@@ -1,6 +1,15 @@
 # Maintainer Mode
 
-**Review someone else's nixpkgs pull request, and yours gets on the list.**
+**What should a nixpkgs maintainer do next, for what we give back?**
+
+Three queues answer it: **pull requests to review**, **pull requests ready to
+merge**, and **packages I watch**. A fourth page is your **review record**.
+nixfresh answers the same question from
+the other end, for what we consume: what is stale, what has an advisory, who
+maintains it. nixfresh stays a read-only public dataset. Maintainer Mode is the
+only one of the two with accounts.
+
+Review someone else's nixpkgs pull request, and yours gets on the list.
 
 Reviews are cheap and merges are scarce. An approval from someone without
 commit access moves nothing, so a club that only trades reviews builds a nicer
@@ -9,8 +18,33 @@ that carry a review that changed something, pass their checks, have no
 conflict, and have an approval on their current head. A committer can work it
 from the top down. The review queue exists to feed it.
 
-The club reads GitHub. **It never writes to GitHub**: no reviews, no merges,
-no comments, no labels.
+Maintainer Mode reads GitHub. **It never writes to GitHub**: no reviews, no
+merges, no comments, no labels.
+
+## Maintainer Mode grants nothing
+
+nixpkgs committers grant commit access. Maintainer Mode hands them evidence
+they do not have today, and a human still decides.
+
+Getting a pull request listed is a cheap prize, which is why additive-only
+credit and no dispute process are enough. Commit access is an expensive
+prize: the moment a number buys it, the incentive to game it outgrows what
+this design can hold. So nothing here computes a recommendation, and no
+number unlocks anything beyond a place in the queues.
+
+The record answers: here are this person's last fifty reviews, what came of
+each, and whose work they overlap with. Its headline is **pull requests a
+committer later merged without further changes after their review**. Nothing
+else shows as directly that someone's judgement already matches the people who
+hold the merge button, and it cannot be farmed, because a committer has to act
+for it to count. The second number is **problems found**: the author changed
+the pull request after a review that requested changes or commented on a
+changed line.
+
+There is **no leaderboard**. A leaderboard drives volume, and volume is the
+enemy of review quality. A global ranking lets five people dominate while the
+rest disengage. The visible unit is the outcome on one person's own page, not
+a count of reviews and not a rank.
 
 ## The rules
 
@@ -122,18 +156,36 @@ bucket, which is the newcomer path: packaging hygiene (complete `meta`,
 pinned hashes, `platforms`, a missing `versionCheckHook`) needs no domain
 knowledge and is most of what a first review finds.
 
+## Packages I watch
+
+Follow a package, and the watch page shows its open advisories, a newer
+upstream release, and the open nixpkgs pull requests against it.
+
+- **Advisories and upstream** come from a nixfresh instance's public
+  `GET /api/v1/packages/<pname>` (`MAINTAINER_MODE_NIXFRESH_URL`). Maintainer
+  Mode never writes to nixfresh.
+- **Open pull requests** come from Maintainer Mode's own sync: a title that
+  starts `<pname>:` (or `….<pname>:`), or a file under `pkgs/by-name/<xx>/<pname>/`.
+- **Why here and not in nixfresh.** A public nixfresh instance holds no
+  credential and no user table by design. Accounts, stored preferences and
+  outbound messages are a write path. Maintainer Mode already logs people in
+  and keeps state, so a subscription is one more row in its database. One
+  login, one account system, one place that can send a person anything.
+- **Nothing is sent yet.** This slice models the subscription and shows what a
+  watcher would hear about. Delivery, mail or otherwise, is a later decision.
+
 ## Three audiences
 
-| Audience | Surface                                                                                                                          |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| Humans   | the web page: ready to merge, needs review (your area, unowned, all), the ledger, one page per person                            |
-| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people`, `/api/v1/people/<login>`, `/api/v1/status` |
-| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                               |
+| Audience | Surface                                                                                                                                |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Humans   | the web page: ready to merge, needs review (your area, unowned, all), packages I watch, one review record per person                   |
+| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/status` |
+| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                                 |
 
 ```sh
 maintainer-mode --server https://<host> merge
 maintainer-mode --server https://<host> review --bucket mine --login <you>
-maintainer-mode --server https://<host> ledger <login>
+maintainer-mode --server https://<host> record <login>
 maintainer-mode --server https://<host> check <login>; echo $?
 ```
 
@@ -148,7 +200,7 @@ Every query command takes `--json`.
   pull requests by `updatedAt`, newest first, and stops at the watermark of
   the previous pass. Both walks store their cursor, so a pass that runs out
   of budget resumes where it stopped.
-- **Tokens.** When you log in, the club keeps your token and reads public
+- **Tokens.** When you log in, Maintainer Mode keeps your token and reads public
   nixpkgs data with it. The rate limit grows with the number of people who use
   it. The OAuth app asks for no scope, so the token reads public data only. A
   deployment may also give the server a token of its own
@@ -175,14 +227,15 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 ./result/bin/maintainer-mode serve --db club.sqlite
 ```
 
-| Variable                      | Meaning                                                     |
-| ----------------------------- | ----------------------------------------------------------- |
+| Variable                          | Meaning                                                     |
+| --------------------------------- | ----------------------------------------------------------- |
 | `MAINTAINER_MODE_LISTEN`          | listen address, default `127.0.0.1:8790`                    |
 | `MAINTAINER_MODE_DB`              | SQLite path                                                 |
 | `MAINTAINER_MODE_PUBLIC_URL`      | the public URL; the OAuth callback is `<url>/auth/callback` |
-| `GITHUB_CLIENT_ID`            | OAuth app client id                                         |
-| `GITHUB_CLIENT_SECRET_FILE`   | file holding the OAuth app client secret                    |
+| `GITHUB_CLIENT_ID`                | OAuth app client id                                         |
+| `GITHUB_CLIENT_SECRET_FILE`       | file holding the OAuth app client secret                    |
 | `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
+| `MAINTAINER_MODE_NIXFRESH_URL`    | nixfresh instance for package health on the watch page      |
 
 CI is the flake's `checks`: `nix flake check`.
 
