@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 
 use crate::model::{Pr, Review, Void};
@@ -8,7 +8,9 @@ use crate::store::Store;
 
 const OWNER: &str = "NixOS";
 const REPO: &str = "nixpkgs";
-const PAGE: i64 = 25;
+/// GitHub times out on large nested pages and answers with an HTML error page
+/// rather than JSON. A failed page is asked again, smaller.
+const PAGES: [i64; 4] = [25, 10, 5, 5];
 
 const PR_FIELDS: &str = r#"
   number title url isDraft state createdAt updatedAt mergedAt mergeable headRefOid baseRefName
@@ -222,11 +224,12 @@ pub fn normalize(n: &Value) -> Option<Pr> {
     })
 }
 
-async fn page(
+async fn page_of(
     client: &mut Client,
     store: &Store,
     open_only: bool,
     after: Option<&str>,
+    n: i64,
 ) -> Result<(Vec<Pr>, Option<String>)> {
     let query = format!(
         "query($owner: String!, $name: String!, $n: Int!, $after: String, $states: [PullRequestState!], $field: IssueOrderField!) {{
@@ -240,7 +243,7 @@ async fn page(
          }}"
     );
     let vars = json!({
-        "owner": OWNER, "name": REPO, "n": PAGE, "after": after,
+        "owner": OWNER, "name": REPO, "n": n, "after": after,
         "states": if open_only { json!(["OPEN"]) } else { Value::Null },
         "field": if open_only { "CREATED_AT" } else { "UPDATED_AT" },
     });
@@ -253,6 +256,27 @@ async fn page(
         .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
         .flatten();
     Ok((prs, next))
+}
+
+async fn page(
+    client: &mut Client,
+    store: &Store,
+    open_only: bool,
+    after: Option<&str>,
+) -> Result<(Vec<Pr>, Option<String>)> {
+    let mut last = None;
+    for n in PAGES {
+        match page_of(client, store, open_only, after, n).await {
+            Ok(v) => return Ok(v),
+            Err(e) if client.has_token() => {
+                tracing::warn!("page of {n}: {e:#}");
+                last = Some(e);
+                tokio::time::sleep(StdDuration::from_secs(5)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("at least one attempt"))
 }
 
 /// Brings the store up to date. Two walks, both resumable from a stored cursor:
