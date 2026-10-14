@@ -7,7 +7,7 @@ let
   primer = callPackage ./nix/primer.nix { };
 in
 rustPlatform.buildRustPackage {
-  pname = "review-club";
+  pname = "maintainer-mode";
   version = "0.1.0";
 
   src = lib.fileset.toSource {
@@ -27,7 +27,7 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "Review a nixpkgs pull request, get yours on the list";
-    mainProgram = "review-club";
+    mainProgram = "maintainer-mode";
     license = lib.licenses.mit;
     platforms = lib.platforms.unix;
   };

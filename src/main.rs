@@ -22,7 +22,7 @@ const EXIT_NOT_LISTED: i32 = 3;
 
 #[derive(Parser)]
 #[command(
-    name = "review-club",
+    name = "maintainer-mode",
     version,
     about = "Review a nixpkgs pull request, get yours on the list"
 )]
@@ -33,7 +33,7 @@ struct Cli {
     #[arg(
         long,
         global = true,
-        env = "REVIEW_CLUB_SERVER",
+        env = "MAINTAINER_MODE_SERVER",
         default_value = "http://127.0.0.1:8790"
     )]
     server: String,
@@ -45,14 +45,14 @@ struct Cli {
 enum Command {
     /// Web page, JSON API and the background sync
     Serve {
-        #[arg(long, env = "REVIEW_CLUB_LISTEN", default_value = "127.0.0.1:8790")]
+        #[arg(long, env = "MAINTAINER_MODE_LISTEN", default_value = "127.0.0.1:8790")]
         listen: String,
-        #[arg(long, env = "REVIEW_CLUB_DB", default_value = "review-club.sqlite")]
+        #[arg(long, env = "MAINTAINER_MODE_DB", default_value = "maintainer-mode.sqlite")]
         db: PathBuf,
         /// The URL people reach; the OAuth callback is `<url>/auth/callback`.
         #[arg(
             long,
-            env = "REVIEW_CLUB_PUBLIC_URL",
+            env = "MAINTAINER_MODE_PUBLIC_URL",
             default_value = "http://127.0.0.1:8790"
         )]
         public_url: String,
@@ -61,14 +61,14 @@ enum Command {
         #[arg(long, env = "GITHUB_CLIENT_SECRET_FILE")]
         client_secret_file: Option<PathBuf>,
         /// A token owned by the deployment, used before any lent token.
-        #[arg(long, env = "REVIEW_CLUB_SYNC_TOKEN_FILE")]
+        #[arg(long, env = "MAINTAINER_MODE_SYNC_TOKEN_FILE")]
         sync_token_file: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
     },
     /// One sync pass into a local database, then exit
     Sync {
-        #[arg(long, env = "REVIEW_CLUB_DB", default_value = "review-club.sqlite")]
+        #[arg(long, env = "MAINTAINER_MODE_DB", default_value = "maintainer-mode.sqlite")]
         db: PathBuf,
         #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
         token: String,

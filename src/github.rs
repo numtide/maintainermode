@@ -82,7 +82,7 @@ impl Client {
 
 pub fn http() -> reqwest::Client {
     reqwest::Client::builder()
-        .user_agent("review-club")
+        .user_agent("maintainer-mode")
         .timeout(StdDuration::from_secs(120))
         .build()
         .expect("http client")
@@ -130,11 +130,11 @@ fn nodes(v: &Value) -> impl Iterator<Item = &Value> {
     v["nodes"].as_array().into_iter().flatten()
 }
 
-/// A committer voids a review with a line `review-club: void <review link>`
+/// A committer voids a review with a line `maintainer-mode: void <review link>`
 /// in a comment on the same pull request.
 fn parse_void(body: &str) -> Option<String> {
     body.lines().find_map(|l| {
-        let rest = l.trim().strip_prefix("review-club: void")?.trim();
+        let rest = l.trim().strip_prefix("maintainer-mode: void")?.trim();
         let id = rest.rsplit("pullrequestreview-").next()?;
         let id: String = id.chars().take_while(|c| c.is_ascii_digit()).collect();
         (!id.is_empty()).then_some(id)
@@ -461,11 +461,11 @@ mod tests {
     #[test]
     fn void_line_names_a_review() {
         assert_eq!(
-            parse_void("thanks\nreview-club: void https://github.com/NixOS/nixpkgs/pull/1#pullrequestreview-123\n").as_deref(),
+            parse_void("thanks\nmaintainer-mode: void https://github.com/NixOS/nixpkgs/pull/1#pullrequestreview-123\n").as_deref(),
             Some("123")
         );
-        assert_eq!(parse_void("review-club: void 456").as_deref(), Some("456"));
-        assert_eq!(parse_void("review-club: void please"), None);
+        assert_eq!(parse_void("maintainer-mode: void 456").as_deref(), Some("456"));
+        assert_eq!(parse_void("maintainer-mode: void please"), None);
     }
 
     #[test]

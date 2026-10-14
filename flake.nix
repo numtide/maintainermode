@@ -1,5 +1,5 @@
 {
-  description = "review-club - review a nixpkgs pull request, get yours on the list";
+  description = "maintainer-mode - review a nixpkgs pull request, get yours on the list";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -28,8 +28,8 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          review-club = pkgs.callPackage ./package.nix { };
-          default = review-club;
+          maintainer-mode = pkgs.callPackage ./package.nix { };
+          default = maintainer-mode;
         }
       );
 
@@ -40,7 +40,7 @@
         in
         {
           default = pkgs.mkShell {
-            PRIMER_DIR = "${self.packages.${system}.review-club.primer}";
+            PRIMER_DIR = "${self.packages.${system}.maintainer-mode.primer}";
             packages = [
               pkgs.cargo
               pkgs.rustc
@@ -61,10 +61,10 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         {
-          build = self.packages.${system}.review-club;
+          build = self.packages.${system}.maintainer-mode;
           fmt = (treefmtFor system).config.build.check self;
-          clippy = self.packages.${system}.review-club.overrideAttrs (old: {
-            pname = "review-club-clippy";
+          clippy = self.packages.${system}.maintainer-mode.overrideAttrs (old: {
+            pname = "maintainer-mode-clippy";
             nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.clippy ];
             buildPhase = "cargo clippy --all-targets -- -D warnings";
             installPhase = "touch $out";
