@@ -19,7 +19,7 @@ use crate::store::Store;
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
-const REPO_URL: &str = "https://github.com/numtide/review-club";
+const REPO_URL: &str = "https://github.com/numtide/maintainer-mode";
 
 macro_rules! octicon {
     ($name:literal) => {
@@ -231,13 +231,13 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>nixpkgs review club</title>
+<title>Maintainer Mode</title>
 <link rel="stylesheet" href="/static/primer.css">
 <link rel="stylesheet" href="/static/club.css">
 </head>
 <body class="color-bg-default color-fg-default">
 <header class="Header">
-  <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">nixpkgs review club</span></a></div>
+  <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">Maintainer Mode</span></a></div>
   <div class="Header-item">{who}</div>
 </header>
 <nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>

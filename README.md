@@ -1,4 +1,4 @@
-# nixpkgs review club
+# Maintainer Mode
 
 **Review someone else's nixpkgs pull request, and yours gets on the list.**
 
@@ -76,7 +76,7 @@ earned it.
   shown and never acted on.
 - **The one manual lever.** A nixpkgs committer can void a review. They post
   a comment on the same pull request with a line
-  `review-club: void <link to the review>`. The comment is public, so the act
+  `maintainer-mode: void <link to the review>`. The comment is public, so the act
   is logged. The ledger shows the voided credit with a link to that comment.
   "Committer" means the comment's `authorAssociation` is `OWNER`, `MEMBER` or
   `COLLABORATOR`.
@@ -128,13 +128,13 @@ knowledge and is most of what a first review finds.
 | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Humans   | the web page: ready to merge, needs review (your area, unowned, all), the ledger, one page per person                            |
 | Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people`, `/api/v1/people/<login>`, `/api/v1/status` |
-| Programs | `review-club check <login>`: exit 0 listed, 3 not listed, 1 broken                                                               |
+| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                               |
 
 ```sh
-review-club --server https://<host> merge
-review-club --server https://<host> review --bucket mine --login <you>
-review-club --server https://<host> ledger <login>
-review-club --server https://<host> check <login>; echo $?
+maintainer-mode --server https://<host> merge
+maintainer-mode --server https://<host> review --bucket mine --login <you>
+maintainer-mode --server https://<host> ledger <login>
+maintainer-mode --server https://<host> check <login>; echo $?
 ```
 
 Every query command takes `--json`.
@@ -152,7 +152,7 @@ Every query command takes `--json`.
   nixpkgs data with it. The rate limit grows with the number of people who use
   it. The OAuth app asks for no scope, so the token reads public data only. A
   deployment may also give the server a token of its own
-  (`REVIEW_CLUB_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
+  (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
   your session and its token.
 - The `meta.maintainers` and `ci/OWNERS` index comes from the nixpkgs source
   tarball of `master`, once a day.
@@ -171,18 +171,18 @@ Every query command takes `--json`.
 
 ```sh
 nix build
-GITHUB_TOKEN=… ./result/bin/review-club sync --db club.sqlite --index
-./result/bin/review-club serve --db club.sqlite
+GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
+./result/bin/maintainer-mode serve --db club.sqlite
 ```
 
 | Variable                      | Meaning                                                     |
 | ----------------------------- | ----------------------------------------------------------- |
-| `REVIEW_CLUB_LISTEN`          | listen address, default `127.0.0.1:8790`                    |
-| `REVIEW_CLUB_DB`              | SQLite path                                                 |
-| `REVIEW_CLUB_PUBLIC_URL`      | the public URL; the OAuth callback is `<url>/auth/callback` |
+| `MAINTAINER_MODE_LISTEN`          | listen address, default `127.0.0.1:8790`                    |
+| `MAINTAINER_MODE_DB`              | SQLite path                                                 |
+| `MAINTAINER_MODE_PUBLIC_URL`      | the public URL; the OAuth callback is `<url>/auth/callback` |
 | `GITHUB_CLIENT_ID`            | OAuth app client id                                         |
 | `GITHUB_CLIENT_SECRET_FILE`   | file holding the OAuth app client secret                    |
-| `REVIEW_CLUB_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
+| `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
 
 CI is the flake's `checks`: `nix flake check`.
 
