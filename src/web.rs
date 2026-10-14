@@ -20,7 +20,7 @@ use crate::store::Store;
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
-const REPO_URL: &str = "https://github.com/numtide/maintainer-mode";
+const README: &str = include_str!("../README.md");
 
 macro_rules! octicon {
     ($name:literal) => {
@@ -117,6 +117,7 @@ pub fn router(app: Shared) -> Router {
         .route("/", get(merge_page))
         .route("/review", get(review_page))
         .route("/record", get(record_page))
+        .route("/rules", get(rules_page))
         .route("/watch", get(watch_page).post(add_watch))
         .route("/watch/remove", post(remove_watch))
         .route("/u/:login", get(person_page))
@@ -267,7 +268,7 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
 <nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
-  {prs} pull requests synced · nixpkgs index {rev} · <a href="{REPO_URL}#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
+  {prs} pull requests synced · nixpkgs index {rev} · <a href="/rules#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
   An independent community project. Not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT).
 </footer>
 </body>
@@ -1004,4 +1005,52 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     }
     out.push_str("</div>");
     page(&app, viewer.as_deref(), "watch", &out)
+}
+
+/// Gives each heading the id GitHub would, so `#the-rules` links still land.
+fn anchor_headings(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(i) = rest.find("<h") {
+        let level = rest.as_bytes().get(i + 2).copied();
+        let close = rest[i..].find('>').map(|j| i + j);
+        match (level, close) {
+            (Some(l @ b'1'..=b'6'), Some(c)) if c == i + 3 => {
+                let tag_end = format!("</h{}>", l as char);
+                let text_end = rest[c..].find(&tag_end).map_or(rest.len(), |j| c + j);
+                let slug: String = rest[c + 1..text_end]
+                    .to_lowercase()
+                    .chars()
+                    .filter_map(|ch| match ch {
+                        'a'..='z' | '0'..='9' | '-' => Some(ch),
+                        ' ' => Some('-'),
+                        _ => None,
+                    })
+                    .collect();
+                out.push_str(&rest[..i]);
+                let _ = write!(out, "<h{} id=\"{slug}\">", l as char);
+                rest = &rest[c + 1..];
+            }
+            _ => {
+                out.push_str(&rest[..i + 2]);
+                rest = &rest[i + 2..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(
+        &mut html,
+        pulldown_cmark::Parser::new_ext(README, pulldown_cmark::Options::ENABLE_TABLES),
+    );
+    let body = format!(
+        "<article class=\"markdown-body\">{}</article>",
+        anchor_headings(&html)
+    );
+    page(&app, viewer.as_deref(), "rules", &body)
 }
