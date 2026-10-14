@@ -17,6 +17,8 @@ pub struct Pr {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub merged_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub merged_by: Option<String>,
     /// MERGEABLE, CONFLICTING or UNKNOWN.
     pub mergeable: String,
     pub head_oid: String,
