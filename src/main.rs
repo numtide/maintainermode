@@ -6,7 +6,7 @@ mod queue;
 mod store;
 mod web;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
@@ -106,6 +106,12 @@ pub async fn refresh_member(app: &App, login: &str, token: &str) -> Result<()> {
     app.recompute()
 }
 
+async fn settle(app: &App, client: &mut github::Client) -> Result<usize> {
+    app.recompute()?;
+    let n = github::settle_mergeable(&app.store, client, &app.merge_candidates()).await?;
+    Ok(n)
+}
+
 async fn background(app: Arc<App>, every: u64) {
     loop {
         let index_at = app.store.get_time("index_at").ok().flatten();
@@ -122,6 +128,9 @@ async fn background(app: Arc<App>, every: u64) {
             match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
                 Ok(n) => tracing::info!("synced {n} pull requests"),
                 Err(e) => tracing::warn!("sync: {e:#}"),
+            }
+            if let Err(e) = settle(&app, &mut client).await {
+                tracing::warn!("mergeable: {e:#}");
             }
         } else {
             tracing::info!("no token yet; the sync starts when someone logs in");
@@ -223,6 +232,10 @@ async fn run(cli: Cli) -> Result<i32> {
             let mut client = github::Client::new(vec![token]);
             let n = github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await?;
             eprintln!("synced {n} pull requests");
+            eprintln!(
+                "settled {} merge candidates",
+                settle(&app, &mut client).await?
+            );
             Ok(0)
         }
         Command::Merge => {

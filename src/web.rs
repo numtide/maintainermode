@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::extract::{Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -74,6 +74,22 @@ impl App {
             index_rev: index.rev.clone(),
         });
         Ok(())
+    }
+
+    /// Everything a ready pull request needs except a known `mergeable`.
+    pub fn merge_candidates(&self) -> Vec<u64> {
+        self.snap()
+            .queues
+            .review
+            .iter()
+            .filter(|e| {
+                e.mergeable == "UNKNOWN"
+                    && e.ci.as_deref() == Some("SUCCESS")
+                    && !e.approved_by.is_empty()
+                    && !e.credited_by.is_empty()
+            })
+            .map(|e| e.number)
+            .collect()
     }
 
     fn snap(&self) -> Arc<Snapshot> {
