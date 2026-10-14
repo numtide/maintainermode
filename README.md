@@ -205,6 +205,10 @@ Every query command takes `--json`.
   deployment may also give the server a token of its own
   (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
   your session and its token.
+- **A GitHub App, later.** The server token is meant to become the token of a
+  GitHub App installed on an organisation. An installation token expires after
+  one hour, and the service reads `MAINTAINER_MODE_SYNC_TOKEN_FILE` once at
+  start, so the App needs the service to mint or reread its token first.
 - **The nixpkgs index is evaluated, with iets.** Once a day, Maintainer Mode
   unpacks the source tarball of nixpkgs `master` and evaluates every derivation
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
