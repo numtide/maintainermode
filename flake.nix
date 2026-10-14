@@ -69,6 +69,11 @@
         in
         {
           build = self.packages.${system}.maintainer-mode;
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+          vm = import ./nix/test.nix { inherit self pkgs; };
+        }
+        // {
           fmt = (treefmtFor system).config.build.check self;
           clippy = self.packages.${system}.maintainer-mode.overrideAttrs (old: {
             pname = "maintainer-mode-clippy";
@@ -79,6 +84,15 @@
           });
         }
       );
+
+      nixosModules.default =
+        { lib, pkgs, ... }:
+        {
+          imports = [ ./nix/module.nix ];
+          services.maintainer-mode.package =
+            lib.mkDefault
+              self.packages.${pkgs.stdenv.hostPlatform.system}.maintainer-mode;
+        };
 
       formatter = forAll (system: (treefmtFor system).config.build.wrapper);
     };
