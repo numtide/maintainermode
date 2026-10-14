@@ -1,5 +1,7 @@
 mod area;
+mod attrs;
 mod dossier;
+mod eval;
 mod github;
 mod ledger;
 mod model;
@@ -29,6 +31,23 @@ const EXIT_NOT_LISTED: i32 = 3;
     about = "Review a nixpkgs pull request, get yours on the list"
 )]
 struct Cli {
+    /// The Nix evaluator: iets in a deployment, plain nix anywhere else.
+    #[arg(
+        long,
+        global = true,
+        env = "MAINTAINER_MODE_EVALUATOR",
+        default_value = "nix"
+    )]
+    evaluator: String,
+    /// Package sets to sweep for meta.maintainers; `pkgs` is the top level.
+    #[arg(
+        long = "index-set",
+        global = true,
+        env = "MAINTAINER_MODE_INDEX_SETS",
+        value_delimiter = ',',
+        default_value = "pkgs,python3Packages"
+    )]
+    index_sets: Vec<String>,
     #[arg(long, global = true)]
     json: bool,
     /// Where the query commands read from.
@@ -87,6 +106,15 @@ enum Command {
         token: String,
         #[arg(long)]
         index: bool,
+    },
+    /// Sweep nixpkgs master with the evaluator and store the index
+    Sweep {
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
+        db: PathBuf,
     },
     /// The ready-to-merge queue
     Merge,
@@ -183,7 +211,26 @@ fn print_entries(v: &Value) {
     }
 }
 
+fn data_dir(db: &std::path::Path) -> PathBuf {
+    match db.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+        _ => PathBuf::from("."),
+    }
+}
+
 async fn run(cli: Cli) -> Result<i32> {
+    eval::set_evaluator(&cli.evaluator);
+    let sets: Vec<String> = cli
+        .index_sets
+        .iter()
+        .map(|s| {
+            if s == "pkgs" {
+                String::new()
+            } else {
+                s.clone()
+            }
+        })
+        .collect();
     match cli.command {
         Command::Serve {
             listen,
@@ -216,6 +263,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
                 nixfresh: nixfresh_url.as_deref().map(nixfresh::Client::new),
+                data_dir: data_dir(&db),
+                index_sets: sets.clone(),
             });
             app.recompute()?;
             tokio::spawn(background(app.clone(), sync_every));
@@ -241,6 +290,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 snapshot: Default::default(),
                 secure_cookies: false,
                 nixfresh: None,
+                data_dir: data_dir(&db),
+                index_sets: sets.clone(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -251,6 +302,30 @@ async fn run(cli: Cli) -> Result<i32> {
             eprintln!(
                 "settled {} merge candidates",
                 settle(&app, &mut client).await?
+            );
+            Ok(0)
+        }
+        Command::Sweep { db } => {
+            let store = Store::open(&db)?;
+            let app = App {
+                index: RwLock::new(web::load_index(&store)),
+                store,
+                oauth: None,
+                sync_token: None,
+                snapshot: Default::default(),
+                secure_cookies: false,
+                nixfresh: None,
+                data_dir: data_dir(&db),
+                index_sets: sets.clone(),
+            };
+            web::refresh_index(&app).await?;
+            let index = app.index.read().unwrap();
+            println!(
+                "{} maintainers, {} packages, {} owner lines at {}",
+                index.maintainers.len(),
+                index.packages.len(),
+                index.owners.len(),
+                index.rev
             );
             Ok(0)
         }

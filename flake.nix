@@ -4,6 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     treefmt-nix.url = "github:numtide/treefmt-nix";
+    iets = {
+      url = "github:numtide/iets";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -11,6 +15,7 @@
       self,
       nixpkgs,
       treefmt-nix,
+      iets,
     }:
     let
       systems = [
@@ -28,7 +33,9 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          maintainer-mode = pkgs.callPackage ./package.nix { };
+          maintainer-mode = pkgs.callPackage ./package.nix {
+            evaluator = iets.packages.${system}.classic or null;
+          };
           default = maintainer-mode;
         }
       );

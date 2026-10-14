@@ -2,6 +2,9 @@
   lib,
   rustPlatform,
   callPackage,
+  makeWrapper,
+  # anything that answers `nix eval --json --file`; null leaves `nix` from PATH
+  evaluator ? null,
 }:
 let
   primer = callPackage ./nix/primer.nix { };
@@ -23,10 +26,17 @@ rustPlatform.buildRustPackage {
 
   env.PRIMER_DIR = "${primer}";
 
-  passthru = { inherit primer; };
+  nativeBuildInputs = [ makeWrapper ];
+
+  postInstall = lib.optionalString (evaluator != null) ''
+    wrapProgram $out/bin/maintainer-mode \
+      --set-default MAINTAINER_MODE_EVALUATOR ${evaluator}/bin/nix
+  '';
+
+  passthru = { inherit primer evaluator; };
 
   meta = {
-    description = "Review a nixpkgs pull request, get yours on the list";
+    description = "What a nixpkgs maintainer should do next: review, merge, watch";
     mainProgram = "maintainer-mode";
     license = lib.licenses.mit;
     platforms = lib.platforms.unix;

@@ -1,13 +1,14 @@
 //! Who knows which part of nixpkgs. Three derived sources, unioned:
-//! `meta.maintainers` read from the nixpkgs source, `ci/OWNERS`, and the
+//! `meta.maintainers` from evaluating nixpkgs, `ci/OWNERS`, and the
 //! directories a person changed in merged pull requests over the last year.
 //! Opt-in tags go on top.
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::io::Read;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::path::{Path, PathBuf};
 
+use crate::attrs;
 use crate::model::Pr;
 use crate::store::Member;
 
@@ -18,6 +19,9 @@ pub struct Index {
     pub maintainers: BTreeMap<String, BTreeSet<String>>,
     /// path prefix → logins, from `ci/OWNERS`.
     pub owners: Vec<(String, Vec<String>)>,
+    /// pname → the area of the file that defines it.
+    #[serde(default)]
+    pub packages: BTreeMap<String, String>,
 }
 
 /// The area a file's maintainers cover: the package directory for a
@@ -34,64 +38,6 @@ fn under(path: &str, prefix: &str) -> bool {
     !prefix.is_empty()
         && path.starts_with(prefix)
         && (path.len() == prefix.len() || path.as_bytes()[prefix.len()] == b'/')
-}
-
-/// handle → GitHub login, from `maintainers/maintainer-list.nix`.
-fn parse_maintainer_list(src: &str) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    let mut handle: Option<String> = None;
-    for line in src.lines() {
-        if let Some(rest) = line.strip_prefix("  ") {
-            if !rest.starts_with(' ') {
-                if let Some((h, tail)) = rest.split_once(" = ") {
-                    if tail.trim_start().starts_with('{') {
-                        handle = Some(h.trim_matches('"').to_string());
-                        continue;
-                    }
-                }
-            }
-        }
-        let t = line.trim();
-        if let (Some(h), Some(v)) = (&handle, t.strip_prefix("github = \"")) {
-            if let Some(login) = v.strip_suffix("\";") {
-                out.insert(h.clone(), login.to_lowercase());
-            }
-        }
-    }
-    out
-}
-
-/// Handles named in `maintainers = …;`. Reads the common spellings
-/// (`with lib.maintainers; [ a b ]`, `[ lib.maintainers.a ]`); a team or a
-/// computed list is skipped, so an area can be missing but never invented.
-fn parse_maintainers(src: &str, handles: &HashMap<String, String>) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    let mut rest = src;
-    while let Some(i) = rest.find("maintainers") {
-        rest = &rest[i + "maintainers".len()..];
-        let Some(after) = rest.trim_start().strip_prefix('=') else {
-            continue;
-        };
-        let mut body = after.trim_start();
-        if body.starts_with("with ") {
-            body = body.split_once(';').map_or("", |(_, b)| b).trim_start();
-        }
-        let Some(list) = body.strip_prefix('[') else {
-            continue;
-        };
-        let Some((list, _)) = list.split_once(']') else {
-            continue;
-        };
-        for tok in list.split_whitespace() {
-            let h = tok
-                .trim_start_matches("lib.maintainers.")
-                .trim_start_matches("maintainers.");
-            if let Some(login) = handles.get(h) {
-                out.insert(login.clone());
-            }
-        }
-    }
-    out
 }
 
 fn parse_owners(src: &str) -> Vec<(String, Vec<String>)> {
@@ -117,63 +63,118 @@ fn parse_owners(src: &str) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-/// Builds the index from a nixpkgs source tarball (`.tar.gz`).
-pub fn from_tarball(rev: &str, bytes: &[u8]) -> Result<Index> {
-    let mut files: Vec<(String, String)> = Vec::new();
-    let mut list = String::new();
-    let mut owners = String::new();
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.to_string_lossy().to_string();
-        let Some((_, rel)) = path.split_once('/') else {
+pub fn from_entries(rev: &str, entries: &[attrs::Entry], owners: &str) -> Index {
+    let mut maintainers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut packages = BTreeMap::new();
+    let index = attrs::Index::build(entries);
+    for e in entries {
+        let Some(file) = &e.file else {
             continue;
         };
-        let rel = rel.to_string();
-        let wanted = rel == "maintainers/maintainer-list.nix"
-            || rel == "ci/OWNERS"
-            || (rel.ends_with(".nix") && (rel.starts_with("pkgs/") || rel.starts_with("nixos/")));
-        if !wanted {
-            continue;
+        let area = area_key(file);
+        for login in &e.maintainers {
+            maintainers
+                .entry(login.to_lowercase())
+                .or_default()
+                .insert(area.clone());
         }
-        let mut s = String::new();
-        if entry.read_to_string(&mut s).is_err() {
-            continue;
-        }
-        match rel.as_str() {
-            "maintainers/maintainer-list.nix" => list = s,
-            "ci/OWNERS" => owners = s,
-            _ if s.contains("maintainers") => files.push((rel, s)),
-            _ => {}
+        if index.resolve(&e.pname) == Some(e.attr.as_str()) {
+            packages.insert(e.pname.clone(), area);
         }
     }
-    anyhow::ensure!(!list.is_empty(), "no maintainer-list.nix in the tarball");
-    let handles = parse_maintainer_list(&list);
-    let mut maintainers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for (path, src) in &files {
-        for login in parse_maintainers(src, &handles) {
-            maintainers.entry(login).or_default().insert(area_key(path));
-        }
-    }
-    Ok(Index {
+    Index {
         rev: rev.to_string(),
         maintainers,
-        owners: parse_owners(&owners),
-    })
+        owners: parse_owners(owners),
+        packages,
+    }
 }
 
-pub async fn fetch(rev: &str) -> Result<Index> {
-    let url = format!("https://codeload.github.com/NixOS/nixpkgs/tar.gz/{rev}");
-    let bytes = crate::github::http()
-        .get(&url)
+async fn master_rev(http: &reqwest::Client) -> Result<String> {
+    let sha = http
+        .get("https://api.github.com/repos/NixOS/nixpkgs/commits/master")
+        .header("Accept", "application/vnd.github.sha")
         .send()
         .await?
         .error_for_status()?
-        .bytes()
-        .await
-        .context("nixpkgs tarball")?;
-    let rev = rev.to_string();
-    tokio::task::spawn_blocking(move || from_tarball(&rev, &bytes)).await?
+        .text()
+        .await?;
+    anyhow::ensure!(sha.len() == 40, "unexpected master revision {sha:?}");
+    Ok(sha)
+}
+
+/// Unpacks a nixpkgs tarball into `dir`, dropping the top directory GitHub
+/// names after the revision.
+fn unpack(bytes: &[u8], dir: &Path) -> Result<()> {
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        let rel: PathBuf = path.components().skip(1).collect();
+        if rel.as_os_str().is_empty() {
+            continue;
+        }
+        entry.unpack(dir.join(rel))?;
+    }
+    Ok(())
+}
+
+/// Sweeps nixpkgs master with the configured evaluator. The source is a
+/// tarball unpacked under `data`, not a flake reference, so the evaluator
+/// needs no daemon and writes nothing to a store.
+pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
+    let http = crate::github::http();
+    let rev = master_rev(&http).await?;
+    let dir = data.join(format!("nixpkgs-{rev}"));
+    if !dir.join("default.nix").exists() {
+        let bytes = http
+            .get(format!(
+                "https://codeload.github.com/NixOS/nixpkgs/tar.gz/{rev}"
+            ))
+            .send()
+            .await?
+            .error_for_status()?
+            .bytes()
+            .await
+            .context("nixpkgs tarball")?;
+        let tmp = data.join(format!("nixpkgs-{rev}.partial"));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp)?;
+        let t = tmp.clone();
+        tokio::task::spawn_blocking(move || unpack(&bytes, &t)).await??;
+        std::fs::rename(&tmp, &dir)?;
+    }
+    for old in std::fs::read_dir(data)?.flatten() {
+        let name = old.file_name().to_string_lossy().to_string();
+        if name.starts_with("nixpkgs-") && old.path() != dir {
+            let _ = std::fs::remove_dir_all(old.path());
+        }
+    }
+    let owners = std::fs::read_to_string(dir.join("ci/OWNERS")).unwrap_or_default();
+    let sets = sets.to_vec();
+    let d = dir.clone();
+    let entries = tokio::task::spawn_blocking(move || -> Result<Vec<attrs::Entry>> {
+        let mut all = Vec::new();
+        for set in &sets {
+            let started = std::time::Instant::now();
+            let found = attrs::sweep(&d, "x86_64-linux", set)?;
+            tracing::info!(
+                "swept {:?} with {}: {} derivations in {:.1}s",
+                if set.is_empty() {
+                    "top level"
+                } else {
+                    set.as_str()
+                },
+                crate::eval::evaluator(),
+                found.len(),
+                started.elapsed().as_secs_f64()
+            );
+            all.extend(found);
+        }
+        Ok(all)
+    })
+    .await??;
+    Ok(from_entries(&rev, &entries, &owners))
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -258,24 +259,6 @@ impl Ownership {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_maintainer_spellings() {
-        let list = "{\n  alice = {\n    github = \"Alice\";\n  };\n  \"bob-2\" = {\n    email = \"x\";\n    github = \"bob\";\n  };\n}\n";
-        let h = parse_maintainer_list(list);
-        assert_eq!(h["alice"], "alice");
-        assert_eq!(h["bob-2"], "bob");
-        let a = parse_maintainers(
-            "meta.maintainers = with lib.maintainers; [ alice bob-2 ];",
-            &h,
-        );
-        assert_eq!(a.len(), 2);
-        let b = parse_maintainers(
-            "maintainers = [ lib.maintainers.alice ] ++ lib.teams.x.members;",
-            &h,
-        );
-        assert_eq!(b.into_iter().collect::<Vec<_>>(), vec!["alice"]);
-    }
 
     #[test]
     fn owners_lines_become_prefixes() {
