@@ -1,6 +1,6 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration as StdDuration;
 
 use crate::model::{Pr, Review, Void};
@@ -14,6 +14,7 @@ const PAGES: [i64; 4] = [25, 10, 5, 5];
 
 const PR_FIELDS: &str = r#"
   number title url isDraft state createdAt updatedAt mergedAt mergeable headRefOid baseRefName
+  mergedBy { login }
   author { __typename login }
   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
   files(first: 50) { nodes { path } }
@@ -209,6 +210,7 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         created_at: time(&n["createdAt"])?,
         updated_at: time(&n["updatedAt"])?,
         merged_at: time(&n["mergedAt"]),
+        merged_by: n["mergedBy"]["login"].as_str().map(String::from),
         mergeable: n["mergeable"].as_str().unwrap_or("UNKNOWN").to_string(),
         head_oid: n["headRefOid"].as_str().unwrap_or("").to_string(),
         files: nodes(&n["files"])
@@ -464,7 +466,10 @@ mod tests {
             parse_void("thanks\nmaintainer-mode: void https://github.com/NixOS/nixpkgs/pull/1#pullrequestreview-123\n").as_deref(),
             Some("123")
         );
-        assert_eq!(parse_void("maintainer-mode: void 456").as_deref(), Some("456"));
+        assert_eq!(
+            parse_void("maintainer-mode: void 456").as_deref(),
+            Some("456")
+        );
         assert_eq!(parse_void("maintainer-mode: void please"), None);
     }
 

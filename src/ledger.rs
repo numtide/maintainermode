@@ -245,18 +245,18 @@ pub fn compute(prs: &[Pr], orphan: impl Fn(&Pr) -> bool, now: DateTime<Utc>) -> 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::model::Void;
 
-    fn t(day: i64) -> DateTime<Utc> {
+    pub fn t(day: i64) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339("2026-06-01T12:00:00Z")
             .unwrap()
             .with_timezone(&Utc)
             + Duration::days(day)
     }
 
-    fn pr(number: u64, author: &str, created: i64) -> Pr {
+    pub fn pr(number: u64, author: &str, created: i64) -> Pr {
         Pr {
             number,
             title: format!("pr {number}"),
@@ -269,6 +269,7 @@ mod tests {
             created_at: t(created),
             updated_at: t(created),
             merged_at: None,
+            merged_by: None,
             mergeable: "MERGEABLE".into(),
             head_oid: "abc".into(),
             files: vec![],
@@ -280,7 +281,7 @@ mod tests {
         }
     }
 
-    fn review(id: u64, author: &str, day: i64) -> Review {
+    pub fn review(id: u64, author: &str, day: i64) -> Review {
         Review {
             url: format!("https://github.com/NixOS/nixpkgs/pull/1#pullrequestreview-{id}"),
             author: author.into(),
