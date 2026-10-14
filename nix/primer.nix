@@ -13,6 +13,7 @@ let
   icons = [
     "check-circle-fill"
     "dot-fill"
+    "bell"
     "eye"
     "git-merge"
     "git-pull-request"

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -41,6 +41,12 @@ impl Store {
                committed TEXT NOT NULL,
                tags TEXT NOT NULL,
                refreshed_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS watch (
+               login TEXT NOT NULL,
+               package TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               PRIMARY KEY (login, package)
              );
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -231,6 +237,34 @@ impl Store {
              GROUP BY token ORDER BY MAX(seen_at) DESC",
         )?;
         let rows = stmt.query_map([since], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+impl Store {
+    pub fn watch(&self, login: &str, package: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO watch (login, package, created_at) VALUES (?1, ?2, ?3)",
+            params![login, package, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn unwatch(&self, login: &str, package: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM watch WHERE login = ?1 AND package = ?2",
+            params![login, package],
+        )?;
+        Ok(())
+    }
+
+    pub fn watched(&self, login: &str) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT package FROM watch WHERE login = ?1 ORDER BY package")?;
+        let rows = stmt.query_map([login], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 }
