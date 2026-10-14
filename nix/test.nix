@@ -18,6 +18,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/ | grep -q 'Maintainer Mode'")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status | grep -q move_days")
     machine.succeed("curl -sf http://127.0.0.1:8790/static/primer.css >/dev/null")
+    machine.succeed("curl -sf http://127.0.0.1:8790/rules | grep -q 'id=\"the-rules\"'")
     machine.fail("curl -sf http://127.0.0.1:8790/api/v1/people")
     status = machine.execute("maintainer-mode --server http://127.0.0.1:8790 check nobody")[0]
     assert status == 3, f"check exits {status}, not 3"

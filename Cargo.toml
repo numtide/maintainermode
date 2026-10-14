@@ -8,6 +8,9 @@ description = "Review a nixpkgs pull request, get yours on the list"
 [dependencies]
 anyhow = "1"
 flate2 = "1"
+pulldown-cmark = { version = "0.12", default-features = false, features = [
+  "html",
+] }
 axum = "0.7"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }

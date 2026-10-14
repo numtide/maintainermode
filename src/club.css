@@ -147,3 +147,38 @@ a:hover {
   background: var(--bgColor-accent-muted);
   border-radius: 6px;
 }
+.markdown-body {
+  max-width: 860px;
+}
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 16px 0;
+  display: block;
+  overflow-x: auto;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--borderColor-default);
+  padding: 6px 13px;
+}
+.markdown-body code {
+  background: var(--bgColor-neutral-muted);
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+  font-size: 85%;
+}
+.markdown-body pre {
+  background: var(--bgColor-muted);
+  padding: 16px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.markdown-body pre code {
+  background: none;
+  padding: 0;
+}
+.markdown-body h2 {
+  margin-top: 32px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--borderColor-muted);
+}
