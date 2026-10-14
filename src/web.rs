@@ -54,6 +54,9 @@ pub struct App {
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,
     pub nixfresh: Option<crate::nixfresh::Client>,
+    /// Where the nixpkgs source is unpacked for the evaluator.
+    pub data_dir: std::path::PathBuf,
+    pub index_sets: Vec<String>,
 }
 
 impl App {
@@ -849,23 +852,25 @@ pub fn load_index(store: &Store) -> Index {
 }
 
 pub async fn refresh_index(app: &App) -> Result<()> {
-    let rev = format!("master@{}", Utc::now().format("%Y-%m-%d"));
-    let index = area::fetch("refs/heads/master").await?;
-    let index = Index { rev, ..index };
+    let index = area::fetch(&app.data_dir, &app.index_sets).await?;
     app.store.set("index", &serde_json::to_string(&index)?)?;
     app.store.set("index_at", &Utc::now().to_rfc3339())?;
     *app.index.write().unwrap() = index;
     Ok(())
 }
 
-fn touches(pr: &crate::model::Pr, pname: &str) -> bool {
+/// `area` is where the evaluated index says the package is defined; the title
+/// convention catches pull requests that change only a caller of it.
+fn touches(pr: &crate::model::Pr, pname: &str, area: Option<&str>) -> bool {
     let prefix = format!("{pname}:");
     let qualified = format!(".{pname}:");
-    let shard: String = pname.chars().take(2).collect::<String>().to_lowercase();
-    let dir = format!("pkgs/by-name/{shard}/{pname}/");
     pr.title.starts_with(&prefix)
         || pr.title.contains(&qualified)
-        || pr.files.iter().any(|f| f.starts_with(&dir))
+        || area.is_some_and(|a| {
+            pr.files
+                .iter()
+                .any(|f| f == a || f.strip_prefix(a).is_some_and(|r| r.starts_with('/')))
+        })
 }
 
 #[derive(Deserialize)]
@@ -969,10 +974,11 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
             }
             None => {}
         }
+        let area = app.index.read().unwrap().packages.get(pname).cloned();
         let open: Vec<&crate::model::Pr> = s
             .pr_data
             .iter()
-            .filter(|p| p.is_open() && touches(p, pname))
+            .filter(|p| p.is_open() && touches(p, pname, area.as_deref()))
             .collect();
         let _ = write!(
             out,
