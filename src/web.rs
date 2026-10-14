@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::extract::{Form, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -18,6 +18,7 @@ use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
+const CLUB_CSS: &str = include_str!("club.css");
 const REPO_URL: &str = "https://github.com/numtide/review-club";
 
 macro_rules! octicon {
@@ -114,7 +115,8 @@ pub fn router(app: Shared) -> Router {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", post(logout))
-        .route("/static/primer.css", get(primer))
+        .route("/static/primer.css", get(|| css(PRIMER_CSS)))
+        .route("/static/club.css", get(|| css(CLUB_CSS)))
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/v1/status", get(api_status))
         .route("/api/v1/queue/merge", get(api_merge))
@@ -162,13 +164,13 @@ fn ago(t: DateTime<Utc>) -> String {
     }
 }
 
-async fn primer() -> impl IntoResponse {
+async fn css(body: &'static str) -> impl IntoResponse {
     (
         [
             (header::CONTENT_TYPE, "text/css; charset=utf-8"),
             (header::CACHE_CONTROL, "public, max-age=86400"),
         ],
-        PRIMER_CSS,
+        body,
     )
 }
 
@@ -231,7 +233,7 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>nixpkgs review club</title>
 <link rel="stylesheet" href="/static/primer.css">
-<style>.octicon{{vertical-align:text-bottom}} .UnderlineNav-item .octicon{{margin-right:6px}}</style>
+<link rel="stylesheet" href="/static/club.css">
 </head>
 <body class="color-bg-default color-fg-default">
 <header class="Header">
@@ -532,7 +534,11 @@ async fn person_page(
              <div class=\"f6 color-fg-muted\">{} · {} {}</div></div><div class=\"text-right\">{status}</div></div>",
             c.at.format("%Y-%m-%d"),
             why.join(", "),
-            factors.join(", "),
+            if factors.is_empty() {
+                String::new()
+            } else {
+                format!("· {}", factors.join(", "))
+            },
             u = esc(&c.review_url),
             n = c.pr,
             t = esc(&c.pr_title),

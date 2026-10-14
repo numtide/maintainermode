@@ -197,6 +197,10 @@ Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages
 are server-rendered HTML; there is no JavaScript.
 
+Version 22 of `@primer/css` no longer ships `Box`, `Label`, `UnderlineNav`,
+`Subhead` or `flash`. `src/club.css` rebuilds those few on Primer's own
+color tokens, so light and dark mode follow the bundle.
+
 Primer is GitHub's design system, used so that people who arrive from a pull
 request page do not learn a second interface. The club is an independent
 community project. It is not a GitHub product and is not endorsed by GitHub,

@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
 
