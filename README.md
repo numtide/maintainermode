@@ -139,10 +139,9 @@ counts when it moves something; you are simply not asked for it.
 
 Your area is derived, never self-assessed. It is the union of:
 
-1. **`meta.maintainers`**: every package whose source names you, read from
-   the nixpkgs source once a day. The reader takes the common spellings
-   (`with lib.maintainers; [ … ]`, `lib.maintainers.x`) and skips teams and
-   computed lists, so it can miss an area but never invents one.
+1. **`meta.maintainers`**: every package whose evaluated `meta.maintainers`
+   names your GitHub login, at the directory of its `meta.position`. Teams and
+   computed lists count, because the evaluator resolves them.
 2. **`ci/OWNERS`**: the file the "Check / owners" job reads. Team entries are
    skipped, because team membership is not public.
 3. **What you changed**: the directories of files in your merged pull requests
@@ -206,8 +205,25 @@ Every query command takes `--json`.
   deployment may also give the server a token of its own
   (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
   your session and its token.
-- The `meta.maintainers` and `ci/OWNERS` index comes from the nixpkgs source
-  tarball of `master`, once a day.
+- **The nixpkgs index is evaluated, with iets.** Once a day, Maintainer Mode
+  unpacks the source tarball of nixpkgs `master` and evaluates every derivation
+  in the top level and `python3Packages` (`--index-set`). For each one it keeps
+  the package name, the file of `meta.position`, and the GitHub logins in
+  `meta.maintainers`. That one sweep maps paths to packages and packages to
+  people. It evaluates a local tree, not a flake reference, so the evaluator
+  needs no daemon and writes nothing to a store.
+- **The evaluator is one setting**, `--evaluator` (`MAINTAINER_MODE_EVALUATOR`):
+  anything that answers `nix eval --json --file`. The package sets it to
+  [iets](https://github.com/numtide/iets); `package.nix` takes `evaluator` to
+  swap it. Each sweep logs its evaluator and time, so the two can be compared.
+  Measured on one nixpkgs revision, both producing the same index:
+
+  | Evaluator  | Top level (25,320) | python3Packages (11,484) | Whole sweep | Peak RSS |
+  | ---------- | ------------------ | ------------------------ | ----------- | -------- |
+  | iets       | 7.1 s              | 1.8 s                    | 13.9 s      | 1.98 GB  |
+  | nix 2.34.8 | 13.1 s             | 6.3 s                    | 19.6 s      | 2.07 GB  |
+
+  `maintainer-mode sweep` runs the sweep alone, to time it.
 
 ## Known limits of slice one
 
@@ -216,6 +232,8 @@ Every query command takes `--json`.
   busy pull request can lose a trigger or a void past those limits.
 - Ownership of a pull request is judged against today's nixpkgs, not the
   nixpkgs of the day of the review.
+- The sweep covers derivations in the swept sets. NixOS modules, whose
+  `meta.maintainers` sits outside a derivation, are not in it yet.
 - Bot authors (`r-ryantm` among them) are never listed, so their pull requests
   do not appear.
 
@@ -241,10 +259,11 @@ CI is the flake's `checks`: `nix flake check`.
 
 ## What we took, and under which licence
 
-| Package                                                              | Version | Licence | Used for                        |
-| -------------------------------------------------------------------- | ------- | ------- | ------------------------------- |
-| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, served as-is |
-| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | twelve 16px SVG icons           |
+| Package                                                              | Version | Licence | Used for                                                                                            |
+| -------------------------------------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
+| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, served as-is                                                                     |
+| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
+| nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages
