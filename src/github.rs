@@ -1,6 +1,6 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::time::Duration as StdDuration;
 
 use crate::model::{Pr, Review, Void};
@@ -310,6 +310,40 @@ pub async fn sync(store: &Store, client: &mut Client, window_days: i64) -> Resul
     store.delete_key("recent_cursor")?;
     store.set("last_sync", &Utc::now().to_rfc3339())?;
     Ok(count)
+}
+
+/// GitHub computes `mergeable` lazily: a bulk read mostly returns UNKNOWN, and
+/// the read itself starts the computation. Asking again for the few merge
+/// candidates, one aliased field each, settles them for the next pass.
+pub async fn settle_mergeable(
+    store: &Store,
+    client: &mut Client,
+    numbers: &[u64],
+) -> Result<usize> {
+    let mut settled = 0;
+    for chunk in numbers.chunks(50) {
+        let fields: String = chunk
+            .iter()
+            .map(|n| format!("p{n}: pullRequest(number: {n}) {{ number mergeable }} "))
+            .collect();
+        let query = format!(
+            "{{ rateLimit {{ remaining }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
+        );
+        let data = client.graphql(store, &query, Value::Null).await?;
+        for pr in data["repository"]
+            .as_object()
+            .into_iter()
+            .flat_map(|o| o.values())
+        {
+            if let (Some(n), Some(m)) = (pr["number"].as_u64(), pr["mergeable"].as_str()) {
+                if m != "UNKNOWN" {
+                    store.set_mergeable(n, m)?;
+                    settled += 1;
+                }
+            }
+        }
+    }
+    Ok(settled)
 }
 
 /// Directories a person changed in merged pull requests over the last year,
