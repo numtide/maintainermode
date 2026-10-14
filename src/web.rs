@@ -1,0 +1,731 @@
+use anyhow::Result;
+use axum::extract::{Form, Path, Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::collections::HashMap;
+use std::fmt::Write;
+use std::sync::{Arc, RwLock};
+
+use crate::area::{self, Area, Index, Ownership};
+use crate::github::OAuth;
+use crate::ledger::{self, Dropped, Ledger, Trigger};
+use crate::queue::{self, Entry, Queues};
+use crate::store::Store;
+
+const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
+const REPO_URL: &str = "https://github.com/numtide/review-club";
+
+macro_rules! octicon {
+    ($name:literal) => {
+        include_str!(concat!(env!("PRIMER_DIR"), "/octicons/", $name, "-16.svg"))
+    };
+}
+
+fn icon(svg: &str) -> String {
+    svg.replacen(
+        "<svg ",
+        "<svg class=\"octicon\" fill=\"currentColor\" aria-hidden=\"true\" ",
+        1,
+    )
+}
+
+#[derive(Default)]
+pub struct Snapshot {
+    pub ledger: Ledger,
+    pub queues: Queues,
+    pub areas: HashMap<String, Area>,
+    pub prs: usize,
+    pub index_rev: String,
+}
+
+pub struct App {
+    pub store: Store,
+    pub oauth: Option<OAuth>,
+    pub sync_token: Option<String>,
+    pub index: RwLock<Index>,
+    pub snapshot: RwLock<Arc<Snapshot>>,
+    pub secure_cookies: bool,
+}
+
+impl App {
+    pub fn recompute(&self) -> Result<()> {
+        let prs = self.store.prs()?;
+        let index = self.index.read().unwrap();
+        let own = Ownership::new(&index);
+        let ledger = ledger::compute(&prs, |p| own.orphan(p), Utc::now());
+        let areas: HashMap<String, Area> = self
+            .store
+            .members()?
+            .iter()
+            .map(|m| (m.login.clone(), Area::of(m, &index)))
+            .collect();
+        let member_areas: Vec<Area> = areas.values().cloned().collect();
+        let queues = queue::build(&prs, &ledger, &member_areas);
+        *self.snapshot.write().unwrap() = Arc::new(Snapshot {
+            ledger,
+            queues,
+            areas,
+            prs: prs.len(),
+            index_rev: index.rev.clone(),
+        });
+        Ok(())
+    }
+
+    fn snap(&self) -> Arc<Snapshot> {
+        self.snapshot.read().unwrap().clone()
+    }
+
+    fn viewer(&self, headers: &HeaderMap) -> Option<String> {
+        let id = cookie(headers, "session")?;
+        self.store.session(&id).ok().flatten().map(|s| s.login)
+    }
+}
+
+type Shared = Arc<App>;
+
+pub fn router(app: Shared) -> Router {
+    Router::new()
+        .route("/", get(merge_page))
+        .route("/review", get(review_page))
+        .route("/ledger", get(ledger_page))
+        .route("/u/:login", get(person_page))
+        .route("/me/tags", post(set_tags))
+        .route("/auth/login", get(login))
+        .route("/auth/callback", get(callback))
+        .route("/auth/logout", post(logout))
+        .route("/static/primer.css", get(primer))
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/api/v1/status", get(api_status))
+        .route("/api/v1/queue/merge", get(api_merge))
+        .route("/api/v1/queue/review", get(api_review))
+        .route("/api/v1/people", get(api_people))
+        .route("/api/v1/people/:login", get(api_person))
+        .with_state(app)
+}
+
+fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|kv| kv.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.to_string())
+}
+
+fn set_cookie(app: &App, name: &str, value: &str, max_age: i64) -> String {
+    let secure = if app.secure_cookies { "; Secure" } else { "" };
+    format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
+}
+
+fn random_id() -> String {
+    use rand::RngCore;
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+fn ago(t: DateTime<Utc>) -> String {
+    let d = Utc::now() - t;
+    match d.num_days() {
+        0 => format!("{}h", d.num_hours().max(0)),
+        n => format!("{n}d"),
+    }
+}
+
+async fn primer() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        PRIMER_CSS,
+    )
+}
+
+fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> {
+    let s = app.snap();
+    let tabs = [
+        (
+            "merge",
+            "/",
+            icon(octicon!("git-merge")),
+            "Ready to merge",
+            s.queues.merge.len(),
+        ),
+        (
+            "review",
+            "/review",
+            icon(octicon!("eye")),
+            "Needs review",
+            s.queues.review.len(),
+        ),
+        (
+            "ledger",
+            "/ledger",
+            icon(octicon!("law")),
+            "Ledger",
+            s.ledger.people.values().filter(|p| p.listed).count(),
+        ),
+    ];
+    let mut nav = String::new();
+    for (id, href, ic, label, n) in tabs {
+        let current = if id == tab {
+            " aria-current=\"page\""
+        } else {
+            ""
+        };
+        let _ = write!(
+            nav,
+            "<li class=\"d-inline-flex\"><a class=\"UnderlineNav-item\" href=\"{href}\"{current}>{ic}<span>{label}</span><span class=\"Counter\">{n}</span></a></li>"
+        );
+    }
+    let who = match viewer {
+        Some(v) => format!(
+            "<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
+             <form method=\"post\" action=\"/auth/logout\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">{} Sign out</button></form>",
+            icon(octicon!("person")),
+            icon(octicon!("sign-out")),
+            v = esc(v)
+        ),
+        None if app.oauth.is_some() => format!(
+            "<a class=\"btn btn-sm btn-primary\" href=\"/auth/login\">{} Sign in with GitHub</a>",
+            icon(octicon!("sign-in"))
+        ),
+        None => String::new(),
+    };
+    Html(format!(
+        r#"<!doctype html>
+<html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nixpkgs review club</title>
+<link rel="stylesheet" href="/static/primer.css">
+<style>.octicon{{vertical-align:text-bottom}} .UnderlineNav-item .octicon{{margin-right:6px}}</style>
+</head>
+<body class="color-bg-default color-fg-default">
+<header class="Header">
+  <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">nixpkgs review club</span></a></div>
+  <div class="Header-item">{who}</div>
+</header>
+<nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
+<main class="container-lg px-3 py-4">{body}</main>
+<footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
+  {prs} pull requests synced · nixpkgs index {rev} · <a href="{REPO_URL}#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
+  An independent community project. Not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT).
+</footer>
+</body>
+</html>"#,
+        club = icon(octicon!("people")),
+        prs = s.prs,
+        rev = esc(if s.index_rev.is_empty() {
+            "pending"
+        } else {
+            &s.index_rev
+        }),
+    ))
+}
+
+fn ci_label(e: &Entry) -> String {
+    match e.ci.as_deref() {
+        Some("SUCCESS") => format!(
+            "<span class=\"color-fg-success\" title=\"checks pass\">{}</span>",
+            icon(octicon!("check-circle-fill"))
+        ),
+        Some("FAILURE" | "ERROR") => format!(
+            "<span class=\"color-fg-danger\" title=\"checks fail\">{}</span>",
+            icon(octicon!("x-circle-fill"))
+        ),
+        _ => format!(
+            "<span class=\"color-fg-attention\" title=\"checks pending\">{}</span>",
+            icon(octicon!("dot-fill"))
+        ),
+    }
+}
+
+fn people(logins: &[String]) -> String {
+    logins
+        .iter()
+        .map(|l| format!("<a href=\"/u/{0}\">{0}</a>", esc(l)))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn rows(entries: &[&Entry], empty: &str) -> String {
+    if entries.is_empty() {
+        return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
+    }
+    let mut out = String::from("<div class=\"Box\">");
+    for e in entries.iter().take(200) {
+        let conflict = if e.mergeable == "CONFLICTING" {
+            "<span class=\"Label Label--danger ml-1\">conflict</span>"
+        } else {
+            ""
+        };
+        let unowned = if e.unowned {
+            "<span class=\"Label Label--attention ml-1\">unowned</span>"
+        } else {
+            ""
+        };
+        let mut meta = format!(
+            "#{} by <a href=\"/u/{a}\">{a}</a> ({:.1}) · {} old · <span class=\"branch-name\">{}</span>",
+            e.number,
+            e.author_score,
+            ago(e.created_at),
+            esc(&e.base),
+            a = esc(&e.author)
+        );
+        if !e.approved_by.is_empty() {
+            let _ = write!(meta, " · approved by {}", people(&e.approved_by));
+        }
+        if !e.credited_by.is_empty() {
+            let _ = write!(meta, " · moved by {}", people(&e.credited_by));
+        }
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex flex-items-start\">\
+               <span class=\"mr-2 color-fg-open\">{pr}</span>\
+               <div class=\"flex-auto\">\
+                 <a class=\"Link--primary text-bold\" href=\"{url}\">{title}</a>{conflict}{unowned}\
+                 <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
+               </div>\
+               <span class=\"ml-2\">{ci}</span>\
+             </div>",
+            pr = icon(octicon!("git-pull-request")),
+            url = esc(&e.url),
+            title = esc(&e.title),
+            ci = ci_label(e),
+        );
+    }
+    if entries.len() > 200 {
+        let _ = write!(
+            out,
+            "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
+            entries.len() - 200
+        );
+    }
+    out.push_str("</div>");
+    out
+}
+
+async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let entries: Vec<&Entry> = s.queues.merge.iter().collect();
+    let body = format!(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
+         <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
+         Ordered by the author's credit, so people who review rise. Work it from the top.</div></div>{}",
+        rows(&entries, "Nothing is ready yet.")
+    );
+    page(&app, viewer.as_deref(), "merge", &body)
+}
+
+#[derive(Deserialize)]
+struct ReviewQuery {
+    bucket: Option<String>,
+}
+
+fn review_bucket<'a>(s: &'a Snapshot, viewer: Option<&str>, bucket: &str) -> Vec<&'a Entry> {
+    let mine = viewer.and_then(|v| s.areas.get(v));
+    s.queues
+        .review
+        .iter()
+        .filter(|e| Some(e.author.as_str()) != viewer)
+        .filter(|e| match bucket {
+            "mine" => mine.is_some_and(|a| a.covers(&e.files)),
+            "unowned" => e.unowned,
+            _ => true,
+        })
+        .collect()
+}
+
+const HYGIENE: &str = "<div class=\"flash mb-3\"><strong>The newcomer path.</strong> Nobody in the club knows these areas, so they rot. \
+A first review needs no domain knowledge: is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
+Are hashes fixed-output and pinned? Are <code>platforms</code> right? Does a CLI have <code>versionCheckHook</code>? \
+Leave the finding as an inline comment on the changed line. A review here earns full credit at any age.</div>";
+
+async fn review_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<ReviewQuery>,
+) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let bucket = q
+        .bucket
+        .as_deref()
+        .unwrap_or(if viewer.is_some() { "mine" } else { "unowned" });
+    let entries = review_bucket(&s, viewer.as_deref(), bucket);
+    let mut tabs = String::new();
+    for (id, label) in [
+        ("mine", "Your area"),
+        ("unowned", "Unowned"),
+        ("all", "All"),
+    ] {
+        if id == "mine" && viewer.is_none() {
+            continue;
+        }
+        let sel = if id == bucket { " selected" } else { "" };
+        let _ = write!(
+            tabs,
+            "<a class=\"SegmentedControl-item btn btn-sm{sel}\" href=\"/review?bucket={id}\">{label}</a> "
+        );
+    }
+    let intro = match bucket {
+        "mine" => "Pull requests that touch what you maintain, own, have changed this year, or tagged. Oldest first.".to_string(),
+        "unowned" => HYGIENE.to_string(),
+        _ => "Every listed pull request that is not ready to merge. Oldest first.".to_string(),
+    };
+    let body = format!(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Needs review</h1>\
+         <div class=\"Subhead-description\">Credit comes when your review moves a pull request: the author pushes or replies, \
+         you comment on a changed line, or it merges within {} days.</div></div>\
+         <div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
+        ledger::MOVE_DAYS,
+        rows(&entries, "Nothing here.")
+    );
+    page(&app, viewer.as_deref(), "review", &body)
+}
+
+async fn ledger_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let mut people: Vec<_> = s.ledger.people.values().filter(|p| p.score > 0.0).collect();
+    people.sort_by(|a, b| b.score.total_cmp(&a.score));
+    let mut out = String::from(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ledger</h1>\
+         <div class=\"Subhead-description\">Computed from public GitHub data on every sync. Nothing here is kept by hand.</div></div>\
+         <div class=\"Box\"><div class=\"Box-header d-flex f6 text-bold\"><span class=\"flex-auto\">Reviewer</span>\
+         <span class=\"col-2 text-right\">Credit</span><span class=\"col-2 text-right\">Authors</span><span class=\"col-2 text-right\">Reciprocity</span></div>",
+    );
+    for p in people.iter().take(300) {
+        let listed = if p.listed {
+            "<span class=\"Label Label--success ml-1\">listed</span>"
+        } else {
+            ""
+        };
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><a href=\"/u/{l}\">{l}</a>{listed}</span>\
+             <span class=\"col-2 text-right\">{:.2}</span><span class=\"col-2 text-right\">{}</span><span class=\"col-2 text-right\">{:.0}%</span></div>",
+            p.score,
+            p.counterparties,
+            p.reciprocity * 100.0,
+            l = esc(&p.login)
+        );
+    }
+    out.push_str("</div>");
+    page(&app, viewer.as_deref(), "ledger", &out)
+}
+
+fn trigger_label(t: &Trigger) -> &'static str {
+    match t {
+        Trigger::AuthorPushed => "author pushed",
+        Trigger::AuthorReplied => "author replied",
+        Trigger::InlineOnChange => "comment on a changed line",
+        Trigger::Merged => "merged",
+    }
+}
+
+async fn person_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Path(login): Path<String>,
+) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let p = s.ledger.people.get(&login).cloned().unwrap_or_default();
+    let mut out = format!(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{l}</h1>\
+         <div class=\"Subhead-description\">Credit {:.2} · {} distinct authors in {} days (needs {} to be listed) · \
+         reciprocity {:.0}% <span class=\"color-fg-muted\">(share of credit from authors who also review {l}; shown, never acted on)</span></div></div>",
+        p.score,
+        p.counterparties,
+        ledger::WINDOW_DAYS,
+        ledger::MIN_COUNTERPARTIES,
+        p.reciprocity * 100.0,
+        l = esc(&login)
+    );
+    if viewer.as_deref() == Some(login.as_str()) {
+        let area = s.areas.get(&login).cloned().unwrap_or_default();
+        let _ = write!(
+            out,
+            "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} Your area</div>\
+             <div class=\"Box-row f6\">{} paths you maintain · {} you own in ci/OWNERS · {} you changed this year</div>\
+             <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
+             <label class=\"f6\" for=\"tags\">Tags: path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
+             <textarea class=\"form-control width-full my-2\" id=\"tags\" name=\"tags\" rows=\"3\">{}</textarea>\
+             <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div></div>",
+            icon(octicon!("tag")),
+            area.maintains.len(),
+            area.owns.len(),
+            area.committed.len(),
+            esc(&area.tags.join("\n"))
+        );
+    }
+    out.push_str("<div class=\"Box\"><div class=\"Box-header text-bold\">Credits</div>");
+    let mut credits: Vec<_> = s.ledger.credits_of(&login).collect();
+    credits.sort_by_key(|c| std::cmp::Reverse(c.at));
+    if credits.is_empty() {
+        out.push_str("<div class=\"Box-row color-fg-muted\">No credit yet.</div>");
+    }
+    for c in credits {
+        let why: Vec<&str> = c.triggers.iter().map(trigger_label).collect();
+        let status = match &c.dropped {
+            None => format!(
+                "{:.2} <span class=\"color-fg-muted\">of {:.2}</span>",
+                c.value, c.weight
+            ),
+            Some(Dropped::DailyCap) => {
+                "<span class=\"Label\">over the daily cap</span>".to_string()
+            }
+            Some(Dropped::Voided { by, url }) => format!(
+                "<a class=\"Label Label--danger\" href=\"{}\">voided by {}</a>",
+                esc(url),
+                esc(by)
+            ),
+        };
+        let mut factors = Vec::new();
+        if c.orphan {
+            factors.push("unowned".to_string());
+        } else if !c.queue_head {
+            factors.push(format!("picked fresh ×{}", ledger::PICKED_FACTOR));
+        }
+        if c.pair_factor < 1.0 {
+            factors.push(format!("repeat author ×{}", c.pair_factor));
+        }
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
+             <a href=\"{u}\">review</a> of <a href=\"https://github.com/NixOS/nixpkgs/pull/{n}\">#{n}</a> {t} by <a href=\"/u/{a}\">{a}</a>\
+             <div class=\"f6 color-fg-muted\">{} · {} {}</div></div><div class=\"text-right\">{status}</div></div>",
+            c.at.format("%Y-%m-%d"),
+            why.join(", "),
+            factors.join(", "),
+            u = esc(&c.review_url),
+            n = c.pr,
+            t = esc(&c.pr_title),
+            a = esc(&c.pr_author),
+        );
+    }
+    out.push_str("</div>");
+    page(&app, viewer.as_deref(), "ledger", &out)
+}
+
+#[derive(Deserialize)]
+struct TagsForm {
+    tags: String,
+}
+
+async fn set_tags(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Form(f): Form<TagsForm>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let tags: Vec<String> = f
+        .tags
+        .lines()
+        .map(|l| l.trim().trim_matches('/').to_string())
+        .filter(|l| !l.is_empty())
+        .take(50)
+        .collect();
+    if let Err(e) = app
+        .store
+        .set_tags(&login, &tags)
+        .and_then(|_| app.recompute())
+    {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    Redirect::to(&format!("/u/{login}")).into_response()
+}
+
+async fn login(State(app): State<Shared>) -> Response {
+    let Some(oauth) = &app.oauth else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "login is not configured").into_response();
+    };
+    let state = random_id();
+    (
+        [(
+            header::SET_COOKIE,
+            set_cookie(&app, "oauth_state", &state, 600),
+        )],
+        Redirect::to(&oauth.authorize_url(&state)),
+    )
+        .into_response()
+}
+
+#[derive(Deserialize)]
+struct Callback {
+    code: String,
+    state: String,
+}
+
+async fn callback(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(cb): Query<Callback>,
+) -> Response {
+    let Some(oauth) = &app.oauth else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    if cookie(&headers, "oauth_state").as_deref() != Some(cb.state.as_str()) {
+        return (StatusCode::BAD_REQUEST, "state mismatch, try again").into_response();
+    }
+    let (login, token) = match oauth.exchange(&cb.code).await {
+        Ok(v) => v,
+        Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+    };
+    let id = random_id();
+    if let Err(e) = app.store.create_session(&id, &login, &token) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    let bg = app.clone();
+    let who = login.clone();
+    tokio::spawn(async move {
+        if let Err(e) = crate::refresh_member(&bg, &who, &token).await {
+            tracing::warn!("area of {who}: {e:#}");
+        }
+    });
+    let mut h = HeaderMap::new();
+    h.append(
+        header::SET_COOKIE,
+        set_cookie(&app, "session", &id, 30 * 86400)
+            .parse()
+            .unwrap(),
+    );
+    h.append(
+        header::SET_COOKIE,
+        set_cookie(&app, "oauth_state", "", 0).parse().unwrap(),
+    );
+    (h, Redirect::to("/review?bucket=mine")).into_response()
+}
+
+async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Response {
+    if let Some(id) = cookie(&headers, "session") {
+        let _ = app.store.delete_session(&id);
+    }
+    (
+        [(header::SET_COOKIE, set_cookie(&app, "session", "", 0))],
+        Redirect::to("/"),
+    )
+        .into_response()
+}
+
+#[derive(Serialize)]
+struct Status {
+    prs: usize,
+    last_sync: Option<String>,
+    watermark: Option<String>,
+    open_done: bool,
+    index_rev: String,
+    computed_at: DateTime<Utc>,
+    members: usize,
+    rules: serde_json::Value,
+}
+
+async fn api_status(State(app): State<Shared>) -> Json<Status> {
+    let s = app.snap();
+    Json(Status {
+        prs: s.prs,
+        last_sync: app.store.get("last_sync").ok().flatten(),
+        watermark: app.store.get("watermark").ok().flatten(),
+        open_done: app.store.get("open_done").ok().flatten().is_some(),
+        index_rev: s.index_rev.clone(),
+        computed_at: s.ledger.computed_at,
+        members: s.areas.len(),
+        rules: json!({
+            "move_days": ledger::MOVE_DAYS,
+            "half_life_days": ledger::HALF_LIFE_DAYS,
+            "window_days": ledger::WINDOW_DAYS,
+            "daily_cap": ledger::DAILY_CAP,
+            "per_pr_cap": 1,
+            "min_counterparties": ledger::MIN_COUNTERPARTIES,
+            "queue_head_days": ledger::QUEUE_HEAD_DAYS,
+            "picked_factor": ledger::PICKED_FACTOR,
+            "pair_factor": ledger::PAIR_FACTOR,
+        }),
+    })
+}
+
+async fn api_merge(State(app): State<Shared>) -> Json<Vec<Entry>> {
+    Json(app.snap().queues.merge.clone())
+}
+
+#[derive(Deserialize)]
+struct ApiReview {
+    bucket: Option<String>,
+    login: Option<String>,
+}
+
+/// `bucket=mine` takes `login`, so an agent can ask for anyone's routed queue;
+/// areas are derived from public data and are not secret.
+async fn api_review(State(app): State<Shared>, Query(q): Query<ApiReview>) -> Json<Vec<Entry>> {
+    let s = app.snap();
+    let bucket = q.bucket.as_deref().unwrap_or("all");
+    Json(
+        review_bucket(&s, q.login.as_deref(), bucket)
+            .into_iter()
+            .cloned()
+            .collect(),
+    )
+}
+
+async fn api_people(State(app): State<Shared>) -> Json<Vec<ledger::Person>> {
+    let s = app.snap();
+    let mut v: Vec<_> = s.ledger.people.values().cloned().collect();
+    v.sort_by(|a, b| b.score.total_cmp(&a.score));
+    Json(v)
+}
+
+async fn api_person(State(app): State<Shared>, Path(login): Path<String>) -> Response {
+    let s = app.snap();
+    let person = s
+        .ledger
+        .people
+        .get(&login)
+        .cloned()
+        .unwrap_or(ledger::Person {
+            login: login.clone(),
+            ..Default::default()
+        });
+    let credits: Vec<_> = s.ledger.credits_of(&login).cloned().collect();
+    Json(json!({ "person": person, "credits": credits, "area": s.areas.get(&login) }))
+        .into_response()
+}
+
+pub fn load_index(store: &Store) -> Index {
+    store
+        .get("index")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+pub async fn refresh_index(app: &App) -> Result<()> {
+    let rev = format!("master@{}", Utc::now().format("%Y-%m-%d"));
+    let index = area::fetch("refs/heads/master").await?;
+    let index = Index { rev, ..index };
+    app.store.set("index", &serde_json::to_string(&index)?)?;
+    app.store.set("index_at", &Utc::now().to_rfc3339())?;
+    *app.index.write().unwrap() = index;
+    Ok(())
+}
