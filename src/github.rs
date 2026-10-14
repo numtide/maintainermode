@@ -1,6 +1,6 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::Duration as StdDuration;
 
 use crate::model::{Pr, Review, Void};

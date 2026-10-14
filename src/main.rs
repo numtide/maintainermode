@@ -6,7 +6,7 @@ mod queue;
 mod store;
 mod web;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
