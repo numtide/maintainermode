@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::extract::{Form, Path, Query, State};
-use axum::http::{header, HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,6 +12,7 @@ use std::fmt::Write;
 use std::sync::{Arc, RwLock};
 
 use crate::area::{self, Area, Index, Ownership};
+use crate::dossier::{self, Outcome};
 use crate::github::OAuth;
 use crate::ledger::{self, Dropped, Ledger, Trigger};
 use crate::queue::{self, Entry, Queues};
@@ -42,6 +43,7 @@ pub struct Snapshot {
     pub areas: HashMap<String, Area>,
     pub prs: usize,
     pub index_rev: String,
+    pub pr_data: Vec<crate::model::Pr>,
 }
 
 pub struct App {
@@ -51,6 +53,7 @@ pub struct App {
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,
+    pub nixfresh: Option<crate::nixfresh::Client>,
 }
 
 impl App {
@@ -73,6 +76,7 @@ impl App {
             areas,
             prs: prs.len(),
             index_rev: index.rev.clone(),
+            pr_data: prs,
         });
         Ok(())
     }
@@ -109,7 +113,9 @@ pub fn router(app: Shared) -> Router {
     Router::new()
         .route("/", get(merge_page))
         .route("/review", get(review_page))
-        .route("/ledger", get(ledger_page))
+        .route("/record", get(record_page))
+        .route("/watch", get(watch_page).post(add_watch))
+        .route("/watch/remove", post(remove_watch))
         .route("/u/:login", get(person_page))
         .route("/me/tags", post(set_tags))
         .route("/auth/login", get(login))
@@ -121,7 +127,6 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/status", get(api_status))
         .route("/api/v1/queue/merge", get(api_merge))
         .route("/api/v1/queue/review", get(api_review))
-        .route("/api/v1/people", get(api_people))
         .route("/api/v1/people/:login", get(api_person))
         .with_state(app)
 }
@@ -176,27 +181,38 @@ async fn css(body: &'static str) -> impl IntoResponse {
 
 fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> {
     let s = app.snap();
+    let watched = viewer
+        .and_then(|v| app.store.watched(v).ok())
+        .map(|w| w.len().to_string())
+        .unwrap_or_default();
     let tabs = [
         (
             "merge",
             "/",
             icon(octicon!("git-merge")),
             "Ready to merge",
-            s.queues.merge.len(),
+            s.queues.merge.len().to_string(),
         ),
         (
             "review",
             "/review",
             icon(octicon!("eye")),
             "Needs review",
-            s.queues.review.len(),
+            s.queues.review.len().to_string(),
         ),
         (
-            "ledger",
-            "/ledger",
+            "watch",
+            "/watch",
+            icon(octicon!("bell")),
+            "Watching",
+            watched,
+        ),
+        (
+            "record",
+            "/record",
             icon(octicon!("law")),
-            "Ledger",
-            s.ledger.people.values().filter(|p| p.listed).count(),
+            "Review record",
+            String::new(),
         ),
     ];
     let mut nav = String::new();
@@ -206,9 +222,14 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
         } else {
             ""
         };
+        let counter = if n.is_empty() {
+            String::new()
+        } else {
+            format!("<span class=\"Counter\">{n}</span>")
+        };
         let _ = write!(
             nav,
-            "<li class=\"d-inline-flex\"><a class=\"UnderlineNav-item\" href=\"{href}\"{current}>{ic}<span>{label}</span><span class=\"Counter\">{n}</span></a></li>"
+            "<li class=\"d-inline-flex\"><a class=\"UnderlineNav-item\" href=\"{href}\"{current}>{ic}<span>{label}</span>{counter}</a></li>"
         );
     }
     let who = match viewer {
@@ -300,9 +321,8 @@ fn rows(entries: &[&Entry], empty: &str) -> String {
             ""
         };
         let mut meta = format!(
-            "#{} by <a href=\"/u/{a}\">{a}</a> ({:.1}) · {} old · <span class=\"branch-name\">{}</span>",
+            "#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
             e.number,
-            e.author_score,
             ago(e.created_at),
             esc(&e.base),
             a = esc(&e.author)
@@ -420,35 +440,31 @@ async fn review_page(
     page(&app, viewer.as_deref(), "review", &body)
 }
 
-async fn ledger_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+#[derive(Deserialize)]
+struct RecordQuery {
+    login: Option<String>,
+}
+
+/// There is deliberately no ranking of people: a leaderboard drives volume,
+/// and a global order lets five people dominate while the rest disengage.
+async fn record_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<RecordQuery>,
+) -> Response {
     let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let mut people: Vec<_> = s.ledger.people.values().filter(|p| p.score > 0.0).collect();
-    people.sort_by(|a, b| b.score.total_cmp(&a.score));
-    let mut out = String::from(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ledger</h1>\
-         <div class=\"Subhead-description\">Computed from public GitHub data on every sync. Nothing here is kept by hand.</div></div>\
-         <div class=\"Box\"><div class=\"Box-header d-flex f6 text-bold\"><span class=\"flex-auto\">Reviewer</span>\
-         <span class=\"col-2 text-right\">Credit</span><span class=\"col-2 text-right\">Authors</span><span class=\"col-2 text-right\">Reciprocity</span></div>",
-    );
-    for p in people.iter().take(300) {
-        let listed = if p.listed {
-            "<span class=\"Label Label--success ml-1\">listed</span>"
-        } else {
-            ""
-        };
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><a href=\"/u/{l}\">{l}</a>{listed}</span>\
-             <span class=\"col-2 text-right\">{:.2}</span><span class=\"col-2 text-right\">{}</span><span class=\"col-2 text-right\">{:.0}%</span></div>",
-            p.score,
-            p.counterparties,
-            p.reciprocity * 100.0,
-            l = esc(&p.login)
-        );
+    if let Some(l) = q.login.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        return Redirect::to(&format!("/u/{}", crate::github::urlencode(l))).into_response();
     }
-    out.push_str("</div>");
-    page(&app, viewer.as_deref(), "ledger", &out)
+    if let Some(v) = &viewer {
+        return Redirect::to(&format!("/u/{v}")).into_response();
+    }
+    let body = "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Review record</h1>\
+        <div class=\"Subhead-description\">One person's reviews and what came of each. There is no ranking.</div></div>\
+        <form method=\"get\" action=\"/record\" class=\"d-flex\" style=\"gap:8px;max-width:420px\">\
+        <input class=\"form-control flex-auto\" name=\"login\" placeholder=\"GitHub login\" aria-label=\"GitHub login\">\
+        <button class=\"btn\" type=\"submit\">Show record</button></form>";
+    page(&app, None, "record", body).into_response()
 }
 
 fn trigger_label(t: &Trigger) -> &'static str {
@@ -460,6 +476,43 @@ fn trigger_label(t: &Trigger) -> &'static str {
     }
 }
 
+fn outcome_label(o: Outcome) -> &'static str {
+    match o {
+        Outcome::MergedUnchanged => "<span class=\"Label Label--success\">merged unchanged</span>",
+        Outcome::MergedAfterChanges => "<span class=\"Label\">merged after changes</span>",
+        Outcome::MergedByReviewer => "<span class=\"Label\">merged by the reviewer</span>",
+        Outcome::ChangedAfterReview => {
+            "<span class=\"Label Label--attention\">changed after review</span>"
+        }
+        Outcome::Open => "<span class=\"Label\">open</span>",
+        Outcome::Closed => "<span class=\"Label\">closed</span>",
+    }
+}
+
+fn stat(n: usize, label: &str, hint: &str) -> String {
+    format!(
+        "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"text-bold\">{label}</div>\
+         <div class=\"f6 color-fg-muted\">{hint}</div></div>"
+    )
+}
+
+fn overlap(title: &str, list: &[(String, usize)]) -> String {
+    let mut out =
+        format!("<div class=\"Box flex-1\"><div class=\"Box-header text-bold\">{title}</div>");
+    if list.is_empty() {
+        out.push_str("<div class=\"Box-row color-fg-muted\">None yet.</div>");
+    }
+    for (l, n) in list {
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
+            l = esc(l)
+        );
+    }
+    out.push_str("</div>");
+    out
+}
+
 async fn person_page(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -468,15 +521,32 @@ async fn person_page(
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let p = s.ledger.people.get(&login).cloned().unwrap_or_default();
+    let d = dossier::build(&s.pr_data, &login);
+    let listed = if p.listed {
+        "<span class=\"Label Label--success\">listed</span>".to_string()
+    } else {
+        format!(
+            "<span class=\"Label\">not listed: {} of {} authors</span>",
+            p.counterparties,
+            ledger::MIN_COUNTERPARTIES
+        )
+    };
     let mut out = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{l}</h1>\
-         <div class=\"Subhead-description\">Credit {:.2} · {} distinct authors in {} days (needs {} to be listed) · \
-         reciprocity {:.0}% <span class=\"color-fg-muted\">(share of credit from authors who also review {l}; shown, never acted on)</span></div></div>",
-        p.score,
-        p.counterparties,
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{l} {listed}</h1>\
+         <div class=\"Subhead-description\">Evidence, not a verdict. Maintainer Mode grants nothing; nixpkgs committers do. \
+         Reviews in the synced data: the last {} days and every open pull request.</div></div>\
+         <div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\">{}{}</div>",
         ledger::WINDOW_DAYS,
-        ledger::MIN_COUNTERPARTIES,
-        p.reciprocity * 100.0,
+        stat(
+            d.merged_unchanged,
+            "merged unchanged after their review",
+            "a committer merged it later, with no push after the review"
+        ),
+        stat(
+            d.problems_found,
+            "problems found",
+            "the author changed the pull request after their review asked for it"
+        ),
         l = esc(&login)
     );
     if viewer.as_deref() == Some(login.as_str()) {
@@ -496,7 +566,49 @@ async fn person_page(
             esc(&area.tags.join("\n"))
         );
     }
-    out.push_str("<div class=\"Box\"><div class=\"Box-header text-bold\">Credits</div>");
+    let _ = write!(
+        out,
+        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Last {} reviews, and what came of each</div>",
+        dossier::RECENT
+    );
+    if d.recent.is_empty() {
+        out.push_str("<div class=\"Box-row color-fg-muted\">No reviews in the synced data.</div>");
+    }
+    for r in &d.recent {
+        let found = if r.problem_found {
+            " <span class=\"Label Label--attention\">problem found</span>"
+        } else {
+            ""
+        };
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
+             <a class=\"Link--primary\" href=\"https://github.com/NixOS/nixpkgs/pull/{n}\">#{n} {t}</a>\
+             <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
+             <div class=\"text-right\">{}{found}</div></div>",
+            r.at.format("%Y-%m-%d"),
+            esc(&r.state.to_lowercase().replace('_', " ")),
+            outcome_label(r.outcome),
+            n = r.pr,
+            t = esc(&r.pr_title),
+            u = esc(&r.review_url),
+            a = esc(&r.pr_author),
+        );
+    }
+    out.push_str("</div>");
+    let _ = write!(
+        out,
+        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\">{}{}</div>",
+        overlap("Reviewed alongside", &d.co_reviewers),
+        overlap("Reviewed pull requests of", &d.authors)
+    );
+    let _ = write!(
+        out,
+        "<details class=\"Box\"><summary class=\"Box-header text-bold\">Credit: {:.2}, reciprocity {:.0}% \
+         <span class=\"f6 color-fg-muted text-normal\">(decides listing only; reciprocity is shown, never acted on)</span></summary>",
+        p.score,
+        p.reciprocity * 100.0
+    );
     let mut credits: Vec<_> = s.ledger.credits_of(&login).collect();
     credits.sort_by_key(|c| std::cmp::Reverse(c.at));
     if credits.is_empty() {
@@ -545,8 +657,8 @@ async fn person_page(
             a = esc(&c.pr_author),
         );
     }
-    out.push_str("</div>");
-    page(&app, viewer.as_deref(), "ledger", &out)
+    out.push_str("</details>");
+    page(&app, viewer.as_deref(), "record", &out)
 }
 
 #[derive(Deserialize)]
@@ -710,13 +822,6 @@ async fn api_review(State(app): State<Shared>, Query(q): Query<ApiReview>) -> Js
     )
 }
 
-async fn api_people(State(app): State<Shared>) -> Json<Vec<ledger::Person>> {
-    let s = app.snap();
-    let mut v: Vec<_> = s.ledger.people.values().cloned().collect();
-    v.sort_by(|a, b| b.score.total_cmp(&a.score));
-    Json(v)
-}
-
 async fn api_person(State(app): State<Shared>, Path(login): Path<String>) -> Response {
     let s = app.snap();
     let person = s
@@ -729,7 +834,8 @@ async fn api_person(State(app): State<Shared>, Path(login): Path<String>) -> Res
             ..Default::default()
         });
     let credits: Vec<_> = s.ledger.credits_of(&login).cloned().collect();
-    Json(json!({ "person": person, "credits": credits, "area": s.areas.get(&login) }))
+    let dossier = dossier::build(&s.pr_data, &login);
+    Json(json!({ "person": person, "dossier": dossier, "credits": credits, "area": s.areas.get(&login) }))
         .into_response()
 }
 
@@ -750,4 +856,146 @@ pub async fn refresh_index(app: &App) -> Result<()> {
     app.store.set("index_at", &Utc::now().to_rfc3339())?;
     *app.index.write().unwrap() = index;
     Ok(())
+}
+
+fn touches(pr: &crate::model::Pr, pname: &str) -> bool {
+    let prefix = format!("{pname}:");
+    let qualified = format!(".{pname}:");
+    let shard: String = pname.chars().take(2).collect::<String>().to_lowercase();
+    let dir = format!("pkgs/by-name/{shard}/{pname}/");
+    pr.title.starts_with(&prefix)
+        || pr.title.contains(&qualified)
+        || pr.files.iter().any(|f| f.starts_with(&dir))
+}
+
+#[derive(Deserialize)]
+struct WatchForm {
+    package: String,
+}
+
+fn valid_pname(p: &str) -> bool {
+    !p.is_empty()
+        && p.len() <= 100
+        && p.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.+".contains(c))
+}
+
+async fn add_watch(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Form(f): Form<WatchForm>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let p = f.package.trim();
+    if !valid_pname(p) {
+        return (StatusCode::BAD_REQUEST, "not a package name").into_response();
+    }
+    if let Err(e) = app.store.watch(&login, p) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    Redirect::to("/watch").into_response()
+}
+
+async fn remove_watch(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Form(f): Form<WatchForm>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    if let Err(e) = app.store.unwatch(&login, f.package.trim()) {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    Redirect::to("/watch").into_response()
+}
+
+/// Delivery (mail or otherwise) is not built: this slice models the
+/// subscription and shows what a watcher would hear about.
+async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let mut out = String::from(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Packages I watch</h1>\
+         <div class=\"Subhead-description\">Advisories, new upstream releases and open pull requests for the packages you follow. \
+         Package health comes from nixfresh's public dataset. Nothing is sent to you yet.</div></div>",
+    );
+    let Some(login) = viewer.as_deref() else {
+        out.push_str("<div class=\"blankslate\"><p>Sign in to follow packages.</p></div>");
+        return page(&app, None, "watch", &out);
+    };
+    out.push_str(
+        "<form method=\"post\" action=\"/watch\" class=\"d-flex mb-3\" style=\"gap:8px;max-width:420px\">\
+         <input class=\"form-control flex-auto\" name=\"package\" placeholder=\"package name, like hello\" aria-label=\"package name\">\
+         <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>",
+    );
+    let watched = app.store.watched(login).unwrap_or_default();
+    if watched.is_empty() {
+        out.push_str("<div class=\"blankslate\"><p>You watch nothing yet.</p></div>");
+        return page(&app, viewer.as_deref(), "watch", &out);
+    }
+    let s = app.snap();
+    out.push_str("<div class=\"Box\">");
+    for pname in &watched {
+        let health = match &app.nixfresh {
+            Some(c) => c.health(pname).await.ok(),
+            None => None,
+        };
+        let mut facts: Vec<String> = Vec::new();
+        match &health {
+            Some(h) if h.tracked => {
+                if let (Some(v), Some(u)) = (&h.version, &h.upstream) {
+                    if v != u {
+                        facts.push(format!(
+                            "<span class=\"Label Label--attention\">upstream {} (nixpkgs {})</span>",
+                            esc(u),
+                            esc(v)
+                        ));
+                    }
+                }
+                for a in &h.open_advisories {
+                    facts.push(format!(
+                        "<span class=\"Label Label--danger\">{}</span>",
+                        esc(a)
+                    ));
+                }
+            }
+            Some(_) => {
+                facts.push("<span class=\"Label\">not in the nixfresh dataset</span>".into())
+            }
+            None if app.nixfresh.is_some() => {
+                facts.push("<span class=\"Label\">nixfresh unreachable</span>".into())
+            }
+            None => {}
+        }
+        let open: Vec<&crate::model::Pr> = s
+            .pr_data
+            .iter()
+            .filter(|p| p.is_open() && touches(p, pname))
+            .collect();
+        let _ = write!(
+            out,
+            "<div class=\"Box-row\"><div class=\"d-flex flex-items-center\">\
+             <strong class=\"flex-auto\">{p}</strong> {}\
+             <form method=\"post\" action=\"/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"package\" value=\"{p}\">\
+             <button class=\"btn btn-sm\" type=\"submit\">Unwatch</button></form></div>",
+            facts.join(" "),
+            p = esc(pname)
+        );
+        for pr in open.iter().take(10) {
+            let _ = write!(
+                out,
+                "<div class=\"f6 mt-1\">{} <a href=\"{}\">#{} {}</a> by {}</div>",
+                icon(octicon!("git-pull-request")),
+                esc(&pr.url),
+                pr.number,
+                esc(&pr.title),
+                esc(&pr.author)
+            );
+        }
+        out.push_str("</div>");
+    }
+    out.push_str("</div>");
+    page(&app, viewer.as_deref(), "watch", &out)
 }

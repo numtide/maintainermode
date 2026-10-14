@@ -1,12 +1,14 @@
 mod area;
+mod dossier;
 mod github;
 mod ledger;
 mod model;
+mod nixfresh;
 mod queue;
 mod store;
 mod web;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
@@ -47,7 +49,11 @@ enum Command {
     Serve {
         #[arg(long, env = "MAINTAINER_MODE_LISTEN", default_value = "127.0.0.1:8790")]
         listen: String,
-        #[arg(long, env = "MAINTAINER_MODE_DB", default_value = "maintainer-mode.sqlite")]
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
         db: PathBuf,
         /// The URL people reach; the OAuth callback is `<url>/auth/callback`.
         #[arg(
@@ -65,10 +71,17 @@ enum Command {
         sync_token_file: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
+        /// A nixfresh instance whose public API supplies package health.
+        #[arg(long, env = "MAINTAINER_MODE_NIXFRESH_URL")]
+        nixfresh_url: Option<String>,
     },
     /// One sync pass into a local database, then exit
     Sync {
-        #[arg(long, env = "MAINTAINER_MODE_DB", default_value = "maintainer-mode.sqlite")]
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
         db: PathBuf,
         #[arg(long, env = "GITHUB_TOKEN", hide_env_values = true)]
         token: String,
@@ -84,8 +97,8 @@ enum Command {
         #[arg(long)]
         login: Option<String>,
     },
-    /// One person's ledger, or everyone's
-    Ledger { login: Option<String> },
+    /// One person's review record: outcomes, not a rank
+    Record { login: String },
     /// Exit 0 when the login is listed, 3 when it is not, 1 on error
     Check { login: String },
 }
@@ -180,6 +193,7 @@ async fn run(cli: Cli) -> Result<i32> {
             client_secret_file,
             sync_token_file,
             sync_every,
+            nixfresh_url,
         } => {
             let store = Store::open(&db)?;
             let oauth = match (client_id, read_secret(&client_secret_file)?) {
@@ -201,6 +215,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 sync_token: read_secret(&sync_token_file)?,
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
+                nixfresh: nixfresh_url.as_deref().map(nixfresh::Client::new),
             });
             app.recompute()?;
             tokio::spawn(background(app.clone(), sync_every));
@@ -225,6 +240,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 sync_token: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
+                nixfresh: None,
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -263,42 +279,29 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             Ok(0)
         }
-        Command::Ledger { login } => {
-            let path = match &login {
-                Some(l) => format!("/api/v1/people/{}", github::urlencode(l)),
-                None => "/api/v1/people".to_string(),
-            };
-            let v = fetch(&cli.server, &path).await?;
+        Command::Record { login } => {
+            let v = fetch(
+                &cli.server,
+                &format!("/api/v1/people/{}", github::urlencode(&login)),
+            )
+            .await?;
             if cli.json {
                 println!("{v}");
-            } else if login.is_some() {
-                let p = &v["person"];
+                return Ok(0);
+            }
+            let d = &v["dossier"];
+            println!(
+                "{login}: {} merged unchanged after review, {} problems found, {} reviewed, listed {}",
+                d["merged_unchanged"], d["problems_found"], d["reviewed"], v["person"]["listed"]
+            );
+            for r in d["recent"].as_array().into_iter().flatten() {
                 println!(
-                    "{}  credit {:.2}  authors {}  listed {}  reciprocity {:.0}%",
-                    p["login"].as_str().unwrap_or(""),
-                    p["score"].as_f64().unwrap_or(0.0),
-                    p["counterparties"],
-                    p["listed"],
-                    p["reciprocity"].as_f64().unwrap_or(0.0) * 100.0
+                    "  {}  #{:<7} {:<22} {}",
+                    r["at"].as_str().unwrap_or("").get(..10).unwrap_or(""),
+                    r["pr"],
+                    r["outcome"].as_str().unwrap_or(""),
+                    r["pr_title"].as_str().unwrap_or("")
                 );
-                for c in v["credits"].as_array().into_iter().flatten() {
-                    println!(
-                        "  {:.2}  #{:<7} {}  {}",
-                        c["value"].as_f64().unwrap_or(0.0),
-                        c["pr"],
-                        c["review_url"].as_str().unwrap_or(""),
-                        c["dropped"]["reason"].as_str().unwrap_or("")
-                    );
-                }
-            } else {
-                for p in v.as_array().into_iter().flatten().take(50) {
-                    println!(
-                        "{:<24} {:>6.2}  {}",
-                        p["login"].as_str().unwrap_or(""),
-                        p["score"].as_f64().unwrap_or(0.0),
-                        if p["listed"] == true { "listed" } else { "" }
-                    );
-                }
             }
             Ok(0)
         }
