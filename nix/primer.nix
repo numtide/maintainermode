@@ -15,6 +15,7 @@ let
     "dot-fill"
     "bell"
     "eye"
+    "graph"
     "git-merge"
     "git-pull-request"
     "law"

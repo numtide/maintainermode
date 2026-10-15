@@ -60,6 +60,12 @@ in
       description = "A nixfresh instance whose public API supplies package health for the watch page.";
     };
 
+    historySince = lib.mkOption {
+      type = lib.types.str;
+      default = "2020-01-01";
+      description = "How far back the history walk for `/state` goes, as YYYY-MM-DD.";
+    };
+
     indexSets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
@@ -88,6 +94,7 @@ in
         MAINTAINER_MODE_DB = "${state}/maintainer-mode.sqlite";
         MAINTAINER_MODE_PUBLIC_URL = cfg.publicUrl;
         MAINTAINER_MODE_INDEX_SETS = lib.concatStringsSep "," cfg.indexSets;
+        MAINTAINER_MODE_HISTORY_SINCE = cfg.historySince;
         HOME = state;
       }
       // lib.optionalAttrs (cfg.githubClientId != null) {

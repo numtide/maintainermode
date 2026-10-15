@@ -191,19 +191,64 @@ upstream release, and the open nixpkgs pull requests against it.
 - **Nothing is sent yet.** This slice models the subscription and shows what a
   watcher would hear about. Delivery, mail or otherwise, is a later decision.
 
+## The state of nixpkgs
+
+`/state` and `GET /api/v1/metrics` show how pull requests flow through
+nixpkgs, month by month. Every figure is an aggregate. No figure names a person,
+in line with "no leaderboard".
+
+- **Inflow.** Pull requests opened, and how many came from bots, first-time
+  contributors, security fixes, new packages, backports and mass rebuilds.
+  "First-time" is GitHub's `authorAssociation` or the nixpkgs label
+  `12.first-time contribution`. The other kinds come from the nixpkgs labels
+  (`1.severity: security`, `8.has: package (new)`, `10.rebuild-linux: 501+`)
+  and from a `release-*` base branch.
+- **Disclosed AI use.** A pull request counts when its last commit or its
+  description has an `Assisted-by:` trailer, or when it has the
+  `llm-assisted` label. AI attribution in another form, such as a
+  `Co-authored-by:` trailer, is counted apart, because the policy says it does
+  not satisfy the disclosure rule. Undisclosed use cannot be seen, so each count
+  is a floor. Standard community automation, such as `r-ryantm`, is exempt
+  from the policy and counts under bots.
+- **Outflow.** Merged, closed without merge, the backlog open at each month's
+  end, merges without an approval, and self-merges.
+- **Latency.** Hours to the first review by someone else and the share
+  reviewed within seven days, both for human authors. Days to merge, at the
+  median and the 90th percentile.
+- **Outcomes by cohort.** Of the pull requests opened in a month and closed
+  since, the share merged: for all, for first-time contributors and for
+  disclosed AI use.
+- **Load.** Over the last 365 days, how many people did half, and 80%, of the
+  merges, of the reviews and of the human-authored pull requests. This shows how
+  few people carry nixpkgs without naming them.
+- **Areas.** Open, never reviewed, opened and merged per area of the tree, from
+  the files a pull request changes.
+
+The full sync reads only pull requests updated in the last 60 days and all open
+ones. A second walk, the **history walk**, reads every pull request created
+since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default 2020-01-01).
+It reads 50 pull requests per query with fewer fields: the first 10 reviews,
+the first 50 files, the labels and the last commit message, but not the
+description. It stores them in a table of their own, so
+they never reach the ledger. It walks 100 pages per sync pass and resumes from
+its cursor. The first walk back to 2020 takes several hours. Until it ends,
+older months are incomplete. The backlog before `--history-since` is a floor,
+because a pull request closed before the walk started is not in it.
+
 ## Three audiences
 
-| Audience | Surface                                                                                                                                |
-| -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Humans   | the web page: ready to merge, needs review (your area, unowned, all), packages I watch, one review record per person                   |
-| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/status` |
-| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                                 |
+| Audience | Surface                                                                                                                                                   |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Humans   | the web page: ready to merge, needs review (your area, unowned, all), packages I watch, one review record per person                                      |
+| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/metrics`, `/api/v1/status` |
+| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                                                    |
 
 ```sh
 maintainer-mode --server https://<host> merge
 maintainer-mode --server https://<host> review --bucket mine --login <you>
 maintainer-mode --server https://<host> record <login>
 maintainer-mode --server https://<host> check <login>; echo $?
+maintainer-mode --server https://<host> metrics --months 24
 ```
 
 Every query command takes `--json`.

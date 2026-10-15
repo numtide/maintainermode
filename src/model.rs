@@ -32,6 +32,22 @@ pub struct Pr {
     /// When new commits reached the head, by commit date or force push.
     pub pushes: Vec<DateTime<Utc>>,
     pub voids: Vec<Void>,
+    #[serde(default)]
+    pub closed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub additions: u64,
+    #[serde(default)]
+    pub deletions: u64,
+    #[serde(default)]
+    pub changed_files: u64,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    /// GitHub's `authorAssociation`: FIRST_TIME_CONTRIBUTOR, CONTRIBUTOR, MEMBER and so on.
+    #[serde(default)]
+    pub association: String,
+    /// The AI tool the pull request discloses, or "disclosed" when it names none.
+    #[serde(default)]
+    pub ai: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

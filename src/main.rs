@@ -4,6 +4,7 @@ mod dossier;
 mod eval;
 mod github;
 mod ledger;
+mod metrics;
 mod model;
 mod nixfresh;
 mod queue;
@@ -48,6 +49,14 @@ struct Cli {
         default_value = "pkgs,python3Packages"
     )]
     index_sets: Vec<String>,
+    /// How far back the history walk for the metrics goes.
+    #[arg(
+        long,
+        global = true,
+        env = "MAINTAINER_MODE_HISTORY_SINCE",
+        default_value = "2020-01-01"
+    )]
+    history_since: chrono::NaiveDate,
     #[arg(long, global = true)]
     json: bool,
     /// Where the query commands read from.
@@ -106,6 +115,9 @@ enum Command {
         token: String,
         #[arg(long)]
         index: bool,
+        /// Also walk the history for the metrics, to the end.
+        #[arg(long)]
+        history: bool,
     },
     /// Sweep nixpkgs master with the evaluator and store the index
     Sweep {
@@ -129,6 +141,11 @@ enum Command {
     Record { login: String },
     /// Exit 0 when the login is listed, 3 when it is not, 1 on error
     Check { login: String },
+    /// The state of nixpkgs, month by month
+    Metrics {
+        #[arg(long, default_value_t = 12)]
+        months: usize,
+    },
 }
 
 fn read_secret(path: &Option<PathBuf>) -> Result<Option<String>> {
@@ -153,7 +170,15 @@ async fn settle(app: &App, client: &mut github::Client) -> Result<usize> {
     Ok(n)
 }
 
-async fn background(app: Arc<App>, every: u64) {
+/// About ten minutes of walking per pass; the full walk back to 2020 takes
+/// several hours.
+const HISTORY_PAGES_PER_PASS: usize = 100;
+
+fn since(date: chrono::NaiveDate) -> chrono::DateTime<Utc> {
+    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
+}
+
+async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate) {
     loop {
         let index_at = app.store.get_time("index_at").ok().flatten();
         if index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
@@ -173,6 +198,18 @@ async fn background(app: Arc<App>, every: u64) {
             if let Err(e) = settle(&app, &mut client).await {
                 tracing::warn!("mergeable: {e:#}");
             }
+            match github::history(
+                &app.store,
+                &mut client,
+                since(history_since),
+                HISTORY_PAGES_PER_PASS,
+            )
+            .await
+            {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("history: {n} pull requests"),
+                Err(e) => tracing::warn!("history: {e:#}"),
+            }
         } else {
             tracing::info!("no token yet; the sync starts when someone logs in");
         }
@@ -188,6 +225,12 @@ async fn background(app: Arc<App>, every: u64) {
         }
         if let Err(e) = app.recompute() {
             tracing::warn!("recompute: {e:#}");
+        }
+        let a = app.clone();
+        match tokio::task::spawn_blocking(move || a.recompute_metrics()).await {
+            Ok(Err(e)) => tracing::warn!("metrics: {e:#}"),
+            Err(e) => tracing::warn!("metrics: {e}"),
+            Ok(Ok(())) => {}
         }
         tokio::time::sleep(std::time::Duration::from_secs(every)).await;
     }
@@ -265,9 +308,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 nixfresh: nixfresh_url.as_deref().map(nixfresh::Client::new),
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
+                metrics: Default::default(),
             });
             app.recompute()?;
-            tokio::spawn(background(app.clone(), sync_every));
+            let a = app.clone();
+            tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
+            tokio::spawn(background(app.clone(), sync_every, cli.history_since));
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             tracing::info!("listening on {listen}");
             let router = web::router(app)
@@ -280,7 +326,12 @@ async fn run(cli: Cli) -> Result<i32> {
                 .await?;
             Ok(0)
         }
-        Command::Sync { db, token, index } => {
+        Command::Sync {
+            db,
+            token,
+            index,
+            history,
+        } => {
             let store = Store::open(&db)?;
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
@@ -292,6 +343,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 nixfresh: None,
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
+                metrics: Default::default(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -303,6 +355,11 @@ async fn run(cli: Cli) -> Result<i32> {
                 "settled {} merge candidates",
                 settle(&app, &mut client).await?
             );
+            while history && app.store.get("history_done")?.is_none() {
+                let n =
+                    github::history(&app.store, &mut client, since(cli.history_since), 50).await?;
+                eprintln!("history: {n} pull requests");
+            }
             Ok(0)
         }
         Command::Sweep { db } => {
@@ -317,6 +374,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 nixfresh: None,
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
+                metrics: Default::default(),
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();
@@ -376,6 +434,51 @@ async fn run(cli: Cli) -> Result<i32> {
                     r["pr"],
                     r["outcome"].as_str().unwrap_or(""),
                     r["pr_title"].as_str().unwrap_or("")
+                );
+            }
+            Ok(0)
+        }
+        Command::Metrics { months } => {
+            let v = fetch(&cli.server, "/api/v1/metrics").await?;
+            if cli.json {
+                println!("{v}");
+                return Ok(0);
+            }
+            let n = &v["now"];
+            println!(
+                "open {}  never reviewed {}  security {}  first-time {}  disclosed AI {}",
+                n["open"], n["never_reviewed"], n["security"], n["first_time"], n["ai"]
+            );
+            println!(
+                "{:<8} {:>6} {:>6} {:>6} {:>6} {:>8} {:>7} {:>9} {:>9} {:>7}",
+                "month",
+                "opened",
+                "merged",
+                "closed",
+                "AI",
+                "open-end",
+                "review",
+                "1st-rev h",
+                "merge d",
+                "in 7d"
+            );
+            let all = v["months"].as_array().cloned().unwrap_or_default();
+            for m in all.iter().rev().take(months).rev() {
+                let f = |k: &str| m[k].as_f64().map_or("-".into(), |x| format!("{x}"));
+                println!(
+                    "{:<8} {:>6} {:>6} {:>6} {:>6} {:>8} {:>7} {:>9} {:>9} {:>7}",
+                    m["month"].as_str().unwrap_or(""),
+                    m["opened"].to_string(),
+                    m["merged"].to_string(),
+                    m["closed_unmerged"].to_string(),
+                    m["opened_ai"].to_string(),
+                    m["open_at_end"].to_string(),
+                    m["reviews"].to_string(),
+                    f("first_review_hours_p50"),
+                    f("merge_days_p50"),
+                    m["reviewed_within_7d"]
+                        .as_f64()
+                        .map_or("-".into(), |x| format!("{:.0}%", x * 100.0)),
                 );
             }
             Ok(0)
