@@ -46,6 +46,24 @@ enemy of review quality. A global ranking lets five people dominate while the
 rest disengage. The visible unit is the outcome on one person's own page, not
 a count of reviews and not a rank.
 
+## Within the nixpkgs rules
+
+Maintainer Mode works inside the nixpkgs
+[automation/AI policy](https://github.com/NixOS/nixpkgs/blob/cb05a63e8584e596c5747f368669e7c7ff3615aa/CONTRIBUTING.md#automationai-policy)
+and does not add rules of its own on top of it.
+
+- **A person merges.** The policy says automation without manual review "must
+  not be used as the sole arbiter of whether to merge a change". The
+  ready-to-merge queue is a reading list for a committer. It merges nothing.
+- **A credited review is a contribution.** The policy covers reviews: a review
+  made with an AI tool must be reviewed by its author and disclosed. Maintainer
+  Mode credits reviews by their outcome, and the policy applies to them as it
+  applies to any other review.
+- **The AI numbers are aggregates.** The [state of nixpkgs](#the-state-of-nixpkgs)
+  counts disclosures. It never lists a person or a pull request. The policy
+  leaves enforcement to people, who are asked to "assume good faith and remain
+  civil".
+
 ## The rules
 
 ### 1. Credit is earned by moving a pull request, not by having an opinion
