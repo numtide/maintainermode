@@ -15,6 +15,7 @@ use crate::area::{self, Area, Index, Ownership};
 use crate::dossier::{self, Outcome};
 use crate::github::OAuth;
 use crate::ledger::{self, Dropped, Ledger, Trigger};
+use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
 
@@ -57,6 +58,7 @@ pub struct App {
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,
     pub index_sets: Vec<String>,
+    pub metrics: RwLock<Arc<Report>>,
 }
 
 impl App {
@@ -81,6 +83,14 @@ impl App {
             index_rev: index.rev.clone(),
             pr_data: prs,
         });
+        Ok(())
+    }
+
+    /// Reads every stored pull request, so it runs after a sync pass rather
+    /// than on each request.
+    pub fn recompute_metrics(&self) -> Result<()> {
+        let facts = metrics::merge(self.store.facts()?, &self.snap().pr_data);
+        *self.metrics.write().unwrap() = Arc::new(metrics::compute(&facts, Utc::now()));
         Ok(())
     }
 
@@ -132,6 +142,8 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/queue/merge", get(api_merge))
         .route("/api/v1/queue/review", get(api_review))
         .route("/api/v1/people/:login", get(api_person))
+        .route("/api/v1/metrics", get(api_metrics))
+        .route("/state", get(state_page))
         .with_state(app)
 }
 
@@ -216,6 +228,13 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
             "/record",
             icon(octicon!("law")),
             "Review record",
+            String::new(),
+        ),
+        (
+            "state",
+            "/state",
+            icon(octicon!("graph")),
+            "State of nixpkgs",
             String::new(),
         ),
     ];
@@ -1053,4 +1072,221 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         anchor_headings(&html)
     );
     page(&app, viewer.as_deref(), "rules", &body)
+}
+
+async fn api_metrics(State(app): State<Shared>) -> Json<Report> {
+    Json(Report::clone(&app.metrics.read().unwrap()))
+}
+
+fn num(v: Option<f64>) -> String {
+    v.map_or_else(|| "–".into(), |v| format!("{v}"))
+}
+
+fn pct(v: Option<f64>) -> String {
+    v.map_or_else(|| "–".into(), |v| format!("{:.0}%", v * 100.0))
+}
+
+fn table(head: &[&str], rows: &[Vec<String>]) -> String {
+    let mut out =
+        String::from("<div class=\"markdown-body\" style=\"overflow-x:auto\"><table><thead><tr>");
+    for h in head {
+        let _ = write!(out, "<th>{h}</th>");
+    }
+    out.push_str("</tr></thead><tbody>");
+    for r in rows {
+        out.push_str("<tr>");
+        for c in r {
+            let _ = write!(out, "<td>{c}</td>");
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table></div>");
+    out
+}
+
+async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let r = app.metrics.read().unwrap().clone();
+    let mut body = String::from(
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">State of nixpkgs</h1>\
+         <div class=\"Subhead-description\">Pull request flow from public GitHub data. \
+         Aggregates only: no figure names a person. \
+         <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a> · \
+         <a href=\"/api/v1/metrics\">JSON</a></div></div>",
+    );
+    let Some(at) = r.generated_at else {
+        body.push_str("<div class=\"flash\">The first sync has not finished yet.</div>");
+        return page(&app, viewer.as_deref(), "state", &body);
+    };
+    let n = &r.now;
+    let _ = write!(
+        body,
+        "<p class=\"f6 color-fg-muted\">{} pull requests, opened since {}. Computed {}. {}</p>",
+        r.pull_requests,
+        r.earliest_created
+            .map(|t| t.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+        ago(at),
+        match app.store.get("history_done").ok().flatten() {
+            Some(_) => "The history walk is complete.".to_string(),
+            None =>
+                "The history walk is still running, so older months are incomplete.".to_string(),
+        }
+    );
+    let _ = write!(
+        body,
+        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:8px\">{}{}{}{}{}</div>",
+        stat(
+            n.open,
+            "open",
+            &format!(
+                "{} drafts, {} from bots, median age {} days",
+                n.drafts,
+                n.by_bots,
+                num(n.age_days_p50)
+            )
+        ),
+        stat(
+            n.never_reviewed,
+            "never reviewed",
+            "human authors, not drafts, no review by anyone else"
+        ),
+        stat(
+            n.security,
+            "open security fixes",
+            &format!("median age {} days", num(n.security_age_days_p50))
+        ),
+        stat(
+            n.first_time,
+            "open from first-time contributors",
+            "by GitHub's association or the nixpkgs label"
+        ),
+        stat(
+            n.ai,
+            "open with disclosed AI use",
+            "Assisted-by trailer or llm-assisted label; a floor"
+        ),
+    );
+    let ages: Vec<Vec<String>> = n
+        .age
+        .iter()
+        .map(|(k, v)| vec![esc(k.split_once(": ").map_or(k, |(_, l)| l)), v.to_string()])
+        .chain(
+            n.base
+                .iter()
+                .map(|(k, v)| vec![format!("base: {k}"), v.to_string()]),
+        )
+        .collect();
+    let c = &r.concentration_365d;
+    let load = |l: &metrics::Load, what: &str| {
+        vec![
+            what.to_string(),
+            l.total.to_string(),
+            l.people.to_string(),
+            l.people_for_half.to_string(),
+            l.people_for_80.to_string(),
+        ]
+    };
+    let _ = write!(
+        body,
+        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
+         <div class=\"flex-1\"><h2 class=\"f4 mb-2\">Who carries the load, last 365 days</h2>{}</div></div>",
+        table(&["", "open"], &ages),
+        table(
+            &["", "total", "people", "people for half", "people for 80%"],
+            &[
+                load(&c.merges, "merges"),
+                load(&c.reviews, "reviews"),
+                load(&c.authored, "authored, humans"),
+            ]
+        ),
+    );
+    let months: Vec<Vec<String>> = r
+        .months
+        .iter()
+        .rev()
+        .take(24)
+        .map(|m| {
+            vec![
+                m.month.clone(),
+                m.opened.to_string(),
+                m.opened_by_bots.to_string(),
+                m.opened_first_time.to_string(),
+                format!("{} / {}", m.opened_ai, m.opened_ai_other_form),
+                m.merged.to_string(),
+                m.closed_unmerged.to_string(),
+                m.open_at_end.to_string(),
+                m.reviews.to_string(),
+                m.reviewers.to_string(),
+                m.mergers.to_string(),
+                num(m.first_review_hours_p50),
+                pct(m.reviewed_within_7d),
+                format!("{} / {}", num(m.merge_days_p50), num(m.merge_days_p90)),
+                pct(m.merge_rate),
+                pct(m.merge_rate_first_time),
+            ]
+        })
+        .collect();
+    let _ = write!(
+        body,
+        "<h2 class=\"f4 mb-2\">Month by month</h2>{}",
+        table(
+            &[
+                "month",
+                "opened",
+                "bots",
+                "first-time",
+                "AI / other form",
+                "merged",
+                "closed",
+                "open at end",
+                "reviews",
+                "reviewers",
+                "mergers",
+                "first review, h (p50)",
+                "reviewed in 7 days",
+                "days to merge (p50 / p90)",
+                "merge rate",
+                "first-time merge rate",
+            ],
+            &months
+        )
+    );
+    let areas: Vec<Vec<String>> = r
+        .areas
+        .iter()
+        .map(|a| {
+            vec![
+                esc(&a.area),
+                a.open.to_string(),
+                a.never_reviewed.to_string(),
+                a.opened_365d.to_string(),
+                a.merged_365d.to_string(),
+                num(a.merge_days_p50_365d),
+            ]
+        })
+        .collect();
+    let tools: Vec<Vec<String>> = r
+        .ai_tools_365d
+        .iter()
+        .map(|(t, n)| vec![esc(t), n.to_string()])
+        .collect();
+    let _ = write!(
+        body,
+        "<div class=\"d-flex flex-wrap mt-4\" style=\"gap:16px\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">By area</h2>{}</div>\
+         <div><h2 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h2>{}</div></div>",
+        table(
+            &[
+                "area",
+                "open",
+                "never reviewed",
+                "opened, 365 d",
+                "merged, 365 d",
+                "days to merge (p50)"
+            ],
+            &areas
+        ),
+        table(&["tool", "pull requests"], &tools),
+    );
+    page(&app, viewer.as_deref(), "state", &body)
 }

@@ -278,6 +278,13 @@ pub(crate) mod tests {
             author_activity: vec![],
             pushes: vec![],
             voids: vec![],
+            closed_at: None,
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            labels: vec![],
+            association: String::new(),
+            ai: None,
         }
     }
 

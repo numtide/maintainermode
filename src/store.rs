@@ -4,6 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::Mutex;
 
+use crate::metrics::Facts;
 use crate::model::Pr;
 
 pub struct Store {
@@ -33,6 +34,11 @@ impl Store {
                number INTEGER PRIMARY KEY,
                updated_at TEXT NOT NULL,
                state TEXT NOT NULL,
+               data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS history (
+               number INTEGER PRIMARY KEY,
+               updated_at TEXT NOT NULL,
                data TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -79,6 +85,31 @@ impl Store {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    pub fn put_facts(&self, facts: &[Facts]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for f in facts {
+            tx.execute(
+                "INSERT INTO history (number, updated_at, data) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(number) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data",
+                params![f.number, f.updated_at.to_rfc3339(), serde_json::to_string(f)?],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn facts(&self) -> Result<Vec<Facts>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data FROM history")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
     }
 
     pub fn set_mergeable(&self, number: u64, mergeable: &str) -> Result<()> {
