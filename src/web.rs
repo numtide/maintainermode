@@ -379,7 +379,7 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
 <nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
-  {prs} pull requests synced · nixpkgs index {rev} · <a href="https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md">nixpkgs contributor guide</a> · <a href="/rules#the-rules">the rules</a> · <a href="/sync">sync status</a> · <a href="/api/v1/status">API</a><br>
+  {prs} pull requests synced · nixpkgs index {rev} · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/rules#the-rules">the rules</a> · <a href="/sync">sync status</a> · <a href="/api/v1/status">API</a><br>
   A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>
 </body>
@@ -397,6 +397,14 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
             &s.index_rev
         }),
     ))
+}
+
+pub(crate) const CONTRIBUTING: &str =
+    "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
+
+/// Maintainer Mode finds the work; these say how nixpkgs wants it done.
+pub(crate) fn nixpkgs_guides() -> String {
+    guide_box()
 }
 
 fn ci_label(e: &Entry) -> String {
