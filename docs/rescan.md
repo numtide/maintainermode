@@ -28,7 +28,7 @@ you turn it on.
    - a `github`, `gitlab` or `sourcehut` input on the default host, locked to
      a commit;
    - a `tarball`, `file` or `git` input with an `https://` URL on a public
-     host;
+     host. A `git` input must not set `submodules` or `lfs`;
    - a `path` input inside the tree.
 
    The server refuses all other inputs, for example `ssh://`, `file://`,
@@ -100,12 +100,39 @@ there:
 
 - The server checks the reference and every input of the lock file before
   step 4, as step 3 says.
-- Nix fetches only those inputs, because the lock file cannot change.
+- The server refuses a `git` input that sets `submodules` or `lfs`. These
+  make git fetch URLs that the lock file does not name.
+- Nix fetches only the inputs of the lock file, because the lock file cannot
+  change.
 - These steps evaluate no output of the flake.
 
-A public DNS name can still resolve to a private address. Do not run the
-service on a host where a fetch from the host network can do harm. Put a
-firewall rule in front of the metadata service of your cloud provider.
+The checks look at the URL as it is written. They cannot stop these ways to
+reach other addresses:
+
+- A public DNS name can resolve to a private address.
+- A public host can answer with an HTTP redirect. Nix follows redirects, to
+  any address and over plain `http://`.
+
+Thus a fetch step can reach every address that the host can reach. Do not
+run the service on a host where such a fetch can do harm. Block the private
+address ranges for the service, not only the metadata service of your cloud
+provider. The sandbox runs in the cgroup of the service, so a rule on the
+unit applies to it. For example, on NixOS:
+
+```nix
+systemd.services.maintainer-mode.serviceConfig.IPAddressDeny = [
+  "10.0.0.0/8"
+  "100.64.0.0/10"
+  "169.254.0.0/16"
+  "172.16.0.0/12"
+  "192.168.0.0/16"
+  "fc00::/7"
+  "fe80::/10"
+];
+```
+
+This rule applies to the whole service. Make sure that the service can still
+reach its DNS resolver and its other servers.
 
 ## The limits
 

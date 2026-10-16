@@ -262,6 +262,17 @@ fn https_ok(url: &str) -> bool {
         && !url.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
+/// Submodules and LFS make git fetch URLs that the lock file does not name,
+/// so the server cannot check them.
+fn git_follows_urls(locked: &Value, url: &str) -> bool {
+    let set = |k: &str| locked.get(k).is_some_and(|v| v != &Value::Bool(false));
+    let in_query = url.split_once('?').is_some_and(|(_, q)| {
+        q.split('&')
+            .any(|p| matches!(p.split('=').next(), Some("submodules" | "lfs")))
+    });
+    set("submodules") || set("lfs") || in_query
+}
+
 /// Every input that the lock file names must be one the sandbox may fetch:
 /// a forge archive, or an https URL on a public host.
 pub fn check_lock(text: &str) -> Result<(), String> {
@@ -284,7 +295,8 @@ pub fn check_lock(text: &str) -> Result<(), String> {
                         .all(|k| text(k).is_some_and(|v| name_ok(v.trim_start_matches('~'), 100)))
                     && text("rev").is_some_and(|r| r.chars().all(|c| c.is_ascii_hexdigit()))
             }
-            "tarball" | "file" | "git" => text("url").is_some_and(https_ok),
+            "tarball" | "file" => text("url").is_some_and(https_ok),
+            "git" => text("url").is_some_and(|u| https_ok(u) && !git_follows_urls(locked, u)),
             "path" => text("path")
                 .is_some_and(|p| !p.starts_with('/') && !p.split('/').any(|s| s == "..")),
             _ => false,
@@ -919,6 +931,7 @@ mod tests {
             serde_json::json!({ "type": "sourcehut", "owner": "~sir", "repo": "x", "rev": rev }),
             serde_json::json!({ "type": "tarball", "url": "https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz" }),
             serde_json::json!({ "type": "git", "url": "https://codeberg.org/o/r?ref=main&rev=abc" }),
+            serde_json::json!({ "type": "git", "url": "https://codeberg.org/o/r", "submodules": false }),
             serde_json::json!({ "type": "path", "path": "./sub" }),
         ] {
             assert_eq!(check_lock(&lock(ok.clone())), Ok(()), "{ok}");
@@ -934,6 +947,9 @@ mod tests {
             serde_json::json!({ "type": "path", "path": "../up" }),
             serde_json::json!({ "type": "indirect", "id": "nixpkgs" }),
             serde_json::json!({ "type": "mercurial", "url": "https://hg.example.org/x" }),
+            serde_json::json!({ "type": "git", "url": "https://codeberg.org/o/r", "submodules": true }),
+            serde_json::json!({ "type": "git", "url": "https://codeberg.org/o/r", "lfs": true }),
+            serde_json::json!({ "type": "git", "url": "https://codeberg.org/o/r?rev=abc&submodules=1" }),
         ] {
             assert!(check_lock(&lock(bad.clone())).is_err(), "{bad}");
         }
