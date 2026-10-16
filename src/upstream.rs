@@ -396,12 +396,13 @@ fn retry_days(failures: u32) -> i64 {
     FRESH_FIRST << failures.saturating_sub(1).min(5)
 }
 
-/// When a package first gets `latest`. A first answer is not news, unless
-/// repology saw it first.
+/// When a package first gets `latest`. A first answer, or the first one
+/// after a failure or an unclear answer, is not news, unless repology saw
+/// it first.
 fn seen_at(h: &Health, attr: &str, latest: &Option<String>, now: DateTime<Utc>) -> DateTime<Utc> {
     match h.direct.get(attr) {
         Some(d) if d.latest == *latest => d.seen_at,
-        Some(_) => now,
+        Some(d) if d.latest.is_some() => now,
         _ => latest
             .as_ref()
             .and_then(|v| h.upstream_since(attr, v))
@@ -587,6 +588,31 @@ mod tests {
             origin("https://gitlab.com/api/v4/projects/a%2/repository/archive.tar.gz"),
             None
         );
+    }
+
+    #[test]
+    fn only_a_change_after_a_good_answer_is_news() {
+        let now = Utc::now();
+        let earlier = now - chrono::Duration::days(3);
+        let mut h = Health::default();
+        let entry = |latest: Option<&str>, failed| Direct {
+            latest: latest.map(String::from),
+            from: "tags".into(),
+            failed,
+            failures: u32::from(failed),
+            checked_at: earlier,
+            seen_at: earlier,
+        };
+        let v2 = Some("2.0".to_string());
+        assert_eq!(seen_at(&h, "a", &v2, now), DateTime::UNIX_EPOCH);
+        h.direct.insert("a".into(), entry(None, true));
+        assert_eq!(seen_at(&h, "a", &v2, now), DateTime::UNIX_EPOCH);
+        h.direct.insert("a".into(), entry(None, false));
+        assert_eq!(seen_at(&h, "a", &v2, now), DateTime::UNIX_EPOCH);
+        h.direct.insert("a".into(), entry(Some("1.0"), false));
+        assert_eq!(seen_at(&h, "a", &v2, now), now);
+        h.direct.insert("a".into(), entry(Some("2.0"), false));
+        assert_eq!(seen_at(&h, "a", &v2, now), earlier);
     }
 
     #[test]
