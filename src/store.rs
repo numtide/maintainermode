@@ -341,7 +341,7 @@ impl Store {
     }
 
     /// Tokens of people seen in the last 30 days, most recent first. The sync
-    /// spreads its reads across them; see the README on rate limits.
+    /// spreads its reads across them; see docs/data.md on rate limits.
     pub fn lent_tokens(&self) -> Result<Vec<String>> {
         let since = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
         let conn = self.conn.lock().unwrap();

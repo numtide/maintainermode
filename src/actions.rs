@@ -183,7 +183,7 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Str
          <form method=\"post\" action=\"/actions/settings\">\
          <label class=\"f6\" for=\"review_repo\">Your fork of <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, with <code>review.yml</code></label>\
          <input class=\"form-control width-full mb-2\" id=\"review_repo\" name=\"review_repo\" value=\"{}\">\
-         <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see the README); the same one works</label>\
+         <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/actions.md\">docs/actions.md</a>); the same one works</label>\
          <input class=\"form-control width-full mb-2\" id=\"update_repo\" name=\"update_repo\" value=\"{}\">\
          <label class=\"f6\" for=\"nixpkgs_fork\">Your fork of nixpkgs, where updates push their branch</label>\
          <input class=\"form-control width-full mb-2\" id=\"nixpkgs_fork\" name=\"nixpkgs_fork\" value=\"{}\">\

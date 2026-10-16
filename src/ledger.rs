@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::model::{Pr, Review};
 
-/// The README explains each constant. Change the README with the number.
+/// docs/rules.md explains each constant. Change it with the number.
 pub const MOVE_DAYS: i64 = 14;
 pub const HALF_LIFE_DAYS: f64 = 30.0;
 pub const WINDOW_DAYS: i64 = 60;

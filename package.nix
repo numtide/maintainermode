@@ -19,7 +19,7 @@ rustPlatform.buildRustPackage {
       ./Cargo.toml
       ./Cargo.lock
       ./src
-      ./README.md
+      ./docs/rules.md
     ];
   };
 
