@@ -220,11 +220,12 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::progress::routes())
         .merge(crate::mcp::routes())
         .merge(crate::rescan::routes())
+        .merge(crate::welcome::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
 
-fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -235,7 +236,7 @@ fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
-fn set_cookie(app: &App, name: &str, value: &str, max_age: i64) -> String {
+pub(crate) fn set_cookie(app: &App, name: &str, value: &str, max_age: i64) -> String {
     let secure = if app.secure_cookies { "; Secure" } else { "" };
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
@@ -371,10 +372,15 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
     }
     let who = match viewer {
         Some(v) => format!(
-            "<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
+            "{}<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
              <a class=\"Header-link mr-3\" href=\"/me/progress\">{} Progress</a>\
              <a class=\"Header-link mr-3\" href=\"/me/settings\">{} Settings</a>\
              <form method=\"post\" action=\"/auth/logout\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">{} Sign out</button></form>",
+            if crate::welcome::pending(app, v) {
+                "<a class=\"Header-link mr-3\" href=\"/welcome\">Get started</a>"
+            } else {
+                ""
+            },
             icon(octicon!("person")),
             icon(octicon!("flame")),
             icon(octicon!("gear")),
@@ -519,8 +525,13 @@ async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let entries: Vec<&Entry> = s.queues.merge.iter().collect();
+    let intro = if viewer.is_none() {
+        crate::welcome::intro(&app, &headers)
+    } else {
+        String::new()
+    };
     let body = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
+        "{intro}<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
          <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
          Ordered by the author's credit, so people who review rise. Work it from the top. \
          <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a></div></div>{}",
@@ -959,6 +970,11 @@ async fn callback(
     if let Err(e) = app.store.create_session(&id, &login, &token) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+    let next = if crate::welcome::first_visit(&app, &login) {
+        "/welcome"
+    } else {
+        "/review?bucket=foryou"
+    };
     let bg = app.clone();
     let who = login.clone();
     tokio::spawn(async move {
@@ -977,7 +993,7 @@ async fn callback(
         header::SET_COOKIE,
         set_cookie(&app, "oauth_state", "", 0).parse().unwrap(),
     );
-    (h, Redirect::to("/review?bucket=foryou")).into_response()
+    (h, Redirect::to(next)).into_response()
 }
 
 async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Response {

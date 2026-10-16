@@ -34,6 +34,7 @@ mod subject;
 mod upstream;
 mod version;
 mod web;
+mod welcome;
 mod workflows;
 
 use anyhow::{Context, Result, bail};
