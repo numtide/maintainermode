@@ -122,7 +122,7 @@ in
           "NixOS/nixpkgs"
           "NixOS/nix"
         ];
-        description = "Repositories, as `owner/name`, whose issues and pull requests the archive keeps in full. An empty list turns the archive off.";
+        description = "Public repositories, as `owner/name`, whose issues and pull requests the archive keeps in full. The walk refuses a private repository, and the API does not serve it. An empty list turns the archive off.";
       };
 
       itemsPerPass = lib.mkOption {

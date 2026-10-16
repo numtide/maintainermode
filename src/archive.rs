@@ -375,6 +375,11 @@ impl Archive {
         Ok(())
     }
 
+    /// True also when the file cannot say, so a read error hides the items.
+    pub fn is_private(&self) -> bool {
+        self.get("private").map_or(true, |p| p.is_some())
+    }
+
     fn delete_key(&self, key: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
@@ -708,6 +713,7 @@ impl Pass<'_> {
             "query($owner: String!, $name: String!, $after: String) {{
                rateLimit {{ cost remaining resetAt }}
                repository(owner: $owner, name: $name) {{
+                 isPrivate
                  {field}(first: 100, after: $after, orderBy: {{ field: UPDATED_AT, direction: DESC }}) {{
                    pageInfo {{ hasNextPage endCursor }}
                    nodes {{ number updatedAt }}
@@ -722,6 +728,14 @@ impl Pass<'_> {
             }
             let vars = json!({ "owner": a.owner, "name": a.name, "after": cursor });
             let data = self.query(&query, vars, &[]).await?;
+            if data["repository"]["isPrivate"].as_bool() != Some(false) {
+                a.set("private", "1")?;
+                bail!(
+                    "{} is private or unknown; the archive keeps public repositories only",
+                    a.repo
+                );
+            }
+            a.delete_key("private")?;
             let conn = &data["repository"][field];
             let mut reached = false;
             let mut top = a.num("top")?.unwrap_or(0);
@@ -1024,6 +1038,8 @@ pub fn routes() -> Router<Shared> {
     Router::new().route("/api/v1/archive/:owner/:repo/:number", get(api_item))
 }
 
+const NOT_ARCHIVED: &str = "this server does not archive that repository";
+
 fn not_found(msg: &str) -> Response {
     (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
 }
@@ -1038,7 +1054,10 @@ async fn api_item(
         .iter()
         .find(|a| a.repo.eq_ignore_ascii_case(&name))
     else {
-        return not_found("this server does not archive that repository");
+        return not_found(NOT_ARCHIVED);
+    };
+    if a.is_private() {
+        return not_found(NOT_ARCHIVED);
     };
     match a.item(number) {
         Ok(Some(Item {
@@ -1056,6 +1075,7 @@ async fn api_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("mm-archive-{name}-{}", std::process::id()));
@@ -1148,6 +1168,7 @@ mod tests {
         gone: Vec<u64>,
         broken: Mutex<Vec<u64>>,
         bumped: Mutex<Vec<(u64, DateTime<Utc>)>>,
+        private: AtomicBool,
     }
 
     impl Fake {
@@ -1159,6 +1180,7 @@ mod tests {
                 gone: vec![],
                 broken: Mutex::new(vec![]),
                 bumped: Mutex::new(vec![]),
+                private: AtomicBool::new(false),
             }
         }
 
@@ -1243,7 +1265,7 @@ mod tests {
                 .iter()
                 .map(|k| json!({ "number": k, "updatedAt": self.updated(*k) }))
                 .collect();
-            json!({ "data": { "rateLimit": rate, "repository": { field: {
+            json!({ "data": { "rateLimit": rate, "repository": { "isPrivate": self.private.load(Ordering::Relaxed), field: {
                 "pageInfo": { "hasNextPage": to < all.len(), "endCursor": to.to_string() },
                 "nodes": nodes } } } })
         }
@@ -1278,6 +1300,13 @@ mod tests {
                 events: crate::events::Log::open(&dir.join("events")).unwrap(),
                 dir,
             }
+        }
+
+        async fn try_pass(&self, budget: usize) -> (Archive, Result<usize>) {
+            let a = Archive::open(&self.dir, "NixOS/nixpkgs", budget).unwrap();
+            let mut client = github::Client::at(&self.url, vec!["t".into()]);
+            let r = pass(&self.store, &self.events, &a, &mut client).await;
+            (a, r)
         }
 
         /// One pass with a fresh `Archive`, as after a restart.
@@ -1367,6 +1396,27 @@ mod tests {
         assert!(a.item(5).unwrap().is_some());
         assert!(a.get("backfill_done").unwrap().is_some());
         assert_eq!(a.progress(Utc::now()).unwrap()["failed"], 0);
+        std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_private_repository_is_not_walked_or_served() {
+        let fake = Arc::new(Fake::new(5, 100));
+        let rig = Rig::new("private", fake.clone()).await;
+        let a = rig.pass(100).await;
+        assert!(!a.is_private());
+        assert_eq!(a.num("items").unwrap(), Some(5));
+
+        fake.private.store(true, Ordering::Relaxed);
+        fake.bumped.lock().unwrap().push((4, Utc::now()));
+        let (a, r) = rig.try_pass(100).await;
+        assert!(format!("{:#}", r.unwrap_err()).contains("public repositories only"));
+        assert!(a.is_private());
+        assert!(a.due_now(Utc::now(), 10).unwrap().is_empty());
+
+        fake.private.store(false, Ordering::Relaxed);
+        let a = rig.pass(100).await;
+        assert!(!a.is_private());
         std::fs::remove_dir_all(&rig.dir).unwrap();
     }
 
