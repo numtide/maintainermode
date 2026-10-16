@@ -46,6 +46,39 @@ pub struct Health {
     pub advisories: BTreeMap<String, Vec<Advisory>>,
     pub repology_at: Option<DateTime<Utc>>,
     pub tracker_at: Option<DateTime<Utc>>,
+    /// attribute → the upstream version and when a refresh first saw it, so
+    /// a daily refresh does not make an old release new again.
+    #[serde(default)]
+    pub upstream_seen: BTreeMap<String, (String, DateTime<Utc>)>,
+}
+
+impl Health {
+    /// The first fill dates every release to the epoch: a backlog is not news.
+    pub fn set_upstream(&mut self, upstream: BTreeMap<String, String>, now: DateTime<Utc>) {
+        let first = self.upstream_seen.is_empty();
+        let mut seen = std::mem::take(&mut self.upstream_seen);
+        self.upstream_seen = upstream
+            .iter()
+            .map(|(attr, v)| {
+                let at = match seen.remove(attr) {
+                    Some((old, at)) if old == *v => at,
+                    _ if first => DateTime::UNIX_EPOCH,
+                    _ => now,
+                };
+                (attr.clone(), (v.clone(), at))
+            })
+            .collect();
+        self.upstream = upstream;
+        self.repology_at = Some(now);
+    }
+
+    /// When `version` of `attr` was first seen upstream.
+    pub fn upstream_since(&self, attr: &str, version: &str) -> Option<DateTime<Utc>> {
+        self.upstream_seen
+            .get(attr)
+            .filter(|(v, _)| v == version)
+            .map(|(_, at)| *at)
+    }
 }
 
 fn http() -> reqwest::Client {
