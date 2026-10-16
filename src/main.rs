@@ -13,6 +13,7 @@ mod health;
 mod hygiene;
 mod ledger;
 mod links;
+mod llm;
 mod metrics;
 mod model;
 mod osv;

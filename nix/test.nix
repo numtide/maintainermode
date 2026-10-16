@@ -109,6 +109,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Authorization: Bearer nope' -d '{}' http://127.0.0.1:8790/api/v1/reports > /tmp/r2 && grep -q 401 /tmp/r2")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/sets > /tmp/r3 && grep -q 303 /tmp/r3")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/upload-token > /tmp/r4 && grep -q 303 /tmp/r4")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/settings > /tmp/r5 && grep -q 303 /tmp/r5")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d llm_ok=1 http://127.0.0.1:8790/me/settings > /tmp/r6 && grep -q 303 /tmp/r6")
     machine.succeed("cp -rL /etc/scan /tmp/scan")
     machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top --nixpkgs ./nixpkgs")
     machine.succeed("grep -q our-private-daemon /tmp/scan/maintainer-mode-scan.json")

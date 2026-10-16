@@ -190,6 +190,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
         .merge(crate::archive::routes())
+        .merge(crate::llm::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
@@ -330,8 +331,10 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
     let who = match viewer {
         Some(v) => format!(
             "<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
+             <a class=\"Header-link mr-3\" href=\"/me/settings\">{} Settings</a>\
              <form method=\"post\" action=\"/auth/logout\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">{} Sign out</button></form>",
             icon(octicon!("person")),
+            icon(octicon!("gear")),
             icon(octicon!("sign-out")),
             v = esc(v)
         ),
