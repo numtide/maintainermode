@@ -66,6 +66,9 @@ pub struct Health {
     pub osv: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub osv_vulns: BTreeMap<String, crate::osv::Vuln>,
+    /// OSV id → failures in a row and the last one, for the backoff.
+    #[serde(default)]
+    pub osv_failed: BTreeMap<String, (u32, DateTime<Utc>)>,
     #[serde(default)]
     pub osv_at: Option<DateTime<Utc>>,
     /// source → what its last pass did.

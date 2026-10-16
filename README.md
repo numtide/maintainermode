@@ -549,8 +549,9 @@ Every query command takes `--json`.
     ecosystem is known: a source from PyPI, crates.io or npm, or an
     attribute of a Python package set. One request asks for 1000 packages,
     each by its name and the exact version nixpkgs ships. A pass then reads
-    the records of up to 200 new matches. The CVEs of the matches get a
-    score and EPSS too.
+    the records of up to 200 new matches. When a record fails, the pass
+    goes on with the others, and that record waits 1 day, then 2, 4 and up
+    to 32 days. The CVEs of the matches get a score and EPSS too.
 
   No source needs an account. `/sync` shows what each source did on its last
   pass.
