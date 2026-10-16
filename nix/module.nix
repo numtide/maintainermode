@@ -25,7 +25,7 @@ in
     domain = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      example = "maintainer-mode.numtide.com";
+      example = "maintainer-mode.example.org";
       description = "When set, nginx serves this name with ACME and proxies to `listen`.";
     };
 
