@@ -94,6 +94,34 @@ in
       ];
       description = "Package sets the daily sweep evaluates; `pkgs` is the top level.";
     };
+
+    eventCopy = {
+      enable = lib.mkEnableOption "the daily copy of the nixpkgs event log to an S3-compatible store";
+
+      endpoint = lib.mkOption {
+        type = lib.types.str;
+        example = "https://storage.example.org";
+        description = "The S3 endpoint, such as the S3 endpoint of a bunny.net Storage zone.";
+      };
+
+      bucket = lib.mkOption {
+        type = lib.types.str;
+        description = "The bucket. Objects are `YYYY/MM/DD.ndjson.zst` and `YYYY/MM.sqlite.zst`.";
+      };
+
+      region = lib.mkOption {
+        type = lib.types.str;
+        description = "The region that the signature names.";
+      };
+
+      credentialsFile = lib.mkOption {
+        type = lib.types.path;
+        description = ''
+          File with `AWS_ACCESS_KEY_ID=…` and `AWS_SECRET_ACCESS_KEY=…` lines,
+          read through LoadCredential; never copied to the store.
+        '';
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -134,6 +162,12 @@ in
       }
       // lib.optionalAttrs (cfg.githubAppInstallationId != null) {
         GITHUB_APP_INSTALLATION_ID = toString cfg.githubAppInstallationId;
+      }
+      // lib.optionalAttrs cfg.eventCopy.enable {
+        MAINTAINER_MODE_S3_ENDPOINT = cfg.eventCopy.endpoint;
+        MAINTAINER_MODE_S3_BUCKET = cfg.eventCopy.bucket;
+        MAINTAINER_MODE_S3_REGION = cfg.eventCopy.region;
+        MAINTAINER_MODE_S3_CREDENTIALS_FILE = "%d/s3_credentials";
       };
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} serve";
@@ -143,7 +177,8 @@ in
         LoadCredential =
           lib.optional (cfg.githubClientSecretFile != null) "client_secret:${cfg.githubClientSecretFile}"
           ++ lib.optional (cfg.syncTokenFile != null) "sync_token:${cfg.syncTokenFile}"
-          ++ lib.optional (cfg.githubAppKeyFile != null) "github_app_key:${cfg.githubAppKeyFile}";
+          ++ lib.optional (cfg.githubAppKeyFile != null) "github_app_key:${cfg.githubAppKeyFile}"
+          ++ lib.optional cfg.eventCopy.enable "s3_credentials:${cfg.eventCopy.credentialsFile}";
         Restart = "on-failure";
         # the daily sweep of nixpkgs peaks near 2 GB
         MemoryMax = "4G";

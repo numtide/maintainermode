@@ -375,14 +375,14 @@ its cursor. The first walk back to 2020 takes several hours. Until it ends,
 older months are incomplete. The backlog before `--history-since` is a floor,
 because a pull request closed before the walk started is not in it.
 
-## Three audiences
+## Four audiences
 
-| Audience | Surface                                                                                                                                                   |
-| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Humans   | the web page: ready to merge, needs review (your area, unowned, all), packages I watch, one review record per person                                      |
-| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/metrics`, `/api/v1/status` |
-| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                                                    |
-| Owners   | `maintainer-mode scan`, `export` and `submit`: a private package set from your own closure                                                                |
+| Audience | Surface                                                                                                                                                                                                                                                                                                                             |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Humans   | the web page: ready to merge, needs review (your area, unowned, all), a page per package, module and area, what you maintain, what you watch, your package set, actions, one review record per person                                                                                                                               |
+| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/find/<name>`, `/api/v1/packages/<attr>`, `/api/v1/modules/<file>`, `/api/v1/areas/<path>`, `/api/v1/maintainers/<login>`, `/api/v1/metrics`, `/api/v1/status`, `/api/v1/events` (Server-Sent Events) |
+| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken; `show <name>` and `maintains <login>`                                                                                                                                                                                                                       |
+| Owners   | `maintainer-mode scan`, `export` and `submit`: a private package set from your own closure                                                                                                                                                                                                                                          |
 
 ```sh
 maintainer-mode --server https://<host> merge
@@ -458,6 +458,41 @@ Every query command takes `--json`.
   second, and every issue of the security tracker. Hydra is asked per page
   view and the answer is kept an hour.
 
+## The nixpkgs event log
+
+Maintainer Mode keeps every public event on NixOS/nixpkgs that it can see.
+[docs/events.md](docs/events.md) gives the plan and the measured size.
+
+- **Sources.** With a sync token, the server polls the Events API at the
+  interval GitHub asks for (`X-Poll-Interval`). It sends the last `ETag`, so
+  an answer of `304` costs no rate limit. Each hour, it also reads the
+  GH Archive file of the past hour and adds the events that the poll missed.
+  Without a sync token, GH Archive is the only source. GH Archive holds only
+  about 2 to 3 % of the nixpkgs events.
+- **Storage.** One SQLite file per month: `events/YYYY-MM.sqlite`, next to
+  the database. Each event has a `seq` that continues across the files. The
+  GitHub event id is unique, so an event that both sources send is stored
+  once. The event JSON is zstd-compressed.
+- **Reading.** `GET /api/v1/events` is Server-Sent Events. Each event has its
+  `seq` as `id` and the event JSON as `data`. Send `Last-Event-ID` (or
+  `?after=<seq>`) to replay from that point, then follow live. Without it,
+  the stream starts at the newest event. Filters: `type`, `number`, `actor`.
+
+```sh
+curl -N -H 'Last-Event-ID: 0' 'https://<host>/api/v1/events?type=PullRequestReviewEvent'
+```
+
+- **Copy outside the host.** This is off by default. When you set the four
+  `MAINTAINER_MODE_S3_*` variables, the server copies to an S3-compatible
+  store (the plan uses bunny.net Storage with its S3 API):
+  - each day, after 02:00 UTC: the events that GitHub created on the day
+    before, as `YYYY/MM/DD.ndjson.zst`, in the GH Archive format;
+  - each past month, once: its SQLite file, as `YYYY/MM.sqlite.zst`.
+
+  The credentials file holds two lines, `AWS_ACCESS_KEY_ID=…` and
+  `AWS_SECRET_ACCESS_KEY=…`. The NixOS module reads it through
+  `LoadCredential` (`services.maintainer-mode.eventCopy`).
+
 ## Known limits of slice one
 
 - Each pull request reads its first 30 reviews, the first 5 inline comments of
@@ -480,18 +515,30 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 ./result/bin/maintainer-mode serve --db club.sqlite
 ```
 
-| Variable                          | Meaning                                                     |
-| --------------------------------- | ----------------------------------------------------------- |
-| `MAINTAINER_MODE_LISTEN`          | listen address, default `127.0.0.1:8790`                    |
-| `MAINTAINER_MODE_DB`              | SQLite path                                                 |
-| `MAINTAINER_MODE_PUBLIC_URL`      | the public URL; the OAuth callback is `<url>/auth/callback` |
-| `GITHUB_CLIENT_ID`                | OAuth app client id                                         |
-| `GITHUB_CLIENT_SECRET_FILE`       | file holding the OAuth app client secret                    |
-| `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
-| `GITHUB_APP_ID`                   | GitHub App whose installation token syncs first             |
-| `GITHUB_APP_KEY_FILE`             | file holding the PEM private key of the GitHub App          |
-| `GITHUB_APP_INSTALLATION_ID`      | installation to use; else the one on the account of the App |
-| `MAINTAINER_MODE_UPLOAD_TOKEN`    | the client's upload token for `submit`                      |
+| Variable                              | Meaning                                                     |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `MAINTAINER_MODE_LISTEN`              | listen address, default `127.0.0.1:8790`                    |
+| `MAINTAINER_MODE_DB`                  | SQLite path                                                 |
+| `MAINTAINER_MODE_PUBLIC_URL`          | the public URL; the OAuth callback is `<url>/auth/callback` |
+| `GITHUB_CLIENT_ID`                    | OAuth app client id                                         |
+| `GITHUB_CLIENT_SECRET_FILE`           | file holding the OAuth app client secret                    |
+| `MAINTAINER_MODE_SYNC_TOKEN_FILE`     | optional token owned by the deployment                      |
+| `GITHUB_APP_ID`                       | GitHub App whose installation token syncs first             |
+| `GITHUB_APP_KEY_FILE`                 | file holding the PEM private key of the GitHub App          |
+| `GITHUB_APP_INSTALLATION_ID`          | installation to use; else the one on the account of the App |
+| `MAINTAINER_MODE_UPLOAD_TOKEN`        | the client's upload token for `submit`                      |
+| Variable                              | Meaning                                                     |
+| ------------------------------------- | ----------------------------------------------------------- |
+| `MAINTAINER_MODE_LISTEN`              | listen address, default `127.0.0.1:8790`                    |
+| `MAINTAINER_MODE_DB`                  | SQLite path                                                 |
+| `MAINTAINER_MODE_PUBLIC_URL`          | the public URL; the OAuth callback is `<url>/auth/callback` |
+| `GITHUB_CLIENT_ID`                    | OAuth app client id                                         |
+| `GITHUB_CLIENT_SECRET_FILE`           | file holding the OAuth app client secret                    |
+| `MAINTAINER_MODE_SYNC_TOKEN_FILE`     | optional token owned by the deployment                      |
+| `MAINTAINER_MODE_S3_ENDPOINT`         | S3-compatible endpoint for the copy of the event log        |
+| `MAINTAINER_MODE_S3_BUCKET`           | the bucket of that copy                                     |
+| `MAINTAINER_MODE_S3_REGION`           | the region that the request signature names                 |
+| `MAINTAINER_MODE_S3_CREDENTIALS_FILE` | file with the access key id and the secret key              |
 
 CI is the flake's `checks`: `nix flake check`.
 
