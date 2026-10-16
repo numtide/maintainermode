@@ -61,13 +61,25 @@ impl Client {
     /// Runs one query, moving to the next lent token when the current one is
     /// rejected or nearly out of budget.
     pub async fn graphql(&mut self, store: &Store, query: &str, vars: Value) -> Result<Value> {
+        self.graphql_allowing(store, query, vars, &[]).await
+    }
+
+    /// As `graphql`, but errors of the `allowed` types leave their field
+    /// null instead of failing the query.
+    pub async fn graphql_allowing(
+        &mut self,
+        store: &Store,
+        query: &str,
+        vars: Value,
+        allowed: &[&str],
+    ) -> Result<Value> {
         loop {
             let Some(token) = self.tokens.get(self.current).cloned() else {
                 bail!(
                     "no GitHub token with budget left; sync resumes when someone logs in or the limit resets"
                 );
             };
-            match graphql_once(&self.http, &token, query, &vars).await? {
+            match graphql_call(&self.http, &token, query, &vars, allowed).await? {
                 Outcome::BadToken(t) => {
                     store.forget_token(&t)?;
                     self.current += 1;
@@ -98,6 +110,16 @@ pub async fn graphql_once(
     query: &str,
     vars: &Value,
 ) -> Result<Outcome> {
+    graphql_call(http, token, query, vars, &[]).await
+}
+
+async fn graphql_call(
+    http: &reqwest::Client,
+    token: &str,
+    query: &str,
+    vars: &Value,
+    allowed: &[&str],
+) -> Result<Outcome> {
     let resp = http
         .post("https://api.github.com/graphql")
         .bearer_auth(token)
@@ -110,7 +132,13 @@ pub async fn graphql_once(
     let status = resp.status();
     let body: Value = resp.json().await.context("graphql response")?;
     if let Some(errors) = body.get("errors") {
-        bail!("graphql {status}: {errors}");
+        let all_allowed = errors.as_array().is_some_and(|e| {
+            e.iter()
+                .all(|e| e["type"].as_str().is_some_and(|t| allowed.contains(&t)))
+        });
+        if !all_allowed || body["data"].is_null() {
+            bail!("graphql {status}: {errors}");
+        }
     }
     if !status.is_success() {
         bail!("graphql {status}: {body}");
