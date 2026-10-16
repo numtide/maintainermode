@@ -374,6 +374,7 @@ mod tests {
             snapshot: Default::default(),
             secure_cookies: false,
             health: Default::default(),
+            channels: Default::default(),
             hydra: Default::default(),
             data_dir: Default::default(),
             index_sets: vec![],

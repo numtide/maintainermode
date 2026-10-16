@@ -2,6 +2,7 @@ mod actions;
 mod area;
 mod attrs;
 mod catalog;
+mod channels;
 mod dossier;
 mod eval;
 mod events;
@@ -67,6 +68,16 @@ struct Cli {
         default_value = "pkgs,python3Packages"
     )]
     index_sets: Vec<String>,
+    /// nixpkgs channels to index next to master; `stable` is the newest
+    /// stable channel.
+    #[arg(
+        long = "channel",
+        global = true,
+        env = "MAINTAINER_MODE_CHANNELS",
+        value_delimiter = ',',
+        default_value = "nixos-unstable,stable"
+    )]
+    channels: Vec<String>,
     /// How far back the history walk for the metrics goes.
     #[arg(
         long,
@@ -559,6 +570,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let app = Arc::new(App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
+                channels: RwLock::new(Arc::new(channels::load(&store, &cli.channels))),
                 store,
                 oauth,
                 sync_token: read_secret(&sync_token_file)?,
@@ -578,6 +590,7 @@ async fn run(cli: Cli) -> Result<i32> {
             app.store.set("sync_every", &sync_every.to_string())?;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
             tokio::spawn(health::run(app.clone(), read_secret(&nvd_api_key_file)?));
+            tokio::spawn(channels::run(app.clone()));
             match &app.sync_token {
                 Some(t) => {
                     tokio::spawn(events::poll(app.events.clone(), t.clone()));
@@ -612,6 +625,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
+                channels: RwLock::new(Arc::new(channels::load(&store, &cli.channels))),
                 store,
                 oauth: None,
                 sync_token: None,
@@ -650,6 +664,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
+                channels: RwLock::new(Arc::new(channels::load(&store, &cli.channels))),
                 store,
                 oauth: None,
                 sync_token: None,

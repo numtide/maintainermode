@@ -253,6 +253,32 @@ fn unpack(bytes: &[u8], dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Unpacks nixpkgs at `rev` into `dir`, unless an earlier run already did.
+pub async fn download(http: &reqwest::Client, rev: &str, dir: &Path) -> Result<()> {
+    if dir.join("default.nix").exists() {
+        return Ok(());
+    }
+    let bytes = http
+        .get(format!(
+            "https://codeload.github.com/NixOS/nixpkgs/tar.gz/{rev}"
+        ))
+        .send()
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await
+        .context("nixpkgs tarball")?;
+    let mut tmp = dir.as_os_str().to_owned();
+    tmp.push(".partial");
+    let tmp = PathBuf::from(tmp);
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp)?;
+    let t = tmp.clone();
+    tokio::task::spawn_blocking(move || unpack(&bytes, &t)).await??;
+    std::fs::rename(&tmp, dir)?;
+    Ok(())
+}
+
 /// Sweeps nixpkgs master with the configured evaluator. The source is a
 /// tarball unpacked under `data`, not a flake reference, so the evaluator
 /// needs no daemon and writes nothing to a store.
@@ -260,24 +286,7 @@ pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
     let http = crate::github::http();
     let rev = master_rev(&http).await?;
     let dir = data.join(format!("nixpkgs-{rev}"));
-    if !dir.join("default.nix").exists() {
-        let bytes = http
-            .get(format!(
-                "https://codeload.github.com/NixOS/nixpkgs/tar.gz/{rev}"
-            ))
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await
-            .context("nixpkgs tarball")?;
-        let tmp = data.join(format!("nixpkgs-{rev}.partial"));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp)?;
-        let t = tmp.clone();
-        tokio::task::spawn_blocking(move || unpack(&bytes, &t)).await??;
-        std::fs::rename(&tmp, &dir)?;
-    }
+    download(&http, &rev, &dir).await?;
     for old in std::fs::read_dir(data)?.flatten() {
         let name = old.file_name().to_string_lossy().to_string();
         if name.starts_with("nixpkgs-") && old.path() != dir {
@@ -288,6 +297,7 @@ pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
     let sets = sets.to_vec();
     let d = dir.clone();
     let entries = tokio::task::spawn_blocking(move || -> Result<Vec<attrs::Entry>> {
+        let _one = crate::eval::SWEEP.lock().unwrap_or_else(|e| e.into_inner());
         let mut all = Vec::new();
         for set in &sets {
             let started = std::time::Instant::now();
@@ -310,6 +320,7 @@ pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
     .await??;
     let d = dir.clone();
     let nixos = tokio::task::spawn_blocking(move || {
+        let _one = crate::eval::SWEEP.lock().unwrap_or_else(|e| e.into_inner());
         let started = std::time::Instant::now();
         let n = sweep_nixos(&d, "x86_64-linux");
         if let Ok(n) = &n {

@@ -63,6 +63,19 @@ fn state(app: &App) -> Value {
         )
     };
     let h = app.health.read().unwrap().clone();
+    let channels: Vec<Value> = app
+        .channels
+        .read()
+        .unwrap()
+        .list
+        .iter()
+        .map(|c| {
+            json!({
+                "channel": c.label(), "rev": (!c.rev.is_empty()).then_some(&c.rev),
+                "read_at": c.read_at, "attributes": c.versions.len(),
+            })
+        })
+        .collect();
     let sync_every = num(app, "sync_every").unwrap_or(600);
     let pass_seconds = num(app, "pass_seconds");
     json!({
@@ -83,6 +96,7 @@ fn state(app: &App) -> Value {
             "packages": pkgs, "modules": modules, "teams": teams,
         },
         "packaging": { "checked": checked, "with_gaps": with_gaps },
+        "channels": { "checked_at": time(app, "channels_checked_at"), "list": channels },
         "health": {
             "repology_at": h.repology_at, "outdated": h.upstream.len(),
             "tracker_at": h.tracker_at, "attributes_with_advisories": h.advisories.len(),
@@ -283,6 +297,20 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             when(&x["at"])
         ),
     ));
+    for c in v["channels"]["list"].as_array().into_iter().flatten() {
+        out.push_str(&row(
+            &format!("Channel {}", esc(c["channel"].as_str().unwrap_or(""))),
+            &match c["rev"].as_str() {
+                Some(rev) => format!(
+                    "<code>{}</code> · {} attributes · this revision first seen {}",
+                    esc(rev.get(..12).unwrap_or(rev)),
+                    c["attributes"],
+                    when(&c["read_at"])
+                ),
+                None => "not read yet: the channels wait for the first master index".into(),
+            },
+        ));
+    }
     out.push_str(&row(
         "Upstream versions",
         &format!(

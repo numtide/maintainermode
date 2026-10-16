@@ -10,6 +10,9 @@ const FEATURES: &str = "nix-command flakes";
 
 static EVALUATOR: OnceLock<String> = OnceLock::new();
 
+/// One nixpkgs sweep at a time: each one peaks near 2 GB.
+pub static SWEEP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The one knob that picks the evaluator: iets in a deployment, plain nix
 /// anywhere else. Anything that answers `nix eval --json --file` works, so the
 /// two can be swapped and timed against each other.
