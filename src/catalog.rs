@@ -8,7 +8,7 @@ use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
@@ -308,6 +308,82 @@ fn score_of(s: &Snapshot, index: &Index, h: &Health, attr: &str) -> Option<Score
             hygiene: gaps.as_deref(),
         },
     ))
+}
+
+/// Packages with an open advisory, by the worst band among their advisories.
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub(crate) struct Bands {
+    pub(crate) critical: usize,
+    pub(crate) high: usize,
+    pub(crate) medium: usize,
+    pub(crate) low: usize,
+    pub(crate) unscored: usize,
+}
+
+/// All of nixpkgs in numbers, one package per package name. Public data
+/// only: the index, the health sources and the pull requests.
+#[derive(Debug, Default, Serialize, PartialEq)]
+pub(crate) struct PackageStats {
+    pub(crate) rev: String,
+    pub(crate) packages: usize,
+    pub(crate) behind_upstream: usize,
+    pub(crate) with_advisories: usize,
+    pub(crate) advisories_by_band: Bands,
+    pub(crate) unmaintained: usize,
+    pub(crate) broken: usize,
+    pub(crate) insecure: usize,
+    pub(crate) with_packaging_gaps: usize,
+    pub(crate) open_bumps: usize,
+    pub(crate) bumps_median_age_days: Option<f64>,
+}
+
+pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageStats {
+    let mut out = PackageStats {
+        rev: index.rev.clone(),
+        ..Default::default()
+    };
+    for attr in index.by_pname.values() {
+        let Some(p) = index.pkgs.get(attr) else {
+            continue;
+        };
+        out.packages += 1;
+        if upstream(s, index, h, attr).is_some() {
+            out.behind_upstream += 1;
+        }
+        let open = open_advisories(h, s, attr);
+        let osv = h.osv_extra(attr);
+        if !open.is_empty() || !osv.is_empty() {
+            out.with_advisories += 1;
+            let band = rated(h, &open)
+                .into_iter()
+                .map(|(_, w)| w.band)
+                .chain(osv.into_iter().map(|(_, v)| osv_worst(h, v).band))
+                .max()
+                .flatten();
+            let b = &mut out.advisories_by_band;
+            *match band {
+                Some(severity::Band::Critical) => &mut b.critical,
+                Some(severity::Band::High) => &mut b.high,
+                Some(severity::Band::Medium) => &mut b.medium,
+                Some(severity::Band::Low) => &mut b.low,
+                None => &mut b.unscored,
+            } += 1;
+        }
+        if p.maintainers.is_empty() && p.teams.is_empty() {
+            out.unmaintained += 1;
+        }
+        if let Some(f) = &p.facts {
+            out.broken += usize::from(f.broken);
+            out.insecure += usize::from(f.insecure);
+        }
+        if hygiene::gaps(attr, p).is_some_and(|g| !g.is_empty()) {
+            out.with_packaging_gaps += 1;
+        }
+    }
+    let bumps = crate::bumps::open(s, index, h);
+    out.open_bumps = bumps.len();
+    out.bumps_median_age_days = crate::bumps::median_age_days(&bumps, Utc::now());
+    out
 }
 
 pub(crate) struct Flags {
@@ -2563,6 +2639,61 @@ mod tests {
         assert!(!level.contains("FIXED-2"));
         assert!(channels_html(&ch, "cups", "2.4.20").contains("master is ahead of nixos-26.05"));
         assert!(lag_label(&ch, "cups", "2.4.19").is_empty());
+    }
+
+    #[test]
+    fn package_statistics_count_one_package_per_name() {
+        let mut i = Index {
+            rev: "r".into(),
+            ..Default::default()
+        };
+        for (attr, pname, broken) in [("a", "a", true), ("a_2", "a", false), ("b", "b", false)] {
+            i.pkgs.insert(
+                attr.into(),
+                Package {
+                    pname: pname.into(),
+                    version: "1.0".into(),
+                    maintainers: if attr == "b" {
+                        vec!["alice".into()]
+                    } else {
+                        vec![]
+                    },
+                    facts: Some(crate::attrs::Facts {
+                        broken,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            );
+        }
+        i.by_pname.insert("a".into(), "a".into());
+        i.by_pname.insert("b".into(), "b".into());
+        let mut h = Health::default();
+        h.upstream.insert("b".into(), "2.0".into());
+        h.advisories.insert(
+            "a".into(),
+            vec![Advisory {
+                code: "X".into(),
+                cves: vec![],
+                title: String::new(),
+                issue: None,
+            }],
+        );
+        let mut bump = crate::ledger::tests::pr(1, "r-ryantm", 0);
+        bump.title = "b: 1.0 -> 2.0".into();
+        let s = Snapshot {
+            pr_data: vec![bump],
+            ..Default::default()
+        };
+        let p = package_stats(&s, &i, &h);
+        assert_eq!(p.packages, 2);
+        assert_eq!(p.behind_upstream, 1);
+        assert_eq!(p.with_advisories, 1);
+        assert_eq!(p.advisories_by_band.unscored, 1);
+        assert_eq!(p.unmaintained, 1);
+        assert_eq!(p.broken, 1);
+        assert_eq!(p.with_packaging_gaps, 2);
+        assert_eq!(p.open_bumps, 1);
     }
 
     #[test]
