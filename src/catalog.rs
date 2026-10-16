@@ -949,7 +949,7 @@ fn license_html(l: &License) -> String {
         (None, Some(n)) => esc(n),
         (None, None) => "unnamed".into(),
     };
-    if l.free {
+    if l.free || l.name.as_deref() == Some("unfree") {
         name
     } else {
         format!("{name} <span class=\"Label Label--attention\">unfree</span>")
@@ -1010,7 +1010,7 @@ fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> String {
             "<span class=\"Label Label--danger\">insecure</span><ul class=\"f6 ml-3\">{}</ul>",
             m.known_vulnerabilities
                 .iter()
-                .map(|v| format!("<li>{}</li>", esc(v)))
+                .map(|v| format!("<li style=\"white-space:pre-wrap\">{}</li>", esc(v.trim())))
                 .collect::<String>()
         ));
     }
