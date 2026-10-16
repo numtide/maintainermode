@@ -72,6 +72,33 @@
         }
         // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
           vm = import ./nix/test.nix { inherit self pkgs; };
+          instance =
+            let
+              node = nixpkgs.lib.nixosSystem {
+                modules = [
+                  self.nixosModules.instance
+                  {
+                    nixpkgs.hostPlatform = system;
+                    boot.loader.grub.enable = false;
+                    fileSystems."/" = {
+                      device = "none";
+                      fsType = "tmpfs";
+                    };
+                    system.stateVersion = "26.05";
+                    security.acme.acceptTerms = true;
+                    security.acme.defaults.email = "acme@example.org";
+                    maintainermode = {
+                      enable = true;
+                      githubClientSecretFile = "/run/secrets/client-secret";
+                      syncTokenFile = "/run/secrets/sync-token";
+                    };
+                  }
+                ];
+              };
+            in
+            pkgs.writeText "instance-eval" (
+              builtins.unsafeDiscardStringContext node.config.system.build.toplevel.drvPath
+            );
         }
         // {
           fmt = (treefmtFor system).config.build.check self;
@@ -93,6 +120,13 @@
             lib.mkDefault
               self.packages.${pkgs.stdenv.hostPlatform.system}.maintainer-mode;
         };
+
+      nixosModules.instance = {
+        imports = [
+          self.nixosModules.default
+          ./nix/instance.nix
+        ];
+      };
 
       formatter = forAll (system: (treefmtFor system).config.build.wrapper);
     };
