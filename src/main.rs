@@ -5,6 +5,7 @@ mod catalog;
 mod dossier;
 mod eval;
 mod github;
+mod github_app;
 mod health;
 mod ledger;
 mod links;
@@ -102,6 +103,15 @@ enum Command {
         /// A token owned by the deployment, used before any lent token.
         #[arg(long, env = "MAINTAINER_MODE_SYNC_TOKEN_FILE")]
         sync_token_file: Option<PathBuf>,
+        /// A GitHub App whose installation token is the first sync token.
+        #[arg(long, env = "GITHUB_APP_ID")]
+        github_app_id: Option<String>,
+        /// The App's PEM private key.
+        #[arg(long, env = "GITHUB_APP_KEY_FILE")]
+        github_app_key_file: Option<PathBuf>,
+        /// Without it, the App's only installation is used.
+        #[arg(long, env = "GITHUB_APP_INSTALLATION_ID")]
+        github_app_installation_id: Option<u64>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
     },
@@ -199,7 +209,14 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                 Err(e) => tracing::warn!("package health: {e:#}"),
             }
         }
-        let mut tokens: Vec<String> = app.sync_token.iter().cloned().collect();
+        let mut tokens = Vec::new();
+        if let Some(a) = &app.github_app {
+            match a.token().await {
+                Ok(t) => tokens.push(t),
+                Err(e) => tracing::warn!("GitHub App token: {e:#}"),
+            }
+        }
+        tokens.extend(app.sync_token.iter().cloned());
         tokens.extend(app.store.lent_tokens().unwrap_or_default());
         let mut client = github::Client::new(tokens);
         if client.has_token() {
@@ -298,9 +315,24 @@ async fn run(cli: Cli) -> Result<i32> {
             client_id,
             client_secret_file,
             sync_token_file,
+            github_app_id,
+            github_app_key_file,
+            github_app_installation_id,
             sync_every,
         } => {
             let store = Store::open(&db)?;
+            let github_app = match (github_app_id, read_secret(&github_app_key_file)?) {
+                (Some(id), Some(pem)) => Some(github_app::GithubApp::new(
+                    id,
+                    &pem,
+                    github_app_installation_id,
+                )?),
+                (None, None) => None,
+                _ => bail!("set both GITHUB_APP_ID and GITHUB_APP_KEY_FILE, or neither"),
+            };
+            if let Some(a) = &github_app {
+                tracing::info!("sync token from GitHub App {}", a.id());
+            }
             let oauth = match (client_id, read_secret(&client_secret_file)?) {
                 (Some(id), Some(secret)) => Some(github::OAuth {
                     client_id: id,
@@ -319,6 +351,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 store,
                 oauth,
                 sync_token: read_secret(&sync_token_file)?,
+                github_app,
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
                 hydra: Default::default(),
@@ -356,6 +389,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 store,
                 oauth: None,
                 sync_token: None,
+                github_app: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
@@ -389,6 +423,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 store,
                 oauth: None,
                 sync_token: None,
+                github_app: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),

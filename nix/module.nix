@@ -59,7 +59,25 @@ in
     syncTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Optional GitHub token owned by the deployment, used before tokens lent by logged-in people.";
+      description = "Optional GitHub token owned by the deployment, used before tokens lent by logged-in people. A GitHub App replaces it.";
+    };
+
+    githubAppId = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
+      description = "Id of a GitHub App. Its installation token is the first sync token, renewed before it expires.";
+    };
+
+    githubAppKeyFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "File holding the PEM private key of the GitHub App, read through LoadCredential; never copied to the store.";
+    };
+
+    githubAppInstallationId = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
+      description = "Installation of the GitHub App to use. Without it, the App must have one installation.";
     };
 
     historySince = lib.mkOption {
@@ -84,6 +102,10 @@ in
         assertion = (cfg.githubClientId == null) == (cfg.githubClientSecretFile == null);
         message = "services.maintainer-mode: set githubClientId and githubClientSecretFile together.";
       }
+      {
+        assertion = (cfg.githubAppId == null) == (cfg.githubAppKeyFile == null);
+        message = "services.maintainer-mode: set githubAppId and githubAppKeyFile together.";
+      }
     ];
 
     systemd.services.maintainer-mode = {
@@ -105,6 +127,13 @@ in
       }
       // lib.optionalAttrs (cfg.syncTokenFile != null) {
         MAINTAINER_MODE_SYNC_TOKEN_FILE = "%d/sync_token";
+      }
+      // lib.optionalAttrs (cfg.githubAppId != null) {
+        GITHUB_APP_ID = toString cfg.githubAppId;
+        GITHUB_APP_KEY_FILE = "%d/github_app_key";
+      }
+      // lib.optionalAttrs (cfg.githubAppInstallationId != null) {
+        GITHUB_APP_INSTALLATION_ID = toString cfg.githubAppInstallationId;
       };
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} serve";
@@ -113,7 +142,8 @@ in
         WorkingDirectory = state;
         LoadCredential =
           lib.optional (cfg.githubClientSecretFile != null) "client_secret:${cfg.githubClientSecretFile}"
-          ++ lib.optional (cfg.syncTokenFile != null) "sync_token:${cfg.syncTokenFile}";
+          ++ lib.optional (cfg.syncTokenFile != null) "sync_token:${cfg.syncTokenFile}"
+          ++ lib.optional (cfg.githubAppKeyFile != null) "github_app_key:${cfg.githubAppKeyFile}";
         Restart = "on-failure";
         # the daily sweep of nixpkgs peaks near 2 GB
         MemoryMax = "4G";
