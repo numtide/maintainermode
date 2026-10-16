@@ -38,6 +38,8 @@ pub struct Row {
     /// The author changed the pull request within the move window after a
     /// review that requested changes or commented on a changed line.
     pub problem_found: bool,
+    /// The areas of the state of nixpkgs that the pull request touches.
+    pub areas: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -83,6 +85,7 @@ fn row(pr: &Pr, mine: &[&Review]) -> Row {
         state: last.state.clone(),
         outcome,
         problem_found,
+        areas: crate::metrics::areas(&pr.files),
     }
 }
 
@@ -93,15 +96,29 @@ fn ranked(counts: HashMap<String, usize>) -> Vec<(String, usize)> {
     v
 }
 
+fn reviewed<'a>(prs: &'a [Pr], login: &'a str) -> impl Iterator<Item = (&'a Pr, Vec<&'a Review>)> {
+    prs.iter()
+        .filter(move |p| p.author != login)
+        .filter_map(move |pr| {
+            let mine: Vec<&Review> = pr.reviews.iter().filter(|r| r.author == login).collect();
+            (!mine.is_empty()).then_some((pr, mine))
+        })
+}
+
+/// Every row, newest first, where `build` keeps the last `RECENT`.
+pub fn rows(prs: &[Pr], login: &str) -> Vec<Row> {
+    let mut rows: Vec<Row> = reviewed(prs, login)
+        .map(|(pr, mine)| row(pr, &mine))
+        .collect();
+    rows.sort_by_key(|r| std::cmp::Reverse(r.at));
+    rows
+}
+
 pub fn build(prs: &[Pr], login: &str) -> Dossier {
     let mut rows = Vec::new();
     let mut co: HashMap<String, usize> = HashMap::new();
     let mut authors: HashMap<String, usize> = HashMap::new();
-    for pr in prs.iter().filter(|p| p.author != login) {
-        let mine: Vec<&Review> = pr.reviews.iter().filter(|r| r.author == login).collect();
-        if mine.is_empty() {
-            continue;
-        }
+    for (pr, mine) in reviewed(prs, login) {
         rows.push(row(pr, &mine));
         *authors.entry(pr.author.clone()).or_default() += 1;
         let mut others: Vec<&str> = pr

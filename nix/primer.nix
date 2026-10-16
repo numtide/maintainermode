@@ -38,6 +38,7 @@ let
     "play"
     "key"
     "versions"
+    "flame"
   ];
 in
 runCommand "primer-assets" { } ''
