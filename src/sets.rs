@@ -42,14 +42,30 @@ pub fn token_hash(token: &str) -> String {
         .collect()
 }
 
-/// The attributes of a login's uploaded set, for the private feed.
+/// The attributes of a login's uploaded set and scanned flakes, for the
+/// private feed.
 pub fn set_attrs(app: &App, login: &str) -> Vec<String> {
-    app.store
+    let mut all: std::collections::BTreeSet<String> = app
+        .store
         .package_set(login)
         .ok()
         .flatten()
         .map(|s| s.attrs)
         .unwrap_or_default()
+        .into_iter()
+        .collect();
+    for r in app.store.flake_refs(login).unwrap_or_default() {
+        all.extend(r.attrs);
+    }
+    all.into_iter().collect()
+}
+
+/// Where a row of the panel comes from.
+#[derive(Default)]
+struct Origin {
+    uploaded: bool,
+    watched: bool,
+    flake: bool,
 }
 
 pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
@@ -131,7 +147,9 @@ const NOTICE: &str = "<div class=\"flash mb-4\"><strong>What the server keeps, a
 For your latest report, it keeps the nixpkgs attributes that its own index knows, the time of the upload, \
 the time of the scan and the nixpkgs revision. It drops every other name. It keeps the hash of your upload token, \
 not the token. It uses the set for this page and for your private feed only: no public page, number or API reads it, \
-and there is no admin view. The set expires 90 days after the last upload. The button below deletes it now.</div>";
+and there is no admin view. The set expires 90 days after the last upload. For a public flake that you add below, \
+it keeps the reference, the output, the same attributes from the last good scan, and the reason of the last failure; \
+those attributes expire 90 days after the last good scan. The button below deletes the set and your flakes now.</div>";
 
 async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
@@ -155,14 +173,20 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
         "",
     );
     out.push_str(NOTICE);
-    let mut from: BTreeMap<String, (bool, bool)> = BTreeMap::new();
+    let mut from: BTreeMap<String, Origin> = BTreeMap::new();
     for a in set.iter().flat_map(|s| &s.attrs) {
-        from.entry(a.clone()).or_default().0 = true;
+        from.entry(a.clone()).or_default().uploaded = true;
     }
     for a in &watched {
-        from.entry(a.clone()).or_default().1 = true;
+        from.entry(a.clone()).or_default().watched = true;
+    }
+    for r in app.store.flake_refs(&login).unwrap_or_default() {
+        for a in r.attrs {
+            from.entry(a).or_default().flake = true;
+        }
     }
     out.push_str(&summary(set.as_ref()));
+    out.push_str(&crate::rescan::panel(&app, &login));
     out.push_str(&rows(&app, &from));
     out.push_str(&token_box(&app, &login));
     page(&app, Some(&login), "watch", &out).into_response()
@@ -197,14 +221,14 @@ fn summary(set: Option<&PackageSet>) -> String {
     )
 }
 
-fn rows(app: &App, from: &BTreeMap<String, (bool, bool)>) -> String {
+fn rows(app: &App, from: &BTreeMap<String, Origin>) -> String {
     if from.is_empty() {
         return String::new();
     }
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let mut list: Vec<(Subject, Flags, &(bool, bool))> = from
+    let mut list: Vec<(Subject, Flags, &Origin)> = from
         .iter()
         .map(|(a, src)| {
             let sub = Subject::Pkg(a.clone());
@@ -216,13 +240,16 @@ fn rows(app: &App, from: &BTreeMap<String, (bool, bool)>) -> String {
     let (attention, rest): (Vec<_>, Vec<_>) = list
         .iter()
         .partition(|(_, f, _)| f.advisories > 0 || f.upstream.is_some() || f.risk() >= 15);
-    let row = |(sub, f, (uploaded, watched)): &&(Subject, Flags, &(bool, bool))| {
+    let row = |(sub, f, o): &&(Subject, Flags, &Origin)| {
         let mut tags = String::new();
-        if *watched {
+        if o.watched {
             tags.push_str(" <span class=\"Label\">watched</span>");
         }
-        if *uploaded {
+        if o.uploaded {
             tags.push_str(" <span class=\"Label\">in your report</span>");
+        }
+        if o.flake {
+            tags.push_str(" <span class=\"Label\">in a scanned flake</span>");
         }
         format!(
             "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
@@ -324,14 +351,18 @@ async fn delete_set(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    if let Err(e) = app.store.delete_package_set(&login) {
+    if let Err(e) = app
+        .store
+        .delete_package_set(&login)
+        .and_then(|()| app.store.delete_flake_refs(&login))
+    {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     Redirect::to("/me/sets").into_response()
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -352,7 +383,7 @@ mod tests {
         assert_eq!(bearer(&h), Some("abc"));
     }
 
-    fn app(attrs: &[&str]) -> Shared {
+    pub(crate) fn app(attrs: &[&str]) -> Shared {
         let mut index = crate::area::Index::default();
         if !attrs.is_empty() {
             index.rev = "0".repeat(40);
@@ -383,6 +414,7 @@ mod tests {
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
             archive: Vec::new(),
+            rescan: None,
         })
     }
 

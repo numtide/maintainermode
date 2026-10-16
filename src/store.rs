@@ -88,6 +88,21 @@ impl Store {
                key TEXT PRIMARY KEY,
                data TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS flake_ref (
+               id INTEGER PRIMARY KEY,
+               login TEXT NOT NULL,
+               reference TEXT NOT NULL,
+               output TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               last_at TEXT,
+               error TEXT,
+               attrs TEXT NOT NULL DEFAULT '[]',
+               dropped INTEGER NOT NULL DEFAULT 0,
+               scanned_at TEXT,
+               nixpkgs_rev TEXT,
+               UNIQUE (login, reference, output)
+             );
+             CREATE TABLE IF NOT EXISTS rescan_run (login TEXT NOT NULL, at TEXT NOT NULL);
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -589,5 +604,179 @@ impl Store {
             "DELETE FROM package_set WHERE uploaded_at < ?1",
             [before.to_rfc3339()],
         )?)
+    }
+}
+
+/// A public flake reference that the server scans again after each nixpkgs
+/// index. Private like the uploaded set: only the owner reads it.
+pub struct FlakeRef {
+    pub id: i64,
+    pub login: String,
+    pub reference: String,
+    pub output: String,
+    pub last_at: Option<DateTime<Utc>>,
+    pub error: Option<String>,
+    pub attrs: Vec<String>,
+    pub dropped: usize,
+    pub scanned_at: Option<DateTime<Utc>>,
+    pub nixpkgs_rev: Option<String>,
+}
+
+fn time_of(s: Option<String>) -> Option<DateTime<Utc>> {
+    s.and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
+        .map(|t| t.with_timezone(&Utc))
+}
+
+const FLAKE_COLUMNS: &str =
+    "id, login, reference, output, last_at, error, attrs, dropped, scanned_at, nixpkgs_rev";
+
+fn flake_row(r: &rusqlite::Row) -> rusqlite::Result<FlakeRef> {
+    Ok(FlakeRef {
+        id: r.get(0)?,
+        login: r.get(1)?,
+        reference: r.get(2)?,
+        output: r.get(3)?,
+        last_at: time_of(r.get(4)?),
+        error: r.get(5)?,
+        attrs: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
+        dropped: r.get::<_, i64>(7)?.max(0) as usize,
+        scanned_at: time_of(r.get(8)?),
+        nixpkgs_rev: r.get(9)?,
+    })
+}
+
+impl Store {
+    /// Refuses a reference beyond `max` for the login; returns whether the
+    /// login is within the limit.
+    pub fn add_flake_ref(
+        &self,
+        login: &str,
+        reference: &str,
+        output: &str,
+        max: usize,
+    ) -> Result<bool> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let n: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM flake_ref WHERE login = ?1",
+            [login],
+            |r| r.get(0),
+        )?;
+        if n as usize >= max {
+            return Ok(false);
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO flake_ref (login, reference, output, created_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![login, reference, output, Utc::now().to_rfc3339()],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    pub fn delete_flake_ref(&self, login: &str, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM flake_ref WHERE login = ?1 AND id = ?2",
+            params![login, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_flake_refs(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM flake_ref WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    pub fn flake_refs(&self, login: &str) -> Result<Vec<FlakeRef>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FLAKE_COLUMNS} FROM flake_ref WHERE login = ?1 ORDER BY id"
+        ))?;
+        let rows = stmt.query_map([login], flake_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// References never scanned first, then those last scanned before `since`.
+    pub fn flake_refs_due(&self, since: DateTime<Utc>) -> Result<Vec<FlakeRef>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FLAKE_COLUMNS} FROM flake_ref WHERE last_at IS NULL OR last_at < ?1
+             ORDER BY last_at IS NOT NULL, last_at, id"
+        ))?;
+        let rows = stmt.query_map([since.to_rfc3339()], flake_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// A failure keeps the attributes of the last good scan.
+    pub fn finish_flake_ref(&self, id: i64, result: Result<&PackageSet, &str>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now().to_rfc3339();
+        match result {
+            Ok(set) => conn.execute(
+                "UPDATE flake_ref SET last_at = ?2, error = NULL, attrs = ?3, dropped = ?4,
+                   scanned_at = ?5, nixpkgs_rev = ?6 WHERE id = ?1",
+                params![
+                    id,
+                    now,
+                    serde_json::to_string(&set.attrs)?,
+                    set.dropped as i64,
+                    set.uploaded_at.to_rfc3339(),
+                    set.nixpkgs_rev
+                ],
+            )?,
+            Err(e) => conn.execute(
+                "UPDATE flake_ref SET last_at = ?2, error = ?3 WHERE id = ?1",
+                params![id, now, e],
+            )?,
+        };
+        Ok(())
+    }
+
+    /// The 90-day rule of an upload, applied to the last good scan: its
+    /// attributes go, the reference stays. Returns how many.
+    pub fn purge_flake_results(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE flake_ref SET attrs = '[]', dropped = 0, scanned_at = NULL, nixpkgs_rev = NULL
+             WHERE scanned_at < ?1",
+            [before.to_rfc3339()],
+        )?)
+    }
+
+    pub fn log_rescan_run(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = Utc::now();
+        conn.execute(
+            "DELETE FROM rescan_run WHERE at < ?1",
+            [(now - chrono::Duration::days(2)).to_rfc3339()],
+        )?;
+        conn.execute(
+            "INSERT INTO rescan_run (login, at) VALUES (?1, ?2)",
+            [login, &now.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn rescan_runs_since(&self, login: &str, since: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rescan_run WHERE login = ?1 AND at >= ?2",
+            [login, &since.to_rfc3339()],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
+    /// Counts only, for /sync: references, failing ones, the last scan.
+    pub fn flake_ref_counts(&self) -> Result<(usize, usize, Option<DateTime<Utc>>)> {
+        let conn = self.conn.lock().unwrap();
+        let (n, failing, last): (i64, i64, Option<String>) = conn.query_row(
+            "SELECT COUNT(*), COUNT(error), MAX(last_at) FROM flake_ref",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        Ok((n as usize, failing as usize, time_of(last)))
     }
 }

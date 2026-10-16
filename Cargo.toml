@@ -33,6 +33,8 @@ tokio = { version = "1", features = [
   "signal",
   "sync",
   "time",
+  "process",
+  "io-util",
 ] }
 tower-http = { version = "0.6", features = ["trace", "compression-gzip"] }
 tracing = "0.1"

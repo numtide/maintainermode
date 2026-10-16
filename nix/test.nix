@@ -116,6 +116,12 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -D /tmp/r9.h -o /dev/null -X POST -H 'Authorization: Bearer nope' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8790/mcp && grep -q '^HTTP/1.1 401' /tmp/r9.h && grep -qi '^www-authenticate: Bearer' /tmp/r9.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/mcp > /tmp/r10 && grep -q 405 /tmp/r10")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/claude/pr/1 > /tmp/r11 && grep -q 303 /tmp/r11")
+    # server rescans are off by default: registering a flake is refused
+    machine.succeed("curl -s -o /tmp/r5.body -w '%{http_code}' -X POST -d reference=github:o/r -d output=packages.x86_64-linux.default http://127.0.0.1:8790/me/sets/flakes > /tmp/r5 && grep -q 403 /tmp/r5")
+    machine.succeed("grep -q 'does not scan flakes' /tmp/r5.body")
+    machine.succeed("curl -sf http://127.0.0.1:8790/sync -o /tmp/sync && grep -q 'Flake rescans' /tmp/sync && grep -q 'off on this server' /tmp/sync")
+    machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q '\"rescans\":{\"enabled\":false' /tmp/sync.json")
+    machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_RESCAN /tmp/env")
     machine.succeed("cp -rL /etc/scan /tmp/scan")
     machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top --nixpkgs ./nixpkgs")
     machine.succeed("grep -q our-private-daemon /tmp/scan/maintainer-mode-scan.json")

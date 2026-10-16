@@ -344,6 +344,7 @@ mod tests {
             public_url: "https://mm.example".into(),
             channels: Default::default(),
             archive: Vec::new(),
+            rescan: None,
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
         })
