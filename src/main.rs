@@ -195,9 +195,9 @@ enum Command {
     },
     /// The ready-to-merge queue
     Merge,
-    /// The review queue: mine (needs --login), unowned, or all
+    /// The review queue: foryou (needs --login; mine is an alias), unowned, or all
     Review {
-        #[arg(long, default_value = "all", value_parser = ["mine", "unowned", "all"])]
+        #[arg(long, default_value = "all", value_parser = ["foryou", "mine", "unowned", "all"])]
         bucket: String,
         #[arg(long)]
         login: Option<String>,
@@ -775,8 +775,8 @@ async fn run(cli: Cli) -> Result<i32> {
             Ok(0)
         }
         Command::Review { bucket, login } => {
-            if bucket == "mine" && login.is_none() {
-                bail!("--bucket mine needs --login");
+            if (bucket == "foryou" || bucket == "mine") && login.is_none() {
+                bail!("--bucket {bucket} needs --login");
             }
             let mut path = format!("/api/v1/queue/review?bucket={bucket}");
             if let Some(l) = login {
