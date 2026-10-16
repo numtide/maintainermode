@@ -8,6 +8,7 @@ mod events;
 mod github;
 mod github_app;
 mod health;
+mod hygiene;
 mod ledger;
 mod links;
 mod metrics;

@@ -15,6 +15,7 @@ use std::fmt::Write;
 
 use crate::area::{Index, area_key, under};
 use crate::health::{Advisory, Build, Health, Hydra};
+use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
 use crate::severity::{self, Worst};
@@ -581,6 +582,30 @@ fn rated<'a>(h: &Health, list: &[&'a Advisory]) -> Vec<(&'a Advisory, Worst)> {
     v
 }
 
+fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
+    let Some(gaps) = hygiene::gaps(attr, p) else {
+        return "<span class=\"color-fg-muted f6\">not read yet: the next index sweep reads it</span>"
+            .into();
+    };
+    let mut out: Vec<String> = Vec::new();
+    if let Some(f) = &p.facts {
+        if f.broken {
+            out.push("<span class=\"Label Label--danger\">meta.broken</span>".into());
+        }
+        if f.insecure {
+            out.push("<span class=\"Label Label--danger\">meta.knownVulnerabilities</span>".into());
+        }
+    }
+    out.extend(
+        gaps.iter()
+            .map(|g| format!("<span class=\"Label Label--attention\">{}</span>", esc(g))),
+    );
+    if out.is_empty() {
+        return "<span class=\"color-fg-success\">meta complete</span>".into();
+    }
+    out.join(" ")
+}
+
 fn advisories_html(h: &Health, list: &[&Advisory]) -> String {
     if list.is_empty() {
         return "<span class=\"color-fg-success\">none open</span>".into();
@@ -682,6 +707,7 @@ async fn package_page(
         "Advisories",
         &advisories_html(&h, &open_advisories(&h, &s, &attr)),
     ));
+    out.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
     if viewer.is_some() {
         out.push_str(&kv(
             "Update",
@@ -1610,7 +1636,8 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
             })
             .collect()
     };
-    let extra = json!({ "attr": attr, "package": p, "hydra": build, "hydra_job": job, "advisories": advisories });
+    let hygiene = p.as_ref().and_then(|p| hygiene::gaps(&attr, p));
+    let extra = json!({ "attr": attr, "package": p, "hydra": build, "hydra_job": job, "advisories": advisories, "packaging_gaps": hygiene });
     Json(subject_json(&app, &Subject::Pkg(attr.clone()), extra)).into_response()
 }
 
@@ -1721,6 +1748,7 @@ mod tests {
                     file: Some(format!("pkgs/{pname}/default.nix")),
                     maintainers: m.into_iter().map(String::from).collect(),
                     teams: t.into_iter().map(String::from).collect(),
+                    facts: None,
                 },
             );
             i.by_pname.insert(pname.into(), attr.into());

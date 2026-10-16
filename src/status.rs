@@ -46,9 +46,21 @@ fn last_event_at(app: &App) -> Option<DateTime<Utc>> {
 
 fn state(app: &App) -> Value {
     let s = app.snap();
-    let (rev, pkgs, modules, teams) = {
+    let (rev, pkgs, modules, teams, checked, with_gaps) = {
         let i = app.index.read().unwrap();
-        (i.rev.clone(), i.pkgs.len(), i.modules.len(), i.teams.len())
+        let gaps: Vec<usize> = i
+            .pkgs
+            .iter()
+            .filter_map(|(a, p)| crate::hygiene::gaps(a, p).map(|g| g.len()))
+            .collect();
+        (
+            i.rev.clone(),
+            i.pkgs.len(),
+            i.modules.len(),
+            i.teams.len(),
+            gaps.len(),
+            gaps.iter().filter(|n| **n > 0).count(),
+        )
     };
     let h = app.health.read().unwrap().clone();
     let sync_every = num(app, "sync_every").unwrap_or(600);
@@ -70,6 +82,7 @@ fn state(app: &App) -> Value {
             "rev": rev, "at": time(app, "index_at"),
             "packages": pkgs, "modules": modules, "teams": teams,
         },
+        "packaging": { "checked": checked, "with_gaps": with_gaps },
         "health": {
             "repology_at": h.repology_at, "outdated": h.upstream.len(),
             "tracker_at": h.tracker_at, "attributes_with_advisories": h.advisories.len(),
@@ -270,6 +283,18 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             when(&h["tracker_at"]),
             h["attributes_with_advisories"]
         ),
+    ));
+    let pk = &v["packaging"];
+    out.push_str(&row(
+        "Packaging hygiene",
+        &if pk["checked"].as_u64().unwrap_or(0) == 0 {
+            "from the index sweep, no network · the next index reads it".to_string()
+        } else {
+            format!(
+                "from the index sweep, no network · {} of {} packages have a gap in meta or no versionCheckHook",
+                pk["with_gaps"], pk["checked"]
+            )
+        },
     ));
     for (key, label, what) in SOURCES {
         out.push_str(&row(label, &source(&h["sources"][key], what)));

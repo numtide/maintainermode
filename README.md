@@ -194,6 +194,17 @@ merged in the synced window.
   open. Each advisory shows the worst severity of its CVEs (CVSS), whether
   CISA saw an exploit, and its [EPSS](https://www.first.org/epss/) score: the
   chance of exploitation in the next 30 days.
+- **Packaging hygiene of a package:** cheap checks on what the index sweep
+  reads, with no network and no build:
+  - `meta.description`, `meta.homepage` and `meta.license` are set;
+  - `meta.description` does not end with a period or start with an article;
+  - a program has `meta.mainProgram` and runs `versionCheckHook`;
+  - `meta.broken` and `meta.knownVulnerabilities` show as warnings.
+
+  The sweep does not build, so "a program" is a guess: a top-level attribute
+  under `pkgs/by-name`, `pkgs/applications`, `pkgs/tools`, `pkgs/servers` or
+  `pkgs/games` whose name does not start with `lib`.
+
 - **Health of a module:** the last Hydra build of its NixOS test
   (`nixos.tests.<name>`), and its maintainers and teams.
 - **An area** lists the packages and modules under it, the ones that need
@@ -437,7 +448,11 @@ Every query command takes `--json`.
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
   the package name, the file of `meta.position`, and the GitHub logins in
   `meta.maintainers` and `meta.teams`. That one sweep maps paths to packages and packages to
-  people. One more evaluation, of NixOS with no configuration, reads
+  people. It also reads the first URL of `src` and the facts for packaging
+  hygiene. Each of these is evaluated on its own, so one that fails keeps the
+  package. They add about 380 MB to the peak of the top level. The inputs of
+  a package are read only when its install check runs, because reading all
+  of them adds 500 MB more. One more evaluation, of NixOS with no configuration, reads
   `meta.maintainers` and `meta.teams` of every module, and `lib.teams` gives
   the members of each team. A team member counts as a maintainer.
   It evaluates a local tree, not a flake reference, so the evaluator

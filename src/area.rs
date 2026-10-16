@@ -44,6 +44,8 @@ pub struct Package {
     pub file: Option<String>,
     pub maintainers: Vec<String>,
     pub teams: Vec<String>,
+    #[serde(default)]
+    pub facts: Option<attrs::Facts>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -146,6 +148,7 @@ pub fn from_entries(rev: &str, entries: &[attrs::Entry], owners: &str, nixos: Ni
                 file: e.file.clone(),
                 maintainers: e.maintainers.clone(),
                 teams: e.teams.clone(),
+                facts: e.facts.clone(),
             },
         );
         let Some(file) = &e.file else {
@@ -453,6 +456,7 @@ mod tests {
             file: Some("pkgs/servers/http/nginx/default.nix".into()),
             maintainers: vec![],
             teams: vec!["web".into()],
+            facts: None,
         };
         let nixos = Nixos {
             modules: [(
