@@ -77,6 +77,7 @@ pub struct App {
     /// The URL people reach, for links that leave the site, like feeds.
     pub public_url: String,
     pub events: Arc<crate::events::Log>,
+    pub archive: Vec<Arc<crate::archive::Archive>>,
 }
 
 impl App {
@@ -188,6 +189,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
+        .merge(crate::archive::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }

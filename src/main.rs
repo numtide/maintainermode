@@ -1,4 +1,5 @@
 mod actions;
+mod archive;
 mod area;
 mod attrs;
 mod catalog;
@@ -143,6 +144,23 @@ enum Command {
         sync_every: u64,
         #[command(flatten)]
         s3: Box<S3>,
+        /// Repositories whose issues and pull requests the archive keeps in
+        /// full; empty turns the archive off.
+        #[arg(
+            long = "archive-repo",
+            env = "MAINTAINER_MODE_ARCHIVE_REPOS",
+            value_delimiter = ',',
+            default_value = archive::DEFAULT_REPO
+        )]
+        archive_repos: Vec<String>,
+        /// Items the archive walk fetches per repository and pass.
+        #[arg(long, env = "MAINTAINER_MODE_ARCHIVE_ITEMS", default_value_t = 300)]
+        archive_items: usize,
+    },
+    /// The full copy of issues and pull requests
+    Archive {
+        #[command(subcommand)]
+        command: ArchiveCommand,
     },
     /// One sync pass into a local database, then exit
     Sync {
@@ -234,6 +252,24 @@ enum Command {
         /// File holding the upload token; MAINTAINER_MODE_UPLOAD_TOKEN wins over it
         #[arg(long)]
         token_file: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ArchiveCommand {
+    /// Write the stored items as `<out>/<owner>/<name>/NNNNNNN.ndjson.zst`,
+    /// one file per 10 000 numbers
+    Export {
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
+        db: PathBuf,
+        #[arg(long, default_value = archive::DEFAULT_REPO)]
+        repo: String,
+        #[arg(long)]
+        out: PathBuf,
     },
 }
 
@@ -527,6 +563,8 @@ async fn run(cli: Cli) -> Result<i32> {
             github_app_installation_id,
             sync_every,
             s3,
+            archive_repos,
+            archive_items,
         } => {
             let S3 {
                 s3_endpoint,
@@ -583,6 +621,11 @@ async fn run(cli: Cli) -> Result<i32> {
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 events,
+                archive: archive::open_all(
+                    &data_dir(&db).join("archive"),
+                    &archive_repos,
+                    archive_items,
+                )?,
             });
             app.recompute()?;
             let a = app.clone();
@@ -598,6 +641,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 None => tracing::info!("no sync token: the event log takes GH Archive only"),
             }
             tokio::spawn(events::archive(app.clone()));
+            if !app.archive.is_empty() {
+                tokio::spawn(archive::walk(app.clone()));
+            }
             if let Some(b) = bucket {
                 tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
                 tokio::spawn(events::copy(app.clone(), b));
@@ -638,6 +684,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 events,
+                archive: Vec::new(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -677,6 +724,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 events,
+                archive: Vec::new(),
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();
@@ -941,6 +989,18 @@ async fn run(cli: Cli) -> Result<i32> {
             token_file,
         } => {
             submit(to.as_deref().unwrap_or(&cli.server), &path, token_file).await?;
+            Ok(0)
+        }
+        Command::Archive {
+            command: ArchiveCommand::Export { db, repo, out },
+        } => {
+            let a = archive::Archive::open_existing(&data_dir(&db).join("archive"), &repo)?;
+            let (items, files) = a.export(&out)?;
+            eprintln!(
+                "{items} items of {} in {files} files under {}",
+                a.repo,
+                out.display()
+            );
             Ok(0)
         }
         Command::Check { login } => {

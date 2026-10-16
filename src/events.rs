@@ -14,7 +14,7 @@ use crate::github;
 use crate::store::Store;
 use crate::web::App;
 
-const REPO: &str = "NixOS/nixpkgs";
+pub const REPO: &str = "NixOS/nixpkgs";
 const EVENTS_URL: &str = "https://api.github.com/repos/NixOS/nixpkgs/events?per_page=100";
 /// The Events API serves 300 events at most.
 const EVENT_PAGES: usize = 3;

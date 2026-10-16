@@ -382,6 +382,7 @@ mod tests {
             public_url: String::new(),
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
+            archive: Vec::new(),
         })
     }
 

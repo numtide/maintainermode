@@ -120,7 +120,55 @@ fn state(app: &App) -> Value {
             "server": app.sync_token.is_some() || app.github_app.is_some(),
             "lent": app.store.lent_tokens().map(|t| t.len()).unwrap_or(0),
         },
+        "archive": app.archive.iter().map(|a| a.progress(Utc::now()).unwrap_or_else(|e| {
+            json!({ "repo": a.repo, "last_error": format!("{e:#}") })
+        })).collect::<Vec<_>>(),
     })
+}
+
+fn hours(h: f64) -> String {
+    if h < 1.0 {
+        "less than an hour".into()
+    } else if h < 48.0 {
+        format!("about {h:.0} hours")
+    } else {
+        format!("about {:.0} days", h / 24.0)
+    }
+}
+
+fn archive_row(a: &Value) -> String {
+    let mut parts = vec![format!(
+        "{} issues and pull requests stored ({:.1} MB)",
+        a["items"],
+        a["bytes"].as_f64().unwrap_or(0.0) / 1e6
+    )];
+    match (a["top"].as_i64(), a["oldest"].as_i64()) {
+        (None, _) => parts.push("waiting for the first listing".into()),
+        (Some(_), None) => parts.push("recent updates first".into()),
+        (Some(_), Some(o)) => parts.push(format!("oldest number reached #{o}")),
+    }
+    if let Some(p) = a["percent"].as_f64() {
+        parts.push(format!("{p:.1} % of the repository"));
+    }
+    if a["complete"].as_bool() == Some(true) {
+        parts.push("<span class=\"color-fg-success\">every number read</span>".into());
+    } else if let Some(h) = a["hours_left"].as_f64() {
+        parts.push(format!("{} left at the current pace", hours(h)));
+    }
+    parts.push(format!(
+        "{} due · {} per pass, a pass every {} · the last ended {}",
+        a["due"],
+        a["items_per_pass"],
+        minutes(crate::archive::PASS_EVERY as i64),
+        when(&a["last_pass"])
+    ));
+    if let Some(e) = a["last_error"].as_str() {
+        parts.push(format!(
+            "<span class=\"color-fg-attention\">last error: {}</span>",
+            esc(e)
+        ));
+    }
+    parts.join(" · ")
 }
 
 async fn api_sync(State(app): State<Shared>) -> Json<Value> {
@@ -370,6 +418,18 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     out.push_str("</div>");
+    if let Some(list) = v["archive"].as_array().filter(|l| !l.is_empty()) {
+        out.push_str(
+            "<div class=\"Box mb-4\" id=\"archive\"><div class=\"Box-header text-bold\">Archive of issues and pull requests</div>",
+        );
+        for a in list {
+            out.push_str(&row(
+                &esc(a["repo"].as_str().unwrap_or("")),
+                &archive_row(a),
+            ));
+        }
+        out.push_str("</div>");
+    }
     let worst = pass["worst_delay_seconds"].as_i64();
     let _ = write!(
         out,
