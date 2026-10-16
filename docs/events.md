@@ -1,7 +1,9 @@
 # Plan: the nixpkgs event log
 
-Status: proposed. It replaces the separate event pipeline (a message broker and
-five processes) with one log inside Maintainer Mode.
+Status: built in `src/events.rs`, except two parts: the path prefix filter,
+and the queues that read new events. It replaces the separate event pipeline
+(a message broker and five processes) with one log inside Maintainer Mode.
+The old pipeline stays on the host until this log has run for some time.
 
 ## What it does
 
