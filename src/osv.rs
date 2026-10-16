@@ -160,24 +160,40 @@ pub async fn matches(h: &mut Health, queries: Vec<Query>) -> Run {
         queries.len(),
         found.len()
     );
+    let matched: std::collections::HashSet<&String> = found.values().flatten().collect();
+    h.osv_failed.retain(|id, _| matched.contains(id));
     h.osv = found;
     h.osv_at = Some(Utc::now());
     Run::ok(line)
 }
 
-/// The record of each matched id, once: 200 a pass.
-pub async fn details(h: &mut Health) -> Run {
-    let http = http();
-    let mut due: Vec<String> = h
+/// 1, 2, 4 … 32 days after the last failure.
+fn retry(failures: u32, at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    now - at > chrono::Duration::days(1 << failures.saturating_sub(1).min(5))
+}
+
+/// The ids with no record yet, the ones that never failed first.
+fn detail_due(h: &Health, now: DateTime<Utc>) -> Vec<String> {
+    let mut due: Vec<(u32, &String)> = h
         .osv
         .values()
         .flatten()
         .filter(|id| !h.osv_vulns.contains_key(*id))
-        .cloned()
+        .filter_map(|id| match h.osv_failed.get(id) {
+            None => Some((0, id)),
+            Some(&(n, at)) => retry(n, at, now).then_some((n, id)),
+        })
         .collect();
     due.sort();
     due.dedup();
-    let mut read = 0;
+    due.into_iter().map(|(_, id)| id.clone()).collect()
+}
+
+/// The record of each matched id, once: 200 a pass.
+pub async fn details(h: &mut Health) -> Run {
+    let http = http();
+    let due = detail_due(h, Utc::now());
+    let (mut read, mut failed, mut done) = (0, 0, 0);
     for id in due.iter().take(DETAIL_BUDGET) {
         let got = async {
             anyhow::Ok(
@@ -189,18 +205,28 @@ pub async fn details(h: &mut Health) -> Run {
                     .await?,
             )
         };
+        done += 1;
         match got.await {
             Ok(v) => {
                 h.osv_vulns.insert(id.clone(), vuln(&v));
+                h.osv_failed.remove(id);
                 read += 1;
             }
-            Err(e) => return Run::failed(format!("OSV records: {e:#}")),
+            Err(e) => {
+                tracing::debug!("OSV record {id}: {e:#}");
+                let f = h.osv_failed.entry(id.clone()).or_insert((0, Utc::now()));
+                *f = (f.0 + 1, Utc::now());
+                failed += 1;
+                if failed == done && done >= 10 {
+                    return Run::failed(format!("OSV records: the first {done} requests failed"));
+                }
+            }
         }
         tokio::time::sleep(PAUSE).await;
     }
     Run::ok(format!(
-        "{read} records read · {} left",
-        due.len().saturating_sub(read)
+        "{read} records read, {failed} failed · {} left",
+        due.len().saturating_sub(done)
     ))
 }
 
@@ -241,6 +267,27 @@ mod tests {
             .is_none()
         );
         assert!(query("python3Packages.x", "x", "", None).is_none());
+    }
+
+    #[test]
+    fn a_failing_id_waits_and_does_not_block_the_others() {
+        let now = Utc::now();
+        let mut h = Health::default();
+        h.osv
+            .insert("a".into(), vec!["GHSA-a".into(), "GHSA-b".into()]);
+        h.osv
+            .insert("b".into(), vec!["GHSA-c".into(), "GHSA-a".into()]);
+        h.osv_vulns.insert("GHSA-c".into(), Vuln::default());
+        assert_eq!(detail_due(&h, now), vec!["GHSA-a", "GHSA-b"]);
+        h.osv_failed
+            .insert("GHSA-a".into(), (1, now - chrono::Duration::hours(2)));
+        assert_eq!(detail_due(&h, now), vec!["GHSA-b"]);
+        h.osv_failed
+            .insert("GHSA-a".into(), (1, now - chrono::Duration::days(2)));
+        assert_eq!(detail_due(&h, now), vec!["GHSA-b", "GHSA-a"]);
+        h.osv_failed
+            .insert("GHSA-a".into(), (3, now - chrono::Duration::days(2)));
+        assert_eq!(detail_due(&h, now), vec!["GHSA-b"]);
     }
 
     #[test]
