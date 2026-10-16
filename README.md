@@ -342,8 +342,8 @@ Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you
 when one of them gets an advisory or a new upstream release. The set is
 private. Facts about nixpkgs are public; facts about your machines are not.
 
-You evaluate your own tree on your own machine. The server never evaluates
-it. Three client commands do the work:
+You evaluate your own tree on your own machine. By default, the server never
+evaluates it. Three client commands do the work:
 
 ```sh
 maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
@@ -402,6 +402,27 @@ build.
 **Alerts.** Your private Atom feed (see above) also gets, for each package in
 your set, a new advisory and a new upstream release. It does not get the pull
 requests and issues of the set, because a closure has thousands of packages.
+
+**A public flake, scanned by the server.** This is off by default. When the
+operator turns it on, `/me/sets` has a form for a public flake reference
+(`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
+and an output. After each nixpkgs index, the server scans the output again.
+It keeps the result with the rules of an upload: the same redaction, the
+same index filter and the same 90-day rule. The rows of the panel then show
+"in a scanned flake".
+
+- The scan evaluates third-party code. Each nix step runs in a bubblewrap
+  sandbox, as a separate process, with a read-only store, its own temporary
+  directory, no service state, no secret, and a memory and time limit.
+- The evaluation step has no network. The two fetch steps have the network
+  of the host, and fetch only the inputs that a checked `flake.lock` names.
+- Nix runs with `allow-import-from-derivation = false`: nothing is built.
+- A person has at most 3 flakes and 4 scans a day, by default.
+- `/sync` shows the flakes, the queue, the last scan and the failures, as
+  counts only.
+
+[`docs/rescan.md`](docs/rescan.md) has the threat model, the sandbox, the
+limits, and why the feature is off by default.
 
 ## Actions
 
@@ -782,6 +803,14 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_S3_CREDENTIALS_FILE` | file with the access key id and the secret key              |
 | `MAINTAINER_MODE_ARCHIVE_REPOS`       | repositories to archive; default `NixOS/nixpkgs`            |
 | `MAINTAINER_MODE_ARCHIVE_ITEMS`       | items the archive walk fetches per repository and pass      |
+| `MAINTAINER_MODE_RESCAN`              | `true` turns on the server rescans of public flakes         |
+| `MAINTAINER_MODE_RESCAN_BWRAP`        | the `bwrap` program, default `bwrap`                        |
+| `MAINTAINER_MODE_RESCAN_PRLIMIT`      | the `prlimit` program, default `prlimit`                    |
+| `MAINTAINER_MODE_RESCAN_NIX`          | plain `nix` in `/nix/store`, default `nix` from `PATH`      |
+| `MAINTAINER_MODE_RESCAN_MAX_FLAKES`   | flakes a person can register, default 3                     |
+| `MAINTAINER_MODE_RESCAN_PER_DAY`      | scans a person gets in 24 hours, default 4                  |
+| `MAINTAINER_MODE_RESCAN_TIMEOUT`      | wall-clock limit of one scan in seconds, default 900        |
+| `MAINTAINER_MODE_RESCAN_MEMORY_MB`    | address-space limit of each sandboxed process, default 3072 |
 
 CI is the flake's `checks`: `nix flake check`.
 
