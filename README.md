@@ -220,7 +220,9 @@ with its flags, the ones that need attention first.
 - **The Atom feed** is the delivery. `/watch` makes a private link,
   `/feed/<token>`, with the last 30 days of what happened to your
   subscriptions: pull requests opened, merged or closed, issues opened or
-  closed, and new advisories. Replacing the link cuts the old one.
+  closed, and advisories, when the tracker opens their nixpkgs issue. An
+  advisory with no nixpkgs issue shows on the page, not in the feed.
+  Replacing the link cuts the old one.
 - Subscriptions are private: they show only to you and in your feed. The
   package pages are public.
 - **Why here.** Accounts, stored preferences and outbound messages are a write
@@ -333,8 +335,8 @@ Every query command takes `--json`.
   pull requests by `updatedAt`, newest first, and stops at the watermark of
   the previous pass. Both walks store their cursor, so a pass that runs out
   of budget resumes where it stopped.
-- **Issues** are read the same way, 100 to a query without their body: the
-  body gives only the paths and package name it names. The first pass reads
+- **Issues** are read the same way, 100 to a query. The body is read but not
+  kept: only the paths and the package name it gives are. The first pass reads
   every open issue, then each pass walks by `updatedAt`.
 - **Tokens.** When you log in, Maintainer Mode keeps your token and reads public
   nixpkgs data with it. The rate limit grows with the number of people who use
