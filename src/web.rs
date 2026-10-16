@@ -1034,8 +1034,73 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     page(&app, viewer.as_deref(), "rules", &body)
 }
 
-async fn api_metrics(State(app): State<Shared>) -> Json<Report> {
-    Json(Report::clone(&app.metrics.read().unwrap()))
+fn package_stats(app: &App) -> crate::catalog::PackageStats {
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    crate::catalog::package_stats(&s, &index, &h)
+}
+
+async fn api_metrics(State(app): State<Shared>) -> Json<serde_json::Value> {
+    let mut v = serde_json::to_value(Report::clone(&app.metrics.read().unwrap()))
+        .unwrap_or_else(|_| json!({}));
+    v["packages"] = json!(package_stats(&app));
+    Json(v)
+}
+
+fn packages_section(app: &App) -> String {
+    let p = package_stats(app);
+    let mut out = String::from("<h2 class=\"f4 mt-4 mb-2\" id=\"packages\">Packages</h2>");
+    if p.rev.is_empty() {
+        out.push_str(
+            "<div class=\"flash\">The first nixpkgs index is still being built. These numbers come from it.</div>",
+        );
+        return out;
+    }
+    let b = &p.advisories_by_band;
+    let _ = write!(
+        out,
+        "<p class=\"f6 color-fg-muted\">One package per package name, at nixpkgs {}. \
+         <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a></p>\
+         <div class=\"d-flex flex-wrap mb-2\" style=\"gap:8px\">{}{}{}{}</div>\
+         <div class=\"d-flex flex-wrap mb-4\" style=\"gap:8px\">{}{}{}{}</div>",
+        esc(&p.rev[..p.rev.len().min(12)]),
+        stat(p.packages, "packages", "in the swept package sets"),
+        stat(
+            p.behind_upstream,
+            "behind upstream",
+            "a newer release in its git tags, its registry or repology"
+        ),
+        stat(
+            p.with_advisories,
+            "with open advisories",
+            &format!(
+                "worst: {} critical, {} high, {} medium, {} low, {} with no score",
+                b.critical, b.high, b.medium, b.low, b.unscored
+            )
+        ),
+        stat(
+            p.unmaintained,
+            "unmaintained",
+            "no meta.maintainers and no meta.teams"
+        ),
+        stat(p.broken, "broken", "meta.broken"),
+        stat(p.insecure, "insecure", "meta.knownVulnerabilities is set"),
+        stat(
+            p.with_packaging_gaps,
+            "with packaging gaps",
+            "see the Packaging row of a package page"
+        ),
+        stat(
+            p.open_bumps,
+            "open version bumps",
+            &format!(
+                "median age {} days; <a href=\"/bumps\">the list</a>",
+                num(p.bumps_median_age_days)
+            )
+        ),
+    );
+    out
 }
 
 #[derive(Deserialize)]
@@ -1104,13 +1169,14 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     let r = app.metrics.read().unwrap().clone();
     let mut body = String::from(
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">State of nixpkgs</h1>\
-         <div class=\"Subhead-description\">Pull request flow from public GitHub data. \
+         <div class=\"Subhead-description\">Pull request flow and package health from public data. \
          Aggregates only: no figure names a person. \
          <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a> · \
          <a href=\"/api/v1/metrics\">JSON</a></div></div>",
     );
     let Some(at) = r.generated_at else {
         body.push_str("<div class=\"flash\">The first sync has not finished yet.</div>");
+        body.push_str(&packages_section(&app));
         return page(&app, viewer.as_deref(), "state", &body);
     };
     let n = &r.now;
@@ -1283,6 +1349,7 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         ),
         table(&["tool", "pull requests"], &tools),
     );
+    body.push_str(&packages_section(&app));
     page(&app, viewer.as_deref(), "state", &body)
 }
 
