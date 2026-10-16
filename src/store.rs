@@ -353,6 +353,14 @@ impl Store {
         Ok(())
     }
 
+    /// Every key anyone watches, once.
+    pub fn watched_by_anyone(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT DISTINCT package FROM watch ORDER BY package")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn watched(&self, login: &str) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt =

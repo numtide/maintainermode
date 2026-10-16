@@ -21,6 +21,8 @@ mod severity;
 mod status;
 mod store;
 mod subject;
+mod upstream;
+mod version;
 mod web;
 mod workflows;
 

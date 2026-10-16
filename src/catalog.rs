@@ -240,12 +240,22 @@ fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advis
         .collect()
 }
 
-/// repology's newest release, unless nixpkgs already carries it: under this
-/// attribute, or under another of the same package, like `openssl_3`.
-fn upstream<'a>(s: &Snapshot, index: &Index, h: &'a Health, attr: &str) -> Option<&'a String> {
-    let newest = h.upstream.get(attr)?;
-    let pname = &index.pkgs.get(attr)?.pname;
-    (!s.versions.get(pname).is_some_and(|v| v.contains(newest))).then_some(newest)
+/// The newest upstream release and its source, unless nixpkgs already
+/// carries it: under this attribute, or under another of the same package,
+/// like `openssl_3`.
+fn upstream_from<'a>(
+    s: &Snapshot,
+    index: &Index,
+    h: &'a Health,
+    attr: &str,
+) -> Option<(&'a str, &'a str)> {
+    let p = index.pkgs.get(attr)?;
+    let (newest, from) = h.newest(attr, &p.version)?;
+    (!s.versions.get(&p.pname).is_some_and(|v| v.contains(newest))).then_some((newest, from))
+}
+
+fn upstream<'a>(s: &Snapshot, index: &Index, h: &'a Health, attr: &str) -> Option<&'a str> {
+    upstream_from(s, index, h, attr).map(|(v, _)| v)
 }
 
 pub(crate) struct Flags {
@@ -263,7 +273,7 @@ impl Flags {
             Subject::Pkg(attr) => {
                 let p = index.pkgs.get(attr);
                 (
-                    upstream(s, index, h, attr).cloned(),
+                    upstream(s, index, h, attr).map(String::from),
                     open_advisories(h, s, attr).len(),
                     p.is_some_and(|p| p.maintainers.is_empty() && p.teams.is_empty()),
                 )
@@ -685,19 +695,27 @@ async fn package_page(
         &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
     );
     out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Health</div>");
-    let version = match upstream(&s, &index, &h, &attr) {
-        Some(u) => format!(
-            "{} <span class=\"Label Label--attention\">upstream {}</span>",
+    let version = match upstream_from(&s, &index, &h, &attr) {
+        Some((u, from)) => format!(
+            "{} <span class=\"Label Label--attention\" title=\"from {}\">upstream {}</span>",
             esc(&p.version),
+            esc(from),
             esc(u)
         ),
         None => format!(
             "{} <span class=\"color-fg-muted f6\">{}</span>",
             esc(&p.version),
-            if h.repology_at.is_some() {
-                "no newer release known to repology"
-            } else {
-                "upstream not checked yet"
+            match h.direct.get(&attr) {
+                Some(d) if d.latest.is_some() => format!(
+                    "no newer release in {}",
+                    if d.from == "tags" {
+                        "its git tags".into()
+                    } else {
+                        esc(&d.from)
+                    }
+                ),
+                _ if h.repology_at.is_some() => "no newer release known to repology".into(),
+                _ => "upstream not checked yet".into(),
             }
         ),
     };
@@ -711,10 +729,7 @@ async fn package_page(
     if viewer.is_some() {
         out.push_str(&kv(
             "Update",
-            &crate::actions::update_form(
-                &attr,
-                upstream(&s, &index, &h, &attr).map(String::as_str),
-            ),
+            &crate::actions::update_form(&attr, upstream(&s, &index, &h, &attr)),
         ));
     }
     out.push_str(&kv("Maintainers", &people_links(&p.maintainers)));
@@ -1043,15 +1058,15 @@ async fn browse(
     page(&app, viewer.as_deref(), "packages", &out)
 }
 
-struct Maintained {
-    packages: Vec<(Subject, Option<String>)>,
-    modules: Vec<(Subject, Option<String>)>,
+pub(crate) struct Maintained {
+    pub(crate) packages: Vec<(Subject, Option<String>)>,
+    pub(crate) modules: Vec<(Subject, Option<String>)>,
 }
 
 /// What a login maintains, directly or through a team (named in the second
 /// field). One row per package name: the other attributes of the same
 /// package are aliases or other package sets.
-fn maintained(index: &Index, login: &str) -> Maintained {
+pub(crate) fn maintained(index: &Index, login: &str) -> Maintained {
     let l = login.to_lowercase();
     let teams: Vec<&String> = index
         .teams
