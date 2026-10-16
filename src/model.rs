@@ -88,3 +88,31 @@ impl Pr {
         self.state == "OPEN"
     }
 }
+
+/// An issue on nixpkgs. The body is not kept: only what it names.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Issue {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub author: String,
+    /// OPEN or CLOSED.
+    pub state: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    #[serde(default)]
+    pub closed_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub comments: u64,
+    /// Package names and nixpkgs paths from the body; see `subject::of_body`.
+    #[serde(default)]
+    pub mentions: Vec<String>,
+}
+
+impl Issue {
+    pub fn is_open(&self) -> bool {
+        self.state == "OPEN"
+    }
+}
