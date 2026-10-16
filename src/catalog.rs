@@ -514,7 +514,7 @@ fn build_row(label: &str, job: &str, b: Option<&Build>) -> String {
         ),
         None => format!(
             "<span class=\"color-fg-muted\">no finished build of <a href=\"{}\">{}</a></span>",
-            Hydra::job_url(job),
+            esc(&Hydra::job_url(job)),
             esc(job)
         ),
     };
@@ -543,7 +543,7 @@ fn advisories_html(list: &[&Advisory]) -> String {
                 .unwrap_or_default();
             format!(
                 "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a> {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
-                a.url(),
+                esc(&a.url()),
                 esc(&a.code),
                 esc(&a.title),
                 esc(&a.cves.join(", "))
