@@ -98,7 +98,10 @@ that looks complete.
   one JSON line per item.
 - `/sync` shows, for each repository: the items and the bytes stored, the
   oldest number reached, the percent of the repository, and the time left
-  at the current pace. `/api/v1/sync` has the same data.
+  at the current pace. The pace is the drop of the numbers left (the
+  highest number less the numbers stored) over the last 6 to 12 hours. A
+  refetch of a stored item does not count. `/api/v1/sync` has the same
+  data.
 
 ## Size of nixpkgs
 
@@ -154,9 +157,16 @@ points. That is about 0.4 points for each item.
 | total                                           | about 250,000 points                           |
 | default budget: 300 items per pass, every 5 min | 3,600 items per hour                           |
 | cost of the default budget                      | about 1,440 points per hour, 29 % of 5,000     |
-| time for the full walk at the default budget    | about 160 hours, 7 days                        |
-| time at 600 items per pass                      | about 80 hours, 3.3 days, 58 % of 5,000 points |
+| due items first: events and listed changes      | up to about 250 items per hour                 |
+| left for the history walk, default budget       | about 3,350 items per hour                     |
+| time for the full walk at the default budget    | about 172 hours, 7.2 days                      |
+| time at 600 items per pass                      | about 83 hours, 3.5 days, 58 % of 5,000 points |
 | after the walk: about 220 events per hour       | less than 100 points per hour                  |
+
+Each pass fetches the due items first. Only the rest of the budget goes to
+the history walk. The due items come from about 220 events per hour, and
+the listing finds mostly the same items. This plan counts up to 250 due
+items per hour.
 
 A GitHub App installation has at least 5,000 points per hour. The event
 rate comes from [docs/events.md](events.md).

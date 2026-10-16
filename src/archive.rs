@@ -557,26 +557,53 @@ impl Archive {
         Ok(conn.query_row(sql, [arg], |r| r.get(0))?)
     }
 
+    fn left(&self) -> Result<Option<i64>> {
+        let walked = self.num("items")?.unwrap_or(0) + self.num("none")?.unwrap_or(0);
+        Ok(self.num("top")?.map(|t| (t - walked).max(0)))
+    }
+
+    fn sample(&self, key: &str) -> Result<Option<(DateTime<Utc>, i64)>> {
+        Ok(self.get(key)?.and_then(|v| {
+            let (t, l) = v.split_once(' ')?;
+            let t = DateTime::parse_from_rfc3339(t).ok()?.with_timezone(&Utc);
+            Some((t, l.parse().ok()?))
+        }))
+    }
+
+    /// The numbers left at a time 6 to 12 hours ago, or since the first
+    /// sample. Refetches do not change the numbers left, so they do not
+    /// count as pace.
+    fn pace_base(&self) -> Result<Option<(DateTime<Utc>, i64)>> {
+        Ok(self.sample("pace_prev")?.or(self.sample("pace_mark")?))
+    }
+
+    pub fn mark_pace(&self, now: DateTime<Utc>) -> Result<()> {
+        let Some(left) = self.left()? else {
+            return Ok(());
+        };
+        if self
+            .sample("pace_mark")?
+            .is_none_or(|(t, _)| now - t >= Duration::hours(6))
+        {
+            if let Some(m) = self.get("pace_mark")? {
+                self.set("pace_prev", &m)?;
+            }
+            self.set("pace_mark", &format!("{} {left}", now.to_rfc3339()))?;
+        }
+        Ok(())
+    }
+
     pub fn progress(&self, now: DateTime<Utc>) -> Result<Value> {
         let items = self.num("items")?.unwrap_or(0);
         let none = self.num("none")?.unwrap_or(0);
         let top = self.num("top")?;
-        let walked = items + none;
-        let window = self
-            .time("first_fetch")?
-            .map(|t| (now - t).min(Duration::hours(6)))
-            .filter(|w| *w > Duration::minutes(10));
-        let per_hour = match window {
-            Some(w) => {
-                let n = self.count(
-                    "SELECT COUNT(*) FROM item WHERE fetched_at > ?1",
-                    &(now - w).to_rfc3339(),
-                )?;
-                Some(n as f64 * 3600.0 / w.num_seconds() as f64)
+        let left = self.left()?;
+        let per_hour = match (left, self.pace_base()?) {
+            (Some(l), Some((t, then))) if now - t > Duration::minutes(10) => {
+                Some((then - l) as f64 * 3600.0 / (now - t).num_seconds() as f64)
             }
-            None => None,
+            _ => None,
         };
-        let left = top.map(|t| (t - walked).max(0));
         let done = self.get("backfill_done")?.is_some();
         Ok(json!({
             "repo": self.repo,
@@ -586,7 +613,9 @@ impl Archive {
             "top": top,
             "oldest": self.num("cursor")?,
             "complete": done,
-            "percent": top.filter(|t| *t > 0).map(|t| (walked as f64 * 100.0 / t as f64).min(100.0)),
+            "percent": top
+                .filter(|t| *t > 0)
+                .map(|t| ((items + none) as f64 * 100.0 / t as f64).min(100.0)),
             "due": self.count("SELECT COUNT(*) FROM due WHERE at <= ?1", &now.to_rfc3339())?,
             "failed": self.count("SELECT COUNT(*) FROM failed WHERE at <= ?1", &now.to_rfc3339())?,
             "per_hour": per_hour,
@@ -842,9 +871,6 @@ impl Pass<'_> {
             items.push((k, item));
         }
         let now = Utc::now();
-        if a.get("first_fetch")?.is_none() {
-            a.set("first_fetch", &now.to_rfc3339())?;
-        }
         for (k, item) in &items {
             a.put(*k, item, now)?;
         }
@@ -1023,6 +1049,7 @@ pub async fn walk(app: Arc<App>) {
                     }
                 }
                 let _ = a.set("pass_ended", &Utc::now().to_rfc3339());
+                let _ = a.mark_pace(Utc::now());
                 let _ = a.set(
                     "pass_seconds",
                     &(Utc::now() - started).num_seconds().to_string(),
@@ -1418,6 +1445,40 @@ mod tests {
         let a = rig.pass(100).await;
         assert!(!a.is_private());
         std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    #[test]
+    fn pace_counts_new_numbers_not_refetches() {
+        let dir = tmp("pace");
+        let a = Archive::open(&dir, "NixOS/nixpkgs", 10).unwrap();
+        let t0 = Utc::now();
+        let pr = |k: u64| json!({ "__typename": "PullRequest", "number": k, "updatedAt": "x" });
+        a.set("top", "100").unwrap();
+        for k in 91..=100 {
+            a.put(k, &pr(k), t0).unwrap();
+        }
+        a.mark_pace(t0).unwrap();
+        assert!(a.progress(t0 + Duration::minutes(5)).unwrap()["per_hour"].is_null());
+
+        let t1 = t0 + Duration::hours(1);
+        for k in 71..=90 {
+            a.put(k, &pr(k), t1).unwrap();
+        }
+        for _ in 0..5 {
+            for k in 91..=100 {
+                a.put(k, &pr(k), t1).unwrap();
+            }
+        }
+        a.mark_pace(t1).unwrap();
+        let p = a.progress(t1).unwrap();
+        assert_eq!(p["per_hour"], 20.0);
+        assert_eq!(p["hours_left"], 3.5);
+
+        let t7 = t0 + Duration::hours(7);
+        a.mark_pace(t7).unwrap();
+        assert_eq!(a.sample("pace_prev").unwrap().unwrap().0, t0);
+        assert_eq!(a.progress(t7).unwrap()["per_hour"], 20.0 / 7.0);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     fn event(id: u64, number: u64) -> Value {
