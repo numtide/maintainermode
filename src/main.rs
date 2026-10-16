@@ -595,6 +595,11 @@ async fn run(cli: Cli) -> Result<i32> {
                 ),
             };
             let store = Store::open(&db)?;
+            // the NVD terms of use ask for a notice while the API is used
+            match &nvd_api_key_file {
+                Some(_) => store.set("nvd_api", "1")?,
+                None => store.delete_key("nvd_api")?,
+            }
             let github_app = match (github_app_id, read_secret(&github_app_key_file)?) {
                 (Some(id), Some(pem)) => Some(github_app::GithubApp::new(
                     id,
