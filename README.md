@@ -299,11 +299,12 @@ comma-separated) or with the NixOS option
 - **The package page** has a "Channels" row: the version in master and in
   each channel. When master has a newer version, the row says which channels
   are behind. `GET /api/v1/packages/<attr>` gives the same under `channels`.
-- **Needs backport.** When a package has an advisory and a stable channel has
-  an older version than master, each advisory shows "needs backport". An
-  advisory whose nixpkgs issue closed in the synced window counts as fixed in
-  master. It stays on the page while a stable channel is behind. The API
-  lists these under `needs_backport`.
+- **Needs backport.** An advisory whose nixpkgs issue closed in the synced
+  window counts as fixed in master. When a stable channel has an older
+  version than master, that advisory shows "needs backport". It stays on the
+  page while a stable channel is behind. An open advisory gets no such hint:
+  master can still be vulnerable. The API lists the fixed advisories under
+  `needs_backport`.
 - **What I maintain** marks each package that a channel has at an older
   version: "behind in …". The API gives `channels_behind`.
 - **`/sync`** has one line per channel, with its revision and when it was

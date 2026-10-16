@@ -808,7 +808,7 @@ fn advisories_html(
             .map(|n| format!(" · <a href=\"https://github.com/NixOS/nixpkgs/issues/{n}\">#{n}</a>"))
             .unwrap_or_default();
         format!(
-            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}{hint}<div class=\"f6 color-fg-muted\">{}</div></div>",
+            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
             esc(&a.url()),
             esc(&a.code),
             severity_html(&w),
@@ -1870,9 +1870,8 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
         let h = app.health.read().unwrap().clone();
         let ch = app.channels.read().unwrap().clone();
         let open = open_advisories(&h, &s, &attr);
-        let codes: Vec<&String> = open
-            .iter()
-            .chain(&closed_advisories(&h, &s, &attr))
+        let codes: Vec<&String> = closed_advisories(&h, &s, &attr)
+            .into_iter()
             .map(|a| &a.code)
             .collect();
         let backport: Vec<Value> = ch
@@ -2273,7 +2272,15 @@ mod tests {
             )
         };
         let ahead = html("2.4.20");
-        assert_eq!(ahead.matches("needs backport to nixos-26.05").count(), 2);
+        assert_eq!(ahead.matches("needs backport to nixos-26.05").count(), 1);
+        let open = ahead.split("OPEN-1").nth(1).unwrap();
+        assert!(
+            !open
+                .split("</div></div>")
+                .next()
+                .unwrap()
+                .contains("backport")
+        );
         assert!(ahead.contains("FIXED-2"));
         let level = html("2.4.19");
         assert!(!level.contains("needs backport"));
