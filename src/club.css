@@ -1,3 +1,44 @@
+/* NixOS brand palette, OKLCH, from NixOS/branding
+   package-sets/top-level/nixos-branding/nixos-color-palette/colors.toml.
+   Primer keeps its neutrals; these replace its hues. Primer's dark theme
+   rule has three attribute selectors, so these need the extra `html` to win;
+   the dark block must stay after the light one. */
+html[data-color-mode][data-light-theme][data-dark-theme] {
+  --fgColor-accent: oklch(0.45 0.09 264);
+  --bgColor-accent-emphasis: oklch(0.55 0.12 264);
+  --bgColor-accent-muted: oklch(0.95 0.02 264);
+  --borderColor-accent-emphasis: oklch(0.55 0.12 264);
+  --borderColor-accent-muted: oklch(0.85 0.07 264);
+  --fgColor-success: oklch(0.45 0.09 152);
+  --bgColor-success-emphasis: oklch(0.55 0.11 152);
+  --borderColor-success-emphasis: oklch(0.55 0.11 152);
+  --fgColor-attention: oklch(0.45 0.09 90);
+  --bgColor-attention-muted: oklch(0.95 0.03 90);
+  --borderColor-attention-emphasis: oklch(0.55 0.11 90);
+  --fgColor-danger: oklch(0.45 0.09 16);
+  --borderColor-danger-emphasis: oklch(0.55 0.11 16);
+  --fgColor-done: oklch(0.45 0.09 288);
+  --underlineNav-borderColor-active: oklch(0.75 0.12 240);
+  --header-bgColor: oklch(0.35 0.07 264);
+  --button-primary-bgColor-rest: oklch(0.55 0.12 264);
+  --button-primary-bgColor-hover: oklch(0.5 0.12 264);
+  --button-primary-bgColor-active: oklch(0.45 0.09 264);
+  --focus-outlineColor: oklch(0.75 0.12 240);
+}
+@media (prefers-color-scheme: dark) {
+  html[data-color-mode][data-light-theme][data-dark-theme] {
+    --fgColor-accent: oklch(0.75 0.12 240);
+    --bgColor-accent-muted: oklch(0.55 0.12 264 / 0.2);
+    --borderColor-accent-muted: oklch(0.75 0.12 240 / 0.4);
+    --fgColor-success: oklch(0.75 0.12 152);
+    --fgColor-attention: oklch(0.75 0.12 90);
+    --bgColor-attention-muted: oklch(0.75 0.12 90 / 0.15);
+    --fgColor-danger: oklch(0.75 0.12 16);
+    --fgColor-done: oklch(0.75 0.12 288);
+    --header-bgColor: oklch(0.25 0.05 264);
+  }
+}
+
 /* @primer/css 22 ships tokens, utilities, Header, btn and Counter, but no
    longer Box, Label, UnderlineNav, Subhead or flash. These rebuild the few we
    use on Primer's own tokens, so both color modes follow. */

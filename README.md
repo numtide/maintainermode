@@ -340,6 +340,14 @@ Version 22 of `@primer/css` no longer ships `Box`, `Label`, `UnderlineNav`,
 `Subhead` or `flash`. `src/club.css` rebuilds those few on Primer's own
 color tokens, so light and dark mode follow the bundle.
 
+The hues are the NixOS brand palette from
+[NixOS/branding](https://github.com/NixOS/branding) (`colors.toml`, OKLCH):
+Afghani Blue for links, buttons and the header, Argentinian Blue for focus and
+the current tab, and the accent colors for pass, pending, fail and done.
+`src/club.css` sets them on Primer's tokens, and Primer keeps its grays. The
+site uses the colors only, not the NixOS logo, and it is not an official
+NixOS project.
+
 Primer is GitHub's design system, used so that people who arrive from a pull
 request page do not learn a second interface. The club is an independent
 community project. It is not a GitHub product and is not endorsed by GitHub,
