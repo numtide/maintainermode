@@ -163,6 +163,22 @@ impl Store {
         Ok(out)
     }
 
+    /// Who merged each pull request in the history walk, and when.
+    pub fn merges(&self) -> Result<Vec<(DateTime<Utc>, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT json_extract(data, '$.merged_at'), json_extract(data, '$.merged_by') FROM history
+             WHERE json_extract(data, '$.merged_by') IS NOT NULL AND json_extract(data, '$.merged_at') IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (at, by) = row?;
+            out.push((DateTime::parse_from_rfc3339(&at)?.with_timezone(&Utc), by));
+        }
+        Ok(out)
+    }
+
     pub fn set_mergeable(&self, number: u64, mergeable: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(

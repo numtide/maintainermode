@@ -37,8 +37,10 @@ pub struct Committers {
 }
 
 impl Committers {
+    /// `history` holds the merges outside the ledger's window: (merged_at, merged_by).
     pub fn build(
         prs: &[Pr],
+        history: &[(DateTime<Utc>, String)],
         team: &[String],
         team_at: Option<DateTime<Utc>>,
         now: DateTime<Utc>,
@@ -46,9 +48,10 @@ impl Committers {
         let since = now - Duration::days(MERGED_DAYS);
         let merged: HashSet<String> = prs
             .iter()
-            .filter(|p| p.merged_at.is_some_and(|t| t >= since))
-            .filter_map(|p| p.merged_by.as_deref())
-            .map(str::to_lowercase)
+            .filter_map(|p| p.merged_at.zip(p.merged_by.as_deref()))
+            .chain(history.iter().map(|(at, by)| (*at, by.as_str())))
+            .filter(|(at, _)| *at >= since)
+            .map(|(_, by)| by.to_lowercase())
             .collect();
         let team: HashSet<String> = team.iter().map(|l| l.to_lowercase()).collect();
         Committers {
@@ -67,7 +70,8 @@ impl Committers {
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         let at = store.get_time("committers_team_read").ok().flatten();
-        Self::build(prs, &team, at, now)
+        let history = store.merges().unwrap_or_default();
+        Self::build(prs, &history, &team, at, now)
     }
 
     pub fn is(&self, login: &str) -> bool {
@@ -546,11 +550,29 @@ mod tests {
         let mut new = pr(2, "alice", 300);
         new.merged_at = Some(t(300));
         new.merged_by = Some("Newb".into());
-        let c = Committers::build(&[old, new], &["Teamy".into()], None, t(400));
+        let c = Committers::build(&[old, new], &[], &["Teamy".into()], None, t(400));
         assert!(c.is("newb"));
         assert!(c.is("TEAMY"));
         assert!(!c.is("olda"));
         assert!(!c.is("alice"));
         assert_eq!((c.from_merges, c.from_team, c.len()), (1, 1, 2));
+    }
+
+    #[test]
+    fn a_merge_in_the_history_walk_gives_merge_rights() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut walked = pr(1, "alice", 200);
+        walked.merged_at = Some(t(200));
+        walked.merged_by = Some("Histo".into());
+        let mut gone = pr(2, "alice", 0);
+        gone.merged_at = Some(t(0));
+        gone.merged_by = Some("Olda".into());
+        let open = pr(3, "alice", 0);
+        let facts: Vec<crate::metrics::Facts> = [&walked, &gone, &open].map(Into::into).into();
+        store.put_facts(&facts).unwrap();
+        let c = Committers::load(&store, &[], t(400));
+        assert!(c.is("histo"));
+        assert!(!c.is("olda"));
+        assert_eq!(c.from_merges, 1);
     }
 }
