@@ -152,8 +152,11 @@ pub fn build(index: &Index, prs: &[Pr], issues: &[Issue]) -> Links {
     for i in issues {
         let mut keys = Vec::new();
         look.names(&subject::of_title(&i.title), &mut keys);
-        let (paths, names): (Vec<String>, Vec<String>) =
-            i.mentions.iter().cloned().partition(|m| m.contains('/'));
+        let (paths, names): (Vec<String>, Vec<String>) = i
+            .mentions
+            .iter()
+            .cloned()
+            .partition(|m| subject::is_path(m));
         look.names(&names, &mut keys);
         look.paths(&paths, &mut keys);
         add(&mut links.issues, keys, i.number);
@@ -191,6 +194,28 @@ mod tests {
             Module::default(),
         );
         i
+    }
+
+    #[test]
+    fn an_issue_links_by_a_module_name_in_its_body() {
+        let i = Issue {
+            number: 9,
+            title: "something is off".into(),
+            url: String::new(),
+            author: "alice".into(),
+            state: "OPEN".into(),
+            created_at: crate::ledger::tests::t(0),
+            updated_at: crate::ledger::tests::t(0),
+            closed_at: None,
+            labels: vec![],
+            comments: 0,
+            mentions: subject::of_body("### Package name\n\nnixos/nginx\n"),
+        };
+        let l = build(&index(), &[], &[i]);
+        assert_eq!(
+            l.issues["module:nixos/modules/services/web-servers/nginx/default.nix"],
+            [9]
+        );
     }
 
     #[test]

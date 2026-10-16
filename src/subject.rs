@@ -25,6 +25,11 @@ const PATH_PREFIXES: [&str; 9] = [
 
 const MAX_MENTIONS: usize = 20;
 
+/// A nixpkgs path, as opposed to a name like `nixos/nginx`.
+pub fn is_path(s: &str) -> bool {
+    PATH_PREFIXES.iter().any(|p| s.starts_with(p))
+}
+
 fn clean(word: &str) -> Option<String> {
     let w = word.trim_matches(|c: char| "`'\"()[]{},;.".contains(c));
     let ok = !w.is_empty()
@@ -97,7 +102,7 @@ pub fn of_body(body: &str) -> Vec<String> {
             break;
         }
         let rest = &body[i..];
-        if !PATH_PREFIXES.iter().any(|p| rest.starts_with(p)) || !starts_path(&body[..i]) {
+        if !is_path(rest) || !starts_path(&body[..i]) {
             continue;
         }
         let end = rest
