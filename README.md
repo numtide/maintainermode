@@ -275,6 +275,38 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   asked again after a day. The wait doubles after each failure in a row,
   up to 32 days.
 
+## Channels
+
+A fix in master does not help users until their channel has it. Maintainer
+Mode reads the channels next to master. The default list is `nixos-unstable`
+and `stable`. `stable` is the newest stable channel on
+[channels.nixos.org](https://channels.nixos.org). When that site does not
+answer, it is `nixos-26.05`. Set the list with `--channel`
+(`MAINTAINER_MODE_CHANNELS`, comma-separated) or with the NixOS option
+`services.maintainer-mode.channels`.
+
+- **What it keeps.** For each channel: its revision, the time it first saw
+  that revision, and the version of each attribute. It keeps nothing else.
+- **How it reads.** A separate task checks the revision of each channel
+  every hour. When a revision changes, the task downloads that nixpkgs,
+  evaluates only the version of each attribute in the swept sets, and deletes
+  the source. It reads the channels one after the other. It never evaluates at
+  the same time as the master sweep, so the peak memory stays near 2 GB. It
+  waits while the master index is missing or older than 22 hours. It runs
+  apart from the pull request sync.
+- **The package page** has a "Channels" row: the version in master and in
+  each channel. When master has a newer version, the row says which channels
+  are behind. `GET /api/v1/packages/<attr>` gives the same under `channels`.
+- **Needs backport.** When a package has an advisory and a stable channel has
+  an older version than master, each advisory shows "needs backport". An
+  advisory whose nixpkgs issue closed in the synced window counts as fixed in
+  master. It stays on the page while a stable channel is behind. The API
+  lists these under `needs_backport`.
+- **What I maintain** marks each package that a channel has at an older
+  version: "behind in …". The API gives `channels_behind`.
+- **`/sync`** has one line per channel, with its revision and when it was
+  first seen.
+
 ## What I maintain
 
 `/u/<login>/maintains` lists the packages and NixOS modules whose
@@ -625,6 +657,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_APP_KEY_FILE`                 | file holding the PEM private key of the GitHub App          |
 | `GITHUB_APP_INSTALLATION_ID`          | installation to use; else the one on the account of the App |
 | `MAINTAINER_MODE_UPLOAD_TOKEN`        | the client's upload token for `submit`                      |
+| `MAINTAINER_MODE_CHANNELS`            | channels next to master, default `nixos-unstable,stable`    |
 | Variable                              | Meaning                                                     |
 | ------------------------------------- | ----------------------------------------------------------- |
 | `MAINTAINER_MODE_LISTEN`              | listen address, default `127.0.0.1:8790`                    |
