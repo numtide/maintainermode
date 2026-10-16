@@ -58,6 +58,9 @@ pub struct Health {
     pub cves: BTreeMap<String, crate::severity::Cve>,
     #[serde(default)]
     pub epss_at: Option<DateTime<Utc>>,
+    /// attribute → the newest release from its git tags or its registry.
+    #[serde(default)]
+    pub direct: BTreeMap<String, crate::upstream::Direct>,
     /// source → what its last pass did.
     #[serde(default)]
     pub runs: BTreeMap<String, Run>,
@@ -111,10 +114,32 @@ impl Health {
 
     /// When `version` of `attr` was first seen upstream.
     pub fn upstream_since(&self, attr: &str, version: &str) -> Option<DateTime<Utc>> {
-        self.upstream_seen
+        let direct = self
+            .direct
+            .get(attr)
+            .filter(|d| d.latest.as_deref() == Some(version))
+            .map(|d| d.seen_at);
+        let repology = self
+            .upstream_seen
             .get(attr)
             .filter(|(v, _)| v == version)
-            .map(|(_, at)| *at)
+            .map(|(_, at)| *at);
+        direct.into_iter().chain(repology).min()
+    }
+
+    /// The newest upstream release when it is newer than `current`, and
+    /// where it comes from. The package's own tags or registry overrule
+    /// repology; repology counts only for a release on the same numbering
+    /// scheme.
+    pub fn newest(&self, attr: &str, current: &str) -> Option<(&str, &str)> {
+        if let Some(d) = self.direct.get(attr) {
+            if let Some(v) = &d.latest {
+                return (crate::version::compare(v, current) == std::cmp::Ordering::Greater)
+                    .then_some((v.as_str(), d.from.as_str()));
+            }
+        }
+        let r = self.upstream.get(attr)?;
+        crate::upstream::newer(r, current).then_some((r.as_str(), "repology"))
     }
 }
 
@@ -136,6 +161,43 @@ fn publish(app: &App, h: &Health) {
         Err(e) => tracing::warn!("health: {e:#}"),
     }
     *app.health.write().unwrap() = Arc::new(h.clone());
+}
+
+/// One attribute per package name, plus every attribute someone maintains
+/// or watches, with a source that can be asked directly.
+fn candidates(app: &App) -> Vec<crate::upstream::Candidate> {
+    use crate::catalog::Subject;
+    let index = app.index.read().unwrap();
+    let mut first: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for m in app.store.members().unwrap_or_default() {
+        for (sub, _) in crate::catalog::maintained(&index, &m.login).packages {
+            if let Subject::Pkg(a) = sub {
+                first.insert(a);
+            }
+        }
+    }
+    for key in app.store.watched_by_anyone().unwrap_or_default() {
+        if let Some(Subject::Pkg(a)) = Subject::parse(&key) {
+            first.insert(a);
+        }
+    }
+    let attrs: std::collections::BTreeSet<&String> =
+        index.by_pname.values().chain(first.iter()).collect();
+    attrs
+        .into_iter()
+        .filter_map(|attr| {
+            let p = index.pkgs.get(attr)?;
+            let url = p.facts.as_ref()?.src_url.as_deref()?;
+            Some(crate::upstream::Candidate {
+                attr: attr.clone(),
+                pname: p.pname.clone(),
+                version: p.version.clone(),
+                origin: crate::upstream::origin(url)?,
+                first: first.contains(attr),
+            })
+        })
+        .filter(|c| !c.version.is_empty())
+        .collect()
 }
 
 fn note(h: &mut Health, source: &str, r: Run) {
@@ -183,6 +245,14 @@ pub async fn run(app: Arc<App>, nvd_key: Option<String>) {
             }
             note(&mut h, "epss", r);
         }
+        publish(&app, &h);
+        let c = candidates(&app);
+        let r = if c.is_empty() {
+            Run::ok("waiting for an index with source URLs".into())
+        } else {
+            crate::upstream::pass(&mut h, c).await
+        };
+        note(&mut h, "upstream", r);
         publish(&app, &h);
         tokio::time::sleep(PASS).await;
     }

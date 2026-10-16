@@ -187,7 +187,7 @@ health first, then the open issues and pull requests, then the ones closed or
 merged in the synced window.
 
 - **Health of a package:** its nixpkgs version and the newest upstream release
-  ([repology](https://repology.org), only when nixpkgs is behind), the last
+  (only when nixpkgs is behind; see [Upstream versions](#upstream-versions)), the last
   Hydra build of `nixpkgs/unstable/<attr>.x86_64-linux`, the open advisories
   of the [security tracker](https://tracker.security.nixos.org), and its
   maintainers and teams. An advisory counts as open while its nixpkgs issue is
@@ -216,6 +216,35 @@ merged in the synced window.
 - **Issues** belong by their title, with the forms of
   `.github/ISSUE_TEMPLATE` (`Build failure: <name>`, `Update Request: <name> …`),
   and by the nixpkgs paths and the "Package name" field in their body.
+
+## Upstream versions
+
+The newest release comes from upstream itself when the source of a package
+tells where to ask. [repology](https://repology.org) fills the rest.
+
+- **Git tags.** When `src` comes from GitHub, a GitLab host, Codeberg,
+  sourcehut or KDE, Maintainer Mode asks the repository for its tags over
+  HTTPS, as `git ls-remote --tags` does (protocol v2, one request, no token).
+- **Registries.** When `src` comes from crates.io, PyPI or npm, the registry
+  says which release is the newest.
+- **Which tags count.** A tag counts when it names a version: `v1.2.3`,
+  `openssl-3.5.0` and `curl-8_21_0` do; `nightly`, `v2.0-rc1` and
+  `debian/1.2` do not. A prerelease (`alpha`, `beta`, `rc`, `dev` and the
+  like) never counts. A tag must use the numbering scheme of the nixpkgs
+  version: the same number of digits in the first part, and dots when
+  nixpkgs writes dots. When some tags name the package, only those count.
+- **Order.** Versions compare as nix compares them, except that a
+  prerelease is older than its release.
+- **Correction.** An answer from the tags or the registry overrules
+  repology: it can show that nixpkgs is current. When the newest tag is
+  older than nixpkgs, the tags were misread, and repology stays. A repology
+  version counts only when it is newer, is no prerelease, and uses the same
+  scheme.
+- **Budget.** Each pass of the health task makes up to 300 requests, with
+  100 ms between them. Packages that someone who signed in maintains, or
+  that anyone watches, come first and are asked again after a day. The
+  others are asked again after 7 days. A source that does not answer is
+  asked again after a day.
 
 ## What I maintain
 
@@ -582,6 +611,7 @@ CI is the flake's `checks`: `nix flake check`.
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
+| nixfresh `upstream.rs`, `version.rs` and direct collector            | 2026-10 | MIT     | `src/upstream.rs` and `src/version.rs`: upstream releases from tags and registries                  |
 | nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
 | nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |
 

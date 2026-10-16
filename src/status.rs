@@ -135,7 +135,12 @@ fn row(k: &str, v: &str) -> String {
 }
 
 /// The health sources that report a pass: key, row label, what they read.
-const SOURCES: [(&str, &str, &str); 3] = [
+const SOURCES: [(&str, &str, &str); 4] = [
+    (
+        "upstream",
+        "Upstream tags and registries",
+        "git tags over HTTPS, crates.io, PyPI and npm; 300 requests a pass, the packages people maintain or watch first; they overrule repology",
+    ),
     (
         "cve",
         "Severity",
