@@ -688,6 +688,12 @@ fn short(e: &anyhow::Error) -> String {
     }
 }
 
+/// A flake whose owner has not visited `/me/sets` for the 90 days of an
+/// upload is not scanned any more.
+pub fn seen_since() -> chrono::DateTime<Utc> {
+    Utc::now() - chrono::Duration::days(crate::sets::RETENTION_DAYS)
+}
+
 /// One scan at a time, in order: never scanned first, then the oldest.
 /// A reference is due once per nixpkgs index; a person over the daily
 /// limit waits for the next day.
@@ -698,7 +704,7 @@ async fn pass(app: &App, cfg: &Config) -> Result<()> {
     let Some(index_at) = app.store.get_time("index_at")? else {
         return Ok(());
     };
-    for r in app.store.flake_refs_due(index_at)? {
+    for r in app.store.flake_refs_due(index_at, seen_since())? {
         let day = Utc::now() - chrono::Duration::days(1);
         if app.store.rescan_runs_total_since(day)? >= cfg.per_day_total {
             break;
@@ -1050,7 +1056,12 @@ mod tests {
         });
         let r = add(State(app.clone()), HeaderMap::new(), form).await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
-        assert!(app.store.flake_refs_due(Utc::now()).unwrap().is_empty());
+        assert!(
+            app.store
+                .flake_refs_due(Utc::now(), seen_since())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1062,7 +1073,7 @@ mod tests {
         assert!(!s.add_flake_ref("alice", "github:o/c", "x", 2).unwrap());
         assert!(s.add_flake_ref("bob", "github:o/c", "x", 2).unwrap());
         let before = Utc::now() - chrono::Duration::hours(1);
-        let due = s.flake_refs_due(before).unwrap();
+        let due = s.flake_refs_due(before, seen_since()).unwrap();
         assert_eq!(due.len(), 3);
         let set = PackageSet {
             attrs: vec!["hello".into()],
@@ -1073,9 +1084,9 @@ mod tests {
         };
         s.finish_flake_ref(due[0].id, Ok(&set)).unwrap();
         s.finish_flake_ref(due[1].id, Err("no flake.lock")).unwrap();
-        assert_eq!(s.flake_refs_due(before).unwrap().len(), 1);
+        assert_eq!(s.flake_refs_due(before, seen_since()).unwrap().len(), 1);
         let later = Utc::now() + chrono::Duration::hours(1);
-        assert_eq!(s.flake_refs_due(later).unwrap().len(), 3);
+        assert_eq!(s.flake_refs_due(later, seen_since()).unwrap().len(), 3);
         assert_eq!(s.flake_ref_counts().unwrap().1, 1);
         assert_eq!(crate::sets::set_attrs(&app, &due[0].login), vec!["hello"]);
         s.log_rescan_run("alice").unwrap();
@@ -1088,6 +1099,32 @@ mod tests {
         assert!(crate::sets::set_attrs(&app, &due[0].login).is_empty());
         s.delete_flake_refs("alice").unwrap();
         assert_eq!(s.flake_ref_counts().unwrap().0, 1);
+    }
+
+    #[test]
+    fn an_owner_who_stays_away_stops_the_scans_and_loses_the_attributes() {
+        let app = crate::sets::tests::app(&["hello"]);
+        let s = &app.store;
+        assert!(s.add_flake_ref("alice", "github:o/a", "x", 2).unwrap());
+        let id = s.flake_refs("alice").unwrap()[0].id;
+        let set = PackageSet {
+            attrs: vec!["hello".into()],
+            dropped: 0,
+            uploaded_at: Utc::now() + chrono::Duration::hours(2),
+            scanned_at: None,
+            nixpkgs_rev: None,
+        };
+        s.finish_flake_ref(id, Ok(&set)).unwrap();
+        let after_visit = Utc::now() + chrono::Duration::hours(1);
+        let index_at = after_visit + chrono::Duration::days(1);
+        assert_eq!(s.flake_refs_due(index_at, seen_since()).unwrap().len(), 1);
+        assert!(s.flake_refs_due(index_at, after_visit).unwrap().is_empty());
+        assert_eq!(s.purge_flake_results(after_visit).unwrap(), 1);
+        assert!(crate::sets::set_attrs(&app, "alice").is_empty());
+        assert_eq!(s.purge_flake_results(after_visit).unwrap(), 0);
+        s.touch_flake_refs("alice").unwrap();
+        let seen = s.flake_refs_due(index_at, Utc::now() - chrono::Duration::minutes(1));
+        assert_eq!(seen.unwrap().len(), 1);
     }
 
     #[test]

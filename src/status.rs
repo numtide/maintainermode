@@ -48,7 +48,11 @@ fn last_event_at(app: &App) -> Option<DateTime<Utc>> {
 fn rescans(app: &App) -> Value {
     let (flakes, failing, last) = app.store.flake_ref_counts().unwrap_or_default();
     let queued = match (&app.rescan, time(app, "index_at")) {
-        (Some(_), Some(at)) => app.store.flake_refs_due(at).map(|d| d.len()).unwrap_or(0),
+        (Some(_), Some(at)) => app
+            .store
+            .flake_refs_due(at, crate::rescan::seen_since())
+            .map(|d| d.len())
+            .unwrap_or(0),
         _ => 0,
     };
     json!({

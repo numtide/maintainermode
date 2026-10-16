@@ -408,8 +408,9 @@ operator turns it on, `/me/sets` has a form for a public flake reference
 (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
 and an output. After each nixpkgs index, the server scans the output again.
 It keeps the result with the rules of an upload: the same redaction, the
-same index filter and the same 90-day rule. The rows of the panel then show
-"in a scanned flake".
+same index filter and the same 90-day rule. The server stops the scans of a
+person who has not opened `/me/sets` for 90 days. The rows of the panel then
+show "in a scanned flake".
 
 - The scan evaluates third-party code. Each nix step runs in a bubblewrap
   sandbox, as a separate process, with a read-only store, its own temporary
