@@ -79,7 +79,8 @@ only), epss, osv and the direct read of tags and registries, and the score.
 Packaging hygiene reads the sweep, not the git log of `practice`.
 
 Steps 5 and 6 are done: `/me/sets`, the upload token, the alerts in the Atom
-feed, and the three client commands. The public flake reference is not done.
+feed, and the three client commands. The public flake reference is done and off by
+default; see `docs/rescan.md`.
 
 ## Open
 
@@ -87,4 +88,5 @@ feed, and the three client commands. The public flake reference is not done.
   sender; an Atom feed per account needs neither.
 - Owner and licence of the published nixfresh code.
 - Retention period: 90 days is a proposal.
-- Scan limits for flake references: how many per account, and how often.
+- Scan limits for flake references: the defaults are 3 flakes and 4 scans a
+  day for each account. Experience with a real instance can change them.
