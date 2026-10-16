@@ -950,6 +950,7 @@ async fn tokens(app: &App) -> Vec<String> {
 pub async fn walk(app: Arc<App>) {
     let mut said = false;
     loop {
+        let round = std::time::Instant::now();
         let mut client = github::Client::new(tokens(&app).await);
         if !client.has_token() {
             if !said {
@@ -978,7 +979,8 @@ pub async fn walk(app: Arc<App>) {
                 );
             }
         }
-        tokio::time::sleep(StdDuration::from_secs(PASS_EVERY)).await;
+        let wait = StdDuration::from_secs(PASS_EVERY).saturating_sub(round.elapsed());
+        tokio::time::sleep(wait.max(StdDuration::from_secs(30))).await;
     }
 }
 
