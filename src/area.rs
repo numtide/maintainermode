@@ -46,6 +46,8 @@ pub struct Package {
     pub teams: Vec<String>,
     #[serde(default)]
     pub facts: Option<attrs::Facts>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<attrs::Meta>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -149,6 +151,7 @@ pub fn from_entries(rev: &str, entries: &[attrs::Entry], owners: &str, nixos: Ni
                 maintainers: e.maintainers.clone(),
                 teams: e.teams.clone(),
                 facts: e.facts.clone(),
+                meta: e.meta.clone(),
             },
         );
         let Some(file) = &e.file else {
@@ -468,6 +471,7 @@ mod tests {
             maintainers: vec![],
             teams: vec!["web".into()],
             facts: None,
+            meta: None,
         };
         let nixos = Nixos {
             modules: [(

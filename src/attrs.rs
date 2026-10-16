@@ -28,13 +28,15 @@ pub struct Entry {
     /// `None` in an index swept before these were read.
     #[serde(default)]
     pub facts: Option<Facts>,
+    #[serde(default)]
+    pub meta: Option<Meta>,
 }
 
 /// Cheap facts for packaging hygiene and for asking upstream directly. Each
 /// is read on its own, so one that fails to evaluate keeps the package.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Facts {
-    /// The first 200 characters.
+    /// The first 500 characters.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -53,6 +55,74 @@ pub struct Facts {
     /// The first URL of `src`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub src_url: Option<String>,
+}
+
+/// The rest of `meta`, for the package page. Lists stay short: `platforms`
+/// is a summary, not the list.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Meta {
+    /// The first 2000 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_description: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub homepage: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download_page: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changelog: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub licenses: Vec<License>,
+    /// `None` when `meta.platforms` is not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platforms: Option<Platforms>,
+    /// The first 10; a pattern that is not a system string is `pattern`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bad_platforms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub main_program: Option<String>,
+    /// `shortName` of each entry of `meta.sourceProvenance`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub source_provenance: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_vulnerabilities: Vec<String>,
+    /// `file:line`, relative to the nixpkgs root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct License {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spdx: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default = "free_by_default")]
+    pub free: bool,
+}
+
+fn free_by_default() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Platforms {
+    pub count: usize,
+    /// x86_64 or aarch64.
+    pub linux: bool,
+    pub darwin: bool,
+}
+
+impl Meta {
+    pub fn unfree(&self) -> bool {
+        self.licenses.iter().any(|l| !l.free)
+    }
+
+    pub fn file_line(&self) -> Option<(&str, u32)> {
+        let (file, line) = self.position.as_deref()?.rsplit_once(':')?;
+        Some((file, line.parse().ok()?))
+    }
 }
 
 /// nixpkgs keyed by package name instead of by attribute path.
@@ -146,7 +216,7 @@ let
       let
         d = meta.description or null;
       in
-      if builtins.isString d && d != "" then builtins.substring 0 200 d else null
+      if builtins.isString d && d != "" then builtins.substring 0 500 d else null
     );
     homepage = safe false (meta ? homepage);
     license = safe false (meta ? license);
@@ -174,6 +244,76 @@ let
       if builtins.isString u && u != "" then u else null
     );
   };
+  text = v: if builtins.isString v && v != "" then v else null;
+  urls =
+    v:
+    if builtins.isString v then
+      [ v ]
+    else if builtins.isList v then
+      builtins.filter builtins.isString v
+    else
+      [ ];
+  license =
+    l:
+    if builtins.isAttrs l then
+      {
+        spdx = l.spdxId or null;
+        name = l.shortName or l.fullName or null;
+        free = (l.free or true) == true;
+      }
+    else if builtins.isString l then
+      {
+        spdx = null;
+        name = l;
+        free = true;
+      }
+    else
+      null;
+  # only what is already in meta: no output path, no drvPath
+  meta' = p: meta: {
+    long_description = safe null (
+      let
+        d = text (meta.longDescription or null);
+      in
+      if d == null then null else builtins.substring 0 2000 d
+    );
+    homepage = safe [ ] (urls (meta.homepage or [ ]));
+    download_page = safe null (text (meta.downloadPage or null));
+    changelog = safe [ ] (urls (meta.changelog or [ ]));
+    licenses = safe [ ] (
+      builtins.filter (l: l != null) (
+        map license (lib.toList (meta.license or [ ]))
+      )
+    );
+    platforms = safe null (
+      let
+        ps = meta.platforms or null;
+      in
+      if builtins.isList ps then
+        {
+          count = builtins.length ps;
+          linux = builtins.elem "x86_64-linux" ps || builtins.elem "aarch64-linux" ps;
+          darwin = builtins.elem "aarch64-darwin" ps || builtins.elem "x86_64-darwin" ps;
+        }
+      else
+        null
+    );
+    bad_platforms = safe [ ] (
+      map (x: if builtins.isString x then x else "pattern") (lib.take 10 (meta.badPlatforms or [ ]))
+    );
+    main_program = safe null (text (meta.mainProgram or null));
+    source_provenance = safe [ ] (map (s: s.shortName or "unknown") (meta.sourceProvenance or [ ]));
+    outputs = safe [ ] (builtins.filter builtins.isString (p.outputs or [ ]));
+    known_vulnerabilities = safe [ ] (
+      builtins.filter builtins.isString (meta.knownVulnerabilities or [ ])
+    );
+    position = safe null (
+      if builtins.isString (meta.position or null) then
+        lib.removePrefix (input.path + "/") meta.position
+      else
+        null
+    );
+  };
   entry =
     name:
     let
@@ -192,6 +332,7 @@ let
             );
             teams = map (t: t.shortName or "") (meta.teams or [ ]);
             facts = facts p meta;
+            meta = meta' p meta;
           };
         in
         if !(lib.isDerivation p) then null else builtins.deepSeq out out
@@ -231,9 +372,31 @@ mod tests {
             maintainers: vec![],
             teams: vec![],
             facts: None,
+            meta: None,
         };
         let entries = [e("utillinux"), e("util-linux"), e("pkgsStatic.util-linux")];
         let i = Index::build(entries.iter());
         assert_eq!(i.resolve("util-linux"), Some("util-linux"));
+    }
+
+    #[test]
+    fn meta_reads_from_the_sweep_and_an_old_entry_still_loads() {
+        let old: Entry = serde_json::from_str(r#"{"attr":"hello","pname":"hello"}"#).unwrap();
+        assert_eq!(old.meta, None);
+        let e: Entry = serde_json::from_str(
+            r#"{"attr":"hello","meta":{"bad_platforms":[],"download_page":null,
+            "licenses":[{"free":true,"name":"gpl3Plus","spdx":"GPL-3.0-or-later"},{"free":false,"name":"unfree","spdx":null}],
+            "platforms":{"count":79,"darwin":true,"linux":true},
+            "position":"pkgs/by-name/he/hello/package.nix:58"}}"#,
+        )
+        .unwrap();
+        let m = e.meta.unwrap();
+        assert!(m.unfree());
+        assert_eq!(
+            m.file_line(),
+            Some(("pkgs/by-name/he/hello/package.nix", 58))
+        );
+        let stored = serde_json::to_string(&m).unwrap();
+        assert!(!stored.contains("download_page") && !stored.contains("bad_platforms"));
     }
 }

@@ -15,6 +15,7 @@ use std::fmt::Write;
 
 use crate::actions::Act;
 use crate::area::{Index, area_key, under};
+use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Build, Health, Hydra};
 use crate::hygiene;
@@ -25,6 +26,8 @@ use crate::severity::{self, Worst};
 use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, page, random_id};
 
 const LIST: usize = 100;
+const META_GUIDE: &str =
+    "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#meta-attributes";
 const FEED_DAYS: i64 = 30;
 /// At most this many set events reach a feed, so the watched packages keep
 /// their place in it.
@@ -839,6 +842,199 @@ fn advisories_html(
         .collect()
 }
 
+/// A link only for http and https: `meta` is nixpkgs code, and a
+/// `javascript:` homepage must not run on this site.
+fn url_html(u: &str) -> String {
+    if u.starts_with("https://") || u.starts_with("http://") {
+        format!("<a href=\"{0}\">{0}</a>", esc(u))
+    } else {
+        esc(u)
+    }
+}
+
+fn urls_html(list: &[String]) -> String {
+    list.iter()
+        .map(|u| url_html(u))
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
+fn license_html(l: &License) -> String {
+    let name = match (&l.spdx, &l.name) {
+        (Some(id), _) => format!(
+            "<a href=\"https://spdx.org/licenses/{0}.html\">{0}</a>",
+            esc(id)
+        ),
+        (None, Some(n)) => esc(n),
+        (None, None) => "unnamed".into(),
+    };
+    if l.free {
+        name
+    } else {
+        format!("{name} <span class=\"Label Label--attention\">unfree</span>")
+    }
+}
+
+fn platforms_html(m: &Meta) -> String {
+    let mut out = match &m.platforms {
+        None => "<span class=\"color-fg-muted\">not set</span>".to_string(),
+        Some(p) => {
+            let mut kinds: Vec<&str> = Vec::new();
+            if p.linux {
+                kinds.push("Linux");
+            }
+            if p.darwin {
+                kinds.push("Darwin");
+            }
+            format!(
+                "{} platform{}{}",
+                p.count,
+                if p.count == 1 { "" } else { "s" },
+                if kinds.is_empty() {
+                    String::new()
+                } else {
+                    format!(": {}", kinds.join(", "))
+                }
+            )
+        }
+    };
+    if !m.bad_platforms.is_empty() {
+        let _ = write!(
+            out,
+            " · not on {}",
+            m.bad_platforms
+                .iter()
+                .map(|p| format!("<code>{}</code>", esc(p)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    out
+}
+
+fn codes(list: &[String]) -> String {
+    list.iter()
+        .map(|c| format!("<code>{}</code>", esc(c)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> String {
+    let mut out: Vec<String> = Vec::new();
+    if f.is_some_and(|f| f.broken) {
+        out.push("<span class=\"Label Label--danger\">broken</span>".into());
+    }
+    if !m.known_vulnerabilities.is_empty() {
+        out.push(format!(
+            "<span class=\"Label Label--danger\">insecure</span><ul class=\"f6 ml-3\">{}</ul>",
+            m.known_vulnerabilities
+                .iter()
+                .map(|v| format!("<li>{}</li>", esc(v)))
+                .collect::<String>()
+        ));
+    }
+    if m.unfree() {
+        out.push("<span class=\"Label Label--attention\">unfree</span>".into());
+    }
+    if out.is_empty() {
+        return "<span class=\"color-fg-success\">not broken, not insecure, free</span>".into();
+    }
+    out.join(" ")
+}
+
+/// The "Package" box: what nixpkgs says about the package, as the sweep read it.
+fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
+    let mut out = format!(
+        "<div class=\"Box mb-4\"><div class=\"Box-header d-flex\"><span class=\"text-bold flex-auto\">Package</span>\
+         <a class=\"f6\" href=\"{META_GUIDE}\">what each field means</a></div>"
+    );
+    let description = p.facts.as_ref().and_then(|f| f.description.as_deref());
+    out.push_str(&kv(
+        "Description",
+        &description
+            .map(esc)
+            .unwrap_or_else(|| "<span class=\"color-fg-muted\">none</span>".into()),
+    ));
+    match &p.meta {
+        None => out.push_str(&kv(
+            "meta",
+            "<span class=\"color-fg-muted f6\">not read yet: the next index sweep reads it</span>",
+        )),
+        Some(m) => {
+            if let Some(d) = &m.long_description {
+                out.push_str(&kv(
+                    "Long description",
+                    &format!(
+                        "<div class=\"f6\" style=\"white-space:pre-wrap\">{}</div>",
+                        esc(d.trim_end())
+                    ),
+                ));
+            }
+            let none = "<span class=\"color-fg-muted\">none</span>";
+            out.push_str(&kv(
+                "Homepage",
+                &if m.homepage.is_empty() {
+                    none.into()
+                } else {
+                    urls_html(&m.homepage)
+                },
+            ));
+            if let Some(d) = &m.download_page {
+                out.push_str(&kv("Download page", &url_html(d)));
+            }
+            if !m.changelog.is_empty() {
+                out.push_str(&kv("Changelog", &urls_html(&m.changelog)));
+            }
+            out.push_str(&kv(
+                "License",
+                &if m.licenses.is_empty() {
+                    none.into()
+                } else {
+                    m.licenses
+                        .iter()
+                        .map(license_html)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                },
+            ));
+            out.push_str(&kv("Platforms", &platforms_html(m)));
+            if let Some(b) = &m.main_program {
+                out.push_str(&kv("Main program", &format!("<code>{}</code>", esc(b))));
+            }
+            out.push_str(&kv(
+                "Source provenance",
+                &if m.source_provenance.is_empty() {
+                    "<span class=\"color-fg-muted\">not set: built from source</span>".into()
+                } else {
+                    codes(&m.source_provenance)
+                },
+            ));
+            if !m.outputs.is_empty() {
+                out.push_str(&kv("Outputs", &codes(&m.outputs)));
+            }
+            out.push_str(&kv("Status", &status_html(p.facts.as_ref(), m)));
+            if let Some((file, line)) = m.file_line() {
+                let r = if rev.is_empty() { "master" } else { rev };
+                out.push_str(&kv(
+                    "Position",
+                    &format!(
+                        "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{}/{}#L{line}\">{}:{line}</a>",
+                        esc(r),
+                        esc(file),
+                        esc(file)
+                    ),
+                ));
+            }
+        }
+    }
+    out.push_str(&kv("Maintainers", &people_links(&p.maintainers)));
+    if !p.teams.is_empty() {
+        out.push_str(&kv("Teams", &teams_html(index, &p.teams)));
+    }
+    out.push_str("</div>");
+    out
+}
+
 fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Response {
     let body = format!(
         "<div class=\"blankslate\"><p>{} is not in the nixpkgs index{}.</p><p><a href=\"/packages\">Search packages, modules and areas</a></p></div>",
@@ -958,11 +1154,8 @@ async fn package_page(
             &crate::actions::update_form(&attr, upstream(&s, &index, &h, &attr)),
         ));
     }
-    out.push_str(&kv("Maintainers", &people_links(&p.maintainers)));
-    if !p.teams.is_empty() {
-        out.push_str(&kv("Teams", &teams_html(&index, &p.teams)));
-    }
     out.push_str("</div>");
+    out.push_str(&package_box(&index, &rev, &p));
     let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
         "Pull requests",
@@ -2103,6 +2296,7 @@ mod tests {
                     maintainers: m.into_iter().map(String::from).collect(),
                     teams: t.into_iter().map(String::from).collect(),
                     facts: None,
+                    meta: None,
                 },
             );
             i.by_pname.insert(pname.into(), attr.into());
@@ -2347,6 +2541,29 @@ mod tests {
         assert!(!level.contains("FIXED-2"));
         assert!(channels_html(&ch, "cups", "2.4.20").contains("master is ahead of nixos-26.05"));
         assert!(lag_label(&ch, "cups", "2.4.19").is_empty());
+    }
+
+    #[test]
+    fn the_package_box_escapes_meta_and_links_only_web_urls() {
+        let p = Package {
+            pname: "hello".into(),
+            meta: Some(Meta {
+                long_description: Some("<b>bold</b>\nline two".into()),
+                homepage: vec!["javascript:alert(1)".into(), "https://example.org".into()],
+                known_vulnerabilities: vec!["CVE-1 <x>".into()],
+                position: Some("pkgs/hello/default.nix:7".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let html = package_box(&Index::default(), "abc", &p);
+        assert!(html.contains("&lt;b&gt;bold&lt;/b&gt;"));
+        assert!(!html.contains("href=\"javascript:"));
+        assert!(html.contains("<a href=\"https://example.org\">"));
+        assert!(html.contains("CVE-1 &lt;x&gt;"));
+        assert!(html.contains("blob/abc/pkgs/hello/default.nix#L7"));
+        let old = package_box(&Index::default(), "abc", &Package::default());
+        assert!(old.contains("not read yet"));
     }
 
     #[test]
