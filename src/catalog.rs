@@ -1317,7 +1317,7 @@ fn events(
             push(p.created_at, "pull request opened");
             if let Some(t) = p.merged_at {
                 push(t, "merged");
-            } else if let Some(t) = p.closed_at {
+            } else if let Some(t) = p.closed_at.filter(|_| !p.is_open()) {
                 push(t, "pull request closed");
             }
         }
@@ -1334,7 +1334,7 @@ fn events(
                 }
             };
             push(i.created_at, "issue opened");
-            if let Some(t) = i.closed_at {
+            if let Some(t) = i.closed_at.filter(|_| !i.is_open()) {
                 push(t, "issue closed");
             }
         }
@@ -1363,8 +1363,14 @@ fn events(
     out
 }
 
+/// XML 1.0 has no escape for most control characters; one in a title would
+/// make the whole feed unreadable.
 fn xml(s: &str) -> String {
-    esc(s).replace('\'', "&apos;")
+    let s: String = s
+        .chars()
+        .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    esc(&s).replace('\'', "&apos;")
 }
 
 async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response {
@@ -1693,6 +1699,40 @@ mod tests {
         assert_eq!(codes(&s), ["A", "B", "D"]);
         s.issues_complete = true;
         assert_eq!(codes(&s), ["A", "B"]);
+    }
+
+    #[test]
+    fn feed_text_is_valid_xml() {
+        assert_eq!(
+            xml("a\u{1}b\u{7f} <'&\">\n"),
+            "ab &lt;&apos;&amp;&quot;&gt;\n"
+        );
+    }
+
+    #[test]
+    fn a_reopened_issue_or_pull_request_is_not_reported_closed() {
+        let mut i = issue(1, "OPEN");
+        i.closed_at = Some(crate::ledger::tests::t(1));
+        i.mentions = vec!["pkgs/foo/default.nix".into()];
+        let mut p = crate::ledger::tests::pr(2, "bob", 0);
+        p.closed_at = Some(crate::ledger::tests::t(1));
+        p.files = vec!["pkgs/foo/default.nix".into()];
+        let mut s = Snapshot {
+            issues: vec![i],
+            pr_data: vec![p],
+            ..Default::default()
+        };
+        s.issue_at = [(1, 0)].into();
+        s.pr_at = [(2, 0)].into();
+        let e = events(
+            &s,
+            &Index::default(),
+            &Health::default(),
+            &[Subject::Area("pkgs/foo".into())],
+            crate::ledger::tests::t(-1),
+        );
+        let ids: Vec<&str> = e.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["pr-2-pull request opened", "issue-1-issue opened"]);
     }
 
     #[test]
