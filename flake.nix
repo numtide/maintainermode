@@ -91,6 +91,8 @@
                       enable = true;
                       githubClientSecretFile = "/run/secrets/client-secret";
                       syncTokenFile = "/run/secrets/sync-token";
+                      githubAppId = 1;
+                      githubAppKeyFile = "/run/secrets/github-app-key";
                     };
                   }
                 ];

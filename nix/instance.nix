@@ -29,6 +29,23 @@ in
     syncTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
+      description = "A fallback for the GitHub App token. Drop it once the App is set up.";
+    };
+
+    githubAppId = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
+      description = "Id of the GitHub App whose installation token syncs the instance.";
+    };
+
+    githubAppKeyFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+    };
+
+    githubAppInstallationId = lib.mkOption {
+      type = lib.types.nullOr lib.types.int;
+      default = null;
     };
 
     probes = lib.mkOption {
@@ -42,7 +59,14 @@ in
   config = lib.mkIf cfg.enable {
     services.maintainer-mode = {
       enable = true;
-      inherit (cfg) domain syncTokenFile githubClientSecretFile;
+      inherit (cfg)
+        domain
+        syncTokenFile
+        githubClientSecretFile
+        githubAppId
+        githubAppKeyFile
+        githubAppInstallationId
+        ;
       githubClientId = if cfg.githubClientSecretFile == null then null else cfg.githubClientId;
     };
   };

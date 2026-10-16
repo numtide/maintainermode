@@ -62,6 +62,7 @@ pub struct App {
     pub store: Store,
     pub oauth: Option<OAuth>,
     pub sync_token: Option<String>,
+    pub github_app: Option<crate::github_app::GithubApp>,
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,

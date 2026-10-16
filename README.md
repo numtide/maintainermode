@@ -346,10 +346,14 @@ Every query command takes `--json`.
   deployment may also give the server a token of its own
   (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
   your session and its token.
-- **A GitHub App, later.** The server token is meant to become the token of a
-  GitHub App installed on an organisation. An installation token expires after
-  one hour, and the service reads `MAINTAINER_MODE_SYNC_TOKEN_FILE` once at
-  start, so the App needs the service to mint or reread its token first.
+- **A GitHub App.** A deployment can sync with the token of a GitHub App
+  installation (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`). The service signs a
+  JWT with the App's private key and exchanges it for an installation token.
+  That token expires after one hour, so the service gets a new one before
+  each pass that starts in its last 30 minutes. The App token is used first.
+  When the App is set up, remove `MAINTAINER_MODE_SYNC_TOKEN_FILE`: the
+  deployment then needs no token of a person. The token file stays as a
+  fallback.
 - **The nixpkgs index is evaluated, with iets.** Once a day, Maintainer Mode
   unpacks the source tarball of nixpkgs `master` and evaluates every derivation
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
@@ -408,6 +412,9 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_CLIENT_ID`                | OAuth app client id                                         |
 | `GITHUB_CLIENT_SECRET_FILE`       | file holding the OAuth app client secret                    |
 | `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
+| `GITHUB_APP_ID`                   | GitHub App whose installation token syncs first             |
+| `GITHUB_APP_KEY_FILE`             | file holding the PEM private key of the GitHub App          |
+| `GITHUB_APP_INSTALLATION_ID`      | installation to use; else the only installation of the App  |
 
 CI is the flake's `checks`: `nix flake check`.
 

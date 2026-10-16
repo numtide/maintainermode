@@ -6,6 +6,11 @@ pkgs.testers.runNixOSTest {
     {
       imports = [ self.nixosModules.default ];
       services.maintainer-mode.enable = true;
+      services.maintainer-mode.githubAppId = 1;
+      # a throwaway key, made for the test only
+      services.maintainer-mode.githubAppKeyFile = pkgs.runCommand "test-github-app-key" {
+        nativeBuildInputs = [ pkgs.openssl ];
+      } "openssl genrsa -traditional -out $out 2048";
       virtualisation.memorySize = 1024;
       environment.systemPackages = [ config.services.maintainer-mode.package ];
     };
@@ -38,5 +43,8 @@ pkgs.testers.runNixOSTest {
     status = machine.execute("maintainer-mode --server http://127.0.0.1:8790 check nobody")[0]
     assert status == 3, f"check exits {status}, not 3"
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'sync token from GitHub App 1' /tmp/log")
+    # the key parsed and the JWT was signed; only the request found no network
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App token: error sending request' /tmp/log")
   '';
 }
