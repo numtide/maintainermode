@@ -705,15 +705,26 @@ async fn module_page(
 }
 
 /// Packages and modules under a path, the ones that need attention first.
+/// One row per package name and file: an alias shares both with its target,
+/// while `python3Packages.protobuf` shares only the name with `protobuf`.
 fn contents(index: &Index, s: &Snapshot, h: &Health, path: &str) -> Vec<(Subject, Flags)> {
-    let mut v: Vec<(Subject, Flags)> = index
-        .pkgs
-        .iter()
-        .filter(|(attr, p)| {
-            p.file.as_deref().is_some_and(|f| under(f, path))
-                && index.by_pname.get(&p.pname) == Some(attr)
-        })
-        .map(|(attr, _)| Subject::Pkg(attr.clone()))
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+    let mut pkgs: Vec<&String> = Vec::new();
+    for canonical in [true, false] {
+        for (attr, p) in &index.pkgs {
+            let Some(f) = p.file.as_deref().filter(|f| under(f, path)) else {
+                continue;
+            };
+            if (index.by_pname.get(&p.pname) == Some(attr)) == canonical
+                && seen.insert((&p.pname, f))
+            {
+                pkgs.push(attr);
+            }
+        }
+    }
+    let mut v: Vec<(Subject, Flags)> = pkgs
+        .into_iter()
+        .map(|attr| Subject::Pkg(attr.clone()))
         .chain(
             index
                 .modules
@@ -1699,6 +1710,48 @@ mod tests {
         assert_eq!(codes(&s), ["A", "B", "D"]);
         s.issues_complete = true;
         assert_eq!(codes(&s), ["A", "B"]);
+    }
+
+    #[test]
+    fn an_area_lists_a_package_that_shares_its_name_with_one_elsewhere() {
+        let mut i = Index::default();
+        for (attr, file) in [
+            (
+                "protobuf",
+                "pkgs/development/libraries/protobuf/default.nix",
+            ),
+            (
+                "protobuf_3",
+                "pkgs/development/libraries/protobuf/default.nix",
+            ),
+            (
+                "python3Packages.protobuf",
+                "pkgs/development/python-modules/protobuf/default.nix",
+            ),
+        ] {
+            i.pkgs.insert(
+                attr.into(),
+                Package {
+                    pname: "protobuf".into(),
+                    file: Some(file.into()),
+                    ..Default::default()
+                },
+            );
+        }
+        i.by_pname.insert("protobuf".into(), "protobuf".into());
+        let s = Snapshot::default();
+        let h = Health::default();
+        let names = |path: &str| -> Vec<String> {
+            contents(&i, &s, &h, path)
+                .iter()
+                .map(|(sub, _)| sub.label())
+                .collect()
+        };
+        assert_eq!(
+            names("pkgs/development/python-modules"),
+            ["python3Packages.protobuf"]
+        );
+        assert_eq!(names("pkgs/development/libraries"), ["protobuf"]);
     }
 
     #[test]
