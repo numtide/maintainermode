@@ -114,6 +114,24 @@ in
       description = "nixpkgs channels indexed next to master. `stable` is the newest stable channel.";
     };
 
+    archive = {
+      repositories = lib.mkOption {
+        type = lib.types.listOf lib.types.str;
+        default = [ "NixOS/nixpkgs" ];
+        example = [
+          "NixOS/nixpkgs"
+          "NixOS/nix"
+        ];
+        description = "Repositories, as `owner/name`, whose issues and pull requests the archive keeps in full. An empty list turns the archive off.";
+      };
+
+      itemsPerPass = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 300;
+        description = "Items the archive walk fetches per repository in each pass. A pass starts every 5 minutes.";
+      };
+    };
+
     eventCopy = {
       enable = lib.mkEnableOption "the daily copy of the nixpkgs event log to an S3-compatible store";
 
@@ -167,6 +185,8 @@ in
         MAINTAINER_MODE_INDEX_SETS = lib.concatStringsSep "," cfg.indexSets;
         MAINTAINER_MODE_CHANNELS = lib.concatStringsSep "," cfg.channels;
         MAINTAINER_MODE_HISTORY_SINCE = cfg.historySince;
+        MAINTAINER_MODE_ARCHIVE_REPOS = lib.concatStringsSep "," cfg.archive.repositories;
+        MAINTAINER_MODE_ARCHIVE_ITEMS = toString cfg.archive.itemsPerPass;
         HOME = state;
       }
       // lib.optionalAttrs (cfg.githubClientId != null) {
