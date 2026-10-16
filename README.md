@@ -2,12 +2,16 @@
 
 **What should a nixpkgs maintainer do next, for what we give back?**
 
-Three queues answer it: **pull requests to review**, **pull requests ready to
-merge**, and **packages I watch**. A fourth page is your **review record**.
-nixfresh answers the same question from
-the other end, for what we consume: what is stale, what has an advisory, who
-maintains it. nixfresh stays a read-only public dataset. Maintainer Mode is the
-only one of the two with accounts.
+I ([zimbatm](https://github.com/zimbatm)) build Maintainer Mode for myself, to
+make my maintenance of nixpkgs more enjoyable. It puts in one place what I would
+otherwise collect by hand from GitHub, Hydra, repology and the security tracker.
+It runs in public, so other maintainers can use it too, but it follows one
+person's way of working. It is not an official NixOS project.
+
+The pages answer the question: **pull requests to review**, **pull requests
+ready to merge**, a page for **each package, NixOS module and area** with its
+health, issues and pull requests, **what I maintain**, and **what I watch**. A
+further page is your **review record**.
 
 Review someone else's nixpkgs pull request, and yours gets on the list.
 
