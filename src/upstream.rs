@@ -44,6 +44,9 @@ pub struct Direct {
     pub from: String,
     #[serde(default)]
     pub failed: bool,
+    /// Failures in a row: each one doubles the wait before the next try.
+    #[serde(default)]
+    pub failures: u32,
     pub checked_at: DateTime<Utc>,
     /// When `latest` was first seen.
     pub seen_at: DateTime<Utc>,
@@ -82,9 +85,24 @@ fn registry(src_url: &str) -> Option<Origin> {
         .then_some(Origin::Registry { ecosystem, name })
 }
 
+/// `%2F` and the like, in the project slug of a GitLab API URL.
+fn unescape(s: &str) -> Option<String> {
+    let mut out = Vec::with_capacity(s.len());
+    let mut bytes = s.bytes();
+    while let Some(b) = bytes.next() {
+        if b == b'%' {
+            let hex = [bytes.next()?, bytes.next()?];
+            out.push(u8::from_str_radix(std::str::from_utf8(&hex).ok()?, 16).ok()?);
+        } else {
+            out.push(b);
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 /// The repository or registry behind a `src` URL. nixpkgs' fetchFromGitHub
 /// gives `https://github.com/owner/repo/archive/refs/tags/v1.2.3.tar.gz`, and
-/// GitLab the same with `/-/archive/`.
+/// fetchFromGitLab `https://gitlab.com/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha=v1.2.3`.
 pub fn origin(src_url: &str) -> Option<Origin> {
     if let Some(r) = registry(src_url) {
         return Some(r);
@@ -101,17 +119,28 @@ pub fn origin(src_url: &str) -> Option<Origin> {
     if !git_host {
         return None;
     }
-    // `/-/archive/` before `/archive/`, or a GitLab repository keeps a `/-`
-    let repo = path
-        .split_once("/-/archive/")
-        .or_else(|| path.split_once("/-/releases/"))
-        .or_else(|| path.split_once("/archive/"))
-        .or_else(|| path.split_once("/releases/"))
-        .or_else(|| path.split_once("/repository/"))
-        .map(|(repo, _)| repo)
-        .unwrap_or(path);
-    let repo = repo.trim_end_matches(".git").trim_end_matches('/');
-    if repo.is_empty() || !repo.contains('/') || repo.contains("..") {
+    let slug = match path
+        .strip_prefix("api/v4/projects/")
+        .and_then(|p| p.split_once('/'))
+    {
+        Some((slug, _)) => unescape(slug)?,
+        // `/-/archive/` before `/archive/`, or a GitLab repository keeps a `/-`
+        None => path
+            .split_once("/-/archive/")
+            .or_else(|| path.split_once("/-/releases/"))
+            .or_else(|| path.split_once("/archive/"))
+            .or_else(|| path.split_once("/releases/"))
+            .or_else(|| path.split_once("/repository/"))
+            .map(|(repo, _)| repo)
+            .unwrap_or(path)
+            .to_string(),
+    };
+    let repo = slug.trim_end_matches(".git").trim_end_matches('/');
+    if repo.is_empty()
+        || !repo.contains('/')
+        || repo.contains("..")
+        || repo.contains(['%', '?', '#'])
+    {
         return None;
     }
     Some(Origin::Git(format!("https://{host}/{repo}")))
@@ -362,12 +391,32 @@ pub struct Candidate {
     pub first: bool,
 }
 
+/// 1, 2, 4 … 32 days.
+fn retry_days(failures: u32) -> i64 {
+    FRESH_FIRST << failures.saturating_sub(1).min(5)
+}
+
+/// When a package first gets `latest`. A first answer is not news, unless
+/// repology saw it first.
+fn seen_at(h: &Health, attr: &str, latest: &Option<String>, now: DateTime<Utc>) -> DateTime<Utc> {
+    match h.direct.get(attr) {
+        Some(d) if d.latest == *latest => d.seen_at,
+        Some(_) => now,
+        _ => latest
+            .as_ref()
+            .and_then(|v| h.upstream_since(attr, v))
+            .unwrap_or(DateTime::UNIX_EPOCH),
+    }
+}
+
 fn due(h: &Health, c: &Candidate) -> Option<(u8, DateTime<Utc>)> {
     let rank = u8::from(!c.first);
     let Some(d) = h.direct.get(&c.attr) else {
         return Some((rank, DateTime::UNIX_EPOCH));
     };
-    let days = if c.first || d.failed {
+    let days = if d.failed {
+        retry_days(d.failures)
+    } else if c.first {
         FRESH_FIRST
     } else {
         FRESH_REST
@@ -460,23 +509,17 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
         if unreachable {
             if let Some(d) = h.direct.get_mut(&c.attr) {
                 d.failed = true;
+                d.failures += 1;
                 d.checked_at = now;
                 continue;
             }
         }
-        let seen_at = match h.direct.get(&c.attr) {
-            Some(d) if d.latest == latest => d.seen_at,
-            Some(_) => now,
-            // the first answer is not news, unless repology saw it first
-            None => latest
-                .as_ref()
-                .and_then(|v| h.upstream_since(&c.attr, v))
-                .unwrap_or(DateTime::UNIX_EPOCH),
-        };
+        let seen_at = seen_at(h, &c.attr, &latest, now);
         h.direct.insert(
             c.attr.clone(),
             Direct {
                 failed: unreachable,
+                failures: u32::from(unreachable),
                 latest,
                 from: from.to_string(),
                 checked_at: now,
@@ -516,6 +559,43 @@ mod tests {
             None
         );
         assert_eq!(origin("https://github.com/only-a-user"), None);
+    }
+
+    #[test]
+    fn a_gitlab_api_url_names_its_project() {
+        assert_eq!(
+            origin(
+                "https://gitlab.freedesktop.org/api/v4/projects/xorg%2Flib%2Flibx11/repository/archive.tar.gz?sha=libX11-1.8.12"
+            ),
+            Some(Origin::Git(
+                "https://gitlab.freedesktop.org/xorg/lib/libx11".into()
+            ))
+        );
+        assert_eq!(
+            origin(
+                "https://gitlab.com/api/v4/projects/inkscape%2Finkscape%2Ecom/repository/archive.tar.gz?sha=v1"
+            ),
+            Some(Origin::Git(
+                "https://gitlab.com/inkscape/inkscape.com".into()
+            ))
+        );
+        assert_eq!(
+            origin("https://gitlab.com/api/v4/projects/12345/repository/archive.tar.gz"),
+            None
+        );
+        assert_eq!(
+            origin("https://gitlab.com/api/v4/projects/a%2/repository/archive.tar.gz"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_failing_origin_waits_longer_each_time() {
+        assert_eq!(retry_days(0), 1);
+        assert_eq!(retry_days(1), 1);
+        assert_eq!(retry_days(2), 2);
+        assert_eq!(retry_days(4), 8);
+        assert_eq!(retry_days(40), 32);
     }
 
     #[test]

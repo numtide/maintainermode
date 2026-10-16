@@ -249,7 +249,8 @@ of the git log.
 The newest release comes from upstream itself when the source of a package
 tells where to ask. [repology](https://repology.org) fills the rest.
 
-- **Git tags.** When `src` comes from GitHub, a GitLab host, Codeberg,
+- **Git tags.** When `src` comes from GitHub, a GitLab host (an archive URL
+  or the API URL that fetchFromGitLab makes), Codeberg,
   sourcehut or KDE, Maintainer Mode asks the repository for its tags over
   HTTPS, as `git ls-remote --tags` does (protocol v2, one request, no token).
 - **Registries.** When `src` comes from crates.io, PyPI or npm, the registry
@@ -271,7 +272,8 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   100 ms between them. Packages that someone who signed in maintains, or
   that anyone watches, come first and are asked again after a day. The
   others are asked again after 7 days. A source that does not answer is
-  asked again after a day.
+  asked again after a day. The wait doubles after each failure in a row,
+  up to 32 days.
 
 ## What I maintain
 
