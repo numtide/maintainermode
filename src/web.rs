@@ -219,11 +219,22 @@ pub(crate) fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Coarser as it grows: nobody needs the day of something five years old.
 pub(crate) fn ago(t: DateTime<Utc>) -> String {
     let d = Utc::now() - t;
-    match d.num_days() {
-        0 => format!("{}h", d.num_hours().max(0)),
-        n => format!("{n}d"),
+    let days = d.num_days();
+    if d.num_minutes() < 60 {
+        format!("{}m", d.num_minutes().max(0))
+    } else if d.num_hours() < 24 {
+        format!("{}h", d.num_hours())
+    } else if days < 14 {
+        format!("{days}d")
+    } else if days < 60 {
+        format!("{}w", days / 7)
+    } else if days < 730 {
+        format!("{}mo", days / 30)
+    } else {
+        format!("{}y", days / 365)
     }
 }
 
@@ -1317,6 +1328,16 @@ impl EventsQuery {
 mod tests {
     use super::*;
     use axum::http::Method;
+
+    #[test]
+    fn ages_lose_precision_as_they_grow() {
+        let back = |d: chrono::Duration| ago(Utc::now() - d);
+        assert_eq!(back(chrono::Duration::minutes(5)), "5m");
+        assert_eq!(back(chrono::Duration::hours(30)), "1d");
+        assert_eq!(back(chrono::Duration::days(20)), "2w");
+        assert_eq!(back(chrono::Duration::days(200)), "6mo");
+        assert_eq!(back(chrono::Duration::days(2090)), "5y");
+    }
 
     #[test]
     fn a_post_from_another_site_is_refused() {
