@@ -52,7 +52,7 @@ pub fn set_attrs(app: &App, login: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)?
         .to_str()
