@@ -77,7 +77,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/maintainers/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/watch -o /tmp/page && grep -q 'Sign in to subscribe' /tmp/page")
     machine.succeed("curl -s -o /tmp/committer -w '%{http_code}' http://127.0.0.1:8790/committer > /tmp/committer.code && grep -q 200 /tmp/committer.code")
-    machine.succeed("grep -q 'for people with merge rights' /tmp/committer && grep -q 'Sign in to see it' /tmp/committer && grep -q 'contributor guide' /tmp/committer")
+    machine.succeed("grep -q 'for people with merge rights' /tmp/committer && grep -q 'Sign in to see it' /tmp/committer && grep -q 'Maintainer Mode never merges' /tmp/committer")
     machine.fail("grep -q 'href=\"/committer\"' /tmp/committer")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/committer -o /tmp/committer.json && grep -q '\"maintainer_approved\":\\[\\]' /tmp/committer.json")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/status.json && grep -q nixpkgs-committers /tmp/status.json")
