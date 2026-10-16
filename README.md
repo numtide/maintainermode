@@ -245,7 +245,8 @@ token, when you press a button. Nothing runs on the Maintainer Mode host.
   given), build the package, and push `update/<attr>` to your nixpkgs fork.
   **The branch is pushed whether the build passes or not**, so a failed update
   is a branch to keep working on. It never opens a pull request: the run and
-  `/actions` link the page where you open one.
+  `/actions` link the page where you open one. A second job pushes the branch.
+  Only that job gets `GH_TOKEN`, and it runs no code from nixpkgs or upstream.
 - `/actions` lists your recent runs of both workflows, and the branch of each
   update.
 
