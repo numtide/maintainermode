@@ -162,6 +162,11 @@ fn archive_row(a: &Value) -> String {
         minutes(crate::archive::PASS_EVERY as i64),
         when(&a["last_pass"])
     ));
+    if let Some(n) = a["failed"].as_i64().filter(|n| *n > 0) {
+        parts.push(format!(
+            "<span class=\"color-fg-attention\">{n} items fail; the walk tries each again a day later</span>"
+        ));
+    }
     if let Some(e) = a["last_error"].as_str() {
         parts.push(format!(
             "<span class=\"color-fg-attention\">last error: {}</span>",

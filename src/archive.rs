@@ -52,7 +52,8 @@ const SCHEMA: &str = "PRAGMA journal_mode = WAL;
      CREATE INDEX IF NOT EXISTS item_fetched_at ON item (fetched_at);
      CREATE TABLE IF NOT EXISTS due (number INTEGER PRIMARY KEY, at TEXT NOT NULL);
      CREATE INDEX IF NOT EXISTS due_at ON due (at);
-     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS failed (number INTEGER PRIMARY KEY, at TEXT NOT NULL, error TEXT NOT NULL);";
 
 /// `kind` of a number that GitHub resolves to no issue or pull request: a
 /// deleted or transferred issue, or a discussion.
@@ -443,6 +444,7 @@ impl Archive {
             "DELETE FROM due WHERE number = ?1 AND at <= ?2",
             params![number as i64, now.to_rfc3339()],
         )?;
+        tx.execute("DELETE FROM failed WHERE number = ?1", [number as i64])?;
         tx.commit()?;
         Ok(())
     }
@@ -495,6 +497,26 @@ impl Archive {
             params![number as i64, at.to_rfc3339()],
         )?;
         Ok(())
+    }
+
+    fn fail(&self, number: u64, error: &str, now: DateTime<Utc>) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO failed (number, at, error) VALUES (?1, ?2, ?3)",
+            params![number as i64, now.to_rfc3339(), error],
+        )?;
+        Ok(())
+    }
+
+    /// Whether every number from 1 to `top` has a row.
+    fn stored_up_to(&self, top: u64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM item WHERE number BETWEEN 1 AND ?1",
+            [top as i64],
+            |r| r.get(0),
+        )?;
+        Ok(n as u64 >= top)
     }
 
     fn due_now(&self, now: DateTime<Utc>, limit: usize) -> Result<Vec<u64>> {
@@ -561,6 +583,7 @@ impl Archive {
             "complete": done,
             "percent": top.filter(|t| *t > 0).map(|t| (walked as f64 * 100.0 / t as f64).min(100.0)),
             "due": self.count("SELECT COUNT(*) FROM due WHERE at <= ?1", &now.to_rfc3339())?,
+            "failed": self.count("SELECT COUNT(*) FROM failed WHERE at <= ?1", &now.to_rfc3339())?,
             "per_hour": per_hour,
             "hours_left": match (left, per_hour) {
                 (Some(_), _) if done => Some(0.0),
@@ -843,11 +866,11 @@ impl Pass<'_> {
                         self.a.repo,
                         chunk[0]
                     );
+                    let error = format!("{e:#}");
                     for k in chunk {
+                        self.a.fail(*k, &error, Utc::now())?;
                         self.a.put_off(*k, Utc::now() + Duration::days(1))?;
                     }
-                    let failed = self.a.num("failed")?.unwrap_or(0) + chunk.len() as i64;
-                    self.a.set("failed", &failed.to_string())?;
                     *done += chunk.len();
                 }
             }
@@ -926,7 +949,7 @@ async fn pass(
             d => back[d - 1],
         };
         a.set("cursor", &reached.to_string())?;
-        if reached <= 1 {
+        if reached <= 1 && a.stored_up_to(top as u64)? {
             a.set("backfill_done", &Utc::now().to_rfc3339())?;
         }
         r?;
@@ -1320,6 +1343,30 @@ mod tests {
         let a = rig.pass(4).await;
         let v: Value = serde_json::from_str(&a.item(40).unwrap().unwrap().json.unwrap()).unwrap();
         assert_eq!(v["updatedAt"], fake.updated(40));
+        std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_failed_item_holds_back_the_end() {
+        let fake = Arc::new(Fake::new(12, 100));
+        fake.broken.lock().unwrap().push(5);
+        let rig = Rig::new("failed", fake.clone()).await;
+        rig.pass(100).await;
+        let a = rig.pass(100).await;
+        assert_eq!(a.num("cursor").unwrap(), Some(1));
+        assert!(a.item(5).unwrap().is_none());
+        assert_eq!(a.num("items").unwrap(), Some(11));
+        assert!(a.get("backfill_done").unwrap().is_none());
+        let p = a.progress(Utc::now()).unwrap();
+        assert_eq!(p["failed"], 1);
+        assert_eq!(p["complete"], false);
+
+        fake.broken.lock().unwrap().clear();
+        a.due(5, Utc::now()).unwrap();
+        let a = rig.pass(100).await;
+        assert!(a.item(5).unwrap().is_some());
+        assert!(a.get("backfill_done").unwrap().is_some());
+        assert_eq!(a.progress(Utc::now()).unwrap()["failed"], 0);
         std::fs::remove_dir_all(&rig.dir).unwrap();
     }
 

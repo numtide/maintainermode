@@ -36,11 +36,12 @@ One SQLite file per repository: `archive/<owner>/<name>.sqlite`, next to the
 main database. The main database stays small, and the `pr` and `issue`
 tables and their sync do not change.
 
-| Table  | Holds                                                                                                           |
-| ------ | --------------------------------------------------------------------------------------------------------------- |
-| `item` | `number`, `kind` (`issue`, `pull`, `none`), `updated_at`, `fetched_at`, `size`, `data` (the JSON, zstd level 3) |
-| `due`  | numbers to fetch, and the earliest time to fetch them                                                           |
-| `meta` | the cursors, the watermarks and the counters                                                                    |
+| Table    | Holds                                                                                                           |
+| -------- | --------------------------------------------------------------------------------------------------------------- |
+| `item`   | `number`, `kind` (`issue`, `pull`, `none`), `updated_at`, `fetched_at`, `size`, `data` (the JSON, zstd level 3) |
+| `due`    | numbers to fetch, and the earliest time to fetch them                                                           |
+| `failed` | numbers whose fetch failed at the smallest size, with the error                                                 |
+| `meta`   | the cursors, the watermarks and the counters                                                                    |
 
 The counters (items, bytes) change with each write, so `/sync` does not
 scan the table.
@@ -76,7 +77,14 @@ All state is in the archive file, so the walk continues after a restart.
 A query asks for 10 items. GitHub answers 502 after 10 seconds, so a
 failed query is asked again with 5 items, then with 1 item and smaller
 first pages. An item that fails at the smallest size is due again one day
-later.
+later. The `failed` table keeps it, with the error, until a fetch
+succeeds. `/sync` shows the count of failed items. The walk is complete
+only when every number up to the highest has a row. A failed item keeps the
+walk from completion.
+
+The walk does not store the partial data of a failed item. GitHub gives a
+null field for each error, and the archive must not hold a copy with holes
+that looks complete.
 
 ## Reading
 
