@@ -77,7 +77,7 @@ in
     githubAppInstallationId = lib.mkOption {
       type = lib.types.nullOr lib.types.int;
       default = null;
-      description = "Installation of the GitHub App to use. Without it, the App must have one installation.";
+      description = "Installation of the GitHub App to use. Without it, the service uses the installation on the account that owns the App.";
     };
 
     historySince = lib.mkOption {

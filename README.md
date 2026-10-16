@@ -351,6 +351,9 @@ Every query command takes `--json`.
   JWT with the App's private key and exchanges it for an installation token.
   That token expires after one hour, so the service gets a new one before
   each pass that starts in its last 30 minutes. The App token is used first.
+  Install the App on the account that owns it. People also install the App on
+  their own repositories, so the service never takes their installations. Set
+  `GITHUB_APP_INSTALLATION_ID` to use a different installation.
   When the App is set up, remove `MAINTAINER_MODE_SYNC_TOKEN_FILE`: the
   deployment then needs no token of a person. The token file stays as a
   fallback.
@@ -418,7 +421,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
 | `GITHUB_APP_ID`                   | GitHub App whose installation token syncs first             |
 | `GITHUB_APP_KEY_FILE`             | file holding the PEM private key of the GitHub App          |
-| `GITHUB_APP_INSTALLATION_ID`      | installation to use; else the only installation of the App  |
+| `GITHUB_APP_INSTALLATION_ID`      | installation to use; else the one on the account of the App |
 
 CI is the flake's `checks`: `nix flake check`.
 
