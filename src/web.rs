@@ -188,6 +188,7 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/events", get(api_events))
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
+        .merge(crate::bumps::routes())
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())

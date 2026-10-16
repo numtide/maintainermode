@@ -1,0 +1,447 @@
+//! Version bumps: open pull requests titled `<name>: <old> -> <new>`, the
+//! form of the nixpkgs commit conventions and of r-ryantm.
+
+use axum::Json;
+use axum::Router;
+use axum::extract::{Query, State};
+use axum::http::HeaderMap;
+use axum::response::Html;
+use axum::routing::get;
+use chrono::{DateTime, Utc};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::HashSet;
+use std::fmt::Write;
+
+use crate::actions::Act;
+use crate::area::{Index, under};
+use crate::catalog::{Subject, head, maintained, pr_row, subscriptions, upstream};
+use crate::health::Health;
+use crate::links::pkg_key;
+use crate::model::Pr;
+use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon, page};
+
+const LIST: usize = 200;
+const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
+
+pub fn routes() -> Router<Shared> {
+    Router::new()
+        .route("/bumps", get(bumps_page))
+        .route("/api/v1/bumps", get(api_bumps))
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Bump<'a> {
+    pub name: &'a str,
+    pub old: &'a str,
+    pub new: &'a str,
+}
+
+/// `hello: 2.12 -> 2.13`, with `→` for the arrow, words after the new
+/// version, and a `[Backport release-26.05]` prefix all allowed.
+pub fn parse(title: &str) -> Option<Bump<'_>> {
+    let mut t = title.trim();
+    if t.starts_with('[') {
+        t = t.split_once("] ")?.1.trim_start();
+    }
+    let (name, rest) = t.split_once(": ")?;
+    if name.is_empty() || name.contains(char::is_whitespace) {
+        return None;
+    }
+    let (old, new) = rest.split_once(" -> ").or_else(|| rest.split_once(" → "))?;
+    let old = old.trim();
+    let new = new
+        .split_whitespace()
+        .next()?
+        .trim_end_matches([',', ';', ':']);
+    if old.is_empty() || old.contains(char::is_whitespace) || new.is_empty() {
+        return None;
+    }
+    Some(Bump { name, old, new })
+}
+
+/// People other than the author who approved, on any head.
+fn approvals(pr: &Pr) -> usize {
+    pr.reviews
+        .iter()
+        .filter(|r| r.state == "APPROVED" && !r.author_is_bot && r.author != pr.author)
+        .map(|r| r.author.as_str())
+        .collect::<HashSet<_>>()
+        .len()
+}
+
+fn leaf(attr: &str) -> &str {
+    attr.rsplit('.').next().unwrap_or(attr)
+}
+
+/// The attribute a bump is for: the name itself, or, for
+/// `python312Packages.foo`, the package of that leaf when the pull request
+/// already links to it.
+fn package_of(s: &Snapshot, index: &Index, pr: &Pr, name: &str) -> Option<String> {
+    if let Some(a) = index.resolve(name) {
+        return Some(a.to_string());
+    }
+    let a = index.resolve(leaf(name))?;
+    s.links
+        .prs
+        .get(&pkg_key(a))
+        .is_some_and(|v| v.contains(&pr.number))
+        .then(|| a.to_string())
+}
+
+pub(crate) struct Row<'a> {
+    pub(crate) pr: &'a Pr,
+    pub(crate) bump: Bump<'a>,
+    pub(crate) attr: Option<String>,
+    pub(crate) upstream: Option<String>,
+    pub(crate) approvals: usize,
+}
+
+/// Every open bump, the oldest first.
+pub(crate) fn open<'a>(s: &'a Snapshot, index: &Index, h: &Health) -> Vec<Row<'a>> {
+    let mut rows: Vec<Row> = s
+        .pr_data
+        .iter()
+        .filter(|p| p.is_open())
+        .filter_map(|pr| {
+            let bump = parse(&pr.title)?;
+            let attr = package_of(s, index, pr, bump.name);
+            let upstream = attr
+                .as_deref()
+                .and_then(|a| upstream(s, index, h, a))
+                .map(String::from);
+            Some(Row {
+                pr,
+                bump,
+                attr,
+                upstream,
+                approvals: approvals(pr),
+            })
+        })
+        .collect();
+    rows.sort_by_key(|r| (r.pr.created_at, r.pr.number));
+    rows
+}
+
+pub(crate) fn median_age_days(rows: &[Row], now: DateTime<Utc>) -> Option<f64> {
+    let mut days: Vec<i64> = rows
+        .iter()
+        .map(|r| (now - r.pr.created_at).num_days())
+        .collect();
+    if days.is_empty() {
+        return None;
+    }
+    days.sort_unstable();
+    let n = days.len();
+    Some(if n % 2 == 1 {
+        days[n / 2] as f64
+    } else {
+        (days[n / 2 - 1] + days[n / 2]) as f64 / 2.0
+    })
+}
+
+/// Only what the viewer maintains or watches: by the file of the package,
+/// so an alias and its target count as one, and by watched areas.
+fn mine<'a>(app: &App, index: &Index, login: &str, rows: Vec<Row<'a>>) -> Vec<Row<'a>> {
+    let mut files: HashSet<String> = HashSet::new();
+    let mut areas: Vec<String> = Vec::new();
+    let file_of = |attr: &str| index.pkgs.get(attr).and_then(|p| p.file.clone());
+    for (sub, _) in maintained(index, login).packages {
+        if let Subject::Pkg(a) = sub {
+            files.extend(file_of(&a));
+        }
+    }
+    for sub in subscriptions(app, login) {
+        match sub {
+            Subject::Pkg(a) => files.extend(file_of(&a)),
+            Subject::Area(p) => areas.push(p),
+            Subject::Module(_) => {}
+        }
+    }
+    rows.into_iter()
+        .filter(|r| {
+            r.attr
+                .as_deref()
+                .and_then(file_of)
+                .is_some_and(|f| files.contains(&f))
+                || r.pr.files.iter().any(|f| areas.iter().any(|a| under(f, a)))
+        })
+        .collect()
+}
+
+fn checks(pr: &Pr) -> &'static str {
+    match pr.ci.as_deref() {
+        Some("SUCCESS") => "<span class=\"color-fg-success\">checks pass</span>",
+        Some("FAILURE" | "ERROR") => "<span class=\"color-fg-danger\">checks fail</span>",
+        _ => "<span class=\"color-fg-muted\">checks pending</span>",
+    }
+}
+
+fn upstream_html(r: &Row) -> String {
+    let Some(u) = &r.upstream else {
+        return String::new();
+    };
+    let (class, hint) = if u == r.bump.new {
+        ("Label--success", "this pull request brings it")
+    } else if crate::version::compare(u, r.bump.new) == std::cmp::Ordering::Greater {
+        ("Label--attention", "newer than this pull request")
+    } else {
+        ("", "the newest release Maintainer Mode knows")
+    };
+    format!(
+        " <span class=\"Label {class}\" title=\"{hint}\">upstream {}</span>",
+        esc(u)
+    )
+}
+
+fn row_html(r: &Row, act: Act) -> String {
+    let p = r.pr;
+    let package = r
+        .attr
+        .as_deref()
+        .map(|a| format!(" · <a href=\"/p/{0}\">{0}</a>", esc(a)))
+        .unwrap_or_default();
+    let base = if p.base == "master" || p.base == "staging" {
+        String::new()
+    } else {
+        format!(" · <span class=\"branch-name\">{}</span>", esc(&p.base))
+    };
+    let approved = match r.approvals {
+        0 => "no approval".to_string(),
+        1 => "1 approval".to_string(),
+        n => format!("{n} approvals"),
+    };
+    format!(
+        "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-open\">{ic}</span>\
+         <div class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{u}\">{t}</a>{draft}{up}\
+         <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}</div></div>{buttons}</div>",
+        ic = icon(octicon!("git-pull-request")),
+        u = esc(&p.url),
+        t = esc(&p.title),
+        draft = if p.is_draft {
+            " <span class=\"Label ml-1\">draft</span>"
+        } else {
+            ""
+        },
+        up = upstream_html(r),
+        n = p.number,
+        a = esc(&p.author),
+        age = ago(p.created_at),
+        checks = checks(p),
+        buttons = act.buttons(p.number),
+    )
+}
+
+#[derive(Deserialize)]
+struct Filter {
+    filter: Option<String>,
+}
+
+async fn bumps_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<Filter>,
+) -> Html<String> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let only_mine = viewer.is_some() && q.filter.as_deref() == Some("mine");
+    let mut out = head(
+        &format!("{} Version bumps", icon(octicon!("versions"))),
+        &format!(
+            "Open pull requests titled <code>name: old -&gt; new</code>, most of them from r-ryantm, the oldest first. \
+             Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>."
+        ),
+        "",
+    );
+    let index = app.index.read().unwrap();
+    let mut rows = open(&s, &index, &h);
+    if let (true, Some(v)) = (only_mine, viewer.as_deref()) {
+        rows = mine(&app, &index, v, rows);
+    }
+    if viewer.is_some() {
+        let mut tabs = String::new();
+        for (id, label, on) in [
+            ("all", "All", !only_mine),
+            ("mine", "What you maintain or watch", only_mine),
+        ] {
+            let _ = write!(
+                tabs,
+                "<a class=\"btn btn-sm{}\" href=\"/bumps?filter={id}\">{label}</a> ",
+                if on { " selected" } else { "" }
+            );
+        }
+        let _ = write!(out, "<div class=\"mb-3\">{tabs}</div>");
+    }
+    let _ = write!(
+        out,
+        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/bumps\">JSON</a></p>",
+        rows.len(),
+        median_age_days(&rows, Utc::now())
+            .map(|d| format!(", median age {d} days"))
+            .unwrap_or_default()
+    );
+    if rows.is_empty() {
+        out.push_str("<div class=\"blankslate\"><p>No open version bump.</p></div>");
+        return page(&app, viewer.as_deref(), "packages", &out);
+    }
+    let act = Act::of(&app, viewer.as_deref());
+    out.push_str("<div class=\"Box\">");
+    for r in rows.iter().take(LIST) {
+        out.push_str(&row_html(r, act));
+    }
+    if rows.len() > LIST {
+        let _ = write!(
+            out,
+            "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
+            rows.len() - LIST
+        );
+    }
+    out.push_str("</div>");
+    page(&app, viewer.as_deref(), "packages", &out)
+}
+
+fn row_json(r: &Row) -> Value {
+    let p = r.pr;
+    json!({
+        "number": p.number, "title": p.title, "url": p.url, "author": p.author,
+        "base": p.base, "draft": p.is_draft, "ci": p.ci, "created_at": p.created_at,
+        "name": r.bump.name, "old": r.bump.old, "new": r.bump.new,
+        "package": r.attr, "upstream": r.upstream, "approvals": r.approvals,
+    })
+}
+
+async fn api_bumps(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<Filter>,
+) -> Json<Value> {
+    let viewer = app.viewer(&headers);
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let mut rows = open(&s, &index, &h);
+    let mine_only = q.filter.as_deref() == Some("mine");
+    if let (true, Some(v)) = (mine_only, viewer.as_deref()) {
+        rows = mine(&app, &index, v, rows);
+    }
+    Json(json!({
+        "filter": if mine_only && viewer.is_some() { "mine" } else { "all" },
+        "median_age_days": median_age_days(&rows, Utc::now()),
+        "bumps": rows.iter().map(row_json).collect::<Vec<_>>(),
+    }))
+}
+
+/// The open bumps of one package, from the pull requests attached to it.
+pub(crate) fn of_package<'a>(attr: &str, pname: &str, prs: &[&'a Pr]) -> Vec<&'a Pr> {
+    prs.iter()
+        .copied()
+        .filter(|p| p.is_open())
+        .filter(|p| {
+            parse(&p.title)
+                .is_some_and(|b| b.name == attr || b.name == pname || leaf(b.name) == leaf(attr))
+        })
+        .collect()
+}
+
+pub(crate) fn package_section(
+    s: &Snapshot,
+    index: &Index,
+    h: &Health,
+    attr: &str,
+    prs: &[&Pr],
+    act: Act,
+) -> String {
+    let pname = index.pkgs.get(attr).map_or("", |p| p.pname.as_str());
+    let list = of_package(attr, pname, prs);
+    let mut out = format!(
+        "<div class=\"Box mb-4\"><div class=\"Box-header d-flex\"><span class=\"text-bold flex-auto\">Version bumps <span class=\"Counter\">{}</span></span>\
+         <a class=\"f6\" href=\"/bumps\">all open bumps</a></div>",
+        list.len()
+    );
+    if list.is_empty() {
+        let hint = match upstream(s, index, h, attr) {
+            Some(u) => format!(
+                " Upstream has {}: <a href=\"{GUIDE}\">how to update a package</a>.",
+                esc(u)
+            ),
+            None => String::new(),
+        };
+        let _ = write!(
+            out,
+            "<div class=\"Box-row color-fg-muted\">None open.{hint}</div>"
+        );
+    }
+    for p in list {
+        out.push_str(&pr_row(p, act));
+    }
+    out.push_str("</div>");
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn titles_of_version_bumps() {
+        let b = |old: &'static str, new: &'static str, name: &'static str| {
+            Some(Bump { name, old, new })
+        };
+        assert_eq!(parse("hello: 2.12 -> 2.13"), b("2.12", "2.13", "hello"));
+        assert_eq!(parse("hello: 2.12 → 2.13"), b("2.12", "2.13", "hello"));
+        assert_eq!(
+            parse("python312Packages.foo: 1.0 -> 1.1, fix tests"),
+            b("1.0", "1.1", "python312Packages.foo")
+        );
+        assert_eq!(
+            parse("[Backport release-26.05] curl: 8.20.0 -> 8.21.0"),
+            b("8.20.0", "8.21.0", "curl")
+        );
+        assert_eq!(parse("hello: fix the build"), None);
+        assert_eq!(parse("hello: from 1 -> 2"), None);
+        assert_eq!(parse("treewide: a -> b"), b("a", "b", "treewide"));
+        assert_eq!(parse("some words: 1 -> 2"), None);
+    }
+
+    #[test]
+    fn a_bump_belongs_to_its_package_and_to_another_python_set() {
+        let mut a = crate::ledger::tests::pr(1, "r-ryantm", 0);
+        a.title = "hello: 1 -> 2".into();
+        let mut b = crate::ledger::tests::pr(2, "alice", 0);
+        b.title = "python312Packages.hello: 1 -> 2".into();
+        let mut c = crate::ledger::tests::pr(3, "bob", 0);
+        c.title = "hello: fix the build".into();
+        let prs = [&a, &b, &c];
+        let numbers: Vec<u64> = of_package("python3Packages.hello", "hello", &prs)
+            .iter()
+            .map(|p| p.number)
+            .collect();
+        assert_eq!(numbers, [1, 2]);
+    }
+
+    #[test]
+    fn the_median_age_of_bumps() {
+        let now = crate::ledger::tests::t(10);
+        let prs: Vec<Pr> = [0, 2, 6]
+            .into_iter()
+            .map(|d| crate::ledger::tests::pr(d as u64, "a", d))
+            .collect();
+        let rows: Vec<Row> = prs
+            .iter()
+            .map(|pr| Row {
+                pr,
+                bump: Bump {
+                    name: "x",
+                    old: "1",
+                    new: "2",
+                },
+                attr: None,
+                upstream: None,
+                approvals: approvals(pr),
+            })
+            .collect();
+        assert_eq!(median_age_days(&rows, now), Some(8.0));
+        assert_eq!(median_age_days(&[], now), None);
+    }
+}

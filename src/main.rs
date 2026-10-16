@@ -2,6 +2,7 @@ mod actions;
 mod archive;
 mod area;
 mod attrs;
+mod bumps;
 mod catalog;
 mod channels;
 mod dossier;
