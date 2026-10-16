@@ -382,7 +382,7 @@ fn by_id(a: &Value, b: &Value) -> std::cmp::Ordering {
 /// One poll of the Events API. Returns the new events and the interval
 /// GitHub asks for. A `304` answer costs no rate limit.
 async fn poll_once(
-    log: &Log,
+    log: &Arc<Log>,
     http: &reqwest::Client,
     token: &str,
     etag: &mut Option<String>,
@@ -420,15 +420,23 @@ async fn poll_once(
             bail!("events page {page}: {status}");
         }
         let batch: Vec<Value> = resp.json().await.context("events page")?;
-        let ids: Vec<&str> = batch.iter().filter_map(|e| e["id"].as_str()).collect();
-        let known = log.knows_any(&ids)?;
+        let ids: Vec<String> = batch
+            .iter()
+            .filter_map(|e| e["id"].as_str().map(String::from))
+            .collect();
+        let l = log.clone();
+        let known = tokio::task::spawn_blocking(move || {
+            l.knows_any(&ids.iter().map(String::as_str).collect::<Vec<_>>())
+        })
+        .await??;
         events.extend(batch);
         if known || !more {
             break;
         }
     }
     events.sort_by(by_id);
-    let n = log.insert(&events)?;
+    let l = log.clone();
+    let n = tokio::task::spawn_blocking(move || l.insert(&events)).await??;
     *etag = new_etag;
     Ok((n, interval))
 }
