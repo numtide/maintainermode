@@ -261,20 +261,32 @@ pub async fn records(h: &mut Health) -> Run {
             Ok(r) => r,
             Err(e) => return Run::failed(format!("CVE records: {e}")),
         };
+        // a CVE that is reserved but not published has no record yet
+        let record = if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            None
+        } else {
+            match resp.error_for_status() {
+                Ok(r) => match r.json::<Value>().await {
+                    Ok(v) => Some(v),
+                    Err(e) => return Run::failed(format!("CVE record {id}: {e}")),
+                },
+                Err(e) => return Run::failed(format!("CVE records: {e}")),
+            }
+        };
         let c = h.cves.entry(id.clone()).or_default();
         c.record_at = Some(Utc::now());
-        // a CVE that is reserved but not published has no record yet
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            missing += 1;
-        } else if let Ok(v) = resp.json::<Value>().await {
-            let (band, cvss, exploitation) = record_score(&v);
-            if c.from.as_deref() != Some("nvd") || band.is_some() {
-                c.band = band;
-                c.cvss = cvss;
-                c.from = band.map(|_| "cve".to_string());
+        match record {
+            None => missing += 1,
+            Some(v) => {
+                let (band, cvss, exploitation) = record_score(&v);
+                if c.from.as_deref() != Some("nvd") || band.is_some() {
+                    c.band = band;
+                    c.cvss = cvss;
+                    c.from = band.map(|_| "cve".to_string());
+                }
+                c.exploitation = exploitation;
+                read += 1;
             }
-            c.exploitation = exploitation;
-            read += 1;
         }
         tokio::time::sleep(RECORD_PAUSE).await;
     }
