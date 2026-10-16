@@ -385,6 +385,10 @@ pub async fn run(app: Arc<App>) {
                 }
             }
             for key in &keys {
+                if master_due(&app) {
+                    tracing::info!("channel {key} waits for the master index");
+                    break;
+                }
                 if let Err(e) = refresh(&app, key).await {
                     tracing::warn!("channel {key}: {e:#}");
                 }
