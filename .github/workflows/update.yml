@@ -37,6 +37,9 @@ jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 300
+    outputs:
+      changed: ${{ steps.keep.outputs.changed }}
+      base_rev: ${{ steps.keep.outputs.base_rev }}
     env:
       ATTR: ${{ inputs.attr }}
       VERSION: ${{ inputs.version }}
@@ -77,9 +80,11 @@ jobs:
         id: keep
         working-directory: nixpkgs
         run: |
-          if ! git diff --quiet; then
-            git commit -am "$ATTR: update, unfinished (nix-update failed)"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "$ATTR: update, unfinished (nix-update failed)"
           fi
+          echo "base_rev=$(git rev-parse "origin/$BASE")" >> "$GITHUB_OUTPUT"
           if [[ "$(git rev-list --count "origin/$BASE..HEAD")" == 0 ]]; then
             echo "changed=0" >> "$GITHUB_OUTPUT"
           else
@@ -95,13 +100,18 @@ jobs:
           nix-build -A "$ATTR" --no-out-link --keep-going 2>&1 | tail -n 200 | tee ../build.log
           exit "${PIPESTATUS[0]}"
 
-      - name: push the branch
+      - name: bundle the branch
         if: steps.keep.outputs.changed == '1'
         working-directory: nixpkgs
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${FORK}.git" "HEAD:refs/heads/update/$ATTR"
+        run: git bundle create ../update.bundle "update/$ATTR" "^origin/$BASE"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: steps.keep.outputs.changed == '1'
+        with:
+          name: update-bundle
+          path: update.bundle
+          if-no-files-found: error
+          retention-days: 1
 
       - name: summary
         if: always()
@@ -134,3 +144,33 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$UPDATED" == success && "$BUILT" == success ]]
+
+  # nix-update and the build run code from nixpkgs and from upstream, so the
+  # token that can push lives in a job of its own, which runs none of it.
+  push:
+    needs: update
+    if: ${{ !cancelled() && needs.update.outputs.changed == '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ATTR: ${{ inputs.attr }}
+      FORK: ${{ inputs.fork }}
+      BASE_REV: ${{ needs.update.outputs.base_rev }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: update-bundle
+
+      - name: push the branch
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          [[ "$ATTR" =~ ^[A-Za-z0-9_.+-]+$ ]] || { echo "bad attr: $ATTR"; exit 1; }
+          [[ "$FORK" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "bad fork: $FORK"; exit 1; }
+          [[ "$BASE_REV" =~ ^[0-9a-f]{40}$ ]] || { echo "bad base revision: $BASE_REV"; exit 1; }
+          git init -q nixpkgs
+          cd nixpkgs
+          git fetch -q --depth 1 https://github.com/NixOS/nixpkgs.git "$BASE_REV"
+          git fetch -q ../update.bundle "refs/heads/update/$ATTR:refs/heads/update"
+          git -c core.hooksPath=/dev/null push --force \
+            "https://x-access-token:${GH_TOKEN}@github.com/${FORK}.git" "refs/heads/update:refs/heads/update/$ATTR"
