@@ -58,6 +58,7 @@ pub struct Snapshot {
     pub open_by_dir: HashMap<String, usize>,
     /// pname → every version nixpkgs carries of it, under any attribute.
     pub versions: HashMap<String, std::collections::HashSet<String>>,
+    pub committers: crate::committer::Committers,
 }
 
 pub struct App {
@@ -116,6 +117,7 @@ impl App {
                 .or_default()
                 .insert(p.version.clone());
         }
+        let committers = crate::committer::Committers::load(&self.store, &prs, Utc::now());
         *self.snapshot.write().unwrap() = Arc::new(Snapshot {
             ledger,
             queues,
@@ -131,6 +133,7 @@ impl App {
             issues_complete: self.store.get("issues_open_done")?.is_some(),
             open_by_dir,
             versions,
+            committers,
         });
         drop(index);
         self.recompute_packages();
@@ -981,6 +984,7 @@ struct Status {
     index_rev: String,
     computed_at: DateTime<Utc>,
     members: usize,
+    committers: serde_json::Value,
     rules: serde_json::Value,
 }
 
@@ -994,6 +998,13 @@ async fn api_status(State(app): State<Shared>) -> Json<Status> {
         index_rev: s.index_rev.clone(),
         computed_at: s.ledger.computed_at,
         members: s.areas.len(),
+        committers: json!({
+            "logins": s.committers.len(),
+            "merged_last_365_days": s.committers.from_merges,
+            "team": crate::committer::TEAM,
+            "team_members": s.committers.from_team,
+            "team_read_at": s.committers.team_at,
+        }),
         rules: json!({
             "move_days": ledger::MOVE_DAYS,
             "half_life_days": ledger::HALF_LIFE_DAYS,
