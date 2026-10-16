@@ -181,6 +181,7 @@ pub fn router(app: Shared) -> Router {
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
         .merge(crate::actions::routes())
+        .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
 
@@ -1244,4 +1245,44 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         table(&["tool", "pull requests"], &tools),
     );
     page(&app, viewer.as_deref(), "state", &body)
+}
+
+/// SameSite=Lax still sends the session cookie on a POST from a sibling
+/// subdomain, which is same-site. Browsers say where a request comes from in
+/// `Sec-Fetch-Site`; a client without it is not a browser.
+fn foreign(method: &axum::http::Method, headers: &HeaderMap) -> bool {
+    method == axum::http::Method::POST
+        && headers
+            .get("sec-fetch-site")
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v != "same-origin" && v != "none")
+}
+
+async fn same_origin(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if foreign(req.method(), req.headers()) {
+        return (StatusCode::FORBIDDEN, "send this from a page of this site").into_response();
+    }
+    next.run(req).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::Method;
+
+    #[test]
+    fn a_post_from_another_site_is_refused() {
+        let h = |v: Option<&str>| {
+            let mut h = HeaderMap::new();
+            if let Some(v) = v {
+                h.insert("sec-fetch-site", v.parse().unwrap());
+            }
+            h
+        };
+        assert!(foreign(&Method::POST, &h(Some("cross-site"))));
+        assert!(foreign(&Method::POST, &h(Some("same-site"))));
+        assert!(!foreign(&Method::POST, &h(Some("same-origin"))));
+        assert!(!foreign(&Method::POST, &h(None)));
+        assert!(!foreign(&Method::GET, &h(Some("cross-site"))));
+    }
 }
