@@ -74,6 +74,10 @@ The alert channel is open. See below.
 5. Add the private panel and alerts.
 6. Move `scan`, `export` and `submit` to the client.
 
+Of step 3, the collectors are done: tracker, repology, cve, nvd (with a key
+only), epss, osv and the direct read of tags and registries, and the score.
+Packaging hygiene reads the sweep, not the git log of `practice`.
+
 Steps 5 and 6 are done: `/me/sets`, the upload token, the alerts in the Atom
 feed, and the three client commands. The public flake reference is not done.
 
