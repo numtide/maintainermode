@@ -64,9 +64,12 @@ repository:
    numbers that are stored already.
 
 The budget is a fixed number of items per repository per pass
-(`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses the same
-tokens as the sync, through `github::Client`. It stops for the pass when
-the token has less than 1000 points left, so the sync keeps its budget.
+(`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses only the
+GitHub App token and the sync token of the server, through
+`github::Client`. It never uses the tokens that people lend when they sign
+in. With neither server token, the walk does not run, and `/sync` says so.
+It stops for the pass when the token has less than 1000 points left, so
+the sync keeps its budget.
 
 All state is in the archive file, so the walk continues after a restart.
 

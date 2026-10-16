@@ -645,8 +645,9 @@ cost.
   first fetches what changed recently, then walks back from the newest
   number to #1. An item that gets an event in the event log is fetched again
   5 minutes later. The walk keeps its cursors in the archive file, so it
-  continues after a restart. It stops for the pass when the token has less
-  than 1000 points left.
+  continues after a restart. It uses only the GitHub App token and the sync
+  token of the server, never the tokens that people lend. It stops for the
+  pass when the token has less than 1000 points left.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
   JSON, or 404. `/sync` shows the progress.
 
