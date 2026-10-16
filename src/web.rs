@@ -328,7 +328,7 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
   {prs} pull requests synced · nixpkgs index {rev} · <a href="/rules#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
-  An independent community project. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.
+  A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.
 </footer>
 </body>
 </html>"#,
