@@ -294,8 +294,8 @@ comma-separated) or with the NixOS option
   evaluates only the version of each attribute in the swept sets, and deletes
   the source. It reads the channels one after the other. It never evaluates at
   the same time as the master sweep, so the peak memory stays near 2 GB. It
-  waits while the master index is missing or older than 22 hours. It runs
-  apart from the pull request sync.
+  waits while the master index is missing or older than 22 hours. It checks
+  this again before each channel. It runs apart from the pull request sync.
 - **The package page** has a "Channels" row: the version in master and in
   each channel. When master has a newer version, the row says which channels
   are behind. `GET /api/v1/packages/<attr>` gives the same under `channels`.
