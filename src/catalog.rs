@@ -274,7 +274,7 @@ impl Flags {
                 let p = index.pkgs.get(attr);
                 (
                     upstream(s, index, h, attr).map(String::from),
-                    open_advisories(h, s, attr).len(),
+                    open_advisories(h, s, attr).len() + h.osv_extra(attr).len(),
                     p.is_some_and(|p| p.maintainers.is_empty() && p.teams.is_empty()),
                 )
             }
@@ -616,31 +616,51 @@ fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
     out.join(" ")
 }
 
-fn advisories_html(h: &Health, list: &[&Advisory]) -> String {
-    if list.is_empty() {
+/// An OSV match: its own band, or the worst of its CVEs when one is known.
+fn osv_worst(h: &Health, v: Option<&crate::osv::Vuln>) -> Worst {
+    let Some(v) = v else {
+        return Worst::default();
+    };
+    let mut w = severity::worst(h, &v.cves);
+    if w.band.is_none() {
+        w.band = v.band;
+    }
+    w
+}
+
+fn advisories_html(
+    h: &Health,
+    list: &[&Advisory],
+    osv: &[(&str, Option<&crate::osv::Vuln>)],
+) -> String {
+    if list.is_empty() && osv.is_empty() {
         return "<span class=\"color-fg-success\">none open</span>".into();
     }
-    rated(h, list)
-        .into_iter()
-        .map(|(a, w)| {
-            let issue = a
-                .issue
-                .map(|n| {
-                    format!(
-                        " · <a href=\"https://github.com/NixOS/nixpkgs/issues/{n}\">#{n}</a>"
-                    )
-                })
-                .unwrap_or_default();
-            format!(
-                "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
-                esc(&a.url()),
-                esc(&a.code),
-                severity_html(&w),
-                esc(&a.title),
-                esc(&a.cves.join(", "))
-            )
-        })
-        .collect()
+    let tracker = rated(h, list).into_iter().map(|(a, w)| {
+        let issue = a
+            .issue
+            .map(|n| format!(" · <a href=\"https://github.com/NixOS/nixpkgs/issues/{n}\">#{n}</a>"))
+            .unwrap_or_default();
+        format!(
+            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
+            esc(&a.url()),
+            esc(&a.code),
+            severity_html(&w),
+            esc(&a.title),
+            esc(&a.cves.join(", "))
+        )
+    });
+    let osv = osv.iter().map(|(id, v)| {
+        format!(
+            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {} <span class=\"f6 color-fg-muted\">(OSV, for this version)</span><div class=\"f6 color-fg-muted\">{}</div></div>",
+            esc(&crate::osv::Vuln::url(id)),
+            esc(id),
+            severity_html(&osv_worst(h, *v)),
+            esc(v.and_then(|v| v.summary.as_deref()).unwrap_or("")),
+            esc(&v.map(|v| v.cves.join(", ")).unwrap_or_default())
+        )
+    });
+    tracker.chain(osv).collect()
 }
 
 fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Response {
@@ -723,7 +743,7 @@ async fn package_page(
     out.push_str(&build_row("Hydra", &job, build.as_ref()));
     out.push_str(&kv(
         "Advisories",
-        &advisories_html(&h, &open_advisories(&h, &s, &attr)),
+        &advisories_html(&h, &open_advisories(&h, &s, &attr), &h.osv_extra(&attr)),
     ));
     out.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
     if viewer.is_some() {
@@ -1639,20 +1659,36 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
     };
     let job = Hydra::package_job(&attr);
     let build = app.hydra.last(&job).await;
-    let advisories: Vec<Value> = {
+    let (advisories, osv): (Vec<Value>, Vec<Value>) = {
         let s = app.snap();
         let h = app.health.read().unwrap().clone();
-        rated(&h, &open_advisories(&h, &s, &attr))
+        let tracker = rated(&h, &open_advisories(&h, &s, &attr))
             .into_iter()
             .map(|(a, w)| {
                 let mut v = json!(a);
                 v["severity"] = json!(w);
                 v
             })
-            .collect()
+            .collect();
+        let osv = h
+            .osv_extra(&attr)
+            .into_iter()
+            .map(|(id, v)| {
+                json!({
+                    "id": id, "url": crate::osv::Vuln::url(id),
+                    "summary": v.and_then(|v| v.summary.clone()),
+                    "cves": v.map(|v| v.cves.clone()).unwrap_or_default(),
+                    "severity": osv_worst(&h, v),
+                })
+            })
+            .collect();
+        (tracker, osv)
     };
     let hygiene = p.as_ref().and_then(|p| hygiene::gaps(&attr, p));
-    let extra = json!({ "attr": attr, "package": p, "hydra": build, "hydra_job": job, "advisories": advisories, "packaging_gaps": hygiene });
+    let extra = json!({
+        "attr": attr, "package": p, "hydra": build, "hydra_job": job,
+        "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
+    });
     Json(subject_json(&app, &Subject::Pkg(attr.clone()), extra)).into_response()
 }
 

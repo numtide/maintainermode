@@ -61,6 +61,13 @@ pub struct Health {
     /// attribute → the newest release from its git tags or its registry.
     #[serde(default)]
     pub direct: BTreeMap<String, crate::upstream::Direct>,
+    /// attribute → the OSV ids that match the version nixpkgs ships.
+    #[serde(default)]
+    pub osv: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    pub osv_vulns: BTreeMap<String, crate::osv::Vuln>,
+    #[serde(default)]
+    pub osv_at: Option<DateTime<Utc>>,
     /// source → what its last pass did.
     #[serde(default)]
     pub runs: BTreeMap<String, Run>,
@@ -125,6 +132,37 @@ impl Health {
             .filter(|(v, _)| v == version)
             .map(|(_, at)| *at);
         direct.into_iter().chain(repology).min()
+    }
+
+    /// OSV matches the tracker does not already name by a CVE.
+    pub fn osv_extra(&self, attr: &str) -> Vec<(&str, Option<&crate::osv::Vuln>)> {
+        let tracked: std::collections::HashSet<&String> = self
+            .advisories
+            .get(attr)
+            .into_iter()
+            .flatten()
+            .flat_map(|a| a.cves.iter())
+            .collect();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for id in self.osv.get(attr).into_iter().flatten() {
+            let v = self.osv_vulns.get(id);
+            if seen.contains(id.as_str())
+                || v.is_some_and(|v| {
+                    v.cves.iter().any(|c| tracked.contains(c))
+                        || v.aliases.iter().any(|a| seen.contains(a.as_str()))
+                })
+            {
+                continue;
+            }
+            seen.insert(id);
+            seen.extend(
+                v.into_iter()
+                    .flat_map(|v| v.aliases.iter().map(String::as_str)),
+            );
+            out.push((id.as_str(), v));
+        }
+        out
     }
 
     /// The newest upstream release when it is newer than `current`, and
@@ -200,6 +238,18 @@ fn candidates(app: &App) -> Vec<crate::upstream::Candidate> {
         .collect()
 }
 
+fn osv_queries(app: &App) -> Vec<crate::osv::Query> {
+    let index = app.index.read().unwrap();
+    index
+        .pkgs
+        .iter()
+        .filter_map(|(attr, p)| {
+            let url = p.facts.as_ref().and_then(|f| f.src_url.as_deref());
+            crate::osv::query(attr, &p.pname, &p.version, url)
+        })
+        .collect()
+}
+
 fn note(h: &mut Health, source: &str, r: Run) {
     if r.ok {
         tracing::info!("{source}: {}", r.line);
@@ -244,6 +294,18 @@ pub async fn run(app: Arc<App>, nvd_key: Option<String>) {
                 h.epss_at = Some(r.at);
             }
             note(&mut h, "epss", r);
+        }
+        publish(&app, &h);
+        if crate::osv::due(h.osv_at) {
+            let q = osv_queries(&app);
+            if !q.is_empty() {
+                let r = crate::osv::matches(&mut h, q).await;
+                note(&mut h, "osv", r);
+            }
+        }
+        if !h.osv.is_empty() {
+            let r = crate::osv::details(&mut h).await;
+            note(&mut h, "osv-records", r);
         }
         publish(&app, &h);
         let c = candidates(&app);
@@ -498,5 +560,38 @@ mod tests {
             Some(574783)
         );
         assert_eq!(issue_number("https://example.org/1"), None);
+    }
+
+    #[test]
+    fn an_osv_match_shows_once_and_not_beside_its_tracker_advisory() {
+        let mut h = Health::default();
+        h.advisories.insert(
+            "requests".into(),
+            vec![Advisory {
+                code: "NIXPKGS-1".into(),
+                cves: vec!["CVE-1".into()],
+                title: String::new(),
+                issue: None,
+            }],
+        );
+        h.osv.insert(
+            "requests".into(),
+            vec!["GHSA-a".into(), "GHSA-b".into(), "PYSEC-b".into()],
+        );
+        let v = |cves: &[&str], aliases: &[&str]| crate::osv::Vuln {
+            cves: cves.iter().map(|s| s.to_string()).collect(),
+            aliases: aliases.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        };
+        h.osv_vulns
+            .insert("GHSA-a".into(), v(&["CVE-1"], &["CVE-1"]));
+        h.osv_vulns.insert("GHSA-b".into(), v(&[], &[]));
+        h.osv_vulns.insert("PYSEC-b".into(), v(&[], &["GHSA-b"]));
+        let ids: Vec<&str> = h
+            .osv_extra("requests")
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec!["GHSA-b"]);
     }
 }

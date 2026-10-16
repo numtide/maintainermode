@@ -13,6 +13,7 @@ mod ledger;
 mod links;
 mod metrics;
 mod model;
+mod osv;
 mod queue;
 mod report;
 mod scan;

@@ -137,11 +137,13 @@ fn http() -> reqwest::Client {
         .expect("http client")
 }
 
+/// The CVEs of the tracker advisories and of the OSV matches.
 fn tracked(h: &Health) -> BTreeSet<String> {
     h.advisories
         .values()
         .flatten()
         .flat_map(|a| a.cves.iter())
+        .chain(h.osv_vulns.values().flat_map(|v| v.cves.iter()))
         .filter(|c| c.starts_with("CVE-"))
         .cloned()
         .collect()
