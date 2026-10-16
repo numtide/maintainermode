@@ -59,6 +59,7 @@ pub struct Snapshot {
     /// pname → every version nixpkgs carries of it, under any attribute.
     pub versions: HashMap<String, std::collections::HashSet<String>>,
     pub committers: crate::committer::Committers,
+    pub board: crate::committer::Board,
 }
 
 pub struct App {
@@ -118,6 +119,7 @@ impl App {
                 .insert(p.version.clone());
         }
         let committers = crate::committer::Committers::load(&self.store, &prs, Utc::now());
+        let board = crate::committer::board(&prs, &ledger, &index, &links);
         *self.snapshot.write().unwrap() = Arc::new(Snapshot {
             ledger,
             queues,
@@ -134,6 +136,7 @@ impl App {
             open_by_dir,
             versions,
             committers,
+            board,
         });
         drop(index);
         self.recompute_packages();
@@ -208,6 +211,7 @@ pub fn router(app: Shared) -> Router {
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
         .merge(crate::bumps::routes())
+        .merge(crate::committer::routes())
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
@@ -285,7 +289,7 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
         .and_then(|v| app.store.watched(v).ok())
         .map(|w| w.len().to_string())
         .unwrap_or_default();
-    let tabs = [
+    let mut tabs = vec![
         (
             "merge",
             "/",
@@ -336,6 +340,18 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
             String::new(),
         ),
     ];
+    if viewer.is_some_and(|v| s.committers.is(v)) {
+        tabs.insert(
+            1,
+            (
+                "committer",
+                "/committer",
+                icon(octicon!("key")),
+                "Committer",
+                String::new(),
+            ),
+        );
+    }
     let mut nav = String::new();
     for (id, href, ic, label, n) in tabs {
         let current = if id == tab {
@@ -417,7 +433,7 @@ pub(crate) fn nixpkgs_guides() -> String {
     guide_box()
 }
 
-fn ci_label(e: &Entry) -> String {
+pub(crate) fn ci_label(e: &Entry) -> String {
     match e.ci.as_deref() {
         Some("SUCCESS") => format!(
             "<span class=\"color-fg-success\" title=\"checks pass\">{}</span>",

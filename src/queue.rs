@@ -34,7 +34,7 @@ pub struct Queues {
     pub review: Vec<Entry>,
 }
 
-fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -> Entry {
+pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -> Entry {
     let mut reviewers: Vec<String> = Vec::new();
     let mut approved_by: Vec<String> = Vec::new();
     let mut credited_by: Vec<String> = Vec::new();
@@ -86,13 +86,17 @@ impl Entry {
     }
 }
 
-pub fn build(prs: &[Pr], ledger: &Ledger, members: &[Area]) -> Queues {
-    let credited: HashSet<(u64, &str)> = ledger
+pub(crate) fn credited(ledger: &Ledger) -> HashSet<(u64, &str)> {
+    ledger
         .credits
         .iter()
         .filter(|c| c.dropped.is_none())
         .map(|c| (c.pr, c.reviewer.as_str()))
-        .collect();
+        .collect()
+}
+
+pub fn build(prs: &[Pr], ledger: &Ledger, members: &[Area]) -> Queues {
+    let credited = credited(ledger);
     let mut q = Queues::default();
     for pr in prs
         .iter()
