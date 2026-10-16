@@ -61,6 +61,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s http://127.0.0.1:8790/p/hello -o /tmp/page && grep -q 'first index is still being built' /tmp/page")
     machine.fail("curl -sf http://127.0.0.1:8790/p/hello")
     machine.succeed("curl -sf http://127.0.0.1:8790/a/pkgs/by-name -o /tmp/area && grep -q 'pkgs/by-name/' /tmp/area")
+    machine.succeed("curl -sf http://127.0.0.1:8790/bumps -o /tmp/bumps && grep -q 'No open version bump' /tmp/bumps && grep -q 'package-updates' /tmp/bumps")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/api/v1/bumps?filter=mine' -o /tmp/bumps.json && grep -q '\"filter\":\"all\"' /tmp/bumps.json")
     machine.succeed("curl -sf http://127.0.0.1:8790/u/nobody/maintains -o /tmp/page && grep -q 'What nobody maintains' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/maintainers/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/watch -o /tmp/page && grep -q 'Sign in to subscribe' /tmp/page")

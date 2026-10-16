@@ -37,6 +37,7 @@ let
     "skip"
     "play"
     "key"
+    "versions"
   ];
 in
 runCommand "primer-assets" { } ''

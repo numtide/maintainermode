@@ -173,7 +173,7 @@ impl Subject {
 }
 
 /// Pull requests and issues of a subject, newest first.
-fn attached<'a>(
+pub(crate) fn attached<'a>(
     s: &'a Snapshot,
     index: &Index,
     subject: &Subject,
@@ -260,7 +260,12 @@ fn upstream_from<'a>(
     (!s.versions.get(&p.pname).is_some_and(|v| v.contains(newest))).then_some((newest, from))
 }
 
-fn upstream<'a>(s: &Snapshot, index: &Index, h: &'a Health, attr: &str) -> Option<&'a str> {
+pub(crate) fn upstream<'a>(
+    s: &Snapshot,
+    index: &Index,
+    h: &'a Health,
+    attr: &str,
+) -> Option<&'a str> {
     upstream_from(s, index, h, attr).map(|(v, _)| v)
 }
 
@@ -412,7 +417,7 @@ impl Flags {
     }
 }
 
-fn pr_row(p: &Pr, act: Act) -> String {
+pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
     let (ic, class) = match p.state.as_str() {
         "MERGED" => (icon(octicon!("git-merge")), "color-fg-done"),
         "CLOSED" => (icon(octicon!("git-pull-request-closed")), "color-fg-danger"),
@@ -1157,6 +1162,9 @@ async fn package_page(
     out.push_str("</div>");
     out.push_str(&package_box(&index, &rev, &p));
     let act = Act::of(&app, viewer.as_deref());
+    out.push_str(&crate::bumps::package_section(
+        &s, &index, &h, &attr, &prs, act,
+    ));
     out.push_str(&section(
         "Pull requests",
         &prs,
@@ -1392,12 +1400,16 @@ async fn browse(
         esc(&q),
         icon(octicon!("search"))
     );
-    if let Some(v) = &viewer {
-        let _ = write!(
-            out,
-            "<p><a href=\"/u/{0}/maintains\">What you maintain</a> · <a href=\"/watch\">What you watch</a></p>",
-            esc(v)
-        );
+    match &viewer {
+        Some(v) => {
+            let _ = write!(
+                out,
+                "<p><a href=\"/u/{0}/maintains\">What you maintain</a> · <a href=\"/watch\">What you watch</a> · \
+                 <a href=\"/bumps?filter=mine\">Version bumps</a></p>",
+                esc(v)
+            );
+        }
+        None => out.push_str("<p><a href=\"/bumps\">Version bumps</a></p>"),
     }
     if q.is_empty() {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();
@@ -1740,7 +1752,7 @@ async fn new_feed(State(app): State<Shared>, headers: HeaderMap) -> Response {
     Redirect::to("/watch#feed").into_response()
 }
 
-fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> {
+pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> {
     app.store
         .watched(login)
         .unwrap_or_default()
@@ -2115,10 +2127,20 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
         (tracker, osv, channels, backport)
     };
     let hygiene = p.as_ref().and_then(|p| hygiene::gaps(&attr, p));
+    let bumps: Vec<u64> = {
+        let s = app.snap();
+        let index = app.index.read().unwrap();
+        let (prs, _) = attached(&s, &index, &Subject::Pkg(attr.clone()));
+        let pname = p.as_ref().map_or("", |p| p.pname.as_str());
+        crate::bumps::of_package(&attr, pname, &prs)
+            .iter()
+            .map(|p| p.number)
+            .collect()
+    };
     let extra = json!({
         "attr": attr, "package": p, "hydra": build, "hydra_job": job,
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
-        "channels": channels, "needs_backport": backport,
+        "channels": channels, "needs_backport": backport, "version_bumps": bumps,
     });
     Some(subject_json(app, &Subject::Pkg(attr.clone()), extra))
 }
