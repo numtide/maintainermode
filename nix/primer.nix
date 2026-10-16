@@ -39,6 +39,7 @@ let
     "key"
     "versions"
     "flame"
+    "circle"
   ];
 in
 runCommand "primer-assets" { } ''
