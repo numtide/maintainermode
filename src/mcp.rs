@@ -223,10 +223,10 @@ fn tools() -> Vec<Value> {
         tool(
             "queue_review",
             "Needs review",
-            "Listed pull requests that need review, oldest first. bucket: mine (the area of login, default the caller), unowned, or all.",
+            "Listed pull requests that need review, oldest first. bucket: foryou (the area of login, and the caller's subscriptions when login is the caller; the default), unowned, or all. mine is an alias of foryou.",
             json!({
-                "bucket": { "type": "string", "enum": ["mine", "unowned", "all"] },
-                "login": s("whose area for bucket=mine; default the caller"),
+                "bucket": { "type": "string", "enum": ["foryou", "mine", "unowned", "all"] },
+                "login": s("whose area for bucket=foryou; default the caller"),
                 "limit": limit_prop(),
             }),
             &[],
@@ -300,13 +300,18 @@ async fn call(
             )
         }
         "queue_review" => {
-            let bucket = args["bucket"].as_str().unwrap_or("mine");
-            if !["mine", "unowned", "all"].contains(&bucket) {
-                return Err((-32602, format!("no bucket {bucket}")));
-            }
+            let asked = args["bucket"].as_str().unwrap_or("foryou");
+            let Some(bucket) = crate::web::bucket_name(asked) else {
+                return Err((-32602, format!("no bucket {asked}")));
+            };
             let who = args["login"].as_str().unwrap_or(login);
+            let watched = if who == login {
+                crate::web::watched_of(app, Some(login))
+            } else {
+                Vec::new()
+            };
             let s = app.snap();
-            let q = crate::web::review_bucket(&s, Some(who), bucket);
+            let q = crate::web::review_bucket(&s, Some(who), &watched, bucket);
             Ok(json!({
                 "bucket": bucket, "login": who, "total": q.len(),
                 "entries": q.iter().take(limit(args)).collect::<Vec<_>>(),

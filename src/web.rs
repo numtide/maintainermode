@@ -512,22 +512,60 @@ struct ReviewQuery {
     bucket: Option<String>,
 }
 
+pub(crate) const BUCKETS: [&str; 3] = ["foryou", "unowned", "all"];
+
+/// `mine` is the old name of `foryou`.
+pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
+    match b {
+        "foryou" | "mine" => Some("foryou"),
+        "unowned" => Some("unowned"),
+        "all" => Some("all"),
+        _ => None,
+    }
+}
+
+/// `watched` are subscription keys. They are private: pass them only for
+/// the person who asks for their own queue.
 pub(crate) fn review_bucket<'a>(
     s: &'a Snapshot,
     viewer: Option<&str>,
+    watched: &[String],
     bucket: &str,
 ) -> Vec<&'a Entry> {
     let mine = viewer.and_then(|v| s.areas.get(v));
+    let mut prs: std::collections::HashSet<u64> = std::collections::HashSet::new();
+    let mut paths: Vec<&str> = Vec::new();
+    for key in watched {
+        match crate::catalog::Subject::parse(key) {
+            Some(crate::catalog::Subject::Area(_)) => {
+                paths.extend(key.strip_prefix("area:"));
+            }
+            Some(_) => prs.extend(s.links.prs.get(key).into_iter().flatten()),
+            None => {}
+        }
+    }
+    let watches = |e: &Entry| {
+        prs.contains(&e.number)
+            || e.files
+                .iter()
+                .any(|f| paths.iter().any(|p| area::under(f, p)))
+    };
     s.queues
         .review
         .iter()
         .filter(|e| Some(e.author.as_str()) != viewer)
-        .filter(|e| match bucket {
-            "mine" => mine.is_some_and(|a| a.covers(&e.files)),
-            "unowned" => e.unowned,
+        .filter(|e| match bucket_name(bucket) {
+            Some("foryou") => mine.is_some_and(|a| a.covers(&e.files)) || watches(e),
+            Some("unowned") => e.unowned,
             _ => true,
         })
         .collect()
+}
+
+pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
+    login
+        .and_then(|l| app.store.watched(l).ok())
+        .unwrap_or_default()
 }
 
 const HYGIENE: &str = "<div class=\"flash mb-3\"><strong>The newcomer path.</strong> Nobody in the club knows these areas, so they rot. \
@@ -542,28 +580,39 @@ async fn review_page(
 ) -> Html<String> {
     let viewer = app.viewer(&headers);
     let s = app.snap();
-    let bucket = q
-        .bucket
-        .as_deref()
-        .unwrap_or(if viewer.is_some() { "mine" } else { "unowned" });
-    let entries = review_bucket(&s, viewer.as_deref(), bucket);
+    let bucket = match q.bucket.as_deref().and_then(bucket_name) {
+        Some("foryou") if viewer.is_none() => "unowned",
+        Some(b) => b,
+        None if viewer.is_some() => "foryou",
+        None => "unowned",
+    };
+    let watched = watched_of(&app, viewer.as_deref());
+    let mut entries = Vec::new();
     let mut tabs = String::new();
-    for (id, label) in [
-        ("mine", "Your area"),
-        ("unowned", "Unowned"),
-        ("all", "All"),
-    ] {
-        if id == "mine" && viewer.is_none() {
+    for id in BUCKETS {
+        if id == "foryou" && viewer.is_none() {
             continue;
         }
+        let these = review_bucket(&s, viewer.as_deref(), &watched, id);
+        let label = match id {
+            "foryou" => "For you",
+            "unowned" => "Unowned",
+            _ => "All",
+        };
         let sel = if id == bucket { " selected" } else { "" };
         let _ = write!(
             tabs,
-            "<a class=\"SegmentedControl-item btn btn-sm{sel}\" href=\"/review?bucket={id}\">{label}</a> "
+            "<a class=\"SegmentedControl-item btn btn-sm{sel}\" href=\"/review?bucket={id}\">{label} <span class=\"Counter\">{}</span></a> ",
+            these.len()
         );
+        if id == bucket {
+            entries = these;
+        }
     }
     let intro = match bucket {
-        "mine" => "Pull requests that touch what you maintain, own, have changed this year, or tagged. Oldest first.".to_string(),
+        "foryou" => "Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
+            own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/watch\">watch</a>. Oldest first."
+            .to_string(),
         "unowned" => HYGIENE.to_string(),
         _ => "Every listed pull request that is not ready to merge. Oldest first.".to_string(),
     };
@@ -892,7 +941,7 @@ async fn callback(
         header::SET_COOKIE,
         set_cookie(&app, "oauth_state", "", 0).parse().unwrap(),
     );
-    (h, Redirect::to("/review?bucket=mine")).into_response()
+    (h, Redirect::to("/review?bucket=foryou")).into_response()
 }
 
 async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -952,13 +1001,25 @@ struct ApiReview {
     login: Option<String>,
 }
 
-/// `bucket=mine` takes `login`, so an agent can ask for anyone's routed queue;
-/// areas are derived from public data and are not secret.
-async fn api_review(State(app): State<Shared>, Query(q): Query<ApiReview>) -> Json<Vec<Entry>> {
+/// `bucket=foryou` takes `login`, so an agent can ask for anyone's routed
+/// queue; areas are derived from public data and are not secret.
+/// Subscriptions are, so they count only when the session is that login.
+async fn api_review(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<ApiReview>,
+) -> Json<Vec<Entry>> {
     let s = app.snap();
+    let viewer = app.viewer(&headers);
+    let login = q.login.or_else(|| viewer.clone());
+    let watched = if login.is_some() && login == viewer {
+        watched_of(&app, viewer.as_deref())
+    } else {
+        Vec::new()
+    };
     let bucket = q.bucket.as_deref().unwrap_or("all");
     Json(
-        review_bucket(&s, q.login.as_deref(), bucket)
+        review_bucket(&s, login.as_deref(), &watched, bucket)
             .into_iter()
             .cloned()
             .collect(),
@@ -1448,6 +1509,69 @@ mod tests {
         assert_eq!(back(chrono::Duration::days(20)), "2w");
         assert_eq!(back(chrono::Duration::days(200)), "6mo");
         assert_eq!(back(chrono::Duration::days(2090)), "5y");
+    }
+
+    fn entry(number: u64, author: &str, file: &str, unowned: bool) -> Entry {
+        Entry {
+            number,
+            title: format!("pr {number}"),
+            url: String::new(),
+            author: author.into(),
+            author_score: 0.0,
+            base: "master".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            ci: None,
+            mergeable: "MERGEABLE".into(),
+            reviewers: vec![],
+            approved_by: vec![],
+            credited_by: vec![],
+            files: vec![file.into()],
+            unowned,
+        }
+    }
+
+    #[test]
+    fn for_you_joins_the_area_and_the_subscriptions() {
+        let mut s = Snapshot::default();
+        s.queues.review = vec![
+            entry(1, "x", "pkgs/by-name/he/hello/package.nix", false),
+            entry(2, "x", "pkgs/by-name/cu/curl/package.nix", false),
+            entry(
+                3,
+                "x",
+                "nixos/modules/services/web-servers/nginx/default.nix",
+                false,
+            ),
+            entry(4, "x", "lib/strings.nix", true),
+            entry(5, "bob", "pkgs/by-name/he/hello/package.nix", false),
+        ];
+        s.areas.insert(
+            "bob".into(),
+            Area {
+                maintains: vec!["pkgs/by-name/he/hello".into()],
+                ..Default::default()
+            },
+        );
+        s.links.prs.insert("pkg:curl".into(), vec![2]);
+        let watched = vec![
+            "pkg:curl".to_string(),
+            "area:nixos/modules/services/web-servers".to_string(),
+        ];
+        let numbers = |v: Vec<&Entry>| v.iter().map(|e| e.number).collect::<Vec<_>>();
+        assert_eq!(
+            numbers(review_bucket(&s, Some("bob"), &watched, "foryou")),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            numbers(review_bucket(&s, Some("bob"), &[], "mine")),
+            vec![1]
+        );
+        assert_eq!(
+            numbers(review_bucket(&s, Some("bob"), &watched, "unowned")),
+            vec![4]
+        );
+        assert_eq!(numbers(review_bucket(&s, None, &[], "all")).len(), 5);
     }
 
     #[test]
