@@ -438,6 +438,75 @@ To set it up:
 4. Check the repository names on `/actions`. They default to
    `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
 
+## LLMs, if you want them
+
+`/me/settings` has one choice: **"I am OK with LLMs using my data on this
+site"**. It is off by default. Each person sets it for themselves. When it is
+off, nothing below is available to that person.
+
+### The MCP server
+
+`/mcp` is a read-only [MCP](https://modelcontextprotocol.io) server. It uses
+JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
+2025-06-18.
+
+- **The token.** Make it on `/me/settings`. The server shows it once and keeps
+  only its SHA-256 hash. A new token replaces the old one. One button revokes
+  it. Turning the choice off also revokes it.
+- **A request** is a POST with one JSON-RPC message and
+  `Authorization: Bearer <token>`. The answer is one JSON object. There is no
+  session and no server-sent stream, so `GET /mcp` answers 405.
+- **Methods:** `initialize`, `ping`, `tools/list` and `tools/call`.
+- **Tools.** Each tool only reads. Each returns its JSON as text content. No
+  tool writes to GitHub.
+
+| Tool           | Returns                                                                       |
+| -------------- | ----------------------------------------------------------------------------- |
+| `search`       | packages, modules and areas that match a name, with their health flags        |
+| `package`      | one package, as `/api/v1/packages/<attr>`                                     |
+| `module`       | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works      |
+| `area`         | one path of the tree, as `/api/v1/areas/<path>`                               |
+| `maintains`    | what a login maintains, as `/api/v1/maintainers/<login>`                      |
+| `queue_merge`  | the ready-to-merge queue, the first 50 or `limit`                             |
+| `queue_review` | the review queue: `bucket` is `mine` (default, your area), `unowned` or `all` |
+| `watching`     | your subscriptions, with their health flags                                   |
+| `sync_status`  | the data of `/sync`                                                           |
+
+| Code | Meaning                                                       |
+| ---- | ------------------------------------------------------------- |
+| 200  | a JSON-RPC answer                                             |
+| 202  | a notification; there is no answer                            |
+| 400  | an `MCP-Protocol-Version` other than 2025-06-18 or 2025-03-26 |
+| 401  | no token, or an unknown token                                 |
+| 403  | the choice is off, or an `Origin` other than this site        |
+
+To add it to Claude Code on your machine:
+
+```sh
+claude mcp add --transport http maintainer-mode https://<host>/mcp --header "Authorization: Bearer <token>"
+```
+
+### A Claude Code session on a pull request
+
+Each open pull request row gets a **Claude Code** button next to **Review in
+CI**. It opens `/claude/pr/<number>`. That page shows the prompt in a copy
+box. Its link opens [Claude Code on the web](https://claude.ai/code) with the
+prompt filled in and `NixOS/nixpkgs` selected, through the documented
+`prompt` and `repositories` parameters. Nothing runs until you send the
+prompt. The session runs in your own Claude account.
+
+The prompt gives:
+
+- the pull request number, its URL, its base branch and the files it changes;
+- the nixpkgs
+  [automation/AI policy](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy):
+  you review and answer for the result, each commit ends with an
+  `Assisted-by:` trailer that names the tool and the model with its version,
+  and review comments and descriptions disclose AI use apart from the commits;
+- a rule: do not push to nixpkgs, and do nothing on GitHub without your word;
+- the `/mcp` address, when you have an MCP token. The token itself never goes
+  into the prompt.
+
 ## The state of nixpkgs
 
 `/state` and `GET /api/v1/metrics` show how pull requests flow through
@@ -484,12 +553,12 @@ because a pull request closed before the walk started is not in it.
 
 ## Four audiences
 
-| Audience | Surface                                                                                                                                                                                                                                                                                                                             |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Humans   | the web page: ready to merge, needs review (your area, unowned, all), a page per package, module and area, what you maintain, what you watch, your package set, actions, one review record per person                                                                                                                               |
-| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/find/<name>`, `/api/v1/packages/<attr>`, `/api/v1/modules/<file>`, `/api/v1/areas/<path>`, `/api/v1/maintainers/<login>`, `/api/v1/metrics`, `/api/v1/status`, `/api/v1/events` (Server-Sent Events) |
-| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken; `show <name>` and `maintains <login>`                                                                                                                                                                                                                       |
-| Owners   | `maintainer-mode scan`, `export` and `submit`: a private package set from your own closure                                                                                                                                                                                                                                          |
+| Audience | Surface                                                                                                                                                                                                                                                                                                                                                              |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Humans   | the web page: ready to merge, needs review (your area, unowned, all), a page per package, module and area, what you maintain, what you watch, your package set, actions, one review record per person                                                                                                                                                                |
+| Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/find/<name>`, `/api/v1/packages/<attr>`, `/api/v1/modules/<file>`, `/api/v1/areas/<path>`, `/api/v1/maintainers/<login>`, `/api/v1/metrics`, `/api/v1/status`, `/api/v1/events` (Server-Sent Events), and `/mcp` for those who opt in |
+| Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken; `show <name>` and `maintains <login>`                                                                                                                                                                                                                                                        |
+| Owners   | `maintainer-mode scan`, `export` and `submit`: a private package set from your own closure                                                                                                                                                                                                                                                                           |
 
 ```sh
 maintainer-mode --server https://<host> merge
