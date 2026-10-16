@@ -219,6 +219,31 @@ merged in the synced window.
   `.github/ISSUE_TEMPLATE` (`Build failure: <name>`, `Update Request: <name> …`),
   and by the nixpkgs paths and the "Package name" field in their body.
 
+## The risk score
+
+Each package gets one number: how much it needs attention. The number is a
+sum, and each part shows its reason. The package page lists the reasons.
+On a list, the label shows them when you point at it. Lists show the
+highest number first: the packages of an area, what you maintain, what you
+watch, your package set, and the same lists in the JSON API (`risk`,
+`risk_band`, `risk_reasons` in `flags`).
+
+| Cause                                     | Points                                                         |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| Each open advisory, by its worst CVE      | critical 40, high 25, medium 10, low 3, no score 5; 60 at most |
+| One advisory exploited in the wild (CISA) | 20, or 8 for a public exploit                                  |
+| The highest EPSS                          | 10 from 10 %, 4 from 1 %                                       |
+| `meta.knownVulnerabilities`               | 15                                                             |
+| `meta.broken`                             | 5                                                              |
+| Behind upstream                           | 12 for a new major version, 8 otherwise                        |
+| No maintainer and no team                 | 6                                                              |
+| Packaging hygiene gaps                    | 1 each, 3 at most                                              |
+
+The bands are: 0 ok, 1 to 14 low, 15 to 29 medium, 30 to 49 high, 50 and
+more critical. The weights are a policy, not a measurement. They come from
+nixfresh, simplified: there is no judgment of pull requests and no reading
+of the git log.
+
 ## Upstream versions
 
 The newest release comes from upstream itself when the source of a package
@@ -252,8 +277,9 @@ tells where to ask. [repology](https://repology.org) fills the rest.
 
 `/u/<login>/maintains` lists the packages and NixOS modules whose
 `meta.maintainers` names the login, or whose `meta.teams` names a team the
-login is in. Each row carries the same health flags as a page. The list comes
-from nixpkgs; change it there.
+login is in. Each row carries the same health flags as a page. The highest
+[risk score](#the-risk-score) comes first. The list comes from nixpkgs;
+change it there.
 
 ## What I watch
 
@@ -620,6 +646,7 @@ CI is the flake's `checks`: `nix flake check`.
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
 | nixfresh `upstream.rs`, `version.rs` and direct collector            | 2026-10 | MIT     | `src/upstream.rs` and `src/version.rs`: upstream releases from tags and registries                  |
+| nixfresh `score.rs`                                                  | 2026-10 | MIT     | `src/score.rs`: the risk score, simplified                                                          |
 | nixfresh osv collector                                               | 2026-10 | MIT     | `src/osv.rs`: OSV matches for the exact version of PyPI, crates.io and npm packages                 |
 | nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
 | nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |

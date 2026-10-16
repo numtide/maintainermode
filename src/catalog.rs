@@ -18,6 +18,7 @@ use crate::health::{Advisory, Build, Health, Hydra};
 use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
+use crate::score::{self, Score};
 use crate::severity::{self, Worst};
 use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, page, random_id};
 
@@ -258,24 +259,67 @@ fn upstream<'a>(s: &Snapshot, index: &Index, h: &'a Health, attr: &str) -> Optio
     upstream_from(s, index, h, attr).map(|(v, _)| v)
 }
 
+fn score_label(s: &Score) -> String {
+    let why = if s.reasons.is_empty() {
+        "nothing to fix".to_string()
+    } else {
+        s.reasons
+            .iter()
+            .map(|r| format!("+{} {}", r.points, r.text))
+            .collect::<Vec<_>>()
+            .join("; ")
+    };
+    format!(
+        "<span class=\"Label {}\" title=\"{}\">risk {}</span>",
+        s.label_class(),
+        esc(&why),
+        s.risk
+    )
+}
+
+/// The score of a package from everything the health sources know.
+fn score_of(s: &Snapshot, index: &Index, h: &Health, attr: &str) -> Option<Score> {
+    let p = index.pkgs.get(attr)?;
+    let advisories = open_advisories(h, s, attr);
+    let osv: Vec<Worst> = h
+        .osv_extra(attr)
+        .into_iter()
+        .map(|(_, v)| osv_worst(h, v))
+        .collect();
+    let gaps = hygiene::gaps(attr, p);
+    Some(score::score(
+        h,
+        &score::Input {
+            package: p,
+            advisories: &advisories,
+            osv: &osv,
+            upstream: upstream(s, index, h, attr),
+            hygiene: gaps.as_deref(),
+        },
+    ))
+}
+
 pub(crate) struct Flags {
     pub(crate) upstream: Option<String>,
     pub(crate) advisories: usize,
     unmaintained: bool,
     pub(crate) open_prs: usize,
     pub(crate) open_issues: usize,
+    /// Packages only.
+    pub(crate) score: Option<Score>,
 }
 
 impl Flags {
     pub(crate) fn of(s: &Snapshot, index: &Index, h: &Health, subject: &Subject) -> Flags {
         let (prs, issues) = attached(s, index, subject);
-        let (upstream, advisories, unmaintained) = match subject {
+        let (upstream, advisories, unmaintained, score) = match subject {
             Subject::Pkg(attr) => {
                 let p = index.pkgs.get(attr);
                 (
                     upstream(s, index, h, attr).map(String::from),
                     open_advisories(h, s, attr).len() + h.osv_extra(attr).len(),
                     p.is_some_and(|p| p.maintainers.is_empty() && p.teams.is_empty()),
+                    score_of(s, index, h, attr),
                 )
             }
             Subject::Module(f) => (
@@ -285,8 +329,9 @@ impl Flags {
                     .modules
                     .get(f)
                     .is_some_and(|m| m.maintainers.is_empty() && m.teams.is_empty()),
+                None,
             ),
-            Subject::Area(_) => (None, 0, false),
+            Subject::Area(_) => (None, 0, false, None),
         };
         Flags {
             upstream,
@@ -294,11 +339,29 @@ impl Flags {
             unmaintained,
             open_prs: prs.iter().filter(|p| p.is_open()).count(),
             open_issues: issues.iter().filter(|i| i.is_open()).count(),
+            score,
         }
+    }
+
+    pub(crate) fn risk(&self) -> u32 {
+        self.score.as_ref().map_or(0, |s| s.risk)
+    }
+
+    /// Worst first: the risk, then what it is made of, then activity.
+    pub(crate) fn rank(&self) -> impl Ord {
+        (
+            std::cmp::Reverse(self.risk()),
+            std::cmp::Reverse(self.advisories),
+            self.upstream.is_none(),
+            std::cmp::Reverse(self.open_prs + self.open_issues),
+        )
     }
 
     pub(crate) fn html(&self) -> String {
         let mut out = Vec::new();
+        if let Some(s) = &self.score {
+            out.push(score_label(s));
+        }
         if self.advisories > 0 {
             out.push(format!(
                 "<span class=\"Label Label--danger\">{} {} advisor{}</span>",
@@ -331,6 +394,9 @@ impl Flags {
 
     fn json(&self) -> Value {
         json!({
+            "risk": self.score.as_ref().map(|s| s.risk),
+            "risk_band": self.score.as_ref().map(|s| s.band()),
+            "risk_reasons": self.score.as_ref().map(|s| &s.reasons),
             "upstream": self.upstream,
             "open_advisories": self.advisories,
             "unmaintained": self.unmaintained,
@@ -715,6 +781,26 @@ async fn package_page(
         &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
     );
     out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Health</div>");
+    if let Some(sc) = score_of(&s, &index, &h, &attr) {
+        let reasons: String = sc
+            .reasons
+            .iter()
+            .map(|r| format!("<li>+{} {}</li>", r.points, esc(&r.text)))
+            .collect();
+        out.push_str(&kv(
+            "Risk",
+            &format!(
+                "{} {}{}",
+                score_label(&sc),
+                sc.band(),
+                if reasons.is_empty() {
+                    String::new()
+                } else {
+                    format!("<ul class=\"f6 color-fg-muted ml-3\">{reasons}</ul>")
+                }
+            ),
+        ));
+    }
     let version = match upstream_from(&s, &index, &h, &attr) {
         Some((u, from)) => format!(
             "{} <span class=\"Label Label--attention\" title=\"from {}\">upstream {}</span>",
@@ -854,14 +940,7 @@ fn contents(index: &Index, s: &Snapshot, h: &Health, path: &str) -> Vec<(Subject
             (sub, f)
         })
         .collect();
-    v.sort_by_key(|(sub, f)| {
-        (
-            std::cmp::Reverse(f.advisories),
-            f.upstream.is_none(),
-            std::cmp::Reverse(f.open_prs + f.open_issues),
-            sub.label(),
-        )
-    });
+    v.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
     v
 }
 
@@ -1136,8 +1215,12 @@ fn maintained_rows(
     list: &[(Subject, Option<String>)],
 ) -> String {
     let mut out = String::new();
-    for (sub, how) in list {
-        let f = Flags::of(s, index, h, sub);
+    let mut rows: Vec<(&Subject, &Option<String>, Flags)> = list
+        .iter()
+        .map(|(sub, how)| (sub, how, Flags::of(s, index, h, sub)))
+        .collect();
+    rows.sort_by_key(|(sub, _, f)| (f.rank(), sub.label()));
+    for (sub, how, f) in rows {
         let version = match sub {
             Subject::Pkg(a) => index
                 .pkgs
@@ -1369,14 +1452,7 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
                     (sub, f)
                 })
                 .collect();
-            rows.sort_by_key(|(sub, f)| {
-                (
-                    std::cmp::Reverse(f.advisories),
-                    f.upstream.is_none(),
-                    std::cmp::Reverse(f.open_prs + f.open_issues),
-                    sub.label(),
-                )
-            });
+            rows.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
             out.push_str("<div class=\"Box mb-4\">");
             for (sub, f) in &rows {
                 let _ = write!(
@@ -1738,15 +1814,20 @@ async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> 
     let index = app.index.read().unwrap();
     let m = maintained(&index, &login);
     let rows = |list: &[(Subject, Option<String>)]| -> Vec<Value> {
-        list.iter()
-            .map(|(sub, how)| {
+        let mut rows: Vec<(&Subject, &Option<String>, Flags)> = list
+            .iter()
+            .map(|(sub, how)| (sub, how, Flags::of(&s, &index, &h, sub)))
+            .collect();
+        rows.sort_by_key(|(sub, _, f)| (f.rank(), sub.label()));
+        rows.into_iter()
+            .map(|(sub, how, f)| {
                 let version = match sub {
                     Subject::Pkg(a) => index.pkgs.get(a).map(|p| p.version.clone()),
                     _ => None,
                 };
                 json!({
                     "key": sub.key(), "name": sub.label(), "version": version,
-                    "via_team": how, "flags": Flags::of(&s, &index, &h, sub).json(),
+                    "via_team": how, "flags": f.json(),
                 })
             })
             .collect()
@@ -1962,6 +2043,35 @@ mod tests {
             ["python3Packages.protobuf"]
         );
         assert_eq!(names("pkgs/development/libraries"), ["protobuf"]);
+    }
+
+    #[test]
+    fn an_area_lists_the_riskiest_package_first() {
+        let mut i = Index::default();
+        for (attr, maintainers) in [("aaa", vec!["alice".to_string()]), ("zzz", vec![])] {
+            i.pkgs.insert(
+                attr.into(),
+                Package {
+                    pname: attr.into(),
+                    version: "1.0".into(),
+                    file: Some(format!("pkgs/by-name/{attr}/package.nix")),
+                    maintainers,
+                    ..Default::default()
+                },
+            );
+            i.by_pname.insert(attr.into(), attr.into());
+        }
+        let s = Snapshot::default();
+        let mut h = Health::default();
+        h.upstream.insert("aaa".into(), "1.0-rc1".into());
+        let rows = contents(&i, &s, &h, "pkgs/by-name");
+        let order: Vec<(String, u32)> = rows
+            .iter()
+            .map(|(sub, f)| (sub.label(), f.risk()))
+            .collect();
+        // no maintainer outranks a prerelease repology reports, which counts for nothing
+        assert_eq!(order, [("zzz".to_string(), 6), ("aaa".to_string(), 0)]);
+        assert!(rows[0].1.html().contains("risk 6"));
     }
 
     #[test]
