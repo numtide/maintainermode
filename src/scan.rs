@@ -7,7 +7,8 @@
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::Deserialize;
-use std::collections::{BTreeMap, BTreeSet};
+use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::eval::{eval_with_input_using, run_with};
@@ -166,33 +167,103 @@ fn strip_store_path(path: &str) -> String {
     }
 }
 
+/// Only the fields the scan reads. The output of `derivation show` can come
+/// from a third party, so nothing else is kept in memory, not even as a
+/// `serde_json::Value`.
 #[derive(Debug, Deserialize)]
 struct Derivation {
     #[serde(default)]
     name: String,
     #[serde(default)]
-    env: BTreeMap<String, serde_json::Value>,
-    #[serde(default)]
-    outputs: BTreeMap<String, Output>,
+    env: Env,
+    #[serde(default, deserialize_with = "any_fixed_output")]
+    outputs: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
+struct Env {
+    #[serde(default, deserialize_with = "text_or_none")]
+    pname: Option<String>,
+    #[serde(default, deserialize_with = "text_or_none")]
+    version: Option<String>,
+    #[serde(default, rename = "outputHash", deserialize_with = "present")]
+    output_hash: bool,
+}
+
+#[derive(Deserialize)]
 struct Output {
     #[serde(default)]
-    hash: Option<String>,
+    hash: Option<IgnoredAny>,
     #[serde(default, rename = "hashAlgo")]
-    hash_algo: Option<String>,
+    hash_algo: Option<IgnoredAny>,
+}
+
+fn present<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    IgnoredAny::deserialize(d).map(|_| true)
+}
+
+fn any_fixed_output<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = bool;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a map of outputs")
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<bool, A::Error> {
+            let mut fixed = false;
+            while let Some((_, o)) = m.next_entry::<IgnoredAny, Output>()? {
+                fixed |= o.hash.is_some() || o.hash_algo.is_some();
+            }
+            Ok(fixed)
+        }
+    }
+    d.deserialize_map(V)
+}
+
+/// A string, or `None` for any other JSON value.
+fn text_or_none<'de, D: Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    struct V;
+    impl<'de> Visitor<'de> for V {
+        type Value = Option<String>;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("any value")
+        }
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+            Ok(Some(v.to_string()))
+        }
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
+            Ok(Some(v))
+        }
+        fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_i64<E>(self, _: i64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_u64<E>(self, _: u64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_unit<E>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+        fn visit_seq<A: SeqAccess<'de>>(self, mut s: A) -> Result<Self::Value, A::Error> {
+            while s.next_element::<IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+        fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<Self::Value, A::Error> {
+            while m.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+            Ok(None)
+        }
+    }
+    d.deserialize_any(V)
 }
 
 /// Fixed-output derivations are fetches, and a build without a version is
 /// infrastructure that no advisory or release feed speaks about.
-fn is_package(name: &str, version: &str, drv: Option<&Derivation>) -> bool {
-    let fixed_output = drv.is_some_and(|d| {
-        d.env.contains_key("outputHash")
-            || d.outputs
-                .values()
-                .any(|o| o.hash.is_some() || o.hash_algo.is_some())
-    });
+fn is_package(name: &str, version: &str, fixed_output: bool) -> bool {
     if fixed_output || version.is_empty() {
         return false;
     }
@@ -224,33 +295,103 @@ fn derivation_closure(target: &Target) -> Result<Vec<(String, String)>> {
 
 /// The packages, as (pname, version), in the output of `nix derivation show -r`.
 pub(crate) fn closure_pairs(text: &[u8]) -> Result<Vec<(String, String)>> {
-    let raw: serde_json::Value =
-        serde_json::from_slice(text).context("parse derivation show output")?;
-    // nix 2.35 wraps the map in { derivations, version }; older nix returns it bare.
-    let map = match raw {
-        serde_json::Value::Object(mut o) if o.contains_key("derivations") => {
-            o.remove("derivations").unwrap_or_default()
-        }
-        v => v,
+    closure_pairs_at_most(text, usize::MAX)
+}
+
+/// Reads the closure in one pass and keeps only distinct packages; it stops
+/// past `max` of them.
+pub(crate) fn closure_pairs_at_most(text: &[u8], max: usize) -> Result<Vec<(String, String)>> {
+    let mut found = Closure {
+        max,
+        pairs: BTreeSet::new(),
     };
-    let drvs: BTreeMap<String, Derivation> =
-        serde_json::from_value(map).context("read derivation map")?;
-    let mut out = Vec::new();
-    for (path, drv) in drvs {
+    let mut de = serde_json::Deserializer::from_slice(text);
+    TopLevel(&mut found)
+        .deserialize(&mut de)
+        .and_then(|()| de.end())
+        .context("parse derivation show output")?;
+    Ok(found.pairs.into_iter().collect())
+}
+
+struct Closure {
+    max: usize,
+    pairs: BTreeSet<(String, String)>,
+}
+
+impl Closure {
+    fn add<E: de::Error>(&mut self, path: &str, drv: Derivation) -> Result<(), E> {
         let name = if drv.name.is_empty() {
-            strip_store_path(&path)
+            strip_store_path(path)
         } else {
-            drv.name.clone()
+            drv.name
         };
-        let text = |k: &str| drv.env.get(k).and_then(|v| v.as_str()).map(str::to_string);
         let (fallback_pname, fallback_version) = split_name(&name);
-        let pname = text("pname").unwrap_or(fallback_pname);
-        let version = text("version").unwrap_or(fallback_version);
-        if is_package(&name, &version, Some(&drv)) {
-            out.push((pname, version));
+        let pname = drv.env.pname.unwrap_or(fallback_pname);
+        let version = drv.env.version.unwrap_or(fallback_version);
+        if is_package(&name, &version, drv.env.output_hash || drv.outputs) {
+            self.pairs.insert((pname, version));
+            if self.pairs.len() > self.max {
+                return Err(E::custom(format!("more than {} packages", self.max)));
+            }
         }
+        Ok(())
     }
-    Ok(out)
+}
+
+/// nix 2.35 wraps the map in { derivations, version }; older nix returns it
+/// bare. A store path is never `derivations` or `version`.
+struct TopLevel<'a>(&'a mut Closure);
+
+impl<'de> DeserializeSeed<'de> for TopLevel<'_> {
+    type Value = ();
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<(), D::Error> {
+        d.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for TopLevel<'_> {
+    type Value = ();
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a map of derivations")
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<(), A::Error> {
+        while let Some(key) = m.next_key::<String>()? {
+            match key.as_ref() {
+                "derivations" => m.next_value_seed(Drvs(&mut *self.0))?,
+                "version" => {
+                    m.next_value::<IgnoredAny>()?;
+                }
+                path => {
+                    let drv = m.next_value::<Derivation>()?;
+                    self.0.add(path, drv)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+struct Drvs<'a>(&'a mut Closure);
+
+impl<'de> DeserializeSeed<'de> for Drvs<'_> {
+    type Value = ();
+    fn deserialize<D: Deserializer<'de>>(self, d: D) -> Result<(), D::Error> {
+        d.deserialize_map(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Drvs<'_> {
+    type Value = ();
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a map of derivations")
+    }
+    fn visit_map<A: MapAccess<'de>>(self, mut m: A) -> Result<(), A::Error> {
+        while let Some(path) = m.next_key::<String>()? {
+            let drv = m.next_value::<Derivation>()?;
+            self.0.add(&path, drv)?;
+        }
+        Ok(())
+    }
 }
 
 /// Store paths, not derivations: the outputs must be built or substituted.
@@ -261,7 +402,7 @@ fn runtime_closure(target: &Target) -> Result<Vec<(String, String)>> {
         .lines()
         .filter(|l| !l.is_empty())
         .map(|l| split_name(&strip_store_path(l)))
-        .filter(|(name, version)| is_package(name, version, None))
+        .filter(|(name, version)| is_package(name, version, false))
         .collect())
 }
 
@@ -450,10 +591,10 @@ mod tests {
             strip_store_path("/nix/store/2x905q8m3w6wj9kh1k2agzqx9x0ksapl-zlib-1.3.1.drv"),
             "zlib-1.3.1"
         );
-        assert!(is_package("zlib-1.3.1", "1.3.1", None));
-        assert!(!is_package("hex2_linker-0-footer.M1", "0-footer.M1", None));
-        assert!(!is_package("bootstrap-stage0-stdenv-linux", "1", None));
-        assert!(!is_package("stdenv-linux", "", None));
+        assert!(is_package("zlib-1.3.1", "1.3.1", false));
+        assert!(!is_package("hex2_linker-0-footer.M1", "0-footer.M1", false));
+        assert!(!is_package("bootstrap-stage0-stdenv-linux", "1", false));
+        assert!(!is_package("stdenv-linux", "", false));
     }
 
     #[test]
@@ -467,6 +608,33 @@ mod tests {
             let pairs = closure_pairs(v.to_string().as_bytes()).unwrap();
             assert_eq!(pairs, vec![("zlib".to_string(), "1.3.1".to_string())]);
         }
+    }
+
+    #[test]
+    fn the_closure_ignores_odd_fields_and_stops_past_the_limit() {
+        let drv = serde_json::json!({ "derivations": {
+            "a-zlib-1.3.1.drv": {
+                "name": "zlib-1.3.1",
+                "args": ["", "", ""],
+                "env": { "pname": ["not", "text"], "version": 1, "big": { "x": [] } },
+                "outputs": { "out": { "path": "/nix/store/x" } }
+            },
+            "b-src-1.drv": { "name": "src-1", "outputs": { "out": { "hashAlgo": "sha256" } } },
+            "c-curl-8.drv": { "name": "curl-8", "env": { "outputHash": null } },
+            "d-zlib-1.3.1.drv": { "name": "zlib-1.3.1" },
+            "e-curl-8.drv": { "name": "curl-8" }
+        }, "version": 4 })
+        .to_string();
+        let pairs = closure_pairs_at_most(drv.as_bytes(), 2).unwrap();
+        assert_eq!(
+            pairs,
+            vec![
+                ("curl".to_string(), "8".to_string()),
+                ("zlib".to_string(), "1.3.1".to_string())
+            ]
+        );
+        assert!(closure_pairs_at_most(drv.as_bytes(), 1).is_err());
+        assert!(closure_pairs(b"{} trailing").is_err());
     }
 
     #[test]
