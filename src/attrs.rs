@@ -22,6 +22,9 @@ pub struct Entry {
     pub file: Option<String>,
     #[serde(default)]
     pub maintainers: Vec<String>,
+    /// `shortName` of each team in `meta.teams`.
+    #[serde(default)]
+    pub teams: Vec<String>,
 }
 
 /// nixpkgs keyed by package name instead of by attribute path.
@@ -119,6 +122,7 @@ let
             maintainers = builtins.filter (x: x != null) (
               map (m: m.github or null) (meta.maintainers or [ ])
             );
+            teams = map (t: t.shortName or "") (meta.teams or [ ]);
           };
         in
         if !(lib.isDerivation p) then null else builtins.deepSeq out out
@@ -156,6 +160,7 @@ mod tests {
             version: String::new(),
             file: None,
             maintainers: vec![],
+            teams: vec![],
         };
         let entries = [e("utillinux"), e("util-linux"), e("pkgsStatic.util-linux")];
         let i = Index::build(entries.iter());
