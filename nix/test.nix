@@ -31,6 +31,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/maintainers/nobody | grep -q '\"packages\":\\[\\]'")
     machine.succeed("curl -sf http://127.0.0.1:8790/watch | grep -q 'Sign in to subscribe'")
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
+    machine.succeed("curl -sf http://127.0.0.1:8790/actions | grep -q 'Sign in to run workflows'")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
     machine.fail("curl -sf http://127.0.0.1:8790/a/..%2Fetc")
     status = machine.execute("maintainer-mode --server http://127.0.0.1:8790 check nobody")[0]
     assert status == 3, f"check exits {status}, not 3"

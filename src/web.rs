@@ -177,6 +177,7 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/metrics", get(api_metrics))
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
+        .merge(crate::actions::routes())
         .with_state(app)
 }
 
@@ -277,6 +278,13 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
             "State of nixpkgs",
             String::new(),
         ),
+        (
+            "actions",
+            "/actions",
+            icon(octicon!("play")),
+            "Actions",
+            String::new(),
+        ),
     ];
     let mut nav = String::new();
     for (id, href, ic, label, n) in tabs {
@@ -367,7 +375,7 @@ fn people(logins: &[String]) -> String {
         .join(", ")
 }
 
-fn rows(entries: &[&Entry], empty: &str) -> String {
+fn rows(entries: &[&Entry], empty: &str, act: bool) -> String {
     if entries.is_empty() {
         return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
     }
@@ -404,12 +412,17 @@ fn rows(entries: &[&Entry], empty: &str) -> String {
                  <a class=\"Link--primary text-bold\" href=\"{url}\">{title}</a>{conflict}{unowned}\
                  <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
                </div>\
-               <span class=\"ml-2\">{ci}</span>\
+               <span class=\"ml-2\">{ci}</span>{act}\
              </div>",
             pr = icon(octicon!("git-pull-request")),
             url = esc(&e.url),
             title = esc(&e.title),
             ci = ci_label(e),
+            act = if act {
+                crate::actions::review_button(e.number)
+            } else {
+                String::new()
+            },
         );
     }
     if entries.len() > 200 {
@@ -431,7 +444,7 @@ async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
          <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
          Ordered by the author's credit, so people who review rise. Work it from the top.</div></div>{}",
-        rows(&entries, "Nothing is ready yet.")
+        rows(&entries, "Nothing is ready yet.", viewer.is_some())
     );
     page(&app, viewer.as_deref(), "merge", &body)
 }
@@ -498,7 +511,7 @@ async fn review_page(
          you comment on a changed line, or it merges within {} days.</div></div>\
          <div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
         ledger::MOVE_DAYS,
-        rows(&entries, "Nothing here.")
+        rows(&entries, "Nothing here.", viewer.is_some())
     );
     page(&app, viewer.as_deref(), "review", &body)
 }

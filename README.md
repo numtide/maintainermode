@@ -22,8 +22,10 @@ that carry a review that changed something, pass their checks, have no
 conflict, and have an approval on their current head. A committer can work it
 from the top down. The review queue exists to feed it.
 
-Maintainer Mode reads GitHub. **It never writes to GitHub**: no reviews, no
-merges, no comments, no labels.
+Maintainer Mode reads GitHub. **It never writes to nixpkgs**: no reviews, no
+merges, no comments, no labels. The one write it makes is on your click: it
+starts a workflow in a repository you own (see [Actions](#actions)), and that
+workflow acts as you.
 
 ## Maintainer Mode grants nothing
 
@@ -224,6 +226,40 @@ with its flags, the ones that need attention first.
 - **Why here.** Accounts, stored preferences and outbound messages are a write
   path. Maintainer Mode already logs people in and keeps state, so a
   subscription is one more row in its database.
+
+## Actions
+
+`/actions` starts work in GitHub Actions of a repository you own, with your
+token, when you press a button. Nothing runs on the Maintainer Mode host.
+
+- **Review in CI**, on any pull request row or by number, starts `review.yml`
+  of your fork of
+  [nixpkgs-review-gha](https://github.com/Defelo/nixpkgs-review-gha) with the
+  pull request number. Its own defaults decide the rest, like posting the
+  result.
+- **Update with nix-update**, on a package page, starts `update.yml` with the
+  attribute and the version (repology's newest release, which you can change).
+  It is a small re-implementation of nixpkgs-update on
+  [nix-update](https://github.com/Mic92/nix-update): clone nixpkgs, run
+  nix-update (the package's `updateScript` when it has one and no version is
+  given), build the package, and push `update/<attr>` to your nixpkgs fork.
+  **The branch is pushed whether the build passes or not**, so a failed update
+  is a branch to keep working on. It never opens a pull request: the run and
+  `/actions` link the page where you open one.
+- `/actions` lists your recent runs of both workflows, and the branch of each
+  update.
+
+To set it up:
+
+1. Fork nixpkgs-review-gha, and copy [`gha/update.yml`](gha/update.yml) to its
+   `.github/workflows/`. It calls the reusable workflow in
+   `.github/workflows/update.yml` of this repository.
+2. Give it a `GH_TOKEN` secret that can push to your fork of nixpkgs.
+3. Install the Maintainer Mode GitHub App on that repository. The App needs
+   the "Actions: read and write" permission, so that your login token can
+   start a workflow.
+4. Check the repository names on `/actions`. They default to
+   `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
 
 ## The state of nixpkgs
 

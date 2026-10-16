@@ -1,0 +1,136 @@
+# nix-update on one nixpkgs attribute, called from a workflow in your own
+# repository (see gha/update.yml). It pushes update/<attr> to your nixpkgs
+# fork whether the build passes or not, so a failed update is a branch to
+# keep working on. It never opens a pull request: the run summary links the
+# page where you open one yourself.
+name: update
+
+on:
+  workflow_call:
+    inputs:
+      attr:
+        description: "nixpkgs attribute, like hello or python3Packages.requests"
+        required: true
+        type: string
+      version:
+        description: "Version to update to; empty for the newest"
+        required: false
+        type: string
+        default: ""
+      fork:
+        description: "Your fork of nixpkgs, owner/name"
+        required: true
+        type: string
+      base:
+        description: "nixpkgs branch to start from"
+        required: false
+        type: string
+        default: master
+    secrets:
+      GH_TOKEN:
+        description: "A token that can push to the fork"
+        required: true
+
+permissions: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      ATTR: ${{ inputs.attr }}
+      VERSION: ${{ inputs.version }}
+      FORK: ${{ inputs.fork }}
+      BASE: ${{ inputs.base }}
+    steps:
+      - name: check the inputs
+        run: |
+          [[ "$ATTR" =~ ^[A-Za-z0-9_.+-]+$ ]] || { echo "bad attr: $ATTR"; exit 1; }
+          [[ -z "$VERSION" || "$VERSION" =~ ^[A-Za-z0-9_.+-]+$ ]] || { echo "bad version: $VERSION"; exit 1; }
+          [[ "$FORK" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "bad fork: $FORK"; exit 1; }
+          [[ "$BASE" =~ ^[A-Za-z0-9_./-]+$ ]] || { echo "bad base: $BASE"; exit 1; }
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: clone nixpkgs
+        run: |
+          git clone --depth 1 --branch "$BASE" https://github.com/NixOS/nixpkgs.git nixpkgs
+          git -C nixpkgs config user.name "${{ github.actor }}"
+          git -C nixpkgs config user.email "${{ github.actor_id }}+${{ github.actor }}@users.noreply.github.com"
+          git -C nixpkgs switch -c "update/$ATTR"
+
+      - name: nix-update
+        id: update
+        working-directory: nixpkgs
+        continue-on-error: true
+        run: |
+          args=(--commit)
+          if [[ -n "$VERSION" ]]; then
+            args+=(--version "$VERSION")
+          elif nix-instantiate --eval -A "$ATTR.passthru.updateScript" >/dev/null 2>&1; then
+            args+=(--use-update-script)
+          fi
+          nix run --file . nix-update -- "${args[@]}" "$ATTR" 2>&1 | tee ../update.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: keep what nix-update left
+        id: keep
+        working-directory: nixpkgs
+        run: |
+          if ! git diff --quiet; then
+            git commit -am "$ATTR: update, unfinished (nix-update failed)"
+          fi
+          if [[ "$(git rev-list --count "origin/$BASE..HEAD")" == 0 ]]; then
+            echo "changed=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: build
+        id: build
+        if: steps.keep.outputs.changed == '1'
+        working-directory: nixpkgs
+        continue-on-error: true
+        run: |
+          nix-build -A "$ATTR" --no-out-link --keep-going 2>&1 | tail -n 200 | tee ../build.log
+          exit "${PIPESTATUS[0]}"
+
+      - name: push the branch
+        if: steps.keep.outputs.changed == '1'
+        working-directory: nixpkgs
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${FORK}.git" "HEAD:refs/heads/update/$ATTR"
+
+      - name: summary
+        if: always()
+        env:
+          UPDATED: ${{ steps.update.outcome }}
+          BUILT: ${{ steps.build.outcome }}
+          CHANGED: ${{ steps.keep.outputs.changed }}
+        run: |
+          owner="${FORK%%/*}"; name="${FORK#*/}"
+          compare="https://github.com/NixOS/nixpkgs/compare/${BASE}...${owner}:${name}:update/${ATTR}?expand=1"
+          {
+            echo "## $ATTR"
+            echo
+            echo "- nix-update: $UPDATED"
+            echo "- build: ${BUILT:-skipped}"
+            if [[ "$CHANGED" == 1 ]]; then
+              echo "- branch: \`update/$ATTR\` on $FORK"
+              if [[ "$UPDATED" == success && "$BUILT" == success ]]; then
+                echo "- [Open a pull request]($compare)"
+              else
+                echo "- [See the branch and keep working]($compare)"
+              fi
+            else
+              echo "- nothing changed, so no branch was pushed"
+            fi
+            for f in update.log build.log; do
+              if [[ -s "$f" ]]; then
+                echo; echo "<details><summary>$f</summary>"; echo; echo '```'; tail -n 60 "$f"; echo '```'; echo "</details>"
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$UPDATED" == success && "$BUILT" == success ]]

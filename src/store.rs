@@ -60,6 +60,12 @@ impl Store {
                created_at TEXT NOT NULL,
                PRIMARY KEY (login, package)
              );
+             CREATE TABLE IF NOT EXISTS setting (
+               login TEXT NOT NULL,
+               key TEXT NOT NULL,
+               value TEXT NOT NULL,
+               PRIMARY KEY (login, key)
+             );
              CREATE TABLE IF NOT EXISTS feed (
                login TEXT PRIMARY KEY,
                token TEXT NOT NULL UNIQUE,
@@ -371,5 +377,28 @@ impl Store {
                 r.get(0)
             })
             .optional()?)
+    }
+}
+
+impl Store {
+    pub fn setting(&self, login: &str, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT value FROM setting WHERE login = ?1 AND key = ?2",
+                [login, key],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn set_setting(&self, login: &str, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO setting (login, key, value) VALUES (?1, ?2, ?3)
+             ON CONFLICT(login, key) DO UPDATE SET value = excluded.value",
+            [login, key, value],
+        )?;
+        Ok(())
     }
 }
