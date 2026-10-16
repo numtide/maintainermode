@@ -194,26 +194,45 @@ fn since(date: chrono::NaiveDate) -> chrono::DateTime<Utc> {
     date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }
 
+/// A connect error means the host has no network yet, as on first boot.
+fn offline(e: &anyhow::Error) -> bool {
+    e.chain().any(|c| {
+        c.downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_connect)
+    })
+}
+
+/// Seconds before the next pass after `failures` offline passes in a row.
+fn retry_wait(failures: u32, every: u64) -> u64 {
+    (5u64 << failures.min(6)).min(300).min(every)
+}
+
 async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate) {
+    let mut failures = 0;
     loop {
+        let mut down = false;
+        let mut warn = |what: &str, e: anyhow::Error| {
+            down |= offline(&e);
+            tracing::warn!("{what}: {e:#}");
+        };
         let index_at = app.store.get_time("index_at").ok().flatten();
         if index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
             match web::refresh_index(&app).await {
                 Ok(()) => tracing::info!("nixpkgs index refreshed"),
-                Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
+                Err(e) => warn("nixpkgs index", e),
             }
         }
         if web::health_due(&app) {
             match web::refresh_health(&app).await {
                 Ok(()) => tracing::info!("package health read"),
-                Err(e) => tracing::warn!("package health: {e:#}"),
+                Err(e) => warn("package health", e),
             }
         }
         let mut tokens = Vec::new();
         if let Some(a) = &app.github_app {
             match a.token().await {
                 Ok(t) => tokens.push(t),
-                Err(e) => tracing::warn!("GitHub App token: {e:#}"),
+                Err(e) => warn("GitHub App token", e),
             }
         }
         tokens.extend(app.sync_token.iter().cloned());
@@ -222,8 +241,20 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         if client.has_token() {
             match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
                 Ok(n) => tracing::info!("synced {n} pull requests"),
-                Err(e) => tracing::warn!("sync: {e:#}"),
+                Err(e) => warn("sync", e),
             }
+        } else {
+            tracing::info!("no token yet; the sync starts when someone logs in");
+        }
+        if down {
+            let wait = retry_wait(failures, every);
+            failures = failures.saturating_add(1);
+            tracing::info!("network unreachable; next pass in {wait} s");
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            continue;
+        }
+        failures = 0;
+        if client.has_token() {
             match github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await {
                 Ok(n) => tracing::info!("synced {n} issues"),
                 Err(e) => tracing::warn!("issues: {e:#}"),
@@ -243,8 +274,6 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                 Ok(n) => tracing::info!("history: {n} pull requests"),
                 Err(e) => tracing::warn!("history: {e:#}"),
             }
-        } else {
-            tracing::info!("no token yet; the sync starts when someone logs in");
         }
         for m in app.store.members().unwrap_or_default() {
             if Utc::now() - m.refreshed_at < Duration::hours(24) {
@@ -654,4 +683,27 @@ async fn main() {
         }
     };
     std::process::exit(code);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn retry_backs_off_and_caps() {
+        let waits: Vec<u64> = (0..9).map(|f| retry_wait(f, 600)).collect();
+        assert_eq!(waits, [5, 10, 20, 40, 80, 160, 300, 300, 300]);
+        assert_eq!(retry_wait(8, 60), 60);
+    }
+
+    #[tokio::test]
+    async fn refused_connection_is_offline() {
+        let e = github::http()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(offline(&anyhow::Error::new(e).context("sync")));
+        assert!(!offline(&anyhow::anyhow!("graphql 502 Bad Gateway")));
+    }
 }
