@@ -43,6 +43,19 @@ fn fresh(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     expires_at - now > Duration::minutes(RENEW_BEFORE)
 }
 
+/// People install the same App on their own accounts to start workflows; a
+/// token of their installation must not become the sync token.
+fn owned(installations: &[Value], owner: &str) -> Option<u64> {
+    installations
+        .iter()
+        .find(|i| {
+            i["account"]["login"]
+                .as_str()
+                .is_some_and(|l| l.eq_ignore_ascii_case(owner))
+        })
+        .and_then(|i| i["id"].as_u64())
+}
+
 impl GithubApp {
     pub fn new(id: String, pem: &str, installation: Option<u64>) -> Result<Self> {
         let key = EncodingKey::from_rsa_pem(pem.as_bytes()).context("GitHub App private key")?;
@@ -88,21 +101,27 @@ impl GithubApp {
         if let Some(id) = self.installation {
             return Ok(id);
         }
-        let list = self.get(jwt, "/app/installations").await?;
-        let ids: Vec<u64> = list
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|i| i["id"].as_u64())
-            .collect();
-        match ids.as_slice() {
-            [id] => Ok(*id),
-            _ => bail!(
-                "GitHub App {} has {} installations; set GITHUB_APP_INSTALLATION_ID",
-                self.id,
-                ids.len()
-            ),
+        let app = self.get(jwt, "/app").await?;
+        let owner = app["owner"]["login"]
+            .as_str()
+            .context("GitHub App owner")?
+            .to_string();
+        for page in 1.. {
+            let list = self
+                .get(jwt, &format!("/app/installations?per_page=100&page={page}"))
+                .await?;
+            let list = list.as_array().cloned().unwrap_or_default();
+            if let Some(id) = owned(&list, &owner) {
+                return Ok(id);
+            }
+            if list.len() < 100 {
+                break;
+            }
         }
+        bail!(
+            "GitHub App {} has no installation on its owner {owner}; install it there or set GITHUB_APP_INSTALLATION_ID",
+            self.id
+        )
     }
 
     /// The cached installation token, renewed when it nears its expiry.
@@ -161,5 +180,16 @@ mod tests {
         assert!(fresh(now + Duration::minutes(59), now));
         assert!(!fresh(now + Duration::minutes(20), now));
         assert!(!fresh(now - Duration::minutes(1), now));
+    }
+
+    #[test]
+    fn installation_of_the_owner_only() {
+        let list = serde_json::json!([
+            {"id": 1, "account": {"login": "alice"}},
+            {"id": 2, "account": {"login": "Acme"}},
+        ]);
+        let list = list.as_array().unwrap();
+        assert_eq!(owned(list, "acme"), Some(2));
+        assert_eq!(owned(&list[..1], "acme"), None);
     }
 }
