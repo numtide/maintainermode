@@ -610,6 +610,8 @@ async fn run(cli: Cli) -> Result<i32> {
             let mut client = github::Client::new(vec![token]);
             let n = github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await?;
             eprintln!("synced {n} pull requests");
+            let n = github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await?;
+            eprintln!("synced {n} issues");
             eprintln!(
                 "settled {} merge candidates",
                 settle(&app, &mut client).await?
