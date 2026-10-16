@@ -44,6 +44,33 @@ pub fn repos(app: &App, login: &str) -> Repos {
     }
 }
 
+/// Which buttons a pull request row shows to the viewer.
+#[derive(Clone, Copy, Default)]
+pub struct Act {
+    pub review: bool,
+    pub claude: bool,
+}
+
+impl Act {
+    pub fn of(app: &App, viewer: Option<&str>) -> Act {
+        Act {
+            review: viewer.is_some(),
+            claude: viewer.is_some_and(|v| crate::llm::opted_in(app, v)),
+        }
+    }
+
+    pub fn buttons(self, number: u64) -> String {
+        let mut out = String::new();
+        if self.review {
+            out.push_str(&review_button(number));
+        }
+        if self.claude {
+            out.push_str(&crate::llm::claude_button(number));
+        }
+        out
+    }
+}
+
 /// A small button for a pull request row.
 pub fn review_button(number: u64) -> String {
     format!(
