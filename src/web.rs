@@ -1039,8 +1039,12 @@ async fn api_metrics(State(app): State<Shared>) -> Json<Report> {
 
 #[derive(Deserialize)]
 struct EventsQuery {
-    #[serde(flatten)]
-    filter: crate::events::Filter,
+    /// Not `#[serde(flatten)]`: serde_urlencoded then hands every value
+    /// over as a string, and `number` fails to parse.
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    number: Option<u64>,
+    actor: Option<String>,
     /// For clients that cannot set `Last-Event-ID` on the first request.
     after: Option<u64>,
 }
@@ -1058,7 +1062,7 @@ async fn api_events(
         .and_then(|v| v.trim().parse().ok())
         .or(q.after)
         .unwrap_or_else(|| app.events.head());
-    let stream = crate::events::follow(app.events.clone(), after, q.filter).map(|s| {
+    let stream = crate::events::follow(app.events.clone(), after, q.filter()).map(|s| {
         Ok::<_, std::convert::Infallible>(Event::default().id(s.seq.to_string()).data(s.json))
     });
     (
@@ -1299,6 +1303,16 @@ async fn same_origin(req: axum::extract::Request, next: axum::middleware::Next) 
     next.run(req).await
 }
 
+impl EventsQuery {
+    fn filter(self) -> crate::events::Filter {
+        crate::events::Filter {
+            kind: self.kind,
+            number: self.number,
+            actor: self.actor,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1318,5 +1332,17 @@ mod tests {
         assert!(!foreign(&Method::POST, &h(Some("same-origin"))));
         assert!(!foreign(&Method::POST, &h(None)));
         assert!(!foreign(&Method::GET, &h(Some("cross-site"))));
+    }
+    #[test]
+    fn events_query_parses_every_filter() {
+        let uri: axum::http::Uri = "/api/v1/events?type=PushEvent&number=123&actor=alice&after=3"
+            .parse()
+            .unwrap();
+        let Query(q) = Query::<EventsQuery>::try_from_uri(&uri).unwrap();
+        assert_eq!(q.after, Some(3));
+        let f = q.filter();
+        assert_eq!(f.kind.as_deref(), Some("PushEvent"));
+        assert_eq!(f.number, Some(123));
+        assert_eq!(f.actor.as_deref(), Some("alice"));
     }
 }

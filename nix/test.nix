@@ -68,7 +68,7 @@ pkgs.testers.runNixOSTest {
     # the event stream never ends, so curl stops at its time limit (exit 28);
     # curl creates the body file only when data arrives
     machine.succeed("touch /tmp/events")
-    status = machine.execute("curl -s -m 3 -D /tmp/events.h -o /tmp/events -H 'Last-Event-ID: 0' 'http://127.0.0.1:8790/api/v1/events?type=PushEvent'")[0]
+    status = machine.execute("curl -s -m 3 -D /tmp/events.h -o /tmp/events -H 'Last-Event-ID: 0' 'http://127.0.0.1:8790/api/v1/events?type=PushEvent&number=1&actor=alice'")[0]
     assert status == 28, f"curl on the event stream exits {status}, not 28"
     machine.succeed("grep -qi 'content-type: text/event-stream' /tmp/events.h")
     machine.succeed("! grep -q '^data:' /tmp/events")
