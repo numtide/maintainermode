@@ -63,6 +63,12 @@ pkgs.testers.runNixOSTest {
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
     machine.succeed("curl -sf http://127.0.0.1:8790/sync -o /tmp/sync && grep -q 'Faster with forwarded events' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
+    machine.succeed("grep -q 'CVE Program records' /tmp/sync")
+    machine.succeed("grep -q 'its own task' /tmp/sync")
+    machine.succeed("grep -q cves_with_score /tmp/sync.json")
+    # with no network the tracker names no CVE, so the first severity pass
+    # reads nothing and says so
+    machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync2.json && grep -q '0 records read' /tmp/sync2.json")
     machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 403")

@@ -53,6 +53,40 @@ pub struct Health {
     /// a daily refresh does not make an old release new again.
     #[serde(default)]
     pub upstream_seen: BTreeMap<String, (String, DateTime<Utc>)>,
+    /// CVE id → severity and EPSS, for the CVEs the tracker names.
+    #[serde(default)]
+    pub cves: BTreeMap<String, crate::severity::Cve>,
+    #[serde(default)]
+    pub epss_at: Option<DateTime<Utc>>,
+    /// source → what its last pass did.
+    #[serde(default)]
+    pub runs: BTreeMap<String, Run>,
+}
+
+/// What one source did on its last pass, for `/sync`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Run {
+    pub at: DateTime<Utc>,
+    pub ok: bool,
+    pub line: String,
+}
+
+impl Run {
+    pub fn ok(line: String) -> Run {
+        Run {
+            at: Utc::now(),
+            ok: true,
+            line,
+        }
+    }
+
+    pub fn failed(line: String) -> Run {
+        Run {
+            at: Utc::now(),
+            ok: false,
+            line,
+        }
+    }
 }
 
 impl Health {
@@ -104,9 +138,18 @@ fn publish(app: &App, h: &Health) {
     *app.health.write().unwrap() = Arc::new(h.clone());
 }
 
+fn note(h: &mut Health, source: &str, r: Run) {
+    if r.ok {
+        tracing::info!("{source}: {}", r.line);
+    } else {
+        tracing::warn!("{source}: {}", r.line);
+    }
+    h.runs.insert(source.to_string(), r);
+}
+
 /// Reads only the sources that are due, so a source that is down is asked
 /// again on the next pass while the others keep their day.
-pub async fn run(app: Arc<App>) {
+pub async fn run(app: Arc<App>, nvd_key: Option<String>) {
     let mut h: Health = (**app.health.read().unwrap()).clone();
     loop {
         if stale(h.repology_at) {
@@ -128,6 +171,19 @@ pub async fn run(app: Arc<App>) {
                 Err(e) => tracing::warn!("security tracker: {e:#}"),
             }
         }
+        let r = crate::severity::records(&mut h).await;
+        note(&mut h, "cve", r);
+        publish(&app, &h);
+        let r = crate::severity::nvd(&mut h, nvd_key.as_deref()).await;
+        note(&mut h, "nvd", r);
+        if h.tracker_at.is_some() && stale(h.epss_at) {
+            let r = crate::severity::epss(&mut h).await;
+            if r.ok {
+                h.epss_at = Some(r.at);
+            }
+            note(&mut h, "epss", r);
+        }
+        publish(&app, &h);
         tokio::time::sleep(PASS).await;
     }
 }
