@@ -73,6 +73,13 @@ pub struct Args {
         default_value_t = 4
     )]
     per_day: usize,
+    /// Scans in 24 hours for all people together.
+    #[arg(
+        long = "rescan-per-day-total",
+        env = "MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL",
+        default_value_t = 100
+    )]
+    per_day_total: usize,
     /// Wall-clock limit of one scan, all steps together.
     #[arg(
         long = "rescan-timeout",
@@ -96,6 +103,7 @@ pub struct Config {
     pub nix: PathBuf,
     pub max_flakes: usize,
     pub per_day: usize,
+    pub per_day_total: usize,
     pub timeout: std::time::Duration,
     pub memory_mb: u64,
 }
@@ -114,7 +122,11 @@ impl Args {
                 nix.display()
             );
         }
-        if self.max_flakes == 0 || self.per_day == 0 || self.timeout_seconds == 0 {
+        if self.max_flakes == 0
+            || self.per_day == 0
+            || self.per_day_total == 0
+            || self.timeout_seconds == 0
+        {
             bail!("the rescan limits must be above zero");
         }
         Ok(Some(Config {
@@ -123,6 +135,7 @@ impl Args {
             nix,
             max_flakes: self.max_flakes,
             per_day: self.per_day,
+            per_day_total: self.per_day_total,
             timeout: std::time::Duration::from_secs(self.timeout_seconds),
             memory_mb: self.memory_mb.max(256),
         }))
@@ -687,6 +700,9 @@ async fn pass(app: &App, cfg: &Config) -> Result<()> {
     };
     for r in app.store.flake_refs_due(index_at)? {
         let day = Utc::now() - chrono::Duration::days(1);
+        if app.store.rescan_runs_total_since(day)? >= cfg.per_day_total {
+            break;
+        }
         if app.store.rescan_runs_since(&r.login, day)? >= cfg.per_day {
             continue;
         }
@@ -716,9 +732,10 @@ pub async fn run(app: Arc<App>) {
         return;
     };
     tracing::info!(
-        "flake rescans on: {} flakes a person, {} scans a day, {} s, {} MiB",
+        "flake rescans on: {} flakes a person, {} scans a day, {} in all, {} s, {} MiB",
         cfg.max_flakes,
         cfg.per_day,
+        cfg.per_day_total,
         cfg.timeout.as_secs(),
         cfg.memory_mb
     );
@@ -981,6 +998,7 @@ mod tests {
             nix: "/nix/store/x-nix/bin/nix".into(),
             max_flakes: 3,
             per_day: 4,
+            per_day_total: 100,
             timeout: std::time::Duration::from_secs(900),
             memory_mb: 4096,
         }
@@ -1064,6 +1082,8 @@ mod tests {
         s.log_rescan_run("alice").unwrap();
         assert_eq!(s.rescan_runs_since("alice", before).unwrap(), 2);
         assert_eq!(s.rescan_runs_since("bob", before).unwrap(), 0);
+        s.log_rescan_run("bob").unwrap();
+        assert_eq!(s.rescan_runs_total_since(before).unwrap(), 3);
         assert_eq!(s.purge_flake_results(later).unwrap(), 1);
         assert!(crate::sets::set_attrs(&app, &due[0].login).is_empty());
         s.delete_flake_refs("alice").unwrap();

@@ -769,6 +769,16 @@ impl Store {
         Ok(n as usize)
     }
 
+    pub fn rescan_runs_total_since(&self, since: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM rescan_run WHERE at >= ?1",
+            [since.to_rfc3339()],
+            |r| r.get(0),
+        )?;
+        Ok(n as usize)
+    }
+
     /// Counts only, for /sync: references, failing ones, the last scan.
     pub fn flake_ref_counts(&self) -> Result<(usize, usize, Option<DateTime<Utc>>)> {
         let conn = self.conn.lock().unwrap();

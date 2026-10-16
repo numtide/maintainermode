@@ -776,41 +776,30 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 ./result/bin/maintainer-mode serve --db club.sqlite
 ```
 
-| Variable                              | Meaning                                                     |
-| ------------------------------------- | ----------------------------------------------------------- |
-| `MAINTAINER_MODE_LISTEN`              | listen address, default `127.0.0.1:8790`                    |
-| `MAINTAINER_MODE_DB`                  | SQLite path                                                 |
-| `MAINTAINER_MODE_PUBLIC_URL`          | the public URL; the OAuth callback is `<url>/auth/callback` |
-| `GITHUB_CLIENT_ID`                    | OAuth app client id                                         |
-| `GITHUB_CLIENT_SECRET_FILE`           | file holding the OAuth app client secret                    |
-| `MAINTAINER_MODE_SYNC_TOKEN_FILE`     | optional token owned by the deployment                      |
-| `GITHUB_APP_ID`                       | GitHub App whose installation token syncs first             |
-| `GITHUB_APP_KEY_FILE`                 | file holding the PEM private key of the GitHub App          |
-| `GITHUB_APP_INSTALLATION_ID`          | installation to use; else the one on the account of the App |
-| `MAINTAINER_MODE_UPLOAD_TOKEN`        | the client's upload token for `submit`                      |
-| `MAINTAINER_MODE_CHANNELS`            | channels next to master, default `nixos-unstable,stable`    |
-| Variable                              | Meaning                                                     |
-| ------------------------------------- | ----------------------------------------------------------- |
-| `MAINTAINER_MODE_LISTEN`              | listen address, default `127.0.0.1:8790`                    |
-| `MAINTAINER_MODE_DB`                  | SQLite path                                                 |
-| `MAINTAINER_MODE_PUBLIC_URL`          | the public URL; the OAuth callback is `<url>/auth/callback` |
-| `GITHUB_CLIENT_ID`                    | OAuth app client id                                         |
-| `GITHUB_CLIENT_SECRET_FILE`           | file holding the OAuth app client secret                    |
-| `MAINTAINER_MODE_SYNC_TOKEN_FILE`     | optional token owned by the deployment                      |
-| `MAINTAINER_MODE_S3_ENDPOINT`         | S3-compatible endpoint for the copy of the event log        |
-| `MAINTAINER_MODE_S3_BUCKET`           | the bucket of that copy                                     |
-| `MAINTAINER_MODE_S3_REGION`           | the region that the request signature names                 |
-| `MAINTAINER_MODE_S3_CREDENTIALS_FILE` | file with the access key id and the secret key              |
-| `MAINTAINER_MODE_ARCHIVE_REPOS`       | repositories to archive; default `NixOS/nixpkgs`            |
-| `MAINTAINER_MODE_ARCHIVE_ITEMS`       | items the archive walk fetches per repository and pass      |
-| `MAINTAINER_MODE_RESCAN`              | `true` turns on the server rescans of public flakes         |
-| `MAINTAINER_MODE_RESCAN_BWRAP`        | the `bwrap` program, default `bwrap`                        |
-| `MAINTAINER_MODE_RESCAN_PRLIMIT`      | the `prlimit` program, default `prlimit`                    |
-| `MAINTAINER_MODE_RESCAN_NIX`          | plain `nix` in `/nix/store`, default `nix` from `PATH`      |
-| `MAINTAINER_MODE_RESCAN_MAX_FLAKES`   | flakes a person can register, default 3                     |
-| `MAINTAINER_MODE_RESCAN_PER_DAY`      | scans a person gets in 24 hours, default 4                  |
-| `MAINTAINER_MODE_RESCAN_TIMEOUT`      | wall-clock limit of one scan in seconds, default 900        |
-| `MAINTAINER_MODE_RESCAN_MEMORY_MB`    | address-space limit of each sandboxed process, default 3072 |
+| Variable                               | Meaning                                                     |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `MAINTAINER_MODE_LISTEN`               | listen address, default `127.0.0.1:8790`                    |
+| `MAINTAINER_MODE_DB`                   | SQLite path                                                 |
+| `MAINTAINER_MODE_PUBLIC_URL`           | the public URL; the OAuth callback is `<url>/auth/callback` |
+| `GITHUB_CLIENT_ID`                     | OAuth app client id                                         |
+| `GITHUB_CLIENT_SECRET_FILE`            | file holding the OAuth app client secret                    |
+| `MAINTAINER_MODE_SYNC_TOKEN_FILE`      | optional token owned by the deployment                      |
+| `GITHUB_APP_ID`                        | GitHub App whose installation token syncs first             |
+| `GITHUB_APP_KEY_FILE`                  | file holding the PEM private key of the GitHub App          |
+| `GITHUB_APP_INSTALLATION_ID`           | installation to use; else the one on the account of the App |
+| `MAINTAINER_MODE_UPLOAD_TOKEN`         | the client's upload token for `submit`                      |
+| `MAINTAINER_MODE_CHANNELS`             | channels next to master, default `nixos-unstable,stable`    |
+| `MAINTAINER_MODE_ARCHIVE_REPOS`        | repositories to archive; default `NixOS/nixpkgs`            |
+| `MAINTAINER_MODE_ARCHIVE_ITEMS`        | items the archive walk fetches per repository and pass      |
+| `MAINTAINER_MODE_RESCAN`               | `true` turns on the server rescans of public flakes         |
+| `MAINTAINER_MODE_RESCAN_BWRAP`         | the `bwrap` program, default `bwrap`                        |
+| `MAINTAINER_MODE_RESCAN_PRLIMIT`       | the `prlimit` program, default `prlimit`                    |
+| `MAINTAINER_MODE_RESCAN_NIX`           | plain `nix` in `/nix/store`, default `nix` from `PATH`      |
+| `MAINTAINER_MODE_RESCAN_MAX_FLAKES`    | flakes a person can register, default 3                     |
+| `MAINTAINER_MODE_RESCAN_PER_DAY`       | scans a person gets in 24 hours, default 4                  |
+| `MAINTAINER_MODE_RESCAN_TIMEOUT`       | wall-clock limit of one scan in seconds, default 900        |
+| `MAINTAINER_MODE_RESCAN_MEMORY_MB`     | address-space limit of each sandboxed process, default 3072 |
+| `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
 
 CI is the flake's `checks`: `nix flake check`.
 
