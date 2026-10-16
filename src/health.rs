@@ -8,8 +8,10 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+use crate::web::App;
 
 const REPOLOGY: &str = "https://repology.org/api/v1/projects";
 const REPOLOGY_REPO: &str = "nix_unstable";
@@ -39,7 +41,7 @@ impl Advisory {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Health {
     /// attribute → newest upstream version, only where nixpkgs is behind.
     pub upstream: BTreeMap<String, String>,
@@ -79,6 +81,54 @@ impl Health {
             .get(attr)
             .filter(|(v, _)| v == version)
             .map(|(_, at)| *at)
+    }
+}
+
+/// The health sources run in their own task, so a slow source never holds
+/// back the pull request and issue sync.
+pub const PASS: Duration = Duration::from_secs(600);
+
+fn stale(t: Option<DateTime<Utc>>) -> bool {
+    t.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(24))
+}
+
+fn publish(app: &App, h: &Health) {
+    match serde_json::to_string(h) {
+        Ok(s) => {
+            if let Err(e) = app.store.set("health", &s) {
+                tracing::warn!("health: {e:#}");
+            }
+        }
+        Err(e) => tracing::warn!("health: {e:#}"),
+    }
+    *app.health.write().unwrap() = Arc::new(h.clone());
+}
+
+/// Reads only the sources that are due, so a source that is down is asked
+/// again on the next pass while the others keep their day.
+pub async fn run(app: Arc<App>) {
+    let mut h: Health = (**app.health.read().unwrap()).clone();
+    loop {
+        if stale(h.repology_at) {
+            match repology().await {
+                Ok(u) => {
+                    h.set_upstream(u, Utc::now());
+                    publish(&app, &h);
+                }
+                Err(e) => tracing::warn!("repology: {e:#}"),
+            }
+        }
+        if stale(h.tracker_at) {
+            match tracker().await {
+                Ok(a) => {
+                    h.advisories = a;
+                    h.tracker_at = Some(Utc::now());
+                    publish(&app, &h);
+                }
+                Err(e) => tracing::warn!("security tracker: {e:#}"),
+            }
+        }
+        tokio::time::sleep(PASS).await;
     }
 }
 

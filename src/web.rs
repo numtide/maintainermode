@@ -961,42 +961,6 @@ pub fn load_health(store: &Store) -> crate::health::Health {
         .unwrap_or_default()
 }
 
-fn stale(t: Option<DateTime<Utc>>) -> bool {
-    t.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(24))
-}
-
-/// Whether a health source is a day old or never answered.
-pub fn health_due(app: &App) -> bool {
-    let h = app.health.read().unwrap();
-    stale(h.repology_at) || stale(h.tracker_at)
-}
-
-/// Reads only the sources that are due, so a source that is down is asked
-/// again on the next pass while the other keeps its day.
-pub async fn refresh_health(app: &App) -> Result<()> {
-    let mut h = load_health(&app.store);
-    if stale(h.repology_at) {
-        match crate::health::repology().await {
-            Ok(u) => {
-                h.set_upstream(u, Utc::now());
-            }
-            Err(e) => tracing::warn!("repology: {e:#}"),
-        }
-    }
-    if stale(h.tracker_at) {
-        match crate::health::tracker().await {
-            Ok(a) => {
-                h.advisories = a;
-                h.tracker_at = Some(Utc::now());
-            }
-            Err(e) => tracing::warn!("security tracker: {e:#}"),
-        }
-    }
-    app.store.set("health", &serde_json::to_string(&h)?)?;
-    *app.health.write().unwrap() = Arc::new(h);
-    Ok(())
-}
-
 /// Gives each heading the id GitHub would, so `#the-rules` links still land.
 fn anchor_headings(html: &str) -> String {
     let mut out = String::with_capacity(html.len());

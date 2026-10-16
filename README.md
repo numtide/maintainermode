@@ -456,7 +456,9 @@ Every query command takes `--json`.
 - **Health** comes from two daily bulk reads, kept in the database:
   repology's list of projects outdated in `nix_unstable`, at one request a
   second, and every issue of the security tracker. Hydra is asked per page
-  view and the answer is kept an hour.
+  view and the answer is kept an hour. The health sources run in their own
+  task, every 10 minutes. A slow source does not delay the pull request and
+  issue sync.
 
 ## The nixpkgs event log
 
