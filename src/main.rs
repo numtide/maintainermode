@@ -211,29 +211,30 @@ fn retry_wait(failures: u32, every: u64) -> u64 {
 async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate) {
     let mut failures = 0;
     loop {
-        let mut down = false;
-        let mut warn = |what: &str, e: anyhow::Error| {
-            down |= offline(&e);
-            tracing::warn!("{what}: {e:#}");
-        };
         let index_at = app.store.get_time("index_at").ok().flatten();
         if index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
             match web::refresh_index(&app).await {
                 Ok(()) => tracing::info!("nixpkgs index refreshed"),
-                Err(e) => warn("nixpkgs index", e),
+                Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
             }
         }
         if web::health_due(&app) {
             match web::refresh_health(&app).await {
                 Ok(()) => tracing::info!("package health read"),
-                Err(e) => warn("package health", e),
+                Err(e) => tracing::warn!("package health: {e:#}"),
             }
         }
+        // Only the GitHub sync decides whether the host is offline: one other
+        // host that stays down must not hold back the rest of the pass.
+        let mut down = false;
         let mut tokens = Vec::new();
         if let Some(a) = &app.github_app {
             match a.token().await {
                 Ok(t) => tokens.push(t),
-                Err(e) => warn("GitHub App token", e),
+                Err(e) => {
+                    down = offline(&e);
+                    tracing::warn!("GitHub App token: {e:#}");
+                }
             }
         }
         tokens.extend(app.sync_token.iter().cloned());
@@ -241,10 +242,16 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         let mut client = github::Client::new(tokens);
         if client.has_token() {
             match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
-                Ok(n) => tracing::info!("synced {n} pull requests"),
-                Err(e) => warn("sync", e),
+                Ok(n) => {
+                    down = false;
+                    tracing::info!("synced {n} pull requests");
+                }
+                Err(e) => {
+                    down = offline(&e);
+                    tracing::warn!("sync: {e:#}");
+                }
             }
-        } else {
+        } else if !down {
             tracing::info!("no token yet; the sync starts when someone logs in");
         }
         if down {
