@@ -1131,10 +1131,10 @@ fn packages_section(app: &App) -> String {
         stat(
             p.open_bumps,
             "open version bumps",
-            &format!(
-                "median age {} days; <a href=\"/bumps\">the list</a>",
-                num(p.bumps_median_age_days)
-            )
+            &match p.bumps_median_age_days {
+                Some(d) => format!("median age {d} days; <a href=\"/bumps\">the list</a>"),
+                None => "<a href=\"/bumps\">the list</a>".into(),
+            }
         ),
     );
     out
