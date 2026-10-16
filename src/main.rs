@@ -320,7 +320,12 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         let old_format = app.index.read().unwrap().pkgs.is_empty();
         if old_format || index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
             match web::refresh_index(&app).await {
-                Ok(()) => tracing::info!("nixpkgs index refreshed"),
+                Ok(()) => {
+                    tracing::info!("nixpkgs index refreshed");
+                    if let Err(e) = app.recompute() {
+                        tracing::warn!("recompute: {e:#}");
+                    }
+                }
                 Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
             }
         }
