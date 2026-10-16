@@ -74,6 +74,9 @@ The alert channel is open. See below.
 5. Add the private panel and alerts.
 6. Move `scan`, `export` and `submit` to the client.
 
+Steps 5 and 6 are done: `/me/sets`, the upload token, the alerts in the Atom
+feed, and the three client commands. The public flake reference is not done.
+
 ## Open
 
 - Alert channel: email needs the GitHub App's email permission and a mail

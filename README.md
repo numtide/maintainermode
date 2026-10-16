@@ -229,6 +229,73 @@ with its flags, the ones that need attention first.
   path. Maintainer Mode already logs people in and keeps state, so a
   subscription is one more row in its database.
 
+## My package set
+
+Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you
+when one of them gets an advisory or a new upstream release. The set is
+private. Facts about nixpkgs are public; facts about your machines are not.
+
+You evaluate your own tree on your own machine. The server never evaluates
+it. Three client commands do the work:
+
+```sh
+maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
+maintainer-mode export --out report.json
+maintainer-mode submit --to https://<host> --token-file ~/.config/maintainer-mode/upload-token
+```
+
+- **`scan`** reads the closure of one or more flake outputs (`--flake`,
+  `--output`), or of the attributes of a file (`--file`, `--attr`), with
+  `nix derivation show -r`. `--runtime` reads the built store paths with
+  `nix path-info -r` instead. It matches each package name to a nixpkgs
+  attribute: the name, the name in lower case, or `python3Packages.<name>`.
+  It uses the nixpkgs that the tree pins in `flake.lock` or in
+  `npins/sources.json`. `--nixpkgs-input` names the pin, and `--nixpkgs` gives
+  a path or a flake reference. It writes the full report to
+  `maintainer-mode-scan.json`, which stays on your machine.
+- **`export`** writes the redacted report. It keeps only the packages with a
+  nixpkgs attribute. It counts the other names and does not list them. It
+  removes the name of the scanned tree. Read it before you send it.
+- **`submit`** sends the redacted report to `POST /api/v1/reports`. It reads
+  the upload token from `MAINTAINER_MODE_UPLOAD_TOKEN`, or from the file of
+  `--token-file`.
+
+The report format is the nixfresh report format, schema 1.
+
+**The upload token.** Make it on `/me/sets`. The server shows it once and
+keeps only its SHA-256 hash. A new token replaces the old one. One button
+revokes it.
+
+**What the server does with a report.**
+
+| Code | Meaning                                              |
+| ---- | ---------------------------------------------------- |
+| 202  | stored; the answer gives the kept and dropped counts |
+| 400  | an unreadable report or a schema other than 1        |
+| 401  | no token, or an unknown token                        |
+| 413  | more than 16 MiB, or more than 50,000 packages       |
+| 503  | the nixpkgs index is not built yet                   |
+
+- It keeps an attribute only when its own nixpkgs index has it. It drops all
+  other entries. A broken or hostile client cannot store a private name.
+- It keeps one set per login: a new report replaces the old one.
+- It keeps the attributes, the time of the upload, the time of the scan and
+  the nixpkgs revision. It keeps nothing else from the report.
+- **Lifetime.** A set expires 90 days after its last upload. The background
+  loop deletes it. "Delete my set" on `/me/sets` deletes it at once.
+- **Access.** Only the owner sees `/me/sets`. There is no admin view. No
+  public page, count or API uses an uploaded set.
+
+**The panel.** `/me/sets` shows the attributes of your latest report and the
+packages you watch. Each row has the health flags of a package page:
+advisories, a newer upstream release, open pull requests and open issues.
+The rows that need attention come first. The package page has the last Hydra
+build.
+
+**Alerts.** Your private Atom feed (see above) also gets, for each package in
+your set, a new advisory and a new upstream release. It does not get the pull
+requests and issues of the set, because a closure has thousands of packages.
+
 ## Actions
 
 `/actions` starts work in GitHub Actions of a repository you own, with your
@@ -315,6 +382,7 @@ because a pull request closed before the walk started is not in it.
 | Humans   | the web page: ready to merge, needs review (your area, unowned, all), packages I watch, one review record per person                                      |
 | Agents   | `GET /api/v1/queue/merge`, `/api/v1/queue/review?bucket=…&login=…`, `/api/v1/people/<login>` (record, credits, area), `/api/v1/metrics`, `/api/v1/status` |
 | Programs | `maintainer-mode check <login>`: exit 0 listed, 3 not listed, 1 broken                                                                                    |
+| Owners   | `maintainer-mode scan`, `export` and `submit`: a private package set from your own closure                                                                |
 
 ```sh
 maintainer-mode --server https://<host> merge
@@ -423,6 +491,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_APP_ID`                   | GitHub App whose installation token syncs first             |
 | `GITHUB_APP_KEY_FILE`             | file holding the PEM private key of the GitHub App          |
 | `GITHUB_APP_INSTALLATION_ID`      | installation to use; else the one on the account of the App |
+| `MAINTAINER_MODE_UPLOAD_TOKEN`    | the client's upload token for `submit`                      |
 
 CI is the flake's `checks`: `nix flake check`.
 
@@ -434,6 +503,7 @@ CI is the flake's `checks`: `nix flake check`.
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
+| nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages
