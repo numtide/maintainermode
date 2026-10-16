@@ -497,7 +497,9 @@ prompt. The session runs in your own Claude account.
 
 The prompt gives:
 
-- the pull request number, its URL, its base branch and the files it changes;
+- the pull request number, its URL, its base branch and the files it changes.
+  The title and the file paths come from the author. The prompt puts them in a
+  fenced block and marks that block as data, not instructions;
 - the nixpkgs
   [automation/AI policy](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy):
   you review and answer for the result, each commit ends with an
