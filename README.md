@@ -193,7 +193,9 @@ merged in the synced window.
   maintainers and teams. An advisory counts as open while its nixpkgs issue is
   open. Each advisory shows the worst severity of its CVEs (CVSS), whether
   CISA saw an exploit, and its [EPSS](https://www.first.org/epss/) score: the
-  chance of exploitation in the next 30 days.
+  chance of exploitation in the next 30 days. A package from PyPI,
+  crates.io or npm also shows the [OSV](https://osv.dev) advisories for the
+  exact version nixpkgs ships, unless a tracker advisory names the same CVE.
 - **Packaging hygiene of a package:** cheap checks on what the index sweep
   reads, with no network and no build:
   - `meta.description`, `meta.homepage` and `meta.license` are set;
@@ -515,6 +517,12 @@ Every query command takes `--json`.
     `MAINTAINER_MODE_NVD_API_KEY_FILE`. With a key, a pass asks for up to 50.
   - [EPSS](https://www.first.org/epss/) scores every tracked CVE once a day,
     100 CVEs to a request.
+  - [OSV](https://osv.dev) is asked once a day for each package whose
+    ecosystem is known: a source from PyPI, crates.io or npm, or an
+    attribute of a Python package set. One request asks for 1000 packages,
+    each by its name and the exact version nixpkgs ships. A pass then reads
+    the records of up to 200 new matches. The CVEs of the matches get a
+    score and EPSS too.
 
   No source needs an account. `/sync` shows what each source did on its last
   pass.
@@ -612,6 +620,7 @@ CI is the flake's `checks`: `nix flake check`.
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
 | nixfresh `upstream.rs`, `version.rs` and direct collector            | 2026-10 | MIT     | `src/upstream.rs` and `src/version.rs`: upstream releases from tags and registries                  |
+| nixfresh osv collector                                               | 2026-10 | MIT     | `src/osv.rs`: OSV matches for the exact version of PyPI, crates.io and npm packages                 |
 | nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
 | nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |
 

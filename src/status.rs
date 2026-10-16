@@ -135,7 +135,17 @@ fn row(k: &str, v: &str) -> String {
 }
 
 /// The health sources that report a pass: key, row label, what they read.
-const SOURCES: [(&str, &str, &str); 4] = [
+const SOURCES: [(&str, &str, &str); 6] = [
+    (
+        "osv",
+        "OSV",
+        "the exact version of each PyPI, crates.io and npm package, 1000 to a request, once a day",
+    ),
+    (
+        "osv-records",
+        "OSV records",
+        "the summary and severity of each match, 200 a pass",
+    ),
     (
         "upstream",
         "Upstream tags and registries",
