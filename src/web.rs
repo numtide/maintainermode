@@ -367,11 +367,16 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
   {prs} pull requests synced · nixpkgs index {rev} · <a href="/rules#the-rules">the rules</a> · <a href="/sync">sync status</a> · <a href="/api/v1/status">API</a><br>
-  A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.
+  A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>
 </body>
 </html>"#,
         club = icon(octicon!("people")),
+        nvd = if app.store.get("nvd_api").ok().flatten().is_some() {
+            "<br>This product uses the NVD API but is not endorsed or certified by the NVD."
+        } else {
+            ""
+        },
         prs = s.prs,
         rev = esc(if s.index_rev.is_empty() {
             "pending"

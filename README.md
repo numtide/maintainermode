@@ -671,6 +671,10 @@ Every query command takes `--json`.
   - [NVD](https://nvd.nist.gov) gives a score to a CVE whose record has
     none. NVD needs an API key for a useful rate, so it is off without
     `MAINTAINER_MODE_NVD_API_KEY_FILE`. With a key, a pass asks for up to 50.
+    While the key is set, every page says, as the NVD terms of use ask:
+    "This product uses the NVD API but is not endorsed or certified by the
+    NVD." A CVSS label says whether its score comes from NVD or from the CVE
+    record. The risk score is Maintainer Mode's own, and its label says so.
   - [EPSS](https://www.first.org/epss/) scores every tracked CVE once a day,
     100 CVEs to a request.
   - [OSV](https://osv.dev) is asked once a day for each package whose

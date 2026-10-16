@@ -101,6 +101,8 @@ pub struct Cve {
 pub struct Worst {
     pub band: Option<Band>,
     pub cvss: Option<f64>,
+    /// `cve` or `nvd`: where `cvss` comes from.
+    pub from: Option<String>,
     pub epss: Option<f64>,
     pub percentile: Option<f64>,
     pub exploitation: Option<String>,
@@ -112,6 +114,7 @@ pub fn worst<'a>(h: &Health, cves: impl IntoIterator<Item = &'a String>) -> Wors
         if c.band > w.band {
             w.band = c.band;
             w.cvss = c.cvss;
+            w.from = c.from.clone();
         }
         if c.epss > w.epss {
             w.epss = c.epss;

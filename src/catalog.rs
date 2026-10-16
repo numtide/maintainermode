@@ -271,6 +271,7 @@ fn score_label(s: &Score) -> String {
             .collect::<Vec<_>>()
             .join("; ")
     };
+    let why = format!("Maintainer Mode's own score: {why}");
     format!(
         "<span class=\"Label {}\" title=\"{}\">risk {}</span>",
         s.label_class(),
@@ -615,8 +616,13 @@ fn severity_html(w: &Worst) -> String {
     if let Some(b) = w.band {
         let _ = write!(
             out,
-            " <span class=\"Label {}\" title=\"CVSS base score\">{}{}</span>",
+            " <span class=\"Label {}\" title=\"CVSS base score{}\">{}{}</span>",
             b.label_class(),
+            match w.from.as_deref() {
+                Some("nvd") => ", from NVD",
+                Some("cve") => ", from the CVE record",
+                _ => "",
+            },
             b.word(),
             w.cvss.map(|s| format!(" {s:.1}")).unwrap_or_default()
         );
