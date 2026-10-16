@@ -42,6 +42,8 @@ pkgs.testers.runNixOSTest {
     machine.fail("curl -sf http://127.0.0.1:8790/a/..%2Fetc")
     status = machine.execute("maintainer-mode --server http://127.0.0.1:8790 check nobody")[0]
     assert status == 3, f"check exits {status}, not 3"
+    # a reader that closes stdout early must not make the CLI panic
+    machine.succeed("set -o pipefail; maintainer-mode --server http://127.0.0.1:8790 metrics | true")
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'sync token from GitHub App 1' /tmp/log")
     # the key parsed and the JWT was signed; only the request found no network
