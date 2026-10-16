@@ -65,6 +65,14 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 403")
     machine.fail("curl -sf http://127.0.0.1:8790/a/..%2Fetc")
+    # the event stream never ends, so curl stops at its time limit (exit 28);
+    # curl creates the body file only when data arrives
+    machine.succeed("touch /tmp/events")
+    status = machine.execute("curl -s -m 3 -D /tmp/events.h -o /tmp/events -H 'Last-Event-ID: 0' 'http://127.0.0.1:8790/api/v1/events?type=PushEvent'")[0]
+    assert status == 28, f"curl on the event stream exits {status}, not 28"
+    machine.succeed("grep -qi 'content-type: text/event-stream' /tmp/events.h")
+    machine.succeed("! grep -q '^data:' /tmp/events")
+    machine.succeed("test -d /var/lib/maintainer-mode/events")
     status = machine.execute("maintainer-mode --server http://127.0.0.1:8790 check nobody")[0]
     assert status == 3, f"check exits {status}, not 3"
     # a reader that closes stdout early must not make the CLI panic
