@@ -358,4 +358,120 @@ mod tests {
         h.insert(header::AUTHORIZATION, "Bearer abc".parse().unwrap());
         assert_eq!(bearer(&h), Some("abc"));
     }
+
+    fn app(attrs: &[&str]) -> Shared {
+        let mut index = crate::area::Index::default();
+        if !attrs.is_empty() {
+            index.rev = "0".repeat(40);
+        }
+        for a in attrs {
+            index.pkgs.insert(a.to_string(), Default::default());
+        }
+        std::sync::Arc::new(App {
+            store: crate::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
+            oauth: None,
+            sync_token: None,
+            index: std::sync::RwLock::new(index),
+            snapshot: Default::default(),
+            secure_cookies: false,
+            health: Default::default(),
+            hydra: Default::default(),
+            data_dir: Default::default(),
+            index_sets: vec![],
+            metrics: Default::default(),
+            public_url: String::new(),
+            github_app: None,
+        })
+    }
+
+    async fn post(app: &Shared, token: &str, body: serde_json::Value) -> StatusCode {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        upload(State(app.clone()), h, Bytes::from(body.to_string()))
+            .await
+            .status()
+    }
+
+    fn report() -> serde_json::Value {
+        json!({
+            "schema": crate::report::SCHEMA,
+            "packages": [
+                { "pname": "hello", "attr": "hello", "resolution": "attr" },
+                { "pname": "secret", "attr": "our-private-daemon", "resolution": "attr" },
+                { "pname": "nameless", "resolution": "flake" },
+            ],
+        })
+    }
+
+    #[tokio::test]
+    async fn an_upload_keeps_only_attributes_the_index_knows() {
+        let app = app(&["hello"]);
+        app.store
+            .set_upload_token("alice", &token_hash("t"))
+            .unwrap();
+        assert_eq!(
+            post(&app, "wrong", report()).await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(post(&app, "t", report()).await, StatusCode::ACCEPTED);
+        let set = app.store.package_set("alice").unwrap().unwrap();
+        assert_eq!(set.attrs, vec!["hello"]);
+        assert_eq!(set.dropped, 2);
+        assert_eq!(
+            post(&app, "t", json!({ "schema": 99, "packages": [] })).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn an_upload_waits_for_the_index() {
+        let app = app(&[]);
+        app.store
+            .set_upload_token("alice", &token_hash("t"))
+            .unwrap();
+        assert_eq!(
+            post(&app, "t", report()).await,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert!(app.store.package_set("alice").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn an_upload_has_a_package_limit() {
+        let app = app(&["hello"]);
+        app.store
+            .set_upload_token("alice", &token_hash("t"))
+            .unwrap();
+        let packages: Vec<_> = (0..=MAX_PACKAGES)
+            .map(|_| json!({ "pname": "hello", "attr": "hello", "resolution": "attr" }))
+            .collect();
+        let body = json!({ "schema": crate::report::SCHEMA, "packages": packages });
+        assert_eq!(post(&app, "t", body).await, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[test]
+    fn the_purge_deletes_only_expired_sets() {
+        let app = app(&[]);
+        let now = Utc::now();
+        for (login, days) in [("old", RETENTION_DAYS + 1), ("new", RETENTION_DAYS - 1)] {
+            let set = PackageSet {
+                attrs: vec!["hello".into()],
+                dropped: 0,
+                uploaded_at: now - Duration::days(days),
+                scanned_at: None,
+                nixpkgs_rev: None,
+            };
+            app.store.put_package_set(login, &set).unwrap();
+        }
+        let n = app
+            .store
+            .purge_package_sets(now - Duration::days(RETENTION_DAYS))
+            .unwrap();
+        assert_eq!(n, 1);
+        assert!(app.store.package_set("old").unwrap().is_none());
+        assert!(app.store.package_set("new").unwrap().is_some());
+    }
 }
