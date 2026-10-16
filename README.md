@@ -173,23 +173,53 @@ bucket, which is the newcomer path: packaging hygiene (complete `meta`,
 pinned hashes, `platforms`, a missing `versionCheckHook`) needs no domain
 knowledge and is most of what a first review finds.
 
-## Packages I watch
+## Packages, modules and areas
 
-Follow a package, and the watch page shows its open advisories, a newer
-upstream release, and the open nixpkgs pull requests against it.
+Every package, NixOS module and nixpkgs path has a page: `/p/<attr>`,
+`/m/<module file>` and `/a/<path>`. `/packages` searches them. Each page shows
+health first, then the open issues and pull requests, then the ones closed or
+merged in the synced window.
 
-- **Advisories and upstream** come from a nixfresh instance's public
-  `GET /api/v1/packages/<pname>` (`MAINTAINER_MODE_NIXFRESH_URL`). Maintainer
-  Mode never writes to nixfresh.
-- **Open pull requests** come from Maintainer Mode's own sync: a title that
-  starts `<pname>:` (or `….<pname>:`), or a file under `pkgs/by-name/<xx>/<pname>/`.
-- **Why here and not in nixfresh.** A public nixfresh instance holds no
-  credential and no user table by design. Accounts, stored preferences and
-  outbound messages are a write path. Maintainer Mode already logs people in
-  and keeps state, so a subscription is one more row in its database. One
-  login, one account system, one place that can send a person anything.
-- **Nothing is sent yet.** This slice models the subscription and shows what a
-  watcher would hear about. Delivery, mail or otherwise, is a later decision.
+- **Health of a package:** its nixpkgs version and the newest upstream release
+  ([repology](https://repology.org), only when nixpkgs is behind), the last
+  Hydra build of `nixpkgs/unstable/<attr>.x86_64-linux`, the open advisories
+  of the [security tracker](https://tracker.security.nixos.org), and its
+  maintainers and teams. An advisory counts as open while its nixpkgs issue is
+  open.
+- **Health of a module:** the last Hydra build of its NixOS test
+  (`nixos.tests.<name>`), and its maintainers and teams.
+- **An area** lists the packages and modules under it, the ones that need
+  attention first, its `ci/OWNERS` lines, and the busiest directories below it.
+- **Pull requests** belong to a package or module by the files they change
+  (its directory, or its NixOS test) and by the title convention:
+  `<name>: …` or `nixos/<name>: …`. A file that more than 25 packages share,
+  like `all-packages.nix`, links nothing.
+- **Issues** belong by their title, with the forms of
+  `.github/ISSUE_TEMPLATE` (`Build failure: <name>`, `Update Request: <name> …`),
+  and by the nixpkgs paths and the "Package name" field in their body.
+
+## What I maintain
+
+`/u/<login>/maintains` lists the packages and NixOS modules whose
+`meta.maintainers` names the login, or whose `meta.teams` names a team the
+login is in. Each row carries the same health flags as a page. The list comes
+from nixpkgs; change it there.
+
+## What I watch
+
+Subscribe to any package, module or area from its page, by name on `/watch`,
+or to everything you maintain in one step. `/watch` shows each subscription
+with its flags, the ones that need attention first.
+
+- **The Atom feed** is the delivery. `/watch` makes a private link,
+  `/feed/<token>`, with the last 30 days of what happened to your
+  subscriptions: pull requests opened, merged or closed, issues opened or
+  closed, and new advisories. Replacing the link cuts the old one.
+- Subscriptions are private: they show only to you and in your feed. The
+  package pages are public.
+- **Why here.** Accounts, stored preferences and outbound messages are a write
+  path. Maintainer Mode already logs people in and keeps state, so a
+  subscription is one more row in its database.
 
 ## The state of nixpkgs
 
@@ -262,6 +292,9 @@ Every query command takes `--json`.
   pull requests by `updatedAt`, newest first, and stops at the watermark of
   the previous pass. Both walks store their cursor, so a pass that runs out
   of budget resumes where it stopped.
+- **Issues** are read the same way, 100 to a query without their body: the
+  body gives only the paths and package name it names. The first pass reads
+  every open issue, then each pass walks by `updatedAt`.
 - **Tokens.** When you log in, Maintainer Mode keeps your token and reads public
   nixpkgs data with it. The rate limit grows with the number of people who use
   it. The OAuth app asks for no scope, so the token reads public data only. A
@@ -276,8 +309,11 @@ Every query command takes `--json`.
   unpacks the source tarball of nixpkgs `master` and evaluates every derivation
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
   the package name, the file of `meta.position`, and the GitHub logins in
-  `meta.maintainers`. That one sweep maps paths to packages and packages to
-  people. It evaluates a local tree, not a flake reference, so the evaluator
+  `meta.maintainers` and `meta.teams`. That one sweep maps paths to packages and packages to
+  people. One more evaluation, of NixOS with no configuration, reads
+  `meta.maintainers` and `meta.teams` of every module, and `lib.teams` gives
+  the members of each team. A team member counts as a maintainer.
+  It evaluates a local tree, not a flake reference, so the evaluator
   needs no daemon and writes nothing to a store.
 - **The evaluator is one setting**, `--evaluator` (`MAINTAINER_MODE_EVALUATOR`):
   anything that answers `nix eval --json --file`. The package sets it to
@@ -292,6 +328,11 @@ Every query command takes `--json`.
 
   `maintainer-mode sweep` runs the sweep alone, to time it.
 
+- **Health** comes from two daily bulk reads, kept in the database:
+  repology's list of projects outdated in `nix_unstable`, at one request a
+  second, and every issue of the security tracker. Hydra is asked per page
+  view and the answer is kept an hour.
+
 ## Known limits of slice one
 
 - Each pull request reads its first 30 reviews, the first 5 inline comments of
@@ -299,8 +340,10 @@ Every query command takes `--json`.
   busy pull request can lose a trigger or a void past those limits.
 - Ownership of a pull request is judged against today's nixpkgs, not the
   nixpkgs of the day of the review.
-- The sweep covers derivations in the swept sets. NixOS modules, whose
-  `meta.maintainers` sits outside a derivation, are not in it yet.
+- The sweep covers derivations in the swept sets, and NixOS modules. A package
+  outside the swept sets has no page.
+- Linking issues and pull requests to a package reads conventions, not
+  intent. A title that names no package and touches no file of it is missed.
 - Bot authors (`r-ryantm` among them) are never listed, so their pull requests
   do not appear.
 
@@ -320,7 +363,6 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_CLIENT_ID`                | OAuth app client id                                         |
 | `GITHUB_CLIENT_SECRET_FILE`       | file holding the OAuth app client secret                    |
 | `MAINTAINER_MODE_SYNC_TOKEN_FILE` | optional token owned by the deployment                      |
-| `MAINTAINER_MODE_NIXFRESH_URL`    | nixfresh instance for package health on the watch page      |
 
 CI is the flake's `checks`: `nix flake check`.
 
@@ -331,6 +373,7 @@ CI is the flake's `checks`: `nix flake check`.
 | [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, served as-is                                                                     |
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
+| nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages

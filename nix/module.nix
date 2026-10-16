@@ -9,6 +9,14 @@ let
   state = "/var/lib/maintainer-mode";
 in
 {
+  imports = [
+    (lib.mkRemovedOptionModule [
+      "services"
+      "maintainer-mode"
+      "nixfreshUrl"
+    ] "Maintainer Mode now collects package health itself.")
+  ];
+
   options.services.maintainer-mode = {
     enable = lib.mkEnableOption "Maintainer Mode, the nixpkgs review and merge queues";
 
@@ -54,12 +62,6 @@ in
       description = "Optional GitHub token owned by the deployment, used before tokens lent by logged-in people.";
     };
 
-    nixfreshUrl = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      description = "A nixfresh instance whose public API supplies package health for the watch page.";
-    };
-
     historySince = lib.mkOption {
       type = lib.types.str;
       default = "2020-01-01";
@@ -103,9 +105,6 @@ in
       }
       // lib.optionalAttrs (cfg.syncTokenFile != null) {
         MAINTAINER_MODE_SYNC_TOKEN_FILE = "%d/sync_token";
-      }
-      // lib.optionalAttrs (cfg.nixfreshUrl != null) {
-        MAINTAINER_MODE_NIXFRESH_URL = cfg.nixfreshUrl;
       };
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} serve";

@@ -25,6 +25,16 @@ let
     "sign-out"
     "tag"
     "x-circle-fill"
+    "package"
+    "issue-opened"
+    "issue-closed"
+    "search"
+    "file-directory"
+    "gear"
+    "shield"
+    "rss"
+    "git-pull-request-closed"
+    "skip"
   ];
 in
 runCommand "primer-assets" { } ''

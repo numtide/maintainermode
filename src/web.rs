@@ -28,8 +28,9 @@ macro_rules! octicon {
         include_str!(concat!(env!("PRIMER_DIR"), "/octicons/", $name, "-16.svg"))
     };
 }
+pub(crate) use octicon;
 
-fn icon(svg: &str) -> String {
+pub(crate) fn icon(svg: &str) -> String {
     svg.replacen(
         "<svg ",
         "<svg class=\"octicon\" fill=\"currentColor\" aria-hidden=\"true\" ",
@@ -45,6 +46,14 @@ pub struct Snapshot {
     pub prs: usize,
     pub index_rev: String,
     pub pr_data: Vec<crate::model::Pr>,
+    pub issues: Vec<crate::model::Issue>,
+    pub links: crate::links::Links,
+    pub pr_at: HashMap<u64, usize>,
+    pub issue_at: HashMap<u64, usize>,
+    /// directory → open pull requests that change something under it.
+    pub open_by_dir: HashMap<String, usize>,
+    /// pname → every version nixpkgs carries of it, under any attribute.
+    pub versions: HashMap<String, std::collections::HashSet<String>>,
 }
 
 pub struct App {
@@ -54,11 +63,14 @@ pub struct App {
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,
-    pub nixfresh: Option<crate::nixfresh::Client>,
+    pub health: RwLock<Arc<crate::health::Health>>,
+    pub hydra: crate::health::Hydra,
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,
     pub index_sets: Vec<String>,
     pub metrics: RwLock<Arc<Report>>,
+    /// The URL people reach, for links that leave the site, like feeds.
+    pub public_url: String,
 }
 
 impl App {
@@ -75,6 +87,22 @@ impl App {
             .collect();
         let member_areas: Vec<Area> = areas.values().cloned().collect();
         let queues = queue::build(&prs, &ledger, &member_areas);
+        let issues = self.store.issues()?;
+        let links = crate::links::build(&index, &prs, &issues);
+        let pr_at = prs.iter().enumerate().map(|(i, p)| (p.number, i)).collect();
+        let issue_at = issues
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.number, i))
+            .collect();
+        let open_by_dir = crate::catalog::open_by_dir(&prs);
+        let mut versions: HashMap<String, std::collections::HashSet<String>> = HashMap::new();
+        for p in index.pkgs.values() {
+            versions
+                .entry(p.pname.clone())
+                .or_default()
+                .insert(p.version.clone());
+        }
         *self.snapshot.write().unwrap() = Arc::new(Snapshot {
             ledger,
             queues,
@@ -82,6 +110,12 @@ impl App {
             prs: prs.len(),
             index_rev: index.rev.clone(),
             pr_data: prs,
+            issues,
+            links,
+            pr_at,
+            issue_at,
+            open_by_dir,
+            versions,
         });
         Ok(())
     }
@@ -110,17 +144,17 @@ impl App {
             .collect()
     }
 
-    fn snap(&self) -> Arc<Snapshot> {
+    pub(crate) fn snap(&self) -> Arc<Snapshot> {
         self.snapshot.read().unwrap().clone()
     }
 
-    fn viewer(&self, headers: &HeaderMap) -> Option<String> {
+    pub(crate) fn viewer(&self, headers: &HeaderMap) -> Option<String> {
         let id = cookie(headers, "session")?;
         self.store.session(&id).ok().flatten().map(|s| s.login)
     }
 }
 
-type Shared = Arc<App>;
+pub(crate) type Shared = Arc<App>;
 
 pub fn router(app: Shared) -> Router {
     Router::new()
@@ -128,8 +162,6 @@ pub fn router(app: Shared) -> Router {
         .route("/review", get(review_page))
         .route("/record", get(record_page))
         .route("/rules", get(rules_page))
-        .route("/watch", get(watch_page).post(add_watch))
-        .route("/watch/remove", post(remove_watch))
         .route("/u/:login", get(person_page))
         .route("/me/tags", post(set_tags))
         .route("/auth/login", get(login))
@@ -144,6 +176,7 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/people/:login", get(api_person))
         .route("/api/v1/metrics", get(api_metrics))
         .route("/state", get(state_page))
+        .merge(crate::catalog::routes())
         .with_state(app)
 }
 
@@ -163,21 +196,21 @@ fn set_cookie(app: &App, name: &str, value: &str, max_age: i64) -> String {
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
 }
 
-fn random_id() -> String {
+pub(crate) fn random_id() -> String {
     use rand::RngCore;
     let mut b = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut b);
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-fn esc(s: &str) -> String {
+pub(crate) fn esc(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
 
-fn ago(t: DateTime<Utc>) -> String {
+pub(crate) fn ago(t: DateTime<Utc>) -> String {
     let d = Utc::now() - t;
     match d.num_days() {
         0 => format!("{}h", d.num_hours().max(0)),
@@ -195,7 +228,7 @@ async fn css(body: &'static str) -> impl IntoResponse {
     )
 }
 
-fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> {
+pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> {
     let s = app.snap();
     let watched = viewer
         .and_then(|v| app.store.watched(v).ok())
@@ -215,6 +248,13 @@ fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> 
             icon(octicon!("eye")),
             "Needs review",
             s.queues.review.len().to_string(),
+        ),
+        (
+            "packages",
+            "/packages",
+            icon(octicon!("package")),
+            "Packages",
+            String::new(),
         ),
         (
             "watch",
@@ -879,151 +919,50 @@ pub async fn refresh_index(app: &App) -> Result<()> {
     Ok(())
 }
 
-/// `area` is where the evaluated index says the package is defined; the title
-/// convention catches pull requests that change only a caller of it.
-fn touches(pr: &crate::model::Pr, pname: &str, area: Option<&str>) -> bool {
-    let prefix = format!("{pname}:");
-    let qualified = format!(".{pname}:");
-    pr.title.starts_with(&prefix)
-        || pr.title.contains(&qualified)
-        || area.is_some_and(|a| {
-            pr.files
-                .iter()
-                .any(|f| f == a || f.strip_prefix(a).is_some_and(|r| r.starts_with('/')))
-        })
+pub fn load_health(store: &Store) -> crate::health::Health {
+    store
+        .get("health")
+        .ok()
+        .flatten()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
 }
 
-#[derive(Deserialize)]
-struct WatchForm {
-    package: String,
+fn stale(t: Option<DateTime<Utc>>) -> bool {
+    t.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(24))
 }
 
-fn valid_pname(p: &str) -> bool {
-    !p.is_empty()
-        && p.len() <= 100
-        && p.chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_.+".contains(c))
+/// Whether a health source is a day old or never answered.
+pub fn health_due(app: &App) -> bool {
+    let h = app.health.read().unwrap();
+    stale(h.repology_at) || stale(h.tracker_at)
 }
 
-async fn add_watch(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Form(f): Form<WatchForm>,
-) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let p = f.package.trim();
-    if !valid_pname(p) {
-        return (StatusCode::BAD_REQUEST, "not a package name").into_response();
-    }
-    if let Err(e) = app.store.watch(&login, p) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    Redirect::to("/watch").into_response()
-}
-
-async fn remove_watch(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Form(f): Form<WatchForm>,
-) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    if let Err(e) = app.store.unwatch(&login, f.package.trim()) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    Redirect::to("/watch").into_response()
-}
-
-/// Delivery (mail or otherwise) is not built: this slice models the
-/// subscription and shows what a watcher would hear about.
-async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
-    let viewer = app.viewer(&headers);
-    let mut out = String::from(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Packages I watch</h1>\
-         <div class=\"Subhead-description\">Advisories, new upstream releases and open pull requests for the packages you follow. \
-         Package health comes from nixfresh's public dataset. Nothing is sent to you yet.</div></div>",
-    );
-    let Some(login) = viewer.as_deref() else {
-        out.push_str("<div class=\"blankslate\"><p>Sign in to follow packages.</p></div>");
-        return page(&app, None, "watch", &out);
-    };
-    out.push_str(
-        "<form method=\"post\" action=\"/watch\" class=\"d-flex mb-3\" style=\"gap:8px;max-width:420px\">\
-         <input class=\"form-control flex-auto\" name=\"package\" placeholder=\"package name, like hello\" aria-label=\"package name\">\
-         <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>",
-    );
-    let watched = app.store.watched(login).unwrap_or_default();
-    if watched.is_empty() {
-        out.push_str("<div class=\"blankslate\"><p>You watch nothing yet.</p></div>");
-        return page(&app, viewer.as_deref(), "watch", &out);
-    }
-    let s = app.snap();
-    out.push_str("<div class=\"Box\">");
-    for pname in &watched {
-        let health = match &app.nixfresh {
-            Some(c) => c.health(pname).await.ok(),
-            None => None,
-        };
-        let mut facts: Vec<String> = Vec::new();
-        match &health {
-            Some(h) if h.tracked => {
-                if let (Some(v), Some(u)) = (&h.version, &h.upstream) {
-                    if v != u {
-                        facts.push(format!(
-                            "<span class=\"Label Label--attention\">upstream {} (nixpkgs {})</span>",
-                            esc(u),
-                            esc(v)
-                        ));
-                    }
-                }
-                for a in &h.open_advisories {
-                    facts.push(format!(
-                        "<span class=\"Label Label--danger\">{}</span>",
-                        esc(a)
-                    ));
-                }
+/// Reads only the sources that are due, so a source that is down is asked
+/// again on the next pass while the other keeps its day.
+pub async fn refresh_health(app: &App) -> Result<()> {
+    let mut h = load_health(&app.store);
+    if stale(h.repology_at) {
+        match crate::health::repology().await {
+            Ok(u) => {
+                h.upstream = u;
+                h.repology_at = Some(Utc::now());
             }
-            Some(_) => {
-                facts.push("<span class=\"Label\">not in the nixfresh dataset</span>".into())
-            }
-            None if app.nixfresh.is_some() => {
-                facts.push("<span class=\"Label\">nixfresh unreachable</span>".into())
-            }
-            None => {}
+            Err(e) => tracing::warn!("repology: {e:#}"),
         }
-        let area = app.index.read().unwrap().packages.get(pname).cloned();
-        let open: Vec<&crate::model::Pr> = s
-            .pr_data
-            .iter()
-            .filter(|p| p.is_open() && touches(p, pname, area.as_deref()))
-            .collect();
-        let _ = write!(
-            out,
-            "<div class=\"Box-row\"><div class=\"d-flex flex-items-center\">\
-             <strong class=\"flex-auto\">{p}</strong> {}\
-             <form method=\"post\" action=\"/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"package\" value=\"{p}\">\
-             <button class=\"btn btn-sm\" type=\"submit\">Unwatch</button></form></div>",
-            facts.join(" "),
-            p = esc(pname)
-        );
-        for pr in open.iter().take(10) {
-            let _ = write!(
-                out,
-                "<div class=\"f6 mt-1\">{} <a href=\"{}\">#{} {}</a> by {}</div>",
-                icon(octicon!("git-pull-request")),
-                esc(&pr.url),
-                pr.number,
-                esc(&pr.title),
-                esc(&pr.author)
-            );
-        }
-        out.push_str("</div>");
     }
-    out.push_str("</div>");
-    page(&app, viewer.as_deref(), "watch", &out)
+    if stale(h.tracker_at) {
+        match crate::health::tracker().await {
+            Ok(a) => {
+                h.advisories = a;
+                h.tracker_at = Some(Utc::now());
+            }
+            Err(e) => tracing::warn!("security tracker: {e:#}"),
+        }
+    }
+    app.store.set("health", &serde_json::to_string(&h)?)?;
+    *app.health.write().unwrap() = Arc::new(h);
+    Ok(())
 }
 
 /// Gives each heading the id GitHub would, so `#the-rules` links still land.
