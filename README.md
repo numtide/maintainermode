@@ -358,9 +358,10 @@ Every query command takes `--json`.
   deployment then needs no token of a person. The token file stays as a
   fallback.
 - **No network yet.** On first boot, a pass can start before the network is
-  up. When a pass fails to connect, the next pass starts after 5 seconds. The
-  wait doubles after each failed pass, up to 5 minutes. The first pass that
-  connects restores the normal interval.
+  up. When the GitHub sync fails to connect, the pass stops and the next pass
+  starts after 5 seconds. The wait doubles after each failed pass, up to 5
+  minutes. The first pass that connects restores the normal interval. Only the
+  GitHub sync counts: when another source is down, the pass continues.
 - **The nixpkgs index is evaluated, with iets.** Once a day, Maintainer Mode
   unpacks the source tarball of nixpkgs `master` and evaluates every derivation
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
