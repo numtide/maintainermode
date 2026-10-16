@@ -104,7 +104,11 @@ impl Lookup {
 
     fn names(&self, names: &[String], out: &mut Vec<String>) {
         for n in names {
-            if let Some(keys) = self.by_name.get(n) {
+            let keys = self
+                .by_name
+                .get(n)
+                .or_else(|| self.by_name.get(&n.to_lowercase()));
+            if let Some(keys) = keys {
                 out.extend(keys.iter().cloned());
             }
         }
@@ -224,10 +228,12 @@ mod tests {
         a.files = vec!["pkgs/by-name/he/hello/package.nix".into()];
         let mut b = pr(2, "bob", 0);
         b.title = "nixos/nginx: fix".into();
+        let mut d = pr(4, "dave", 0);
+        d.title = "Hello: a capital first letter".into();
         let mut c = pr(3, "carol", 0);
         c.files = vec!["nixos/tests/nginx.nix".into()];
-        let l = build(&index(), &[a, b, c], &[]);
-        assert_eq!(l.prs["pkg:hello"], [1]);
+        let l = build(&index(), &[a, b, c, d], &[]);
+        assert_eq!(l.prs["pkg:hello"], [4, 1]);
         assert!(
             !l.prs
                 .contains_key("module:nixos/modules/services/web-servers/nginx/tailscale-auth.nix")
