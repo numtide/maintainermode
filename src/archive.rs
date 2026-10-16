@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 
 use crate::github;
+use crate::store::Store;
 use crate::web::{App, Shared};
 
 pub const DEFAULT_REPO: &str = "NixOS/nixpkgs";
@@ -637,7 +638,7 @@ fn transient(e: &anyhow::Error) -> bool {
 }
 
 struct Pass<'a> {
-    app: &'a App,
+    store: &'a Store,
     a: &'a Archive,
     client: &'a mut github::Client,
     remaining: i64,
@@ -647,7 +648,7 @@ impl Pass<'_> {
     async fn query(&mut self, query: &str, vars: Value, allowed: &[&str]) -> Result<Value> {
         let data = self
             .client
-            .graphql_allowing(&self.app.store, query, vars, allowed)
+            .graphql_allowing(self.store, query, vars, allowed)
             .await?;
         if let Some(r) = data["rateLimit"]["remaining"].as_i64() {
             self.remaining = r;
@@ -885,13 +886,18 @@ fn hints(log: &crate::events::Log, a: &Archive, now: DateTime<Utc>) -> Result<us
 
 /// One pass over one repository: the event hints, the listing of recent
 /// updates, the due items, then the walk back through history.
-async fn pass(app: &App, a: &Archive, client: &mut github::Client) -> Result<usize> {
+async fn pass(
+    store: &Store,
+    events: &crate::events::Log,
+    a: &Archive,
+    client: &mut github::Client,
+) -> Result<usize> {
     let now = Utc::now();
     if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
-        hints(&app.events, a, now)?;
+        hints(events, a, now)?;
     }
     let mut p = Pass {
-        app,
+        store,
         a,
         client,
         remaining: i64::MAX,
@@ -967,7 +973,7 @@ pub async fn walk(app: Arc<App>) {
         } else {
             for a in &app.archive {
                 let started = Utc::now();
-                match pass(&app, a, &mut client).await {
+                match pass(&app.store, &app.events, a, &mut client).await {
                     Ok(n) => {
                         if n > 0 {
                             tracing::info!("archive {}: {n} items", a.repo);
@@ -1108,6 +1114,236 @@ mod tests {
         assert_eq!(v["state"], "MERGED");
         assert_eq!(v["timelineItems"]["nodes"][0]["commit"]["oid"], "a");
         assert!(v.get("pullRequestState").is_none());
+    }
+
+    /// A GitHub that answers the walk's queries for `1..=top`. Number `k`
+    /// was updated `top - k` days ago; each fifth number is an issue.
+    struct Fake {
+        top: u64,
+        now: DateTime<Utc>,
+        page: usize,
+        gone: Vec<u64>,
+        broken: Mutex<Vec<u64>>,
+        bumped: Mutex<Vec<(u64, DateTime<Utc>)>>,
+    }
+
+    impl Fake {
+        fn new(top: u64, page: usize) -> Self {
+            Self {
+                top,
+                now: Utc::now(),
+                page,
+                gone: vec![],
+                broken: Mutex::new(vec![]),
+                bumped: Mutex::new(vec![]),
+            }
+        }
+
+        fn updated(&self, k: u64) -> String {
+            let bumped = self.bumped.lock().unwrap();
+            let t = bumped
+                .iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, t)| *t)
+                .unwrap_or(self.now - Duration::days((self.top - k) as i64));
+            t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        }
+
+        fn item(&self, k: u64) -> Value {
+            let empty =
+                json!({ "totalCount": 0, "pageInfo": { "hasNextPage": false }, "nodes": [] });
+            let comments = if k == 3 {
+                json!({ "totalCount": 2, "pageInfo": { "hasNextPage": true, "endCursor": "c1" },
+                        "nodes": [{ "body": "first" }] })
+            } else {
+                empty.clone()
+            };
+            let mut v = json!({ "id": format!("N{k}"), "number": k, "updatedAt": self.updated(k),
+                                "comments": comments, "timelineItems": empty });
+            if k.is_multiple_of(5) {
+                v["__typename"] = "Issue".into();
+            } else {
+                v["__typename"] = "PullRequest".into();
+                v["pullRequestState"] = "OPEN".into();
+                v["files"] = empty.clone();
+                v["reviews"] = empty;
+            }
+            v
+        }
+
+        fn answer(&self, query: &str, vars: &Value) -> Value {
+            let rate = json!({ "cost": 1, "remaining": 4000 });
+            if query.contains("node(id: $id)") {
+                return json!({ "data": { "rateLimit": rate, "node": { "comments": {
+                    "pageInfo": { "hasNextPage": false }, "nodes": [{ "body": "second" }] } } } });
+            }
+            if query.contains("issueOrPullRequest") {
+                let numbers: Vec<u64> = query
+                    .split("issueOrPullRequest(number: ")
+                    .skip(1)
+                    .filter_map(|s| s.split(')').next()?.parse().ok())
+                    .collect();
+                let broken = self.broken.lock().unwrap().clone();
+                let mut repo = serde_json::Map::new();
+                let mut errors = vec![];
+                for k in numbers {
+                    if broken.contains(&k) {
+                        errors.push(json!({ "type": "FORBIDDEN", "path": [format!("n{k}")] }));
+                    }
+                    let gone = self.gone.contains(&k) || k > self.top;
+                    if gone {
+                        errors.push(json!({ "type": "NOT_FOUND", "path": [format!("n{k}")] }));
+                    }
+                    repo.insert(
+                        format!("n{k}"),
+                        if gone { Value::Null } else { self.item(k) },
+                    );
+                }
+                let mut out = json!({ "data": { "rateLimit": rate, "repository": repo } });
+                if !errors.is_empty() {
+                    out["errors"] = errors.into();
+                }
+                return out;
+            }
+            let field = if query.contains("pullRequests(first") {
+                "pullRequests"
+            } else {
+                "issues"
+            };
+            let mut all: Vec<u64> = (1..=self.top)
+                .filter(|k| !self.gone.contains(k) && (k.is_multiple_of(5)) == (field == "issues"))
+                .collect();
+            all.sort_by_key(|k| std::cmp::Reverse(self.updated(*k)));
+            let from: usize = vars["after"].as_str().map_or(0, |c| c.parse().unwrap());
+            let to = (from + self.page).min(all.len());
+            let nodes: Vec<Value> = all[from..to]
+                .iter()
+                .map(|k| json!({ "number": k, "updatedAt": self.updated(*k) }))
+                .collect();
+            json!({ "data": { "rateLimit": rate, "repository": { field: {
+                "pageInfo": { "hasNextPage": to < all.len(), "endCursor": to.to_string() },
+                "nodes": nodes } } } })
+        }
+    }
+
+    async fn serve(fake: Arc<Fake>) -> String {
+        async fn graphql(State(f): State<Arc<Fake>>, Json(body): Json<Value>) -> Json<Value> {
+            Json(f.answer(body["query"].as_str().unwrap_or(""), &body["variables"]))
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/graphql", axum::routing::post(graphql))
+            .with_state(fake);
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/graphql")
+    }
+
+    struct Rig {
+        dir: PathBuf,
+        url: String,
+        store: Store,
+        events: crate::events::Log,
+    }
+
+    impl Rig {
+        async fn new(name: &str, fake: Arc<Fake>) -> Self {
+            let dir = tmp(name);
+            Self {
+                url: serve(fake).await,
+                store: Store::open(Path::new(":memory:")).unwrap(),
+                events: crate::events::Log::open(&dir.join("events")).unwrap(),
+                dir,
+            }
+        }
+
+        /// One pass with a fresh `Archive`, as after a restart.
+        async fn pass(&self, budget: usize) -> Archive {
+            let a = Archive::open(&self.dir, "NixOS/nixpkgs", budget).unwrap();
+            let mut client = github::Client::at(&self.url, vec!["t".into()]);
+            pass(&self.store, &self.events, &a, &mut client)
+                .await
+                .unwrap();
+            a
+        }
+    }
+
+    #[tokio::test]
+    async fn walk_resumes_and_reaches_the_first_number() {
+        let mut fake = Fake::new(60, 1);
+        fake.gone = vec![7];
+        let fake = Arc::new(fake);
+        let rig = Rig::new("walk", fake.clone()).await;
+
+        let a = rig.pass(4).await;
+        assert!(a.get("list_cursor_pullRequests").unwrap().is_some());
+        assert!(a.get("watermark_pullRequests").unwrap().is_none());
+        assert!(a.get("watermark_issues").unwrap().is_some());
+        assert_eq!(a.num("top").unwrap(), Some(60));
+        assert!(a.get("cursor").unwrap().is_none());
+
+        let a = rig.pass(4).await;
+        assert!(a.get("list_cursor_pullRequests").unwrap().is_none());
+        assert!(a.get("watermark_pullRequests").unwrap().is_some());
+        let recent = a.count(
+            "SELECT COUNT(*) FROM due WHERE at <= ?1",
+            &Utc::now().to_rfc3339(),
+        );
+        assert!(recent.unwrap() > 20);
+
+        let mut cursor = u64::MAX;
+        let mut passes = 2;
+        loop {
+            let a = rig.pass(4).await;
+            if let Some(c) = a.num("cursor").unwrap() {
+                assert!((c as u64) <= cursor);
+                cursor = c as u64;
+            }
+            passes += 1;
+            assert!(passes < 40, "the walk does not end");
+            if a.get("backfill_done").unwrap().is_some() {
+                break;
+            }
+        }
+        let a = rig.pass(4).await;
+        assert_eq!(a.get("last_error").unwrap(), None);
+        assert_eq!(a.num("items").unwrap(), Some(59));
+        assert_eq!(a.num("none").unwrap(), Some(1));
+        assert_eq!(a.item(7).unwrap().unwrap().kind, NONE);
+        assert_eq!(a.item(5).unwrap().unwrap().kind, "issue");
+        let v: Value = serde_json::from_str(&a.item(3).unwrap().unwrap().json.unwrap()).unwrap();
+        assert_eq!(v["comments"]["nodes"].as_array().unwrap().len(), 2);
+        assert_eq!(v["state"], "OPEN");
+        assert_eq!(a.progress(Utc::now()).unwrap()["complete"], true);
+
+        fake.bumped.lock().unwrap().push((40, Utc::now()));
+        let a = rig.pass(4).await;
+        let v: Value = serde_json::from_str(&a.item(40).unwrap().unwrap().json.unwrap()).unwrap();
+        assert_eq!(v["updatedAt"], fake.updated(40));
+        std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    fn event(id: u64, number: u64) -> Value {
+        json!({ "id": id.to_string(), "type": "IssueCommentEvent", "created_at": "2026-10-16T00:00:00Z",
+                "actor": { "login": "alice" }, "repo": { "name": crate::events::REPO },
+                "payload": { "issue": { "number": number } } })
+    }
+
+    #[test]
+    fn events_make_items_due() {
+        let dir = tmp("hints");
+        let log = crate::events::Log::open(&dir.join("events")).unwrap();
+        let a = Archive::open(&dir, "NixOS/nixpkgs", 10).unwrap();
+        let now = Utc::now();
+        log.insert(&[event(1, 11)]).unwrap();
+        assert_eq!(hints(&log, &a, now).unwrap(), 0);
+        log.insert(&[event(2, 12), event(3, 13)]).unwrap();
+        assert_eq!(hints(&log, &a, now).unwrap(), 2);
+        assert_eq!(hints(&log, &a, now).unwrap(), 0);
+        assert!(a.due_now(now, 10).unwrap().is_empty());
+        let later = now + Duration::minutes(HINT_DELAY);
+        assert_eq!(a.due_now(later, 10).unwrap(), vec![12, 13]);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// Writes the queries to `$MM_DUMP`, to check them against GitHub's
