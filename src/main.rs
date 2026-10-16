@@ -17,6 +17,7 @@ mod osv;
 mod queue;
 mod report;
 mod scan;
+mod score;
 mod sets;
 mod severity;
 mod status;
@@ -795,6 +796,16 @@ async fn run(cli: Cli) -> Result<i32> {
                     p["maintainers"]
                 );
             }
+            if let Some(r) = f["risk"].as_u64() {
+                out!("  risk {r} ({})", f["risk_band"].as_str().unwrap_or(""));
+                for reason in f["risk_reasons"].as_array().into_iter().flatten() {
+                    out!(
+                        "    +{} {}",
+                        reason["points"],
+                        reason["text"].as_str().unwrap_or("")
+                    );
+                }
+            }
             if let Some(u) = f["upstream"].as_str() {
                 out!("  upstream {u}");
             }
@@ -846,9 +857,13 @@ async fn run(cli: Cli) -> Result<i32> {
                 for r in v[kind].as_array().into_iter().flatten() {
                     let f = &r["flags"];
                     out!(
-                        "{:<40} {:<14} upstream {:<12} advisories {:<2} prs {:<3} issues {}",
+                        "{:<40} {:<14} risk {:<3} upstream {:<12} advisories {:<2} prs {:<3} issues {}",
                         r["name"].as_str().unwrap_or(""),
                         r["version"].as_str().unwrap_or(""),
+                        f["risk"]
+                            .as_u64()
+                            .map(|r| r.to_string())
+                            .unwrap_or("-".into()),
                         f["upstream"].as_str().unwrap_or("-"),
                         f["open_advisories"],
                         f["open_prs"],

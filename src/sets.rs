@@ -212,17 +212,10 @@ fn rows(app: &App, from: &BTreeMap<String, (bool, bool)>) -> String {
             (sub, f, src)
         })
         .collect();
-    list.sort_by_key(|(sub, f, _)| {
-        (
-            std::cmp::Reverse(f.advisories),
-            f.upstream.is_none(),
-            std::cmp::Reverse(f.open_prs + f.open_issues),
-            sub.label(),
-        )
-    });
+    list.sort_by_key(|(sub, f, _)| (f.rank(), sub.label()));
     let (attention, rest): (Vec<_>, Vec<_>) = list
         .iter()
-        .partition(|(_, f, _)| f.advisories > 0 || f.upstream.is_some());
+        .partition(|(_, f, _)| f.advisories > 0 || f.upstream.is_some() || f.risk() >= 15);
     let row = |(sub, f, (uploaded, watched)): &&(Subject, Flags, &(bool, bool))| {
         let mut tags = String::new();
         if *watched {
