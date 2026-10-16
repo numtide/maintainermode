@@ -35,6 +35,7 @@ let
     "rss"
     "git-pull-request-closed"
     "skip"
+    "play"
   ];
 in
 runCommand "primer-assets" { } ''

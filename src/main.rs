@@ -1,3 +1,4 @@
+mod actions;
 mod area;
 mod attrs;
 mod catalog;
@@ -13,6 +14,7 @@ mod queue;
 mod store;
 mod subject;
 mod web;
+mod workflows;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Duration, Utc};

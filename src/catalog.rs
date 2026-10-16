@@ -321,7 +321,7 @@ impl Flags {
     }
 }
 
-fn pr_row(p: &Pr) -> String {
+fn pr_row(p: &Pr, act: bool) -> String {
     let (ic, class) = match p.state.as_str() {
         "MERGED" => (icon(octicon!("git-merge")), "color-fg-done"),
         "CLOSED" => (icon(octicon!("git-pull-request-closed")), "color-fg-danger"),
@@ -340,11 +340,16 @@ fn pr_row(p: &Pr) -> String {
     format!(
         "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 {class}\">{ic}</span>\
          <div class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{u}\">{t}</a>{draft}\
-         <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}</div></div></div>",
+         <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}</div></div>{button}</div>",
         u = esc(&p.url),
         t = esc(&p.title),
         n = p.number,
         a = esc(&p.author),
+        button = if act && p.is_open() {
+            crate::actions::review_button(p.number)
+        } else {
+            String::new()
+        },
         draft = if p.is_draft {
             " <span class=\"Label ml-1\">draft</span>"
         } else {
@@ -617,12 +622,26 @@ async fn package_page(
         "Advisories",
         &advisories_html(&open_advisories(&h, &s, &attr)),
     ));
+    if viewer.is_some() {
+        out.push_str(&kv(
+            "Update",
+            &crate::actions::update_form(
+                &attr,
+                upstream(&s, &index, &h, &attr).map(String::as_str),
+            ),
+        ));
+    }
     out.push_str(&kv("Maintainers", &people_links(&p.maintainers)));
     if !p.teams.is_empty() {
         out.push_str(&kv("Teams", &teams_html(&index, &p.teams)));
     }
     out.push_str("</div>");
-    out.push_str(&section("Pull requests", &prs, |p| p.is_open(), pr_row));
+    out.push_str(&section(
+        "Pull requests",
+        &prs,
+        |p| p.is_open(),
+        |p| pr_row(p, viewer.is_some()),
+    ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()
 }
@@ -671,7 +690,12 @@ async fn module_page(
         ),
     ));
     out.push_str("</div>");
-    out.push_str(&section("Pull requests", &prs, |p| p.is_open(), pr_row));
+    out.push_str(&section(
+        "Pull requests",
+        &prs,
+        |p| p.is_open(),
+        |p| pr_row(p, viewer.is_some()),
+    ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()
 }
@@ -803,7 +827,12 @@ async fn area_page(
             subject_rows(&rows)
         );
     }
-    out.push_str(&section("Pull requests", &prs, |p| p.is_open(), pr_row));
+    out.push_str(&section(
+        "Pull requests",
+        &prs,
+        |p| p.is_open(),
+        |p| pr_row(p, viewer.is_some()),
+    ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()
 }
