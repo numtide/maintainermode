@@ -340,7 +340,9 @@ Every query command takes `--json`.
   every open issue, then each pass walks by `updatedAt`.
 - **Tokens.** When you log in, Maintainer Mode keeps your token and reads public
   nixpkgs data with it. The rate limit grows with the number of people who use
-  it. The OAuth app asks for no scope, so the token reads public data only. A
+  it. The login asks for no scope. The token reads public data, and it can
+  start workflows only in the repositories where you install the Maintainer
+  Mode GitHub App (see [Actions](#actions)). The sync uses it to read only. A
   deployment may also give the server a token of its own
   (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
   your session and its token.
