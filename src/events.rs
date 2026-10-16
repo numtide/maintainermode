@@ -121,12 +121,17 @@ impl Log {
     pub fn open(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
         let mut head = 0;
-        if let Some(last) = months(dir)?.last() {
-            let conn = Connection::open(dir.join(format!("{last}.sqlite")))?;
+        // the newest month file can be empty: the writer creates it before
+        // the first insert of the month
+        for month in months(dir)?.iter().rev() {
+            let conn = Connection::open(dir.join(format!("{month}.sqlite")))?;
             conn.execute_batch(SCHEMA)?;
             head = conn.query_row("SELECT COALESCE(MAX(seq), 0) FROM event", [], |r| {
                 r.get::<_, i64>(0)
             })? as u64;
+            if head > 0 {
+                break;
+            }
         }
         Ok(Self {
             dir: dir.to_path_buf(),
@@ -787,6 +792,25 @@ mod tests {
         assert_eq!(String::from_utf8(day).unwrap().lines().count(), 2);
         log.snapshot("2026-10", &dir.join("copy.sqlite")).unwrap();
         assert!(dir.join("copy.sqlite").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn seq_continues_after_an_empty_month_file() {
+        let dir = tmp("empty-month");
+        let log = Log::open(&dir).unwrap();
+        let oct = Utc.with_ymd_and_hms(2026, 10, 31, 23, 0, 0).unwrap();
+        let nov = Utc.with_ymd_and_hms(2026, 11, 1, 0, 5, 0).unwrap();
+        let a = ev("1", "PushEvent", 1, "2026-10-31T22:59:00Z");
+        let b = ev("2", "PushEvent", 2, "2026-11-01T00:06:00Z");
+        assert_eq!(log.insert_at(&[a], oct).unwrap(), 1);
+        assert_eq!(log.insert_at(&[], nov).unwrap(), 0);
+        assert_eq!(log.months().unwrap(), vec!["2026-10", "2026-11"]);
+        drop(log);
+        let log = Log::open(&dir).unwrap();
+        assert_eq!(log.head(), 1);
+        assert_eq!(log.insert_at(&[b], nov).unwrap(), 1);
+        assert_eq!(log.head(), 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
