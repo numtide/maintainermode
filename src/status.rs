@@ -73,6 +73,10 @@ fn state(app: &App) -> Value {
         "health": {
             "repology_at": h.repology_at, "outdated": h.upstream.len(),
             "tracker_at": h.tracker_at, "attributes_with_advisories": h.advisories.len(),
+            "every_seconds": crate::health::PASS.as_secs(),
+            "cves": h.cves.len(),
+            "cves_with_score": h.cves.values().filter(|c| c.band.is_some()).count(),
+            "sources": h.runs,
         },
         "events": {
             "stored": app.events.head(),
@@ -114,6 +118,43 @@ fn done(v: &Value, yes: &str, no: &str) -> String {
 fn row(k: &str, v: &str) -> String {
     format!(
         "<div class=\"Box-row d-flex\"><div class=\"text-bold\" style=\"min-width:180px\">{k}</div><div class=\"flex-auto\">{v}</div></div>"
+    )
+}
+
+/// The health sources that report a pass: key, row label, what they read.
+const SOURCES: [(&str, &str, &str); 3] = [
+    (
+        "cve",
+        "Severity",
+        "CVE Program records (CVSS and CISA exploitation), 300 a pass",
+    ),
+    (
+        "nvd",
+        "NVD",
+        "CVSS for the CVEs without a score in their record, 50 a pass, only with an API key",
+    ),
+    (
+        "epss",
+        "EPSS",
+        "FIRST's chance of exploitation, every tracked CVE once a day",
+    ),
+];
+
+fn source(run: &Value, what: &str) -> String {
+    let Some(at) = run.get("at") else {
+        return format!("{what} · not run yet");
+    };
+    format!(
+        "{what} · read {} · {}",
+        when(at),
+        if run["ok"].as_bool() == Some(true) {
+            esc(run["line"].as_str().unwrap_or(""))
+        } else {
+            format!(
+                "<span class=\"color-fg-attention\">{}</span>",
+                esc(run["line"].as_str().unwrap_or(""))
+            )
+        }
     )
 }
 
@@ -228,6 +269,16 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             "security tracker, read {} · {} attributes with advisories",
             when(&h["tracker_at"]),
             h["attributes_with_advisories"]
+        ),
+    ));
+    for (key, label, what) in SOURCES {
+        out.push_str(&row(label, &source(&h["sources"][key], what)));
+    }
+    out.push_str(&row(
+        "Health task",
+        &format!(
+            "its own task, one pass every {}: a slow source does not delay the GitHub sync",
+            minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
     ));
     out.push_str(&row(

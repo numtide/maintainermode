@@ -62,6 +62,12 @@ in
       description = "Optional GitHub token owned by the deployment, used before tokens lent by logged-in people. A GitHub App replaces it.";
     };
 
+    nvdApiKeyFile = lib.mkOption {
+      type = lib.types.nullOr lib.types.path;
+      default = null;
+      description = "Optional file holding an NVD API key, read through LoadCredential. Without it, NVD is not asked.";
+    };
+
     githubAppId = lib.mkOption {
       type = lib.types.nullOr lib.types.int;
       default = null;
@@ -156,6 +162,9 @@ in
       // lib.optionalAttrs (cfg.syncTokenFile != null) {
         MAINTAINER_MODE_SYNC_TOKEN_FILE = "%d/sync_token";
       }
+      // lib.optionalAttrs (cfg.nvdApiKeyFile != null) {
+        MAINTAINER_MODE_NVD_API_KEY_FILE = "%d/nvd_api_key";
+      }
       // lib.optionalAttrs (cfg.githubAppId != null) {
         GITHUB_APP_ID = toString cfg.githubAppId;
         GITHUB_APP_KEY_FILE = "%d/github_app_key";
@@ -177,6 +186,7 @@ in
         LoadCredential =
           lib.optional (cfg.githubClientSecretFile != null) "client_secret:${cfg.githubClientSecretFile}"
           ++ lib.optional (cfg.syncTokenFile != null) "sync_token:${cfg.syncTokenFile}"
+          ++ lib.optional (cfg.nvdApiKeyFile != null) "nvd_api_key:${cfg.nvdApiKeyFile}"
           ++ lib.optional (cfg.githubAppKeyFile != null) "github_app_key:${cfg.githubAppKeyFile}"
           ++ lib.optional cfg.eventCopy.enable "s3_credentials:${cfg.eventCopy.credentialsFile}";
         Restart = "on-failure";

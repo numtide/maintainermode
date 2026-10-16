@@ -16,6 +16,7 @@ mod queue;
 mod report;
 mod scan;
 mod sets;
+mod severity;
 mod status;
 mod store;
 mod subject;
@@ -109,6 +110,10 @@ enum Command {
         /// A token owned by the deployment, used before any lent token.
         #[arg(long, env = "MAINTAINER_MODE_SYNC_TOKEN_FILE")]
         sync_token_file: Option<PathBuf>,
+        /// An NVD API key, for the CVEs whose record has no score. NVD is
+        /// not asked without one.
+        #[arg(long, env = "MAINTAINER_MODE_NVD_API_KEY_FILE")]
+        nvd_api_key_file: Option<PathBuf>,
         /// A GitHub App whose installation token is the first sync token.
         #[arg(long, env = "GITHUB_APP_ID")]
         github_app_id: Option<String>,
@@ -500,6 +505,7 @@ async fn run(cli: Cli) -> Result<i32> {
             client_id,
             client_secret_file,
             sync_token_file,
+            nvd_api_key_file,
             github_app_id,
             github_app_key_file,
             github_app_installation_id,
@@ -566,7 +572,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
-            tokio::spawn(health::run(app.clone()));
+            tokio::spawn(health::run(app.clone(), read_secret(&nvd_api_key_file)?));
             match &app.sync_token {
                 Some(t) => {
                     tokio::spawn(events::poll(app.events.clone(), t.clone()));
@@ -790,8 +796,9 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             for a in v["advisories"].as_array().into_iter().flatten() {
                 out!(
-                    "  advisory {}  {}",
+                    "  advisory {}  {:<8} {}",
                     a["code"].as_str().unwrap_or(""),
+                    a["severity"]["band"].as_str().unwrap_or("-"),
                     a["title"].as_str().unwrap_or("")
                 );
             }

@@ -17,6 +17,7 @@ use crate::area::{Index, area_key, under};
 use crate::health::{Advisory, Build, Health, Hydra};
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
+use crate::severity::{self, Worst};
 use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, page, random_id};
 
 const LIST: usize = 100;
@@ -530,12 +531,63 @@ fn kv(k: &str, v: &str) -> String {
     )
 }
 
-fn advisories_html(list: &[&Advisory]) -> String {
+fn severity_html(w: &Worst) -> String {
+    let mut out = String::new();
+    if let Some(b) = w.band {
+        let _ = write!(
+            out,
+            " <span class=\"Label {}\" title=\"CVSS base score\">{}{}</span>",
+            b.label_class(),
+            b.word(),
+            w.cvss.map(|s| format!(" {s:.1}")).unwrap_or_default()
+        );
+    }
+    match w.exploitation.as_deref() {
+        Some("active") => out.push_str(
+            " <span class=\"Label Label--danger\" title=\"CISA SSVC\">exploited in the wild</span>",
+        ),
+        Some("poc") => out.push_str(
+            " <span class=\"Label Label--attention\" title=\"CISA SSVC\">public exploit</span>",
+        ),
+        _ => {}
+    }
+    if let Some(e) = w.epss {
+        let _ = write!(
+            out,
+            " <span class=\"Label\" title=\"chance of exploitation in the next 30 days (EPSS){}\">EPSS {:.1}%</span>",
+            w.percentile
+                .map(|p| format!(", higher than {:.0}% of all CVEs", p * 100.0))
+                .unwrap_or_default(),
+            e * 100.0
+        );
+    }
+    out
+}
+
+/// The tracker's advisories with the worst severity of their CVEs, the
+/// worst first.
+fn rated<'a>(h: &Health, list: &[&'a Advisory]) -> Vec<(&'a Advisory, Worst)> {
+    let mut v: Vec<(&Advisory, Worst)> = list
+        .iter()
+        .map(|a| (*a, severity::worst(h, &a.cves)))
+        .collect();
+    v.sort_by(|(_, a), (_, b)| {
+        b.band.cmp(&a.band).then(
+            b.epss
+                .partial_cmp(&a.epss)
+                .unwrap_or(std::cmp::Ordering::Equal),
+        )
+    });
+    v
+}
+
+fn advisories_html(h: &Health, list: &[&Advisory]) -> String {
     if list.is_empty() {
         return "<span class=\"color-fg-success\">none open</span>".into();
     }
-    list.iter()
-        .map(|a| {
+    rated(h, list)
+        .into_iter()
+        .map(|(a, w)| {
             let issue = a
                 .issue
                 .map(|n| {
@@ -545,9 +597,10 @@ fn advisories_html(list: &[&Advisory]) -> String {
                 })
                 .unwrap_or_default();
             format!(
-                "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a> {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
+                "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
                 esc(&a.url()),
                 esc(&a.code),
+                severity_html(&w),
                 esc(&a.title),
                 esc(&a.cves.join(", "))
             )
@@ -627,7 +680,7 @@ async fn package_page(
     out.push_str(&build_row("Hydra", &job, build.as_ref()));
     out.push_str(&kv(
         "Advisories",
-        &advisories_html(&open_advisories(&h, &s, &attr)),
+        &advisories_html(&h, &open_advisories(&h, &s, &attr)),
     ));
     if viewer.is_some() {
         out.push_str(&kv(
@@ -1545,12 +1598,16 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
     };
     let job = Hydra::package_job(&attr);
     let build = app.hydra.last(&job).await;
-    let advisories: Vec<Advisory> = {
+    let advisories: Vec<Value> = {
         let s = app.snap();
         let h = app.health.read().unwrap().clone();
-        open_advisories(&h, &s, &attr)
+        rated(&h, &open_advisories(&h, &s, &attr))
             .into_iter()
-            .cloned()
+            .map(|(a, w)| {
+                let mut v = json!(a);
+                v["severity"] = json!(w);
+                v
+            })
             .collect()
     };
     let extra = json!({ "attr": attr, "package": p, "hydra": build, "hydra_job": job, "advisories": advisories });

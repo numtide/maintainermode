@@ -191,7 +191,9 @@ merged in the synced window.
   Hydra build of `nixpkgs/unstable/<attr>.x86_64-linux`, the open advisories
   of the [security tracker](https://tracker.security.nixos.org), and its
   maintainers and teams. An advisory counts as open while its nixpkgs issue is
-  open.
+  open. Each advisory shows the worst severity of its CVEs (CVSS), whether
+  CISA saw an exploit, and its [EPSS](https://www.first.org/epss/) score: the
+  chance of exploitation in the next 30 days.
 - **Health of a module:** the last Hydra build of its NixOS test
   (`nixos.tests.<name>`), and its maintainers and teams.
 - **An area** lists the packages and modules under it, the ones that need
@@ -459,6 +461,19 @@ Every query command takes `--json`.
   view and the answer is kept an hour. The health sources run in their own
   task, every 10 minutes. A slow source does not delay the pull request and
   issue sync.
+- **Advisory detail.** For each CVE that the tracker names:
+  - The CVSS score and the CISA exploitation decision come from the
+    [CVE Program's records](https://github.com/CVEProject/cvelistV5), one
+    file per CVE. A pass reads up to 300. A record is read again after 7 days
+    while it has no score, and after 90 days when it has one.
+  - [NVD](https://nvd.nist.gov) gives a score to a CVE whose record has
+    none. NVD needs an API key for a useful rate, so it is off without
+    `MAINTAINER_MODE_NVD_API_KEY_FILE`. With a key, a pass asks for up to 50.
+  - [EPSS](https://www.first.org/epss/) scores every tracked CVE once a day,
+    100 CVEs to a request.
+
+  No source needs an account. `/sync` shows what each source did on its last
+  pass.
 
 ## The nixpkgs event log
 
@@ -552,6 +567,7 @@ CI is the flake's `checks`: `nix flake check`.
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
+| nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
 | nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
