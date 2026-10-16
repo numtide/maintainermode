@@ -462,6 +462,19 @@ impl Store {
         }
         Ok(())
     }
+
+    /// The login whose setting `key` holds `value`, for a value that only
+    /// one login can hold, like a token hash.
+    pub fn setting_login(&self, key: &str, value: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT login FROM setting WHERE key = ?1 AND value = ?2",
+                [key, value],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
 }
 
 /// A person's package set from their latest report. Private: only the owner

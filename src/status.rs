@@ -44,7 +44,7 @@ fn last_event_at(app: &App) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-fn state(app: &App) -> Value {
+pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
         let i = app.index.read().unwrap();

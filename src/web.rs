@@ -191,6 +191,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::sets::routes())
         .merge(crate::archive::routes())
         .merge(crate::llm::routes())
+        .merge(crate::mcp::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
@@ -481,7 +482,11 @@ struct ReviewQuery {
     bucket: Option<String>,
 }
 
-fn review_bucket<'a>(s: &'a Snapshot, viewer: Option<&str>, bucket: &str) -> Vec<&'a Entry> {
+pub(crate) fn review_bucket<'a>(
+    s: &'a Snapshot,
+    viewer: Option<&str>,
+    bucket: &str,
+) -> Vec<&'a Entry> {
     let mine = viewer.and_then(|v| s.areas.get(v));
     s.queues
         .review

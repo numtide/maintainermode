@@ -14,6 +14,7 @@ mod hygiene;
 mod ledger;
 mod links;
 mod llm;
+mod mcp;
 mod metrics;
 mod model;
 mod osv;

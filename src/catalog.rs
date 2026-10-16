@@ -1215,9 +1215,27 @@ async fn browse(
         out.push_str("</div>");
         return page(&app, viewer.as_deref(), "packages", &out);
     }
+    let rows: Vec<(Subject, Flags)> = search(&s, &index, &q)
+        .into_iter()
+        .map(|sub| {
+            let f = Flags::of(&s, &index, &h, &sub);
+            (sub, f)
+        })
+        .collect();
+    if rows.is_empty() {
+        out.push_str("<div class=\"blankslate\"><p>Nothing matches.</p></div>");
+    } else {
+        let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
+    }
+    page(&app, viewer.as_deref(), "packages", &out)
+}
+
+/// What a name resolves to first, then packages, modules and busy
+/// directories whose name contains it.
+fn search(s: &Snapshot, index: &Index, q: &str) -> Vec<Subject> {
     let ql = q.to_lowercase();
     let mut hits: Vec<Subject> = Vec::new();
-    if let Some(sub) = Subject::resolve(&index, &q) {
+    if let Some(sub) = Subject::resolve(index, q) {
         hits.push(sub);
     }
     let mut pkgs: Vec<&String> = index
@@ -1255,19 +1273,7 @@ async fn browse(
     hits.extend(dirs.into_iter().take(20).map(|d| Subject::Area(d.clone())));
     let mut seen = HashSet::new();
     hits.retain(|h| seen.insert(h.clone()));
-    let rows: Vec<(Subject, Flags)> = hits
-        .into_iter()
-        .map(|sub| {
-            let f = Flags::of(&s, &index, &h, &sub);
-            (sub, f)
-        })
-        .collect();
-    if rows.is_empty() {
-        out.push_str("<div class=\"blankslate\"><p>Nothing matches.</p></div>");
-    } else {
-        let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
-    }
-    page(&app, viewer.as_deref(), "packages", &out)
+    hits
 }
 
 pub(crate) struct Maintained {
@@ -1848,19 +1854,11 @@ fn subject_json(app: &crate::web::App, subject: &Subject, extra: Value) -> Value
     v
 }
 
-async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Response {
+pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<Value> {
     let (attr, p) = {
         let index = app.index.read().unwrap();
-        match index.resolve(&name) {
-            Some(a) => (a.to_string(), index.pkgs.get(a).cloned()),
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    Json(json!({"error": "not in the index"})),
-                )
-                    .into_response();
-            }
-        }
+        let a = index.resolve(name)?;
+        (a.to_string(), index.pkgs.get(a).cloned())
     };
     let job = Hydra::package_job(&attr);
     let build = app.hydra.last(&job).await;
@@ -1919,55 +1917,77 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
         "channels": channels, "needs_backport": backport,
     });
-    Json(subject_json(&app, &Subject::Pkg(attr.clone()), extra)).into_response()
+    Some(subject_json(app, &Subject::Pkg(attr.clone()), extra))
+}
+
+async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Response {
+    match package_value(&app, &name).await {
+        Some(v) => Json(v).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "not in the index"})),
+        )
+            .into_response(),
+    }
+}
+
+pub(crate) async fn module_value(app: &crate::web::App, file: &str) -> Option<Value> {
+    let m = app.index.read().unwrap().modules.get(file).cloned()?;
+    let job = Hydra::test_job(module_name(file).trim_start_matches("nixos/"));
+    let build = app.hydra.last(&job).await;
+    let extra = json!({ "file": file, "module": m, "test": build, "test_job": job });
+    Some(subject_json(app, &Subject::Module(file.to_string()), extra))
 }
 
 async fn api_module(State(app): State<Shared>, Path(file): Path<String>) -> Response {
-    let Some(m) = app.index.read().unwrap().modules.get(&file).cloned() else {
-        return (
+    match module_value(&app, &file).await {
+        Some(v) => Json(v).into_response(),
+        None => (
             StatusCode::NOT_FOUND,
             Json(json!({"error": "not a NixOS module in the index"})),
         )
-            .into_response();
-    };
-    let job = Hydra::test_job(module_name(&file).trim_start_matches("nixos/"));
-    let build = app.hydra.last(&job).await;
-    let extra = json!({ "file": file, "module": m, "test": build, "test_job": job });
-    Json(subject_json(&app, &Subject::Module(file.clone()), extra)).into_response()
+            .into_response(),
+    }
 }
 
-async fn api_area(State(app): State<Shared>, Path(path): Path<String>) -> Response {
-    let path = path.trim_matches('/').to_string();
-    if !valid_path(&path) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "not a nixpkgs path"})),
-        )
-            .into_response();
+pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
+    let path = path.trim_matches('/');
+    if !valid_path(path) {
+        return None;
     }
     let contents: Vec<Value> = {
         let s = app.snap();
         let h = app.health.read().unwrap().clone();
         let index = app.index.read().unwrap();
-        contents(&index, &s, &h, &path)
+        contents(&index, &s, &h, path)
             .into_iter()
             .map(|(sub, f)| json!({ "key": sub.key(), "name": sub.label(), "flags": f.json() }))
             .collect()
     };
-    Json(subject_json(
-        &app,
-        &Subject::Area(path.clone()),
+    Some(subject_json(
+        app,
+        &Subject::Area(path.to_string()),
         json!({ "contents": contents }),
     ))
-    .into_response()
 }
 
-async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> Json<Value> {
+async fn api_area(State(app): State<Shared>, Path(path): Path<String>) -> Response {
+    match area_value(&app, &path) {
+        Some(v) => Json(v).into_response(),
+        None => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "not a nixpkgs path"})),
+        )
+            .into_response(),
+    }
+}
+
+pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let m = maintained(&index, &login);
+    let m = maintained(&index, login);
     let rows = |list: &[(Subject, Option<String>)]| -> Vec<Value> {
         let mut rows: Vec<(&Subject, &Option<String>, Flags)> = list
             .iter()
@@ -1994,12 +2014,42 @@ async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> 
             })
             .collect()
     };
-    Json(json!({
+    json!({
         "login": login,
         "rev": index.rev,
         "packages": rows(&m.packages),
         "modules": rows(&m.modules),
-    }))
+    })
+}
+
+async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> Json<Value> {
+    Json(maintains_value(&app, &login))
+}
+
+fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    subjects
+        .iter()
+        .map(|sub| {
+            json!({ "key": sub.key(), "name": sub.label(), "flags": Flags::of(&s, &index, &h, sub).json() })
+        })
+        .collect()
+}
+
+/// The hits of `/packages?q=`, as JSON.
+pub(crate) fn search_value(app: &crate::web::App, q: &str) -> Value {
+    let hits = {
+        let s = app.snap();
+        let index = app.index.read().unwrap();
+        search(&s, &index, q.trim())
+    };
+    json!({ "query": q, "results": subject_list(app, &hits) })
+}
+
+pub(crate) fn watching_value(app: &crate::web::App, login: &str) -> Value {
+    json!({ "login": login, "subscriptions": subject_list(app, &subscriptions(app, login)) })
 }
 
 /// Sends a name to the API of what it resolves to, so a client needs to know
