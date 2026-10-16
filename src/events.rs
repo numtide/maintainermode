@@ -2,7 +2,6 @@ use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Duration, DurationRound, NaiveDate, Utc};
 use futures_util::Stream;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params, params_from_iter};
-use serde::Deserialize;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::io::BufRead;
@@ -57,9 +56,8 @@ pub struct Stored {
     pub json: String,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Default)]
 pub struct Filter {
-    #[serde(rename = "type")]
     pub kind: Option<String>,
     pub number: Option<u64>,
     pub actor: Option<String>,
