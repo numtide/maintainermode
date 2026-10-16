@@ -38,8 +38,6 @@ pub struct Row {
     /// The author changed the pull request within the move window after a
     /// review that requested changes or commented on a changed line.
     pub problem_found: bool,
-    /// The areas of the state of nixpkgs that the pull request touches.
-    pub areas: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -85,7 +83,6 @@ fn row(pr: &Pr, mine: &[&Review]) -> Row {
         state: last.state.clone(),
         outcome,
         problem_found,
-        areas: crate::metrics::areas(&pr.files),
     }
 }
 
@@ -96,8 +93,11 @@ fn ranked(counts: HashMap<String, usize>) -> Vec<(String, usize)> {
     v
 }
 
-fn reviewed<'a>(prs: &'a [Pr], login: &'a str) -> impl Iterator<Item = (&'a Pr, Vec<&'a Review>)> {
-    prs.iter()
+fn reviewed<'a>(
+    prs: impl IntoIterator<Item = &'a Pr>,
+    login: &'a str,
+) -> impl Iterator<Item = (&'a Pr, Vec<&'a Review>)> {
+    prs.into_iter()
         .filter(move |p| p.author != login)
         .filter_map(move |pr| {
             let mine: Vec<&Review> = pr.reviews.iter().filter(|r| r.author == login).collect();
@@ -106,12 +106,32 @@ fn reviewed<'a>(prs: &'a [Pr], login: &'a str) -> impl Iterator<Item = (&'a Pr, 
 }
 
 /// Every row, newest first, where `build` keeps the last `RECENT`.
-pub fn rows(prs: &[Pr], login: &str) -> Vec<Row> {
+pub fn rows<'a>(prs: impl IntoIterator<Item = &'a Pr>, login: &'a str) -> Vec<Row> {
     let mut rows: Vec<Row> = reviewed(prs, login)
         .map(|(pr, mine)| row(pr, &mine))
         .collect();
     rows.sort_by_key(|r| std::cmp::Reverse(r.at));
     rows
+}
+
+/// login → the positions in `prs` of the pull requests that login reviewed,
+/// so one person's rows cost their own reviews and not every pull request.
+pub fn by_reviewer(prs: &[Pr]) -> HashMap<String, Vec<usize>> {
+    let mut out: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, pr) in prs.iter().enumerate() {
+        let mut seen: Vec<&str> = pr
+            .reviews
+            .iter()
+            .map(|r| r.author.as_str())
+            .filter(|a| *a != pr.author)
+            .collect();
+        seen.sort_unstable();
+        seen.dedup();
+        for a in seen {
+            out.entry(a.to_string()).or_default().push(i);
+        }
+    }
+    out
 }
 
 pub fn build(prs: &[Pr], login: &str) -> Dossier {
@@ -188,5 +208,28 @@ mod tests {
         p.merged_at = Some(t(3));
         p.merged_by = Some("bob".into());
         assert_eq!(build(&[p], "bob").merged_unchanged, 0);
+    }
+
+    #[test]
+    fn the_reviewer_index_gives_the_same_rows_as_a_full_scan() {
+        let mut a = pr(1, "alice", 0);
+        a.reviews.push(review(1, "bob", 1));
+        a.reviews.push(review(2, "bob", 2));
+        a.reviews.push(review(3, "alice", 2));
+        let mut b = pr(2, "bob", 0);
+        b.reviews.push(review(4, "bob", 1));
+        b.reviews.push(review(5, "carol", 1));
+        let prs = [a, pr(3, "dave", 0), b];
+        let idx = by_reviewer(&prs);
+        assert_eq!(idx["bob"], [0]);
+        assert_eq!(idx["carol"], [2]);
+        assert!(!idx.contains_key("alice"));
+        let fast = rows(idx["bob"].iter().map(|&i| &prs[i]), "bob");
+        let full = rows(&prs, "bob");
+        assert_eq!(fast.len(), 1);
+        assert_eq!(
+            fast.iter().map(|r| r.pr).collect::<Vec<_>>(),
+            full.iter().map(|r| r.pr).collect::<Vec<_>>()
+        );
     }
 }
