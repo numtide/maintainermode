@@ -8,6 +8,9 @@ description = "Review a nixpkgs pull request, get yours on the list"
 [dependencies]
 anyhow = "1"
 flate2 = "1"
+futures-util = { version = "0.3", default-features = false }
+hmac = "0.12"
+sha2 = "0.10"
 pulldown-cmark = { version = "0.12", default-features = false, features = [
   "html",
 ] }
@@ -24,12 +27,19 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tar = "0.4"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = [
+  "macros",
+  "rt-multi-thread",
+  "signal",
+  "sync",
+  "time",
+] }
 tower-http = { version = "0.6", features = ["trace", "compression-gzip"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 jsonwebtoken = "9"
 ring = "0.17"
+zstd = "0.13"
 
 [profile.release]
 strip = true

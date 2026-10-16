@@ -367,6 +367,12 @@ mod tests {
         for a in attrs {
             index.pkgs.insert(a.to_string(), Default::default());
         }
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let events = std::env::temp_dir().join(format!(
+            "mm-sets-events-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         std::sync::Arc::new(App {
             store: crate::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
             oauth: None,
@@ -381,6 +387,7 @@ mod tests {
             metrics: Default::default(),
             public_url: String::new(),
             github_app: None,
+            events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
         })
     }
 

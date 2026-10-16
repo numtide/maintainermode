@@ -74,6 +74,7 @@ pub struct App {
     pub metrics: RwLock<Arc<Report>>,
     /// The URL people reach, for links that leave the site, like feeds.
     pub public_url: String,
+    pub events: Arc<crate::events::Log>,
 }
 
 impl App {
@@ -179,6 +180,7 @@ pub fn router(app: Shared) -> Router {
         .route("/api/v1/queue/review", get(api_review))
         .route("/api/v1/people/:login", get(api_person))
         .route("/api/v1/metrics", get(api_metrics))
+        .route("/api/v1/events", get(api_events))
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
         .merge(crate::actions::routes())
@@ -1033,6 +1035,37 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
 
 async fn api_metrics(State(app): State<Shared>) -> Json<Report> {
     Json(Report::clone(&app.metrics.read().unwrap()))
+}
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    #[serde(flatten)]
+    filter: crate::events::Filter,
+    /// For clients that cannot set `Last-Event-ID` on the first request.
+    after: Option<u64>,
+}
+
+async fn api_events(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<EventsQuery>,
+) -> Response {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures_util::StreamExt;
+    let after = headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse().ok())
+        .or(q.after)
+        .unwrap_or_else(|| app.events.head());
+    let stream = crate::events::follow(app.events.clone(), after, q.filter).map(|s| {
+        Ok::<_, std::convert::Infallible>(Event::default().id(s.seq.to_string()).data(s.json))
+    });
+    (
+        [("x-accel-buffering", "no")],
+        Sse::new(stream).keep_alive(KeepAlive::default()),
+    )
+        .into_response()
 }
 
 fn num(v: Option<f64>) -> String {

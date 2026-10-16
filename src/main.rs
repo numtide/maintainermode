@@ -4,6 +4,7 @@ mod attrs;
 mod catalog;
 mod dossier;
 mod eval;
+mod events;
 mod github;
 mod github_app;
 mod health;
@@ -118,6 +119,8 @@ enum Command {
         github_app_installation_id: Option<u64>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
+        #[command(flatten)]
+        s3: Box<S3>,
     },
     /// One sync pass into a local database, then exit
     Sync {
@@ -249,6 +252,21 @@ async fn submit(server: &str, path: &std::path::Path, token_file: Option<PathBuf
     print_omitted(&report);
     println!("{body}");
     Ok(())
+}
+
+/// Where the daily copy of the event log goes. Unset turns the copy off.
+#[derive(clap::Args)]
+struct S3 {
+    /// An S3-compatible endpoint, such as a bunny.net Storage S3 endpoint.
+    #[arg(long, env = "MAINTAINER_MODE_S3_ENDPOINT")]
+    s3_endpoint: Option<String>,
+    #[arg(long, env = "MAINTAINER_MODE_S3_BUCKET")]
+    s3_bucket: Option<String>,
+    #[arg(long, env = "MAINTAINER_MODE_S3_REGION")]
+    s3_region: Option<String>,
+    /// Holds `AWS_ACCESS_KEY_ID=…` and `AWS_SECRET_ACCESS_KEY=…` lines.
+    #[arg(long, env = "MAINTAINER_MODE_S3_CREDENTIALS_FILE")]
+    s3_credentials_file: Option<PathBuf>,
 }
 
 fn read_secret(path: &Option<PathBuf>) -> Result<Option<String>> {
@@ -478,7 +496,21 @@ async fn run(cli: Cli) -> Result<i32> {
             github_app_key_file,
             github_app_installation_id,
             sync_every,
+            s3,
         } => {
+            let S3 {
+                s3_endpoint,
+                s3_bucket,
+                s3_region,
+                s3_credentials_file,
+            } = *s3;
+            let bucket = match (s3_endpoint, s3_bucket, s3_region, s3_credentials_file) {
+                (Some(e), Some(b), Some(r), Some(c)) => Some(events::Bucket::new(&e, &b, &r, &c)?),
+                (None, None, None, None) => None,
+                _ => bail!(
+                    "set all of MAINTAINER_MODE_S3_ENDPOINT, _BUCKET, _REGION and _CREDENTIALS_FILE, or none"
+                ),
+            };
             let store = Store::open(&db)?;
             let github_app = match (github_app_id, read_secret(&github_app_key_file)?) {
                 (Some(id), Some(pem)) => Some(github_app::GithubApp::new(
@@ -492,6 +524,7 @@ async fn run(cli: Cli) -> Result<i32> {
             if let Some(a) = &github_app {
                 tracing::info!("sync token from GitHub App {}", a.id());
             }
+            let events = Arc::new(events::Log::open(&data_dir(&db).join("events"))?);
             let oauth = match (client_id, read_secret(&client_secret_file)?) {
                 (Some(id), Some(secret)) => Some(github::OAuth {
                     client_id: id,
@@ -518,11 +551,23 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                events,
             });
             app.recompute()?;
             let a = app.clone();
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
+            match &app.sync_token {
+                Some(t) => {
+                    tokio::spawn(events::poll(app.events.clone(), t.clone()));
+                }
+                None => tracing::info!("no sync token: the event log takes GH Archive only"),
+            }
+            tokio::spawn(events::archive(app.clone()));
+            if let Some(b) = bucket {
+                tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
+                tokio::spawn(events::copy(app.clone(), b));
+            }
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             tracing::info!("listening on {listen}");
             let router = web::router(app)
@@ -542,6 +587,7 @@ async fn run(cli: Cli) -> Result<i32> {
             history,
         } => {
             let store = Store::open(&db)?;
+            let events = Arc::new(events::Log::open(&data_dir(&db).join("events"))?);
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
@@ -556,6 +602,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                events,
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -576,6 +623,7 @@ async fn run(cli: Cli) -> Result<i32> {
         }
         Command::Sweep { db } => {
             let store = Store::open(&db)?;
+            let events = Arc::new(events::Log::open(&data_dir(&db).join("events"))?);
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
@@ -590,6 +638,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                events,
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();
