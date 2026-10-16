@@ -56,7 +56,8 @@ author can try to:
 - run a build, or make the server substitute a large closure;
 - put a private name in a set.
 
-The sandbox and the limits below answer each item.
+The sandbox and the limits below answer each item. The disk has a limit per
+day only; see [Disk](#disk).
 
 ## What the sandbox allows
 
@@ -140,6 +141,7 @@ reach its DNS resolver and its other servers.
 | ----------------------------- | -------- | -------------------------- |
 | flakes a person can register  | 3        | `rescan.maxFlakes`         |
 | scans a person gets in 24 h   | 4        | `rescan.scansPerDay`       |
+| scans in 24 h, all people     | 100      | `rescan.scansPerDayTotal`  |
 | wall clock of one scan        | 900 s    | `rescan.timeout`           |
 | address space of each process | 3072 MiB | `rescan.memoryMB`          |
 | CPU time of each process      | 900 s    | the same as the wall clock |
@@ -156,6 +158,27 @@ The scans run in their own task. A slow scan does not delay the sync of pull
 requests and issues. `/sync` shows the number of flakes, the queue, the time
 of the last scan and the number of failing flakes. It shows no reference,
 login or package.
+
+The server reads the output of step 5 in one pass. It keeps only the name
+and the version of each package, and it stops past the package limit.
+
+### Disk
+
+The disk use of a scan has no total limit:
+
+- Steps 2 and 4 add each fetched tree to `/nix/store` through the nix
+  daemon. The file size limit of the sandboxed process does not apply to the
+  daemon.
+- These paths stay in the store until the host collects garbage. No root
+  keeps them alive.
+- The fetch cache in `/work` has a limit per file, not in total. The server
+  deletes `/work` after each scan.
+
+One scan can write as much as the network gives in the wall-clock limit.
+The daily limit for all people together bounds the number of such scans.
+Run the nix garbage collector on the host, for example with
+`nix.gc.automatic = true` on NixOS. Watch the free space of `/nix/store`
+and of the temporary directory of the service.
 
 ## What the server keeps
 

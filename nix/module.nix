@@ -150,6 +150,12 @@ in
         description = "Scans a person gets in 24 hours, all flakes together.";
       };
 
+      scansPerDayTotal = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 100;
+        description = "Scans in 24 hours for all people together. It bounds the disk that fetches use between two garbage collections.";
+      };
+
       timeout = lib.mkOption {
         type = lib.types.ints.positive;
         default = 900;
@@ -250,6 +256,7 @@ in
         MAINTAINER_MODE_RESCAN_NIX = "${config.nix.package}/bin/nix";
         MAINTAINER_MODE_RESCAN_MAX_FLAKES = toString cfg.rescan.maxFlakes;
         MAINTAINER_MODE_RESCAN_PER_DAY = toString cfg.rescan.scansPerDay;
+        MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL = toString cfg.rescan.scansPerDayTotal;
         MAINTAINER_MODE_RESCAN_TIMEOUT = toString cfg.rescan.timeout;
         MAINTAINER_MODE_RESCAN_MEMORY_MB = toString cfg.rescan.memoryMB;
       };
