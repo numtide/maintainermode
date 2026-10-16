@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 use std::time::Duration as StdDuration;
 
 use crate::metrics::{Facts, Seen, areas};
-use crate::model::{Pr, Review, Void};
+use crate::model::{Issue, Pr, Review, Void};
 use crate::store::Store;
 
 const OWNER: &str = "NixOS";
@@ -406,6 +406,130 @@ pub async fn sync(store: &Store, client: &mut Client, window_days: i64) -> Resul
     store.set("watermark", &(started - Duration::minutes(2)).to_rfc3339())?;
     store.delete_key("recent_cursor")?;
     store.set("last_sync", &Utc::now().to_rfc3339())?;
+    Ok(count)
+}
+
+const ISSUE_FIELDS: &str = r#"
+  number title url state createdAt updatedAt closedAt body
+  author { login }
+  labels(first: 20) { nodes { name } }
+  comments { totalCount }
+"#;
+const ISSUE_PAGES: [i64; 3] = [100, 50, 20];
+
+pub fn normalize_issue(n: &Value) -> Option<Issue> {
+    Some(Issue {
+        number: n["number"].as_u64()?,
+        title: n["title"].as_str()?.to_string(),
+        url: n["url"].as_str()?.to_string(),
+        author: login(&n["author"]).0,
+        state: n["state"].as_str()?.to_string(),
+        created_at: time(&n["createdAt"])?,
+        updated_at: time(&n["updatedAt"])?,
+        closed_at: time(&n["closedAt"]),
+        labels: labels(n),
+        comments: n["comments"]["totalCount"].as_u64().unwrap_or(0),
+        mentions: crate::subject::of_body(n["body"].as_str().unwrap_or("")),
+    })
+}
+
+async fn issue_page(
+    client: &mut Client,
+    store: &Store,
+    open_only: bool,
+    after: Option<&str>,
+) -> Result<(Vec<Issue>, Option<String>)> {
+    let mut last = None;
+    for n in ISSUE_PAGES {
+        let query = format!(
+            "query($owner: String!, $name: String!, $n: Int!, $after: String, $states: [IssueState!], $field: IssueOrderField!) {{
+               rateLimit {{ cost remaining resetAt }}
+               repository(owner: $owner, name: $name) {{
+                 issues(first: $n, after: $after, states: $states, orderBy: {{ field: $field, direction: DESC }}) {{
+                   pageInfo {{ hasNextPage endCursor }}
+                   nodes {{ {ISSUE_FIELDS} }}
+                 }}
+               }}
+             }}"
+        );
+        let vars = json!({
+            "owner": OWNER, "name": REPO, "n": n, "after": after,
+            "states": if open_only { json!(["OPEN"]) } else { Value::Null },
+            "field": if open_only { "CREATED_AT" } else { "UPDATED_AT" },
+        });
+        match client.graphql(store, &query, vars).await {
+            Ok(data) => {
+                let conn = &data["repository"]["issues"];
+                let issues = nodes(conn).filter_map(normalize_issue).collect();
+                let next = conn["pageInfo"]["hasNextPage"]
+                    .as_bool()
+                    .unwrap_or(false)
+                    .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
+                    .flatten();
+                return Ok((issues, next));
+            }
+            Err(e) if client.has_token() => {
+                tracing::warn!("issue page of {n}: {e:#}");
+                last = Some(e);
+                tokio::time::sleep(StdDuration::from_secs(5)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.expect("at least one attempt"))
+}
+
+/// The same two walks as `sync`, over issues, with their own cursors.
+pub async fn sync_issues(store: &Store, client: &mut Client, window_days: i64) -> Result<usize> {
+    let mut count = 0;
+    if store.get("issues_open_done")?.is_none() {
+        let mut cursor = store.get("issues_open_cursor")?;
+        loop {
+            let (issues, next) = issue_page(client, store, true, cursor.as_deref()).await?;
+            count += issues.len();
+            store.put_issues(&issues)?;
+            match next {
+                Some(c) => {
+                    store.set("issues_open_cursor", &c)?;
+                    cursor = Some(c);
+                }
+                None => {
+                    store.set("issues_open_done", "1")?;
+                    break;
+                }
+            }
+        }
+    }
+    let started = match store.get_time("issues_recent_started")? {
+        Some(t) if store.get("issues_recent_cursor")?.is_some() => t,
+        _ => {
+            let now = Utc::now();
+            store.set("issues_recent_started", &now.to_rfc3339())?;
+            now
+        }
+    };
+    let floor = store
+        .get_time("issues_watermark")?
+        .unwrap_or_else(|| Utc::now() - Duration::days(window_days));
+    let mut cursor = store.get("issues_recent_cursor")?;
+    loop {
+        let (issues, next) = issue_page(client, store, false, cursor.as_deref()).await?;
+        let reached = issues.iter().any(|i| i.updated_at < floor);
+        count += issues.len();
+        store.put_issues(&issues)?;
+        match next {
+            Some(c) if !reached => {
+                store.set("issues_recent_cursor", &c)?;
+                cursor = Some(c);
+            }
+            _ => break,
+        }
+    }
+    store.set(
+        "issues_watermark",
+        &(started - Duration::minutes(2)).to_rfc3339(),
+    )?;
+    store.delete_key("issues_recent_cursor")?;
     Ok(count)
 }
 

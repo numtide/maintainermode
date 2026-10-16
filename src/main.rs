@@ -9,6 +9,7 @@ mod model;
 mod nixfresh;
 mod queue;
 mod store;
+mod subject;
 mod web;
 
 use anyhow::{Context, Result, bail};
@@ -194,6 +195,10 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
                 Ok(n) => tracing::info!("synced {n} pull requests"),
                 Err(e) => tracing::warn!("sync: {e:#}"),
+            }
+            match github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await {
+                Ok(n) => tracing::info!("synced {n} issues"),
+                Err(e) => tracing::warn!("issues: {e:#}"),
             }
             if let Err(e) = settle(&app, &mut client).await {
                 tracing::warn!("mergeable: {e:#}");

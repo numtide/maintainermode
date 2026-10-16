@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use crate::metrics::Facts;
-use crate::model::Pr;
+use crate::model::{Issue, Pr};
 
 pub struct Store {
     conn: Mutex<Connection>,
@@ -39,6 +39,12 @@ impl Store {
              CREATE TABLE IF NOT EXISTS history (
                number INTEGER PRIMARY KEY,
                updated_at TEXT NOT NULL,
+               data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS issue (
+               number INTEGER PRIMARY KEY,
+               updated_at TEXT NOT NULL,
+               state TEXT NOT NULL,
                data TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -124,6 +130,37 @@ impl Store {
     pub fn prs(&self) -> Result<Vec<Pr>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT data FROM pr")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
+    }
+
+    pub fn put_issues(&self, issues: &[Issue]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for i in issues {
+            tx.execute(
+                "INSERT INTO issue (number, updated_at, state, data) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(number) DO UPDATE SET
+                   updated_at = excluded.updated_at, state = excluded.state, data = excluded.data",
+                params![
+                    i.number,
+                    i.updated_at.to_rfc3339(),
+                    i.state,
+                    serde_json::to_string(i)?
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn issues(&self) -> Result<Vec<Issue>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data FROM issue")?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
