@@ -33,10 +33,13 @@ const PR_FIELDS: &str = r#"
   } }
 "#;
 
+const GRAPHQL: &str = "https://api.github.com/graphql";
+
 pub struct Client {
     http: reqwest::Client,
     tokens: Vec<String>,
     current: usize,
+    endpoint: String,
 }
 
 pub enum Outcome {
@@ -51,6 +54,15 @@ impl Client {
             http: http(),
             tokens,
             current: 0,
+            endpoint: GRAPHQL.into(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn at(endpoint: &str, tokens: Vec<String>) -> Self {
+        Self {
+            endpoint: endpoint.into(),
+            ..Self::new(tokens)
         }
     }
 
@@ -79,7 +91,7 @@ impl Client {
                     "no GitHub token with budget left; sync resumes when someone logs in or the limit resets"
                 );
             };
-            match graphql_call(&self.http, &token, query, &vars, allowed).await? {
+            match graphql_call(&self.http, &self.endpoint, &token, query, &vars, allowed).await? {
                 Outcome::BadToken(t) => {
                     store.forget_token(&t)?;
                     self.current += 1;
@@ -110,18 +122,19 @@ pub async fn graphql_once(
     query: &str,
     vars: &Value,
 ) -> Result<Outcome> {
-    graphql_call(http, token, query, vars, &[]).await
+    graphql_call(http, GRAPHQL, token, query, vars, &[]).await
 }
 
 async fn graphql_call(
     http: &reqwest::Client,
+    endpoint: &str,
     token: &str,
     query: &str,
     vars: &Value,
     allowed: &[&str],
 ) -> Result<Outcome> {
     let resp = http
-        .post("https://api.github.com/graphql")
+        .post(endpoint)
         .bearer_auth(token)
         .json(&json!({ "query": query, "variables": vars }))
         .send()
