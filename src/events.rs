@@ -500,6 +500,14 @@ async fn fill_hour(log: &Arc<Log>, http: &reqwest::Client, hour: DateTime<Utc>) 
     .await?
 }
 
+/// GH Archive publishes an hour well within this delay. Some hours never
+/// come, and the fill must not wait for them.
+const MISSING_AFTER: i64 = 6;
+
+fn missing(hour: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    now - hour >= Duration::hours(MISSING_AFTER)
+}
+
 /// Each hour, adds the events of the past hour that GH Archive has and the
 /// poll missed.
 pub async fn archive(app: Arc<App>) {
@@ -521,16 +529,19 @@ pub async fn archive(app: Arc<App>) {
                         "GH Archive {}: {n} new events",
                         next.format("%Y-%m-%d %H:00")
                     );
-                    next += Duration::hours(1);
-                    if let Err(e) = store.set("gharchive_next", &next.to_rfc3339()) {
-                        tracing::warn!("GH Archive: {e:#}");
-                    }
+                }
+                Ok(Fill::NotYet) if missing(next, now) => {
+                    tracing::warn!("GH Archive {}: missing, skipped", archive_url(next));
                 }
                 Ok(Fill::NotYet) => break,
                 Err(e) => {
                     tracing::warn!("GH Archive {}: {e:#}", archive_url(next));
                     break;
                 }
+            }
+            next += Duration::hours(1);
+            if let Err(e) = store.set("gharchive_next", &next.to_rfc3339()) {
+                tracing::warn!("GH Archive: {e:#}");
             }
         }
         tokio::time::sleep(StdDuration::from_secs(600)).await;
@@ -845,6 +856,9 @@ mod tests {
             archive_url(Utc.with_ymd_and_hms(2026, 10, 14, 5, 0, 0).unwrap()),
             "https://data.gharchive.org/2026-10-14-5.json.gz"
         );
+        let hour = Utc.with_ymd_and_hms(2026, 10, 14, 5, 0, 0).unwrap();
+        assert!(!missing(hour, hour + Duration::minutes(90)));
+        assert!(missing(hour, hour + Duration::hours(6)));
     }
 
     /// The "GET Object" example of the AWS Signature Version 4 documentation.
