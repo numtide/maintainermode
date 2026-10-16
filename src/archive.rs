@@ -934,6 +934,11 @@ async fn pass(app: &App, a: &Archive, client: &mut github::Client) -> Result<usi
     Ok(fetched)
 }
 
+const NO_TOKEN: &str =
+    "no GitHub App token and no sync token; the walk does not use the tokens that people lend";
+
+/// The server's own tokens only: a token that a person lent pays for
+/// their own reviews, not for the archive.
 async fn tokens(app: &App) -> Vec<String> {
     let mut tokens = Vec::new();
     if let Some(g) = &app.github_app {
@@ -942,7 +947,6 @@ async fn tokens(app: &App) -> Vec<String> {
         }
     }
     tokens.extend(app.sync_token.iter().cloned());
-    tokens.extend(app.store.lent_tokens().unwrap_or_default());
     tokens
 }
 
@@ -954,8 +958,11 @@ pub async fn walk(app: Arc<App>) {
         let mut client = github::Client::new(tokens(&app).await);
         if !client.has_token() {
             if !said {
-                tracing::info!("archive: no token yet; the walk starts when there is one");
+                tracing::info!("archive: {NO_TOKEN}");
                 said = true;
+            }
+            for a in &app.archive {
+                let _ = a.set("last_error", NO_TOKEN);
             }
         } else {
             for a in &app.archive {
