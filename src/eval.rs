@@ -52,19 +52,80 @@ pub fn eval_with_input_using(
     expr: &str,
     input: &serde_json::Value,
 ) -> Result<String> {
-    let dir = std::env::temp_dir().join(format!("maintainer-mode-{kind}-{}", std::process::id()));
-    std::fs::create_dir_all(&dir)?;
-    std::fs::write(dir.join("input.json"), serde_json::to_vec(input)?)?;
+    let dir = private_dir(kind)?;
+    let input_path = dir.join("input.json");
+    std::fs::write(&input_path, serde_json::to_vec(input)?)?;
     let path = dir.join(format!("{kind}.nix"));
     std::fs::write(&path, expr)?;
     let text = run_with(
         program,
         &["eval", "--json", "--file", &path.to_string_lossy()],
     );
-    // a failed eval leaves the scratch directory behind: the generated
-    // expression is the only way to read the nix error that names it.
+    // a failed eval keeps the generated expression, the only way to read the
+    // nix error that names it; the input can hold private package names.
     if text.is_ok() {
         let _ = std::fs::remove_dir_all(&dir);
+    } else {
+        let _ = std::fs::remove_file(&input_path);
     }
     text
+}
+
+/// A new directory only the owner can enter. It refuses a path that exists, so
+/// another local user cannot plant the expression that runs.
+fn private_dir(kind: &str) -> Result<std::path::PathBuf> {
+    use rand::Rng;
+    use std::os::unix::fs::DirBuilderExt;
+    for _ in 0..16 {
+        let dir = std::env::temp_dir().join(format!(
+            "maintainer-mode-{kind}-{:016x}",
+            rand::thread_rng().gen::<u64>()
+        ));
+        match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+            Ok(()) => return Ok(dir),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e).with_context(|| format!("create {}", dir.display())),
+        }
+    }
+    bail!(
+        "no free scratch directory in {}",
+        std::env::temp_dir().display()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn the_scratch_directory_is_new_and_private() {
+        let a = private_dir("test").unwrap();
+        let b = private_dir("test").unwrap();
+        assert_ne!(a, b);
+        let mode = std::fs::metadata(&a).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        std::fs::remove_dir(a).unwrap();
+        std::fs::remove_dir(b).unwrap();
+    }
+
+    #[test]
+    fn a_failed_eval_drops_the_input() {
+        let marker = format!("private-{}", std::process::id());
+        let r = eval_with_input_using("false", "failtest", "{}", &serde_json::json!([marker]));
+        assert!(r.is_err());
+        let left: Vec<_> = std::fs::read_dir(std::env::temp_dir())
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("maintainer-mode-failtest-")
+            })
+            .collect();
+        for e in &left {
+            assert!(!e.path().join("input.json").exists());
+            let _ = std::fs::remove_dir_all(e.path());
+        }
+    }
 }
