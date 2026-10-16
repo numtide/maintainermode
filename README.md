@@ -790,6 +790,10 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_APP_INSTALLATION_ID`           | installation to use; else the one on the account of the App |
 | `MAINTAINER_MODE_UPLOAD_TOKEN`         | the client's upload token for `submit`                      |
 | `MAINTAINER_MODE_CHANNELS`             | channels next to master, default `nixos-unstable,stable`    |
+| `MAINTAINER_MODE_S3_ENDPOINT`          | S3-compatible endpoint for the copy of the event log        |
+| `MAINTAINER_MODE_S3_BUCKET`            | the bucket of that copy                                     |
+| `MAINTAINER_MODE_S3_REGION`            | the region that the request signature names                 |
+| `MAINTAINER_MODE_S3_CREDENTIALS_FILE`  | file with the access key id and the secret key              |
 | `MAINTAINER_MODE_ARCHIVE_REPOS`        | repositories to archive; default `NixOS/nixpkgs`            |
 | `MAINTAINER_MODE_ARCHIVE_ITEMS`        | items the archive walk fetches per repository and pass      |
 | `MAINTAINER_MODE_RESCAN`               | `true` turns on the server rescans of public flakes         |
