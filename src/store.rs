@@ -71,6 +71,19 @@ impl Store {
                token TEXT NOT NULL UNIQUE,
                created_at TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS upload_token (
+               login TEXT PRIMARY KEY,
+               hash TEXT NOT NULL UNIQUE,
+               created_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS package_set (
+               login TEXT PRIMARY KEY,
+               attrs TEXT NOT NULL,
+               dropped INTEGER NOT NULL,
+               uploaded_at TEXT NOT NULL,
+               scanned_at TEXT,
+               nixpkgs_rev TEXT
+             );
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -400,5 +413,120 @@ impl Store {
             [login, key, value],
         )?;
         Ok(())
+    }
+}
+
+/// A person's package set from their latest report. Private: only the owner
+/// reads it, and no public number counts it.
+pub struct PackageSet {
+    pub attrs: Vec<String>,
+    pub dropped: usize,
+    pub uploaded_at: DateTime<Utc>,
+    pub scanned_at: Option<String>,
+    pub nixpkgs_rev: Option<String>,
+}
+
+impl Store {
+    /// A new token replaces the old one. Only its hash is kept.
+    pub fn set_upload_token(&self, login: &str, hash: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO upload_token (login, hash, created_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(login) DO UPDATE SET hash = excluded.hash, created_at = excluded.created_at",
+            params![login, hash, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn upload_token_at(&self, login: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT created_at FROM upload_token WHERE login = ?1",
+                [login],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn upload_login(&self, hash: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT login FROM upload_token WHERE hash = ?1",
+                [hash],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn delete_upload_token(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM upload_token WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    pub fn put_package_set(&self, login: &str, set: &PackageSet) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(login) DO UPDATE SET attrs = excluded.attrs, dropped = excluded.dropped,
+               uploaded_at = excluded.uploaded_at, scanned_at = excluded.scanned_at,
+               nixpkgs_rev = excluded.nixpkgs_rev",
+            params![
+                login,
+                serde_json::to_string(&set.attrs)?,
+                set.dropped as i64,
+                set.uploaded_at.to_rfc3339(),
+                set.scanned_at,
+                set.nixpkgs_rev
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn package_set(&self, login: &str) -> Result<Option<PackageSet>> {
+        let conn = self.conn.lock().unwrap();
+        let row = conn
+            .query_row(
+                "SELECT attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev FROM package_set WHERE login = ?1",
+                [login],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((attrs, dropped, uploaded, scanned_at, nixpkgs_rev)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(PackageSet {
+            attrs: serde_json::from_str(&attrs)?,
+            dropped: dropped.max(0) as usize,
+            uploaded_at: DateTime::parse_from_rfc3339(&uploaded)?.with_timezone(&Utc),
+            scanned_at,
+            nixpkgs_rev,
+        }))
+    }
+
+    pub fn delete_package_set(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM package_set WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    /// Deletes every set with no upload since `before`; returns how many.
+    pub fn purge_package_sets(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "DELETE FROM package_set WHERE uploaded_at < ?1",
+            [before.to_rfc3339()],
+        )?)
     }
 }

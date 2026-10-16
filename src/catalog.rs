@@ -152,7 +152,7 @@ impl Subject {
         }
     }
 
-    fn icon(&self) -> String {
+    pub(crate) fn icon(&self) -> String {
         match self {
             Subject::Pkg(_) => icon(octicon!("package")),
             Subject::Module(_) => icon(octicon!("gear")),
@@ -243,16 +243,16 @@ fn upstream<'a>(s: &Snapshot, index: &Index, h: &'a Health, attr: &str) -> Optio
     (!s.versions.get(pname).is_some_and(|v| v.contains(newest))).then_some(newest)
 }
 
-struct Flags {
-    upstream: Option<String>,
-    advisories: usize,
+pub(crate) struct Flags {
+    pub(crate) upstream: Option<String>,
+    pub(crate) advisories: usize,
     unmaintained: bool,
-    open_prs: usize,
-    open_issues: usize,
+    pub(crate) open_prs: usize,
+    pub(crate) open_issues: usize,
 }
 
 impl Flags {
-    fn of(s: &Snapshot, index: &Index, h: &Health, subject: &Subject) -> Flags {
+    pub(crate) fn of(s: &Snapshot, index: &Index, h: &Health, subject: &Subject) -> Flags {
         let (prs, issues) = attached(s, index, subject);
         let (upstream, advisories, unmaintained) = match subject {
             Subject::Pkg(attr) => {
@@ -282,7 +282,7 @@ impl Flags {
         }
     }
 
-    fn html(&self) -> String {
+    pub(crate) fn html(&self) -> String {
         let mut out = Vec::new();
         if self.advisories > 0 {
             out.push(format!(
@@ -492,7 +492,7 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
     )
 }
 
-fn head(title: &str, sub: &str, button: &str) -> String {
+pub(crate) fn head(title: &str, sub: &str, button: &str) -> String {
     format!(
         "<div class=\"Subhead d-flex flex-items-center\"><div class=\"flex-auto\"><h1 class=\"Subhead-heading\">{title}</h1>\
          <div class=\"Subhead-description\">{sub}</div></div><div>{button}</div></div>"
@@ -1217,7 +1217,11 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         &format!("{} Watching", icon(octicon!("bell"))),
         "Packages, modules and areas you subscribed to, with what needs attention first. \
          New pull requests, merges, issues and advisories reach you through your Atom feed.",
-        "",
+        if viewer.is_some() {
+            "<a class=\"btn btn-sm\" href=\"/me/sets\">Your package set</a>"
+        } else {
+            ""
+        },
     );
     let Some(login) = viewer.as_deref() else {
         out.push_str("<div class=\"blankslate\"><p>Sign in to subscribe.</p></div>");
@@ -1276,7 +1280,7 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     }
     let feed = match app.store.feed_token(login).ok().flatten() {
         Some(t) => format!(
-            "<p>Add this link to a feed reader. It is private: anyone with it reads what you watch.</p>\
+            "<p>Add this link to a feed reader. It is private: anyone with it reads what you watch, and the advisories and releases of your package set.</p>\
              <input class=\"form-control width-full mb-2\" readonly value=\"{}/feed/{}\" aria-label=\"feed link\">\
              <form method=\"post\" action=\"/me/feed\"><button class=\"btn btn-sm\" type=\"submit\">Replace the link</button></form>",
             esc(app.public_url.trim_end_matches('/')),
@@ -1374,6 +1378,46 @@ fn events(
     out
 }
 
+/// Events for the packages of a private set: advisories and upstream
+/// releases only. A closure holds thousands of packages, and every pull
+/// request against them would drown the feed.
+fn set_events(
+    s: &Snapshot,
+    index: &Index,
+    h: &Health,
+    attrs: &[String],
+    since: DateTime<Utc>,
+) -> Vec<Event> {
+    let mut out = Vec::new();
+    for attr in attrs {
+        for a in open_advisories(h, s, attr) {
+            let at = a
+                .issue
+                .and_then(|n| s.issue_at.get(&n))
+                .map(|&i| s.issues[i].created_at);
+            if let Some(at) = at.filter(|t| *t >= since) {
+                out.push(Event {
+                    at,
+                    id: format!("advisory-{}-{attr}", a.code),
+                    title: format!("advisory {}: {}", a.code, a.title),
+                    url: a.url(),
+                    subject: attr.clone(),
+                });
+            }
+        }
+        if let (Some(v), Some(at)) = (upstream(s, index, h, attr), h.repology_at) {
+            out.push(Event {
+                at,
+                id: format!("upstream-{attr}-{v}"),
+                title: format!("upstream released {v}"),
+                url: String::new(),
+                subject: attr.clone(),
+            });
+        }
+    }
+    out
+}
+
 /// XML 1.0 has no escape for most control characters; one in a title would
 /// make the whole feed unreadable.
 fn xml(s: &str) -> String {
@@ -1392,17 +1436,25 @@ async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response 
     let subs = subscriptions(&app, &login);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
+    let set = crate::sets::set_attrs(&app, &login);
+    let base = app.public_url.trim_end_matches('/');
     let list = {
         let index = app.index.read().unwrap();
-        events(
-            &s,
-            &index,
-            &h,
-            &subs,
-            Utc::now() - Duration::days(FEED_DAYS),
-        )
+        let since = Utc::now() - Duration::days(FEED_DAYS);
+        let mut list = events(&s, &index, &h, &subs, since);
+        let mut seen: HashSet<String> = list.iter().map(|e| e.id.clone()).collect();
+        for mut e in set_events(&s, &index, &h, &set, since) {
+            if seen.insert(e.id.clone()) {
+                if e.url.is_empty() {
+                    e.url = format!("{base}/p/{}", e.subject);
+                }
+                list.push(e);
+            }
+        }
+        list.sort_by_key(|e| std::cmp::Reverse(e.at));
+        list.truncate(200);
+        list
     };
-    let base = app.public_url.trim_end_matches('/');
     let updated = list.first().map_or_else(Utc::now, |e| e.at);
     let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\

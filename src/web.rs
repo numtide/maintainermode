@@ -182,6 +182,7 @@ pub fn router(app: Shared) -> Router {
         .route("/state", get(state_page))
         .merge(crate::catalog::routes())
         .merge(crate::actions::routes())
+        .merge(crate::sets::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
