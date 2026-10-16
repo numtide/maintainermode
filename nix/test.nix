@@ -61,6 +61,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/maintainers/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/watch -o /tmp/page && grep -q 'Sign in to subscribe' /tmp/page")
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
+    machine.succeed("curl -sf http://127.0.0.1:8790/sync -o /tmp/sync && grep -q 'Faster with forwarded events' /tmp/sync")
+    machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
     machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 403")

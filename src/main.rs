@@ -16,6 +16,7 @@ mod queue;
 mod report;
 mod scan;
 mod sets;
+mod status;
 mod store;
 mod subject;
 mod web;
@@ -315,6 +316,7 @@ fn retry_wait(failures: u32, every: u64) -> u64 {
 async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate) {
     let mut failures = 0;
     loop {
+        let pass_started = Utc::now();
         let index_at = app.store.get_time("index_at").ok().flatten();
         // an index from before packages and modules were kept has neither
         let old_format = app.index.read().unwrap().pkgs.is_empty();
@@ -421,6 +423,11 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             Err(e) => tracing::warn!("metrics: {e}"),
             Ok(Ok(())) => {}
         }
+        let _ = app.store.set("pass_ended", &Utc::now().to_rfc3339());
+        let _ = app.store.set(
+            "pass_seconds",
+            &(Utc::now() - pass_started).num_seconds().to_string(),
+        );
         tokio::time::sleep(std::time::Duration::from_secs(every)).await;
     }
 }
@@ -563,6 +570,7 @@ async fn run(cli: Cli) -> Result<i32> {
             app.recompute()?;
             let a = app.clone();
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
+            app.store.set("sync_every", &sync_every.to_string())?;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
             match &app.sync_token {
                 Some(t) => {
