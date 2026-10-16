@@ -44,6 +44,22 @@ fn last_event_at(app: &App) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
+/// Counts of jobs only: no reference, login or package.
+fn rescans(app: &App) -> Value {
+    let (flakes, failing, last) = app.store.flake_ref_counts().unwrap_or_default();
+    let queued = match (&app.rescan, time(app, "index_at")) {
+        (Some(_), Some(at)) => app.store.flake_refs_due(at).map(|d| d.len()).unwrap_or(0),
+        _ => 0,
+    };
+    json!({
+        "enabled": app.rescan.is_some(),
+        "flakes": flakes,
+        "queued": queued,
+        "failing": failing,
+        "last_run": last,
+    })
+}
+
 pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
@@ -116,6 +132,7 @@ pub(crate) fn state(app: &App) -> Value {
             "last_seconds": pass_seconds,
             "worst_delay_seconds": pass_seconds.map(|p| sync_every + p),
         },
+        "rescans": rescans(app),
         "tokens": {
             "server": app.sync_token.is_some() || app.github_app.is_some(),
             "lent": app.store.lent_tokens().map(|t| t.len()).unwrap_or(0),
@@ -405,6 +422,21 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
     out.push_str(&row(
         "Hydra builds",
         "asked when a package or module page is shown, kept one hour",
+    ));
+    let r = &v["rescans"];
+    out.push_str(&row(
+        "Flake rescans",
+        &if r["enabled"].as_bool() == Some(true) {
+            format!(
+                "{} flakes · {} queued · last scan {} · {} failing",
+                r["flakes"],
+                r["queued"],
+                when(&r["last_run"]),
+                r["failing"]
+            )
+        } else {
+            "off on this server: people upload reports from their own machines".into()
+        },
     ));
     out.push_str(
         "</div><div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Event log</div>",

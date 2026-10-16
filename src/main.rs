@@ -20,6 +20,7 @@ mod model;
 mod osv;
 mod queue;
 mod report;
+mod rescan;
 mod scan;
 mod score;
 mod sets;
@@ -158,6 +159,8 @@ enum Command {
         /// Items the archive walk fetches per repository and pass.
         #[arg(long, env = "MAINTAINER_MODE_ARCHIVE_ITEMS", default_value_t = 300)]
         archive_items: usize,
+        #[command(flatten)]
+        rescan: Box<rescan::Args>,
     },
     /// The full copy of issues and pull requests
     Archive {
@@ -398,6 +401,14 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             Ok(n) => tracing::info!("{n} expired package sets deleted"),
             Err(e) => tracing::warn!("package sets: {e:#}"),
         }
+        match app
+            .store
+            .purge_flake_results(Utc::now() - Duration::days(sets::RETENTION_DAYS))
+        {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("{n} expired flake scans dropped"),
+            Err(e) => tracing::warn!("flake scans: {e:#}"),
+        }
         // Only the GitHub sync decides whether the host is offline: one other
         // host that stays down must not hold back the rest of the pass.
         let mut down = false;
@@ -567,7 +578,9 @@ async fn run(cli: Cli) -> Result<i32> {
             s3,
             archive_repos,
             archive_items,
+            rescan,
         } => {
+            let rescan = rescan.config()?;
             let S3 {
                 s3_endpoint,
                 s3_bucket,
@@ -628,6 +641,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     &archive_repos,
                     archive_items,
                 )?,
+                rescan,
             });
             app.recompute()?;
             let a = app.clone();
@@ -646,6 +660,7 @@ async fn run(cli: Cli) -> Result<i32> {
             if !app.archive.is_empty() {
                 tokio::spawn(archive::walk(app.clone()));
             }
+            tokio::spawn(rescan::run(app.clone()));
             if let Some(b) = bucket {
                 tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
                 tokio::spawn(events::copy(app.clone(), b));
@@ -687,6 +702,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 metrics: Default::default(),
                 events,
                 archive: Vec::new(),
+                rescan: None,
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -727,6 +743,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 metrics: Default::default(),
                 events,
                 archive: Vec::new(),
+                rescan: None,
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();

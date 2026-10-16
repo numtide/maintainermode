@@ -132,6 +132,37 @@ in
       };
     };
 
+    rescan = {
+      enable = lib.mkEnableOption ''
+        server-side scans of the public flakes that people register on
+        `/me/sets`. This evaluates third-party code in a bubblewrap sandbox;
+        read docs/rescan.md first'';
+
+      maxFlakes = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 3;
+        description = "Flake references a person can register.";
+      };
+
+      scansPerDay = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 4;
+        description = "Scans a person gets in 24 hours, all flakes together.";
+      };
+
+      timeout = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 900;
+        description = "Wall-clock limit of one scan in seconds, fetch and evaluation together.";
+      };
+
+      memoryMB = lib.mkOption {
+        type = lib.types.ints.positive;
+        default = 3072;
+        description = "Address-space limit of each sandboxed nix process, in MiB. The service memory limit grows by this much.";
+      };
+    };
+
     eventCopy = {
       enable = lib.mkEnableOption "the daily copy of the nixpkgs event log to an S3-compatible store";
 
@@ -211,7 +242,19 @@ in
         MAINTAINER_MODE_S3_BUCKET = cfg.eventCopy.bucket;
         MAINTAINER_MODE_S3_REGION = cfg.eventCopy.region;
         MAINTAINER_MODE_S3_CREDENTIALS_FILE = "%d/s3_credentials";
+      }
+      // lib.optionalAttrs cfg.rescan.enable {
+        MAINTAINER_MODE_RESCAN = "true";
+        MAINTAINER_MODE_RESCAN_BWRAP = lib.getExe pkgs.bubblewrap;
+        MAINTAINER_MODE_RESCAN_PRLIMIT = "${pkgs.util-linux.bin}/bin/prlimit";
+        MAINTAINER_MODE_RESCAN_NIX = "${config.nix.package}/bin/nix";
+        MAINTAINER_MODE_RESCAN_MAX_FLAKES = toString cfg.rescan.maxFlakes;
+        MAINTAINER_MODE_RESCAN_PER_DAY = toString cfg.rescan.scansPerDay;
+        MAINTAINER_MODE_RESCAN_TIMEOUT = toString cfg.rescan.timeout;
+        MAINTAINER_MODE_RESCAN_MEMORY_MB = toString cfg.rescan.memoryMB;
       };
+      # git fetches the git inputs of a scanned flake, inside the sandbox
+      path = lib.optional cfg.rescan.enable pkgs.git;
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} serve";
         DynamicUser = true;
@@ -225,19 +268,23 @@ in
           ++ lib.optional cfg.eventCopy.enable "s3_credentials:${cfg.eventCopy.credentialsFile}";
         Restart = "on-failure";
         # the daily sweep of nixpkgs peaks near 2 GB
-        MemoryMax = "4G";
+        MemoryMax = if cfg.rescan.enable then "${toString (4096 + cfg.rescan.memoryMB)}M" else "4G";
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;
         NoNewPrivileges = true;
-        ProtectKernelTunables = true;
+        # bubblewrap cannot mount a new /proc over a /proc with read-only
+        # submounts, and sets up the loopback of its network namespace
+        # over netlink
+        ProtectKernelTunables = !cfg.rescan.enable;
         ProtectKernelModules = true;
         ProtectControlGroups = true;
         RestrictAddressFamilies = [
           "AF_INET"
           "AF_INET6"
           "AF_UNIX"
-        ];
+        ]
+        ++ lib.optional cfg.rescan.enable "AF_NETLINK";
         LockPersonality = true;
       };
     };

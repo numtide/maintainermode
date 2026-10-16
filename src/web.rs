@@ -78,6 +78,8 @@ pub struct App {
     pub public_url: String,
     pub events: Arc<crate::events::Log>,
     pub archive: Vec<Arc<crate::archive::Archive>>,
+    /// Server-side flake rescans; None while they are off.
+    pub rescan: Option<crate::rescan::Config>,
 }
 
 impl App {
@@ -192,6 +194,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::archive::routes())
         .merge(crate::llm::routes())
         .merge(crate::mcp::routes())
+        .merge(crate::rescan::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
