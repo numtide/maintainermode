@@ -626,6 +626,39 @@ curl -N -H 'Last-Event-ID: 0' 'https://<host>/api/v1/events?type=PullRequestRevi
   `AWS_SECRET_ACCESS_KEY=…`. The NixOS module reads it through
   `LoadCredential` (`services.maintainer-mode.eventCopy`).
 
+## The archive of issues and pull requests
+
+Maintainer Mode keeps a full copy of each issue and pull request of
+NixOS/nixpkgs, so that GitHub is not the only place that holds them.
+[docs/ingest.md](docs/ingest.md) gives the plan, the measured size and the
+cost.
+
+- **What.** The raw GraphQL JSON of each item: title, body, author, labels,
+  state, timestamps, all comments, all reviews with their bodies, all inline
+  review comments (with path, line and diff hunk), the files and the
+  timeline.
+- **Storage.** One SQLite file per repository: `archive/<owner>/<name>.sqlite`,
+  next to the database. The JSON is zstd-compressed. The main database does
+  not change.
+- **The walk.** A background task, apart from the sync, starts a pass every
+  5 minutes. Each pass fetches a fixed number of items per repository. It
+  first fetches what changed recently, then walks back from the newest
+  number to #1. An item that gets an event in the event log is fetched again
+  5 minutes later. The walk keeps its cursors in the archive file, so it
+  continues after a restart. It stops for the pass when the token has less
+  than 1000 points left.
+- **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
+  JSON, or 404. `/sync` shows the progress.
+
+```sh
+curl https://<host>/api/v1/archive/NixOS/nixpkgs/1
+maintainer-mode archive export --repo NixOS/nixpkgs --out ./export
+```
+
+The export writes one `ndjson.zst` file per 10 000 numbers. To archive more
+repositories, add them to `services.maintainer-mode.archive.repositories`.
+An empty list turns the archive off.
+
 ## Known limits of slice one
 
 - Each pull request reads its first 30 reviews, the first 5 inline comments of
@@ -673,6 +706,8 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_S3_BUCKET`           | the bucket of that copy                                     |
 | `MAINTAINER_MODE_S3_REGION`           | the region that the request signature names                 |
 | `MAINTAINER_MODE_S3_CREDENTIALS_FILE` | file with the access key id and the secret key              |
+| `MAINTAINER_MODE_ARCHIVE_REPOS`       | repositories to archive; default `NixOS/nixpkgs`            |
+| `MAINTAINER_MODE_ARCHIVE_ITEMS`       | items the archive walk fetches per repository and pass      |
 
 CI is the flake's `checks`: `nix flake check`.
 
