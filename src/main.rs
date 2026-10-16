@@ -339,12 +339,6 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             Ok(n) => tracing::info!("{n} expired package sets deleted"),
             Err(e) => tracing::warn!("package sets: {e:#}"),
         }
-        if web::health_due(&app) {
-            match web::refresh_health(&app).await {
-                Ok(()) => tracing::info!("package health read"),
-                Err(e) => tracing::warn!("package health: {e:#}"),
-            }
-        }
         // Only the GitHub sync decides whether the host is offline: one other
         // host that stays down must not hold back the rest of the pass.
         let mut down = false;
@@ -572,6 +566,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
+            tokio::spawn(health::run(app.clone()));
             match &app.sync_token {
                 Some(t) => {
                     tokio::spawn(events::poll(app.events.clone(), t.clone()));
