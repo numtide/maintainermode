@@ -75,7 +75,7 @@ impl Target {
 
 /// The nixpkgs revision a flake pins. `input` names the lock entry when the
 /// flake does not call it `nixpkgs`.
-fn nixpkgs_rev_named(root: &Path, input: Option<&str>) -> Option<String> {
+pub(crate) fn nixpkgs_rev_named(root: &Path, input: Option<&str>) -> Option<String> {
     let text = std::fs::read_to_string(root.join("flake.lock")).ok()?;
     let lock: serde_json::Value = serde_json::from_str(&text).ok()?;
     let nodes = lock.get("nodes")?.as_object()?;
@@ -219,10 +219,20 @@ fn nix(args: &[String]) -> Result<String> {
 fn derivation_closure(target: &Target) -> Result<Vec<(String, String)>> {
     let mut args: Vec<String> = vec!["derivation".into(), "show".into(), "-r".into()];
     args.extend(target.installables());
+    closure_pairs(nix(&args)?.as_bytes())
+}
+
+/// The packages, as (pname, version), in the output of `nix derivation show -r`.
+pub(crate) fn closure_pairs(text: &[u8]) -> Result<Vec<(String, String)>> {
     let raw: serde_json::Value =
-        serde_json::from_str(&nix(&args)?).context("parse derivation show output")?;
+        serde_json::from_slice(text).context("parse derivation show output")?;
     // nix 2.35 wraps the map in { derivations, version }; older nix returns it bare.
-    let map = raw.get("derivations").cloned().unwrap_or(raw);
+    let map = match raw {
+        serde_json::Value::Object(mut o) if o.contains_key("derivations") => {
+            o.remove("derivations").unwrap_or_default()
+        }
+        v => v,
+    };
     let drvs: BTreeMap<String, Derivation> =
         serde_json::from_value(map).context("read derivation map")?;
     let mut out = Vec::new();
@@ -292,7 +302,7 @@ builtins.filter isDrv input.names
 "#;
 
 /// Attribute paths to try for a package name, best first.
-fn candidates(pname: &str) -> Vec<String> {
+pub(crate) fn candidates(pname: &str) -> Vec<String> {
     let mut out = vec![pname.to_string(), pname.to_ascii_lowercase()];
     out.push(format!("python3Packages.{pname}"));
     out.dedup();
@@ -444,6 +454,19 @@ mod tests {
         assert!(!is_package("hex2_linker-0-footer.M1", "0-footer.M1", None));
         assert!(!is_package("bootstrap-stage0-stdenv-linux", "1", None));
         assert!(!is_package("stdenv-linux", "", None));
+    }
+
+    #[test]
+    fn the_closure_reads_from_old_and_new_nix() {
+        let drv = serde_json::json!({
+            "x-zlib-1.3.1.drv": { "name": "zlib-1.3.1", "env": { "pname": "zlib", "version": "1.3.1" } },
+            "y-source.drv": { "name": "source", "env": { "outputHash": "h" } }
+        });
+        let new = serde_json::json!({ "derivations": drv, "version": 4 });
+        for v in [drv, new] {
+            let pairs = closure_pairs(v.to_string().as_bytes()).unwrap();
+            assert_eq!(pairs, vec![("zlib".to_string(), "1.3.1".to_string())]);
+        }
     }
 
     #[test]

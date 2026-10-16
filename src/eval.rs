@@ -76,7 +76,7 @@ pub fn eval_with_input_using(
 
 /// A new directory only the owner can enter. It refuses a path that exists, so
 /// another local user cannot plant the expression that runs.
-fn private_dir(kind: &str) -> Result<std::path::PathBuf> {
+pub(crate) fn private_dir(kind: &str) -> Result<std::path::PathBuf> {
     use rand::Rng;
     use std::os::unix::fs::DirBuilderExt;
     for _ in 0..16 {
