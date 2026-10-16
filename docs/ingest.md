@@ -89,6 +89,10 @@ that looks complete.
 ## Reading
 
 - `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored JSON, or 404.
+  The endpoint has no authentication, so the archive keeps public
+  repositories only. Each listing asks GitHub for `isPrivate`. For a private
+  repository, the walk stops, `/sync` shows the error, and the endpoint
+  answers 404.
 - `maintainer-mode archive export --repo NixOS/nixpkgs --out <dir>` writes
   `<dir>/NixOS/nixpkgs/NNNNNNN.ndjson.zst`: one file per 10 000 numbers,
   one JSON line per item.

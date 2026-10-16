@@ -649,7 +649,9 @@ cost.
   token of the server, never the tokens that people lend. It stops for the
   pass when the token has less than 1000 points left.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
-  JSON, or 404. `/sync` shows the progress.
+  JSON, or 404. `/sync` shows the progress. The endpoint has no
+  authentication, so the archive keeps public repositories only: it refuses
+  a repository that GitHub reports as private.
 
 ```sh
 curl https://<host>/api/v1/archive/NixOS/nixpkgs/1
