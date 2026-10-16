@@ -316,7 +316,9 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
     let mut failures = 0;
     loop {
         let index_at = app.store.get_time("index_at").ok().flatten();
-        if index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
+        // an index from before packages and modules were kept has neither
+        let old_format = app.index.read().unwrap().pkgs.is_empty();
+        if old_format || index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
             match web::refresh_index(&app).await {
                 Ok(()) => tracing::info!("nixpkgs index refreshed"),
                 Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
