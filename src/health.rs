@@ -18,7 +18,8 @@ const REPOLOGY_PAUSE: Duration = Duration::from_millis(1100);
 const REPOLOGY_PAGES: usize = 100;
 const TRACKER: &str = "https://tracker.security.nixos.org/api/v1/issues";
 const TRACKER_PAGES: usize = 200;
-const TRACKER_PAUSE: Duration = Duration::from_millis(1000);
+/// The tracker answers 429 after about 30 quick pages.
+const TRACKER_PAUSE: Duration = Duration::from_millis(2500);
 const HYDRA: &str = "https://hydra.nixos.org";
 const HYDRA_TTL: Duration = Duration::from_secs(3600);
 
