@@ -19,6 +19,7 @@ mod mcp;
 mod metrics;
 mod model;
 mod osv;
+mod progress;
 mod queue;
 mod report;
 mod rescan;

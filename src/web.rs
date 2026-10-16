@@ -206,6 +206,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::sets::routes())
         .merge(crate::archive::routes())
         .merge(crate::llm::routes())
+        .merge(crate::progress::routes())
         .merge(crate::mcp::routes())
         .merge(crate::rescan::routes())
         .layer(axum::middleware::from_fn(same_origin))
@@ -348,9 +349,11 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
     let who = match viewer {
         Some(v) => format!(
             "<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
+             <a class=\"Header-link mr-3\" href=\"/me/progress\">{} Progress</a>\
              <a class=\"Header-link mr-3\" href=\"/me/settings\">{} Settings</a>\
              <form method=\"post\" action=\"/auth/logout\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">{} Sign out</button></form>",
             icon(octicon!("person")),
+            icon(octicon!("flame")),
             icon(octicon!("gear")),
             icon(octicon!("sign-out")),
             v = esc(v)
@@ -621,8 +624,12 @@ async fn review_page(
          <div class=\"Subhead-description\">Credit comes when your review moves a pull request: the author pushes or replies, \
          you comment on a changed line, or it merges within {} days. \
          <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a></div></div>\
-         <div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
+         {}<div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
         ledger::MOVE_DAYS,
+        viewer
+            .as_deref()
+            .map(|v| crate::progress::widget(&app, v))
+            .unwrap_or_default(),
         rows(
             &entries,
             "Nothing here.",
@@ -743,6 +750,12 @@ async fn person_page(
     );
     if viewer.as_deref() == Some(login.as_str()) {
         let area = s.areas.get(&login).cloned().unwrap_or_default();
+        let _ = write!(
+            out,
+            "<div class=\"flash mb-4\">{} <a href=\"/me/progress\">Your progress</a>: your reviews, your streak, your goal and your badges. \
+             Only you see it.</div>",
+            icon(octicon!("flame"))
+        );
         let _ = write!(
             out,
             "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} Your area</div>\
