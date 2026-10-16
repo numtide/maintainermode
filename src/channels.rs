@@ -14,7 +14,7 @@ use crate::web::App;
 const CHANNELS: &str = "https://channels.nixos.org";
 /// The configured name that means the newest stable channel.
 pub const STABLE: &str = "stable";
-/// What `stable` means when channels.nixos.org does not answer.
+/// The last name `stable` tries, when no newer one exists.
 const FALLBACK_STABLE: &str = "nixos-26.05";
 const EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// A channel waits while the master index is this old: the master sweep is
@@ -175,33 +175,50 @@ fn stable_candidates(today: chrono::NaiveDate) -> Vec<String> {
         .collect()
 }
 
-async fn resolve(http: &reqwest::Client, key: &str) -> String {
-    if key != STABLE {
-        return key.to_string();
-    }
-    for name in stable_candidates(Utc::now().date_naive()) {
-        if revision(http, &name).await.is_ok() {
-            return name;
+/// The first name that exists, with its revision. Only a 404 moves on to
+/// an older one: a timeout on the newest must not make `stable` go back.
+async fn first_found<F, Fut>(names: Vec<String>, mut probe: F) -> Result<Option<(String, String)>>
+where
+    F: FnMut(String) -> Fut,
+    Fut: std::future::Future<Output = Result<Option<String>>>,
+{
+    for name in names {
+        if let Some(rev) = probe(name.clone()).await? {
+            return Ok(Some((name, rev)));
         }
     }
-    FALLBACK_STABLE.to_string()
+    Ok(None)
 }
 
-async fn revision(http: &reqwest::Client, name: &str) -> Result<String> {
-    let rev = http
+/// The channel name a key means, and its revision.
+async fn resolve(http: &reqwest::Client, key: &str) -> Result<(String, String)> {
+    let names = if key == STABLE {
+        stable_candidates(Utc::now().date_naive())
+            .into_iter()
+            .chain(std::iter::once(FALLBACK_STABLE.to_string()))
+            .collect()
+    } else {
+        vec![key.to_string()]
+    };
+    first_found(names, |name| async move { revision(http, &name).await })
+        .await?
+        .with_context(|| format!("no channel found for {key}"))
+}
+
+async fn revision(http: &reqwest::Client, name: &str) -> Result<Option<String>> {
+    let resp = http
         .get(format!("{CHANNELS}/{name}/git-revision"))
         .send()
-        .await?
-        .error_for_status()?
-        .text()
-        .await?
-        .trim()
-        .to_string();
+        .await?;
+    if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let rev = resp.error_for_status()?.text().await?.trim().to_string();
     anyhow::ensure!(
         rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()),
         "unexpected revision {rev:?} for {name}"
     );
-    Ok(rev)
+    Ok(Some(rev))
 }
 
 const VERSIONS_EXPR: &str = r#"
@@ -286,8 +303,7 @@ pub fn load(store: &crate::store::Store, keys: &[String]) -> Channels {
 /// Reads one channel when its revision moved. Returns whether it swept.
 async fn refresh(app: &App, key: &str) -> Result<bool> {
     let http = crate::github::http();
-    let name = resolve(&http, key).await;
-    let rev = revision(&http, &name).await?;
+    let (name, rev) = resolve(&http, key).await?;
     let current = app.channels.read().unwrap().clone();
     if current
         .list
@@ -412,6 +428,26 @@ mod tests {
             stable_candidates(d("2026-12-01")),
             ["nixos-26.11", "nixos-26.05", "nixos-25.11", "nixos-25.05"]
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_missing_channel_moves_stable_to_an_older_one() {
+        let names = || vec!["nixos-26.11".to_string(), "nixos-26.05".to_string()];
+        let probe = |missing: bool| {
+            move |name: String| async move {
+                match name.as_str() {
+                    "nixos-26.11" if missing => Ok(None),
+                    "nixos-26.11" => anyhow::bail!("timeout"),
+                    _ => Ok(Some(format!("rev-{name}"))),
+                }
+            }
+        };
+        assert_eq!(
+            first_found(names(), probe(true)).await.unwrap(),
+            Some(("nixos-26.05".into(), "rev-nixos-26.05".into()))
+        );
+        assert!(first_found(names(), probe(false)).await.is_err());
+        assert_eq!(first_found(vec![], probe(true)).await.unwrap(), None);
     }
 
     #[test]

@@ -281,8 +281,10 @@ A fix in master does not help users until their channel has it. Maintainer
 Mode reads the channels next to master. The default list is `nixos-unstable`
 and `stable`. `stable` is the newest stable channel on
 [channels.nixos.org](https://channels.nixos.org). When that site does not
-answer, it is `nixos-26.05`. Set the list with `--channel`
-(`MAINTAINER_MODE_CHANNELS`, comma-separated) or with the NixOS option
+answer, the task tries again the next hour. It moves to an older release only
+when the newer channel does not exist (404). When none exists, it is
+`nixos-26.05`. Set the list with `--channel` (`MAINTAINER_MODE_CHANNELS`,
+comma-separated) or with the NixOS option
 `services.maintainer-mode.channels`.
 
 - **What it keeps.** For each channel: its revision, the time it first saw
