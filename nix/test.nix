@@ -65,6 +65,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
     machine.succeed("grep -q 'CVE Program records' /tmp/sync")
     machine.succeed("grep -q 'its own task' /tmp/sync")
+    machine.succeed("grep -q 'Packaging hygiene' /tmp/sync")
+    machine.succeed("grep -q with_gaps /tmp/sync.json")
     machine.succeed("grep -q cves_with_score /tmp/sync.json")
     # with no network the tracker names no CVE, so the first severity pass
     # reads nothing and says so

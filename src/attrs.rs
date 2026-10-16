@@ -25,6 +25,34 @@ pub struct Entry {
     /// `shortName` of each team in `meta.teams`.
     #[serde(default)]
     pub teams: Vec<String>,
+    /// `None` in an index swept before these were read.
+    #[serde(default)]
+    pub facts: Option<Facts>,
+}
+
+/// Cheap facts for packaging hygiene and for asking upstream directly. Each
+/// is read on its own, so one that fails to evaluate keeps the package.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Facts {
+    /// The first 200 characters.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub homepage: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub license: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub main_program: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub version_check: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub broken: bool,
+    /// `meta.knownVulnerabilities` is not empty.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub insecure: bool,
+    /// The first URL of `src`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src_url: Option<String>,
 }
 
 /// nixpkgs keyed by package name instead of by attribute path.
@@ -106,6 +134,46 @@ let
       file = builtins.head (lib.splitString ":" pos);
     in
     lib.removePrefix (input.path + "/") file;
+  safe =
+    default: v:
+    let
+      r = builtins.tryEval (builtins.deepSeq v v);
+    in
+    if r.success then r.value else default;
+  hook = d: builtins.isAttrs d && (d.name or null) == "version-check-hook";
+  facts = p: meta: {
+    description = safe null (
+      let
+        d = meta.description or null;
+      in
+      if builtins.isString d && d != "" then builtins.substring 0 200 d else null
+    );
+    homepage = safe false (meta ? homepage);
+    license = safe false (meta ? license);
+    main_program = safe false (meta ? mainProgram);
+    # the inputs are read only when the install check runs: forcing every
+    # package's inputs costs 500 MB more
+    version_check = safe false (
+      (p.doInstallCheck or false) == true
+      && builtins.any hook ((p.nativeBuildInputs or [ ]) ++ (p.nativeInstallCheckInputs or [ ]))
+    );
+    broken = safe false ((meta.broken or false) == true);
+    insecure = safe false ((meta.knownVulnerabilities or [ ]) != [ ]);
+    src_url = safe null (
+      let
+        one = p.src.url or "";
+        urls = p.src.urls or [ ];
+        u =
+          if builtins.isString one && one != "" then
+            one
+          else if builtins.isList urls && urls != [ ] then
+            builtins.head urls
+          else
+            null;
+      in
+      if builtins.isString u && u != "" then u else null
+    );
+  };
   entry =
     name:
     let
@@ -123,6 +191,7 @@ let
               map (m: m.github or null) (meta.maintainers or [ ])
             );
             teams = map (t: t.shortName or "") (meta.teams or [ ]);
+            facts = facts p meta;
           };
         in
         if !(lib.isDerivation p) then null else builtins.deepSeq out out
@@ -161,6 +230,7 @@ mod tests {
             file: None,
             maintainers: vec![],
             teams: vec![],
+            facts: None,
         };
         let entries = [e("utillinux"), e("util-linux"), e("pkgsStatic.util-linux")];
         let i = Index::build(entries.iter());
