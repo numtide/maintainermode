@@ -21,8 +21,7 @@ pub fn evaluator() -> &'static str {
     EVALUATOR.get().map(String::as_str).unwrap_or("nix")
 }
 
-pub fn run(args: &[&str]) -> Result<String> {
-    let program = evaluator();
+pub fn run_with(program: &str, args: &[&str]) -> Result<String> {
     let out = Command::new(program)
         .args(["--extra-experimental-features", FEATURES])
         .args(args)
@@ -44,12 +43,24 @@ pub fn run(args: &[&str]) -> Result<String> {
 /// a file rather than the command line: names and paths cannot be escaped into a
 /// nix expression safely.
 pub fn eval_with_input(kind: &str, expr: &str, input: &serde_json::Value) -> Result<String> {
+    eval_with_input_using(evaluator(), kind, expr, input)
+}
+
+pub fn eval_with_input_using(
+    program: &str,
+    kind: &str,
+    expr: &str,
+    input: &serde_json::Value,
+) -> Result<String> {
     let dir = std::env::temp_dir().join(format!("maintainer-mode-{kind}-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     std::fs::write(dir.join("input.json"), serde_json::to_vec(input)?)?;
     let path = dir.join(format!("{kind}.nix"));
     std::fs::write(&path, expr)?;
-    let text = run(&["eval", "--json", "--file", &path.to_string_lossy()]);
+    let text = run_with(
+        program,
+        &["eval", "--json", "--file", &path.to_string_lossy()],
+    );
     // a failed eval leaves the scratch directory behind: the generated
     // expression is the only way to read the nix error that names it.
     if text.is_ok() {

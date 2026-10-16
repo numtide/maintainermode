@@ -36,6 +36,7 @@ let
     "git-pull-request-closed"
     "skip"
     "play"
+    "key"
   ];
 in
 runCommand "primer-assets" { } ''

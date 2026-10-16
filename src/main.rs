@@ -12,6 +12,9 @@ mod links;
 mod metrics;
 mod model;
 mod queue;
+mod report;
+mod scan;
+mod sets;
 mod store;
 mod subject;
 mod web;
@@ -163,6 +166,89 @@ enum Command {
         #[arg(long, default_value_t = 12)]
         months: usize,
     },
+    /// Evaluate the closure of a flake output or of a file's attributes, on
+    /// this machine, and write the full report
+    Scan {
+        #[arg(long, conflicts_with = "file")]
+        flake: Option<String>,
+        #[arg(long)]
+        file: Option<PathBuf>,
+        /// A flake output or a file attribute; repeat for several
+        #[arg(long = "output", alias = "attr")]
+        outputs: Vec<String>,
+        /// nixpkgs to match names against: a path or a flake reference.
+        /// By default the revision the tree pins.
+        #[arg(long)]
+        nixpkgs: Option<String>,
+        /// The lock entry or npins pin of nixpkgs, when it is not `nixpkgs`
+        #[arg(long)]
+        nixpkgs_input: Option<String>,
+        #[arg(long)]
+        system: Option<String>,
+        /// Read the built store paths instead of the derivations
+        #[arg(long)]
+        runtime: bool,
+        #[arg(long, default_value = SCAN_FILE)]
+        out: PathBuf,
+    },
+    /// Write the redacted report: only packages with a nixpkgs attribute
+    Export {
+        #[arg(long, default_value = SCAN_FILE)]
+        report: PathBuf,
+        /// Write here instead of stdout
+        #[arg(long, short)]
+        out: Option<PathBuf>,
+    },
+    /// Send the redacted report to your package set on a server
+    Submit {
+        /// The server; --server when absent
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, default_value = SCAN_FILE)]
+        report: PathBuf,
+        /// File holding the upload token; MAINTAINER_MODE_UPLOAD_TOKEN wins over it
+        #[arg(long)]
+        token_file: Option<PathBuf>,
+    },
+}
+
+const SCAN_FILE: &str = "maintainer-mode-scan.json";
+
+fn print_omitted(r: &report::Report) {
+    let o = &r.omitted;
+    eprintln!(
+        "{} packages with a nixpkgs attribute; {} names kept back",
+        r.packages.len(),
+        o.flake + o.vendored + o.absent + o.unknown
+    );
+}
+
+async fn submit(server: &str, path: &std::path::Path, token_file: Option<PathBuf>) -> Result<()> {
+    let report = report::Report::load(path)?.redacted();
+    let token = match std::env::var("MAINTAINER_MODE_UPLOAD_TOKEN") {
+        Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
+        _ => read_secret(&token_file)?.context(
+            "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/sets",
+        )?,
+    };
+    let url = format!("{}/api/v1/reports", server.trim_end_matches('/'));
+    let resp = github::http()
+        .post(&url)
+        .bearer_auth(token)
+        .json(&report)
+        .send()
+        .await?;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        bail!(
+            "{url}: {status}: {}",
+            body["error"].as_str().unwrap_or("no reason given")
+        );
+    }
+    print_omitted(&report);
+    println!("{body}");
+    Ok(())
 }
 
 fn read_secret(path: &Option<PathBuf>) -> Result<Option<String>> {
@@ -217,6 +303,14 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                 Ok(()) => tracing::info!("nixpkgs index refreshed"),
                 Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
             }
+        }
+        match app
+            .store
+            .purge_package_sets(Utc::now() - Duration::days(sets::RETENTION_DAYS))
+        {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("{n} expired package sets deleted"),
+            Err(e) => tracing::warn!("package sets: {e:#}"),
         }
         if web::health_due(&app) {
             match web::refresh_health(&app).await {
@@ -690,6 +784,61 @@ async fn run(cli: Cli) -> Result<i32> {
                     );
                 }
             }
+            Ok(0)
+        }
+        Command::Scan {
+            flake,
+            file,
+            outputs,
+            nixpkgs,
+            nixpkgs_input,
+            system,
+            runtime,
+            out,
+        } => {
+            let target = scan::Target {
+                flake,
+                file,
+                outputs,
+                nixpkgs,
+                nixpkgs_input,
+                system,
+                runtime,
+            };
+            let r = scan::scan(&target)?;
+            r.write(&out)?;
+            let matched = r.packages.iter().filter(|p| p.attr.is_some()).count();
+            eprintln!(
+                "{} packages, {matched} with a nixpkgs attribute -> {}",
+                r.packages.len(),
+                out.display()
+            );
+            if r.source.nixpkgs_rev.is_none() && target.nixpkgs.is_none() {
+                eprintln!(
+                    "no pinned nixpkgs found; names were matched against flake:nixpkgs. \
+                     Name it with --nixpkgs-input or --nixpkgs."
+                );
+            }
+            Ok(0)
+        }
+        Command::Export { report: path, out } => {
+            let r = report::Report::load(&path)?.redacted();
+            let text = serde_json::to_string_pretty(&r)?;
+            match out {
+                Some(o) => {
+                    std::fs::write(&o, text).with_context(|| format!("write {}", o.display()))?;
+                    print_omitted(&r);
+                }
+                None => println!("{text}"),
+            }
+            Ok(0)
+        }
+        Command::Submit {
+            to,
+            report: path,
+            token_file,
+        } => {
+            submit(to.as_deref().unwrap_or(&cli.server), &path, token_file).await?;
             Ok(0)
         }
         Command::Check { login } => {
