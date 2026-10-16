@@ -53,6 +53,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/page && grep -q move_days /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/static/primer.css >/dev/null")
     machine.succeed("curl -sf http://127.0.0.1:8790/rules -o /tmp/rules && grep -q 'id=\"the-rules\"' /tmp/rules")
+    machine.succeed("grep -q 'id=\"contributor-guide\"' /tmp/rules && grep -q 'nixpkgs/blob/master/pkgs/README.md' /tmp/rules")
     machine.succeed("curl -sf http://127.0.0.1:8790/state | grep -c 'State of nixpkgs'")
     machine.succeed("curl -sf http://127.0.0.1:8790/state -o /tmp/state && grep -q 'id=\"packages\"' /tmp/state && grep -q 'first nixpkgs index is still being built' /tmp/state")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/metrics | grep -c 'concentration_365d'")

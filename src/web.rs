@@ -476,7 +476,8 @@ async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     let body = format!(
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
          <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
-         Ordered by the author's credit, so people who review rise. Work it from the top.</div></div>{}",
+         Ordered by the author's credit, so people who review rise. Work it from the top. \
+         <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a></div></div>{}",
         rows(
             &entries,
             "Nothing is ready yet.",
@@ -549,7 +550,8 @@ async fn review_page(
     let body = format!(
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Needs review</h1>\
          <div class=\"Subhead-description\">Credit comes when your review moves a pull request: the author pushes or replies, \
-         you comment on a changed line, or it merges within {} days.</div></div>\
+         you comment on a changed line, or it merges within {} days. \
+         <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a></div></div>\
          <div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
         ledger::MOVE_DAYS,
         rows(
@@ -1020,6 +1022,40 @@ fn anchor_headings(html: &str) -> String {
     out
 }
 
+const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
+
+/// The rules below say what this site shows and credits; how to work on
+/// nixpkgs is nixpkgs' own guide.
+fn guide_box() -> String {
+    let links = [
+        (
+            "CONTRIBUTING.md",
+            "how to open, review and merge a pull request, commit messages, and the automation and AI policy",
+        ),
+        (
+            "pkgs/README.md",
+            "how to write, update and review a package",
+        ),
+        (
+            "nixos/README.md",
+            "how to write a NixOS module and its test",
+        ),
+        (
+            "maintainers/README.md",
+            "how to become a maintainer, and what it means",
+        ),
+    ];
+    let items: String = links
+        .iter()
+        .map(|(file, what)| format!("<li><a href=\"{NIXPKGS}/{file}\">{file}</a>: {what}</li>"))
+        .collect();
+    format!(
+        "<div class=\"flash mb-4\" id=\"contributor-guide\"><strong>These are the rules of Maintainer Mode, not of nixpkgs.</strong> \
+         nixpkgs decides how the work is done. Read its contributor guide first:\
+         <ul class=\"ml-4 mt-2\">{items}<li><a href=\"https://nixos.org/manual/nixpkgs/unstable/\">The Nixpkgs manual</a>: the reference</li></ul></div>"
+    )
+}
+
 async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
     let viewer = app.viewer(&headers);
     let mut html = String::new();
@@ -1028,7 +1064,8 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         pulldown_cmark::Parser::new_ext(RULES, pulldown_cmark::Options::ENABLE_TABLES),
     );
     let body = format!(
-        "<article class=\"markdown-body\">{}</article>",
+        "{}<article class=\"markdown-body\">{}</article>",
+        guide_box(),
         anchor_headings(&html)
     );
     page(&app, viewer.as_deref(), "rules", &body)
