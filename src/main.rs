@@ -21,6 +21,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -304,9 +305,36 @@ async fn fetch(server: &str, path: &str) -> Result<Value> {
     Ok(resp.json().await?)
 }
 
-fn print_entries(v: &Value) {
+/// Stdout closed by the reader, as `| head` does: not a failure.
+#[derive(Debug)]
+struct StdoutClosed;
+
+impl std::fmt::Display for StdoutClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("stdout closed")
+    }
+}
+
+impl std::error::Error for StdoutClosed {}
+
+fn stdout_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        StdoutClosed.into()
+    } else {
+        anyhow::Error::new(e).context("write to stdout")
+    }
+}
+
+/// `println!` panics when stdout is closed.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        writeln!(std::io::stdout(), $($arg)*).map_err(stdout_error)?
+    };
+}
+
+fn print_entries(v: &Value) -> Result<()> {
     for e in v.as_array().into_iter().flatten() {
-        println!(
+        out!(
             "#{:<7} {:<20} {:>6.2}  {}",
             e["number"],
             e["author"].as_str().unwrap_or(""),
@@ -314,6 +342,7 @@ fn print_entries(v: &Value) {
             e["title"].as_str().unwrap_or("")
         );
     }
+    Ok(())
 }
 
 fn data_dir(db: &std::path::Path) -> PathBuf {
@@ -463,7 +492,7 @@ async fn run(cli: Cli) -> Result<i32> {
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();
-            println!(
+            out!(
                 "{} maintainers, {} packages, {} owner lines at {}",
                 index.maintainers.len(),
                 index.packages.len(),
@@ -475,9 +504,9 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Merge => {
             let v = fetch(&cli.server, "/api/v1/queue/merge").await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
             } else {
-                print_entries(&v);
+                print_entries(&v)?;
             }
             Ok(0)
         }
@@ -491,9 +520,9 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             let v = fetch(&cli.server, &path).await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
             } else {
-                print_entries(&v);
+                print_entries(&v)?;
             }
             Ok(0)
         }
@@ -504,16 +533,19 @@ async fn run(cli: Cli) -> Result<i32> {
             )
             .await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
                 return Ok(0);
             }
             let d = &v["dossier"];
-            println!(
+            out!(
                 "{login}: {} merged unchanged after review, {} problems found, {} reviewed, listed {}",
-                d["merged_unchanged"], d["problems_found"], d["reviewed"], v["person"]["listed"]
+                d["merged_unchanged"],
+                d["problems_found"],
+                d["reviewed"],
+                v["person"]["listed"]
             );
             for r in d["recent"].as_array().into_iter().flatten() {
-                println!(
+                out!(
                     "  {}  #{:<7} {:<22} {}",
                     r["at"].as_str().unwrap_or("").get(..10).unwrap_or(""),
                     r["pr"],
@@ -526,15 +558,19 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Metrics { months } => {
             let v = fetch(&cli.server, "/api/v1/metrics").await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
                 return Ok(0);
             }
             let n = &v["now"];
-            println!(
+            out!(
                 "open {}  never reviewed {}  security {}  first-time {}  disclosed AI {}",
-                n["open"], n["never_reviewed"], n["security"], n["first_time"], n["ai"]
+                n["open"],
+                n["never_reviewed"],
+                n["security"],
+                n["first_time"],
+                n["ai"]
             );
-            println!(
+            out!(
                 "{:<8} {:>6} {:>6} {:>6} {:>6} {:>8} {:>7} {:>9} {:>9} {:>7}",
                 "month",
                 "opened",
@@ -550,7 +586,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let all = v["months"].as_array().cloned().unwrap_or_default();
             for m in all.iter().rev().take(months).rev() {
                 let f = |k: &str| m[k].as_f64().map_or("-".into(), |x| format!("{x}"));
-                println!(
+                out!(
                     "{:<8} {:>6} {:>6} {:>6} {:>6} {:>8} {:>7} {:>9} {:>9} {:>7}",
                     m["month"].as_str().unwrap_or(""),
                     m["opened"].to_string(),
@@ -571,27 +607,27 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Show { name } => {
             let v = fetch(&cli.server, &format!("/api/v1/find/{name}")).await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
                 return Ok(0);
             }
             let f = &v["flags"];
-            println!(
+            out!(
                 "{}  ({})",
                 v["name"].as_str().unwrap_or(&name),
                 v["key"].as_str().unwrap_or("")
             );
             if let Some(p) = v["package"].as_object() {
-                println!(
+                out!(
                     "  version {}  maintainers {}",
                     p["version"].as_str().unwrap_or("?"),
                     p["maintainers"]
                 );
             }
             if let Some(u) = f["upstream"].as_str() {
-                println!("  upstream {u}");
+                out!("  upstream {u}");
             }
             for a in v["advisories"].as_array().into_iter().flatten() {
-                println!(
+                out!(
                     "  advisory {}  {}",
                     a["code"].as_str().unwrap_or(""),
                     a["title"].as_str().unwrap_or("")
@@ -599,7 +635,7 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             for (k, label) in [("hydra", "hydra"), ("test", "nixos test")] {
                 if let Some(b) = v[k].as_object() {
-                    println!(
+                    out!(
                         "  {label} {}  https://hydra.nixos.org/build/{}",
                         b["status"].as_str().unwrap_or("?"),
                         b["id"]
@@ -614,7 +650,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     .filter(|i| i["state"] == "OPEN")
                     .take(20)
                 {
-                    println!(
+                    out!(
                         "  {label:<5} #{:<7} {}",
                         i["number"],
                         i["title"].as_str().unwrap_or("")
@@ -630,13 +666,13 @@ async fn run(cli: Cli) -> Result<i32> {
             )
             .await?;
             if cli.json {
-                println!("{v}");
+                out!("{v}");
                 return Ok(0);
             }
             for kind in ["packages", "modules"] {
                 for r in v[kind].as_array().into_iter().flatten() {
                     let f = &r["flags"];
-                    println!(
+                    out!(
                         "{:<40} {:<14} upstream {:<12} advisories {:<2} prs {:<3} issues {}",
                         r["name"].as_str().unwrap_or(""),
                         r["version"].as_str().unwrap_or(""),
@@ -657,9 +693,9 @@ async fn run(cli: Cli) -> Result<i32> {
             .await?;
             let listed = v["person"]["listed"] == true;
             if cli.json {
-                println!("{}", v["person"]);
+                out!("{}", v["person"]);
             } else {
-                println!("{login}: {}", if listed { "listed" } else { "not listed" });
+                out!("{login}: {}", if listed { "listed" } else { "not listed" });
             }
             Ok(if listed { 0 } else { EXIT_NOT_LISTED })
         }
@@ -677,6 +713,7 @@ async fn main() {
         .init();
     let code = match run(Cli::parse()).await {
         Ok(c) => c,
+        Err(e) if e.is::<StdoutClosed>() => 0,
         Err(e) => {
             eprintln!("error: {e:#}");
             1
