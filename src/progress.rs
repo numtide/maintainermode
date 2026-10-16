@@ -55,6 +55,15 @@ fn same_month(a: DateTime<Utc>, b: DateTime<Utc>) -> bool {
     a.year() == b.year() && a.month() == b.month()
 }
 
+fn live<'a>(credits: &[&'a Credit]) -> Vec<&'a Credit> {
+    credits
+        .iter()
+        .copied()
+        .filter(|c| c.dropped.is_none())
+        .collect()
+}
+
+/// Everything but the badges, which only the full page needs.
 pub fn build(
     rows: &[Row],
     credits: &[&Credit],
@@ -62,11 +71,7 @@ pub fn build(
     goal: Option<u32>,
     now: DateTime<Utc>,
 ) -> Progress {
-    let live: Vec<&Credit> = credits
-        .iter()
-        .copied()
-        .filter(|c| c.dropped.is_none())
-        .collect();
+    let live = live(credits);
     let this_week = week_of(now);
     let weeks: HashSet<NaiveDate> = live.iter().map(|c| week_of(c.at)).collect();
     let mut w = this_week;
@@ -78,20 +83,36 @@ pub fn build(
         streak_weeks += 1;
         w -= Duration::weeks(1);
     }
+    Progress {
+        reviews_week: rows.iter().filter(|r| week_of(r.at) == this_week).count(),
+        reviews_month: rows.iter().filter(|r| same_month(r.at, now)).count(),
+        credited_week: live.iter().filter(|c| week_of(c.at) == this_week).count(),
+        credited_month: live.iter().filter(|c| same_month(c.at, now)).count(),
+        streak_weeks,
+        goal,
+        counterparties,
+        listed: counterparties >= MIN_COUNTERPARTIES,
+        badges: Vec::new(),
+    }
+}
 
+/// `areas` gives the areas a pull request touches; it runs only until the
+/// fifth area shows up.
+pub fn badges(rows: &[Row], credits: &[&Credit], areas: impl Fn(u64) -> Vec<String>) -> Vec<Badge> {
+    let live = live(credits);
     let mut oldest_first: Vec<&Row> = rows.iter().collect();
     oldest_first.sort_by_key(|r| r.at);
     let nth = |n: usize| oldest_first.get(n - 1).map(|r| r.at);
-    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut five_areas = None;
     for r in &oldest_first {
-        seen.extend(r.areas.iter().map(String::as_str).filter(|a| *a != "other"));
+        seen.extend(areas(r.pr).into_iter().filter(|a| a != "other"));
         if seen.len() >= AREAS_FOR_BADGE {
             five_areas = Some(r.at);
             break;
         }
     }
-    let badges = vec![
+    vec![
         Badge {
             name: "First review",
             how: "a review on someone else's pull request",
@@ -130,19 +151,7 @@ pub fn build(
             how: "reviews in 5 areas of nixpkgs, like python, NixOS modules or lib",
             earned: five_areas,
         },
-    ];
-
-    Progress {
-        reviews_week: rows.iter().filter(|r| week_of(r.at) == this_week).count(),
-        reviews_month: rows.iter().filter(|r| same_month(r.at, now)).count(),
-        credited_week: live.iter().filter(|c| week_of(c.at) == this_week).count(),
-        credited_month: live.iter().filter(|c| same_month(c.at, now)).count(),
-        streak_weeks,
-        goal,
-        counterparties,
-        listed: counterparties >= MIN_COUNTERPARTIES,
-        badges,
-    }
+    ]
 }
 
 fn goal_of(app: &App, login: &str) -> Option<u32> {
@@ -154,18 +163,33 @@ fn goal_of(app: &App, login: &str) -> Option<u32> {
         .filter(|g| (1..=MAX_GOAL).contains(g))
 }
 
-pub fn of(app: &App, login: &str) -> Progress {
+pub fn of(app: &App, login: &str, with_badges: bool) -> Progress {
     let s = app.snap();
-    let rows = dossier::rows(&s.pr_data, login);
+    let mine = s
+        .reviewed_by
+        .get(login)
+        .into_iter()
+        .flatten()
+        .map(|&i| &s.pr_data[i]);
+    let rows = dossier::rows(mine, login);
     let credits: Vec<&Credit> = s.ledger.credits_of(login).collect();
     let counterparties = s.ledger.people.get(login).map_or(0, |p| p.counterparties);
-    build(
+    let mut p = build(
         &rows,
         &credits,
         counterparties,
         goal_of(app, login),
         Utc::now(),
-    )
+    );
+    if with_badges {
+        p.badges = badges(&rows, &credits, |n| {
+            s.pr_at
+                .get(&n)
+                .map(|&i| crate::metrics::areas(&s.pr_data[i].files))
+                .unwrap_or_default()
+        });
+    }
+    p
 }
 
 fn goal_line(p: &Progress) -> String {
@@ -195,7 +219,7 @@ fn listing_line(p: &Progress) -> String {
 
 /// The small box on /review, for the signed-in person only.
 pub fn widget(app: &App, login: &str) -> String {
-    let p = of(app, login);
+    let p = of(app, login, false);
     format!(
         "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center\" style=\"gap:16px\">\
          <span class=\"text-bold\">{} Your progress</span>\
@@ -218,7 +242,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let p = of(&app, &login);
+    let p = of(&app, &login, true);
     let mut out = format!(
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{} Your progress</h1>\
          <div class=\"Subhead-description\">Only you see this page. It compares you with nobody: there is no leaderboard. \
@@ -313,7 +337,7 @@ mod tests {
     use crate::ledger::tests::t;
     use crate::ledger::{Dropped, Trigger};
 
-    fn row(pr: u64, day: i64, areas: &[&str], outcome: Outcome) -> Row {
+    fn row(pr: u64, day: i64, outcome: Outcome) -> Row {
         Row {
             pr,
             pr_title: String::new(),
@@ -323,7 +347,6 @@ mod tests {
             state: "COMMENTED".into(),
             outcome,
             problem_found: false,
-            areas: areas.iter().map(|a| a.to_string()).collect(),
         }
     }
 
@@ -369,21 +392,33 @@ mod tests {
 
     #[test]
     fn badges_come_from_the_own_record() {
-        let mut rows: Vec<Row> = (0..10)
-            .map(|i| row(i, i as i64, &["packages: python"], Outcome::Open))
-            .collect();
-        rows.push(row(20, 11, &["lib", "doc", "ci"], Outcome::MergedUnchanged));
-        rows.push(row(21, 12, &["nixos: modules", "other"], Outcome::Open));
+        let mut rows: Vec<Row> = (0..10).map(|i| row(i, i as i64, Outcome::Open)).collect();
+        rows.push(row(20, 11, Outcome::MergedUnchanged));
+        rows.push(row(21, 12, Outcome::Open));
+        rows.push(row(22, 13, Outcome::Open));
         let credits = [credit(1, 3, true)];
         let refs: Vec<&Credit> = credits.iter().collect();
-        let p = build(&rows, &refs, 1, Some(3), t(12));
-        let earned = |name: &str| p.badges.iter().find(|b| b.name == name).unwrap().earned;
+        let asked = std::cell::RefCell::new(Vec::new());
+        let b = badges(&rows, &refs, |n| {
+            asked.borrow_mut().push(n);
+            let a: &[&str] = match n {
+                20 => &["lib", "doc", "ci"],
+                21 => &["nixos: modules", "other"],
+                22 => &["perl"],
+                _ => &["packages: python"],
+            };
+            a.iter().map(|s| s.to_string()).collect()
+        });
+        let earned = |name: &str| b.iter().find(|b| b.name == name).unwrap().earned;
         assert_eq!(earned("First review"), Some(t(0)));
         assert_eq!(earned("10 reviews"), Some(t(9)));
         assert_eq!(earned("50 reviews"), None);
         assert_eq!(earned("First unowned review"), Some(t(3)));
         assert_eq!(earned("Merged unchanged"), Some(t(11)));
         assert_eq!(earned("Five areas"), Some(t(12)));
+        assert!(!asked.borrow().contains(&22));
+        let p = build(&rows, &refs, 1, Some(3), t(12));
+        assert!(p.badges.is_empty());
         assert!(!p.listed);
     }
 }

@@ -49,6 +49,8 @@ pub struct Snapshot {
     pub issues: Vec<crate::model::Issue>,
     pub links: crate::links::Links,
     pub pr_at: HashMap<u64, usize>,
+    /// login → positions in `pr_data` of the pull requests that login reviewed.
+    pub reviewed_by: HashMap<String, Vec<usize>>,
     pub issue_at: HashMap<u64, usize>,
     /// Every open issue has been read once, so an issue missing here is closed.
     pub issues_complete: bool,
@@ -100,6 +102,7 @@ impl App {
         let issues = self.store.issues()?;
         let links = crate::links::build(&index, &prs, &issues);
         let pr_at = prs.iter().enumerate().map(|(i, p)| (p.number, i)).collect();
+        let reviewed_by = dossier::by_reviewer(&prs);
         let issue_at = issues
             .iter()
             .enumerate()
@@ -123,6 +126,7 @@ impl App {
             issues,
             links,
             pr_at,
+            reviewed_by,
             issue_at,
             issues_complete: self.store.get("issues_open_done")?.is_some(),
             open_by_dir,
