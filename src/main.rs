@@ -1,12 +1,14 @@
 mod area;
 mod attrs;
+mod catalog;
 mod dossier;
 mod eval;
 mod github;
+mod health;
 mod ledger;
+mod links;
 mod metrics;
 mod model;
-mod nixfresh;
 mod queue;
 mod store;
 mod subject;
@@ -100,9 +102,6 @@ enum Command {
         sync_token_file: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
-        /// A nixfresh instance whose public API supplies package health.
-        #[arg(long, env = "MAINTAINER_MODE_NIXFRESH_URL")]
-        nixfresh_url: Option<String>,
     },
     /// One sync pass into a local database, then exit
     Sync {
@@ -142,6 +141,10 @@ enum Command {
     Record { login: String },
     /// Exit 0 when the login is listed, 3 when it is not, 1 on error
     Check { login: String },
+    /// A package, NixOS module or path: health, issues and pull requests
+    Show { name: String },
+    /// The packages and NixOS modules a login maintains
+    Maintains { login: String },
     /// The state of nixpkgs, month by month
     Metrics {
         #[arg(long, default_value_t = 12)]
@@ -186,6 +189,12 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             match web::refresh_index(&app).await {
                 Ok(()) => tracing::info!("nixpkgs index refreshed"),
                 Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
+            }
+        }
+        if web::health_due(&app) {
+            match web::refresh_health(&app).await {
+                Ok(()) => tracing::info!("package health read"),
+                Err(e) => tracing::warn!("package health: {e:#}"),
             }
         }
         let mut tokens: Vec<String> = app.sync_token.iter().cloned().collect();
@@ -288,7 +297,6 @@ async fn run(cli: Cli) -> Result<i32> {
             client_secret_file,
             sync_token_file,
             sync_every,
-            nixfresh_url,
         } => {
             let store = Store::open(&db)?;
             let oauth = match (client_id, read_secret(&client_secret_file)?) {
@@ -305,12 +313,14 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             let app = Arc::new(App {
                 index: RwLock::new(web::load_index(&store)),
+                health: RwLock::new(Arc::new(web::load_health(&store))),
                 store,
                 oauth,
                 sync_token: read_secret(&sync_token_file)?,
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
-                nixfresh: nixfresh_url.as_deref().map(nixfresh::Client::new),
+                hydra: Default::default(),
+                public_url: public_url.clone(),
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
@@ -340,12 +350,14 @@ async fn run(cli: Cli) -> Result<i32> {
             let store = Store::open(&db)?;
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
+                health: RwLock::new(Arc::new(web::load_health(&store))),
                 store,
                 oauth: None,
                 sync_token: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
-                nixfresh: None,
+                hydra: Default::default(),
+                public_url: String::new(),
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
@@ -371,12 +383,14 @@ async fn run(cli: Cli) -> Result<i32> {
             let store = Store::open(&db)?;
             let app = App {
                 index: RwLock::new(web::load_index(&store)),
+                health: RwLock::new(Arc::new(web::load_health(&store))),
                 store,
                 oauth: None,
                 sync_token: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
-                nixfresh: None,
+                hydra: Default::default(),
+                public_url: String::new(),
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
@@ -485,6 +499,87 @@ async fn run(cli: Cli) -> Result<i32> {
                         .as_f64()
                         .map_or("-".into(), |x| format!("{:.0}%", x * 100.0)),
                 );
+            }
+            Ok(0)
+        }
+        Command::Show { name } => {
+            let v = fetch(&cli.server, &format!("/api/v1/find/{name}")).await?;
+            if cli.json {
+                println!("{v}");
+                return Ok(0);
+            }
+            let f = &v["flags"];
+            println!(
+                "{}  ({})",
+                v["name"].as_str().unwrap_or(&name),
+                v["key"].as_str().unwrap_or("")
+            );
+            if let Some(p) = v["package"].as_object() {
+                println!(
+                    "  version {}  maintainers {}",
+                    p["version"].as_str().unwrap_or("?"),
+                    p["maintainers"]
+                );
+            }
+            if let Some(u) = f["upstream"].as_str() {
+                println!("  upstream {u}");
+            }
+            for a in v["advisories"].as_array().into_iter().flatten() {
+                println!(
+                    "  advisory {}  {}",
+                    a["code"].as_str().unwrap_or(""),
+                    a["title"].as_str().unwrap_or("")
+                );
+            }
+            for (k, label) in [("hydra", "hydra"), ("test", "nixos test")] {
+                if let Some(b) = v[k].as_object() {
+                    println!(
+                        "  {label} {}  https://hydra.nixos.org/build/{}",
+                        b["status"].as_str().unwrap_or("?"),
+                        b["id"]
+                    );
+                }
+            }
+            for (k, label) in [("prs", "pr"), ("issues", "issue")] {
+                for i in v[k]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|i| i["state"] == "OPEN")
+                    .take(20)
+                {
+                    println!(
+                        "  {label:<5} #{:<7} {}",
+                        i["number"],
+                        i["title"].as_str().unwrap_or("")
+                    );
+                }
+            }
+            Ok(0)
+        }
+        Command::Maintains { login } => {
+            let v = fetch(
+                &cli.server,
+                &format!("/api/v1/maintainers/{}", github::urlencode(&login)),
+            )
+            .await?;
+            if cli.json {
+                println!("{v}");
+                return Ok(0);
+            }
+            for kind in ["packages", "modules"] {
+                for r in v[kind].as_array().into_iter().flatten() {
+                    let f = &r["flags"];
+                    println!(
+                        "{:<40} {:<14} upstream {:<12} advisories {:<2} prs {:<3} issues {}",
+                        r["name"].as_str().unwrap_or(""),
+                        r["version"].as_str().unwrap_or(""),
+                        f["upstream"].as_str().unwrap_or("-"),
+                        f["open_advisories"],
+                        f["open_prs"],
+                        f["open_issues"]
+                    );
+                }
             }
             Ok(0)
         }

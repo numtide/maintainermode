@@ -60,6 +60,12 @@ impl Store {
                created_at TEXT NOT NULL,
                PRIMARY KEY (login, package)
              );
+             CREATE TABLE IF NOT EXISTS feed (
+               login TEXT PRIMARY KEY,
+               token TEXT NOT NULL UNIQUE,
+               created_at TEXT NOT NULL
+             );
+             UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
                login TEXT NOT NULL,
@@ -310,20 +316,20 @@ impl Store {
 }
 
 impl Store {
-    pub fn watch(&self, login: &str, package: &str) -> Result<()> {
+    pub fn watch(&self, login: &str, key: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR IGNORE INTO watch (login, package, created_at) VALUES (?1, ?2, ?3)",
-            params![login, package, Utc::now().to_rfc3339()],
+            params![login, key, Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }
 
-    pub fn unwatch(&self, login: &str, package: &str) -> Result<()> {
+    pub fn unwatch(&self, login: &str, key: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "DELETE FROM watch WHERE login = ?1 AND package = ?2",
-            params![login, package],
+            params![login, key],
         )?;
         Ok(())
     }
@@ -334,5 +340,36 @@ impl Store {
             conn.prepare("SELECT package FROM watch WHERE login = ?1 ORDER BY package")?;
         let rows = stmt.query_map([login], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+}
+
+impl Store {
+    pub fn feed_token(&self, login: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT token FROM feed WHERE login = ?1", [login], |r| {
+                r.get(0)
+            })
+            .optional()?)
+    }
+
+    /// A new token replaces the old one, so a leaked feed link can be cut.
+    pub fn set_feed_token(&self, login: &str, token: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO feed (login, token, created_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(login) DO UPDATE SET token = excluded.token, created_at = excluded.created_at",
+            params![login, token, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn feed_login(&self, token: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row("SELECT login FROM feed WHERE token = ?1", [token], |r| {
+                r.get(0)
+            })
+            .optional()?)
     }
 }
