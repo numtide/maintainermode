@@ -50,6 +50,8 @@ pub struct Snapshot {
     pub links: crate::links::Links,
     pub pr_at: HashMap<u64, usize>,
     pub issue_at: HashMap<u64, usize>,
+    /// Every open issue has been read once, so an issue missing here is closed.
+    pub issues_complete: bool,
     /// directory → open pull requests that change something under it.
     pub open_by_dir: HashMap<String, usize>,
     /// pname → every version nixpkgs carries of it, under any attribute.
@@ -114,6 +116,7 @@ impl App {
             links,
             pr_at,
             issue_at,
+            issues_complete: self.store.get("issues_open_done")?.is_some(),
             open_by_dir,
             versions,
         });

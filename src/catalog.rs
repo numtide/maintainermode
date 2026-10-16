@@ -217,16 +217,20 @@ fn attached<'a>(
     }
 }
 
-/// Advisories whose nixpkgs issue is still open, or not synced yet.
+/// Advisories whose nixpkgs issue is still open, or not synced yet. The sync
+/// keeps only issues open or updated in its window, so once every open issue
+/// is read, an issue it does not have closed long ago.
 fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
     h.advisories
         .get(attr)
         .into_iter()
         .flatten()
-        .filter(|a| {
-            a.issue
-                .and_then(|n| s.issue_at.get(&n))
-                .is_none_or(|&i| s.issues[i].is_open())
+        .filter(|a| match a.issue {
+            None => true,
+            Some(n) => match s.issue_at.get(&n) {
+                Some(&i) => s.issues[i].is_open(),
+                None => !s.issues_complete,
+            },
         })
         .collect()
 }
@@ -1642,6 +1646,53 @@ mod tests {
             ]
         );
         assert_eq!(m.modules.len(), 1);
+    }
+
+    fn issue(number: u64, state: &str) -> Issue {
+        Issue {
+            number,
+            title: format!("issue {number}"),
+            url: format!("https://github.com/NixOS/nixpkgs/issues/{number}"),
+            author: "alice".into(),
+            state: state.into(),
+            created_at: crate::ledger::tests::t(0),
+            updated_at: crate::ledger::tests::t(0),
+            closed_at: None,
+            labels: vec![],
+            comments: 0,
+            mentions: vec![],
+        }
+    }
+
+    #[test]
+    fn an_advisory_whose_issue_the_sync_never_saw_is_closed_once_the_sync_is_complete() {
+        let mut h = Health::default();
+        h.advisories.insert(
+            "hello".into(),
+            [(None, "A"), (Some(1), "B"), (Some(2), "C"), (Some(3), "D")]
+                .into_iter()
+                .map(|(issue, code)| Advisory {
+                    code: code.into(),
+                    cves: vec![],
+                    title: code.into(),
+                    issue,
+                })
+                .collect(),
+        );
+        let mut s = Snapshot {
+            issues: vec![issue(1, "OPEN"), issue(2, "CLOSED")],
+            ..Default::default()
+        };
+        s.issue_at = [(1, 0), (2, 1)].into();
+        let codes = |s: &Snapshot| -> Vec<String> {
+            open_advisories(&h, s, "hello")
+                .iter()
+                .map(|a| a.code.clone())
+                .collect()
+        };
+        assert_eq!(codes(&s), ["A", "B", "D"]);
+        s.issues_complete = true;
+        assert_eq!(codes(&s), ["A", "B"]);
     }
 
     #[test]
