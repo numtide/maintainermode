@@ -5,6 +5,7 @@ mod attrs;
 mod bumps;
 mod catalog;
 mod channels;
+mod committer;
 mod dossier;
 mod eval;
 mod events;
@@ -425,6 +426,7 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             }
         }
         tokens.extend(app.sync_token.iter().cloned());
+        let server_tokens = tokens.clone();
         tokens.extend(app.store.lent_tokens().unwrap_or_default());
         let mut client = github::Client::new(tokens);
         if client.has_token() {
@@ -469,6 +471,9 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                 Ok(n) => tracing::info!("history: {n} pull requests"),
                 Err(e) => tracing::warn!("history: {e:#}"),
             }
+        }
+        if let Err(e) = committer::refresh_team(&app.store, server_tokens).await {
+            tracing::info!("committers team: {e:#}");
         }
         for m in app.store.members().unwrap_or_default() {
             if Utc::now() - m.refreshed_at < Duration::hours(24) {
