@@ -182,12 +182,20 @@ and of the temporary directory of the service.
 
 ## What the server keeps
 
-For each flake: the reference, the output, the time of the last scan, the
-reason of the last failure, and from the last good scan the nixpkgs
-attributes, the count of dropped entries, the time of the scan and the
-nixpkgs revision of the lock file. Only the owner sees it. The attributes
-expire 90 days after the last good scan. "Delete my set" deletes the flakes
-too.
+For each flake: the reference, the output, the time of the last visit of the
+owner to `/me/sets`, the time of the last scan, the reason of the last
+failure, and from the last good scan the nixpkgs attributes, the count of
+dropped entries, the time of the scan and the nixpkgs revision of the lock
+file. Only the owner sees it. "Delete my set" deletes the flakes too.
+
+An upload expires 90 days after the last action of its owner. A scan needs
+no action, so the server applies the rule to the visits of the owner:
+
+- The server scans a flake only if the owner opened `/me/sets` or added a
+  flake in the last 90 days.
+- The attributes expire 90 days after the last good scan or 90 days after
+  the last visit, whichever comes first.
+- The reference stays. The next visit starts the scans again.
 
 ## Why it is off by default
 

@@ -94,6 +94,7 @@ impl Store {
                reference TEXT NOT NULL,
                output TEXT NOT NULL,
                created_at TEXT NOT NULL,
+               seen_at TEXT NOT NULL,
                last_at TEXT,
                error TEXT,
                attrs TEXT NOT NULL DEFAULT '[]',
@@ -665,10 +666,15 @@ impl Store {
         if n as usize >= max {
             return Ok(false);
         }
+        let now = Utc::now().to_rfc3339();
         tx.execute(
-            "INSERT OR IGNORE INTO flake_ref (login, reference, output, created_at)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![login, reference, output, Utc::now().to_rfc3339()],
+            "INSERT OR IGNORE INTO flake_ref (login, reference, output, created_at, seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?4)",
+            params![login, reference, output, now],
+        )?;
+        tx.execute(
+            "UPDATE flake_ref SET seen_at = ?2 WHERE login = ?1",
+            params![login, now],
         )?;
         tx.commit()?;
         Ok(true)
@@ -698,14 +704,30 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// The owner looked at the flakes: they stay due for scans.
+    pub fn touch_flake_refs(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE flake_ref SET seen_at = ?2 WHERE login = ?1",
+            params![login, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     /// References never scanned first, then those last scanned before `since`.
-    pub fn flake_refs_due(&self, since: DateTime<Utc>) -> Result<Vec<FlakeRef>> {
+    /// Only those whose owner came back after `seen_since`.
+    pub fn flake_refs_due(
+        &self,
+        since: DateTime<Utc>,
+        seen_since: DateTime<Utc>,
+    ) -> Result<Vec<FlakeRef>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {FLAKE_COLUMNS} FROM flake_ref WHERE last_at IS NULL OR last_at < ?1
+            "SELECT {FLAKE_COLUMNS} FROM flake_ref
+             WHERE (last_at IS NULL OR last_at < ?1) AND seen_at >= ?2
              ORDER BY last_at IS NOT NULL, last_at, id"
         ))?;
-        let rows = stmt.query_map([since.to_rfc3339()], flake_row)?;
+        let rows = stmt.query_map([since.to_rfc3339(), seen_since.to_rfc3339()], flake_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -734,13 +756,14 @@ impl Store {
         Ok(())
     }
 
-    /// The 90-day rule of an upload, applied to the last good scan: its
-    /// attributes go, the reference stays. Returns how many.
+    /// The 90-day rule of an upload: the attributes go 90 days after the last
+    /// good scan or the last visit of the owner. The reference stays.
+    /// Returns how many.
     pub fn purge_flake_results(&self, before: DateTime<Utc>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
             "UPDATE flake_ref SET attrs = '[]', dropped = 0, scanned_at = NULL, nixpkgs_rev = NULL
-             WHERE scanned_at < ?1",
+             WHERE scanned_at IS NOT NULL AND (scanned_at < ?1 OR seen_at < ?1)",
             [before.to_rfc3339()],
         )?)
     }

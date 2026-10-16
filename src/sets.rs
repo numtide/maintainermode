@@ -149,12 +149,14 @@ the time of the scan and the nixpkgs revision. It drops every other name. It kee
 not the token. It uses the set for this page and for your private feed only: no public page, number or API reads it, \
 and there is no admin view. The set expires 90 days after the last upload. For a public flake that you add below, \
 it keeps the reference, the output, the same attributes from the last good scan, and the reason of the last failure; \
-those attributes expire 90 days after the last good scan. The button below deletes the set and your flakes now.</div>";
+the server scans it only while you open this page at least once in 90 days, and those attributes expire 90 days \
+after the last good scan or your last visit. The button below deletes the set and your flakes now.</div>";
 
 async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
+    let _ = app.store.touch_flake_refs(&login);
     let set = app.store.package_set(&login).ok().flatten();
     let watched: Vec<String> = app
         .store
