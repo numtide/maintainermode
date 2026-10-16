@@ -640,10 +640,9 @@ async fn scan_in(app: &App, cfg: &Config, r: &FlakeRef, work: &Path) -> Result<P
     )
     .await
     .context("evaluate the output")?;
-    let pairs = tokio::task::spawn_blocking(move || crate::scan::closure_pairs(&out)).await??;
-    if pairs.len() > MAX_PACKAGES {
-        bail!("more than {MAX_PACKAGES} packages");
-    }
+    let pairs =
+        tokio::task::spawn_blocking(move || crate::scan::closure_pairs_at_most(&out, MAX_PACKAGES))
+            .await??;
     let rev = crate::scan::nixpkgs_rev_named(&root, None)
         .filter(|r| r.len() <= 64 && r.chars().all(|c| c.is_ascii_hexdigit()));
     accept(app, pairs, rev)
