@@ -21,6 +21,9 @@ use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, page, random_id};
 
 const LIST: usize = 100;
 const FEED_DAYS: i64 = 30;
+/// At most this many set events reach a feed, so the watched packages keep
+/// their place in it.
+const SET_EVENTS: usize = 50;
 /// Directories a reader starts from; `ci/OWNERS` adds its own.
 const TOP_AREAS: [&str; 14] = [
     "lib",
@@ -1405,16 +1408,20 @@ fn set_events(
                 });
             }
         }
-        if let (Some(v), Some(at)) = (upstream(s, index, h, attr), h.repology_at) {
-            out.push(Event {
-                at,
-                id: format!("upstream-{attr}-{v}"),
-                title: format!("upstream released {v}"),
-                url: String::new(),
-                subject: attr.clone(),
-            });
+        if let Some(v) = upstream(s, index, h, attr) {
+            if let Some(at) = h.upstream_since(attr, v).filter(|t| *t >= since) {
+                out.push(Event {
+                    at,
+                    id: format!("upstream-{attr}-{v}"),
+                    title: format!("upstream released {v}"),
+                    url: String::new(),
+                    subject: attr.clone(),
+                });
+            }
         }
     }
+    out.sort_by_key(|e| std::cmp::Reverse(e.at));
+    out.truncate(SET_EVENTS);
     out
 }
 
@@ -1732,6 +1739,21 @@ mod tests {
             mentions: vec![],
         }
     }
+    fn dated_issue(number: u64, created_at: DateTime<Utc>) -> Issue {
+        Issue {
+            number,
+            title: String::new(),
+            url: String::new(),
+            author: String::new(),
+            state: "OPEN".into(),
+            created_at,
+            updated_at: created_at,
+            closed_at: None,
+            labels: vec![],
+            comments: 0,
+            mentions: vec![],
+        }
+    }
 
     #[test]
     fn an_advisory_whose_issue_the_sync_never_saw_is_closed_once_the_sync_is_complete() {
@@ -1847,5 +1869,81 @@ mod tests {
         let d = open_by_dir(&[p]);
         assert_eq!(d["pkgs"], 1);
         assert_eq!(d["pkgs/a"], 1);
+    }
+
+    #[test]
+    fn a_set_gets_only_new_advisories_and_new_releases() {
+        let now = Utc::now();
+        let since = now - Duration::days(FEED_DAYS);
+        let mut i = Index::default();
+        for a in ["fresh", "stale"] {
+            i.pkgs.insert(
+                a.into(),
+                Package {
+                    pname: a.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut s = Snapshot::default();
+        for (n, at) in [(1, now - Duration::days(1)), (2, now - Duration::days(60))] {
+            s.issue_at.insert(n, s.issues.len());
+            s.issues.push(dated_issue(n, at));
+        }
+        let mut h = Health::default();
+        for (attr, n) in [("fresh", 1), ("stale", 2)] {
+            h.advisories.insert(
+                attr.into(),
+                vec![Advisory {
+                    code: format!("A-{n}"),
+                    cves: vec![],
+                    title: String::new(),
+                    issue: Some(n),
+                }],
+            );
+        }
+        h.set_upstream(
+            [("stale".to_string(), "9".to_string())].into(),
+            now - Duration::days(40),
+        );
+        h.set_upstream(
+            [("stale", "9"), ("fresh", "2")]
+                .map(|(a, v)| (a.to_string(), v.to_string()))
+                .into(),
+            now - Duration::days(2),
+        );
+        h.set_upstream(h.upstream.clone(), now);
+        let attrs = vec!["fresh".to_string(), "stale".to_string()];
+        let mut ids: Vec<String> = set_events(&s, &i, &h, &attrs, since)
+            .into_iter()
+            .map(|e| e.id)
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["advisory-A-1-fresh", "upstream-fresh-2"]);
+    }
+
+    #[test]
+    fn a_large_set_does_not_flood_the_feed() {
+        let now = Utc::now();
+        let mut i = Index::default();
+        let mut h = Health::default();
+        h.set_upstream(
+            [("seed".to_string(), "1".to_string())].into(),
+            now - Duration::days(3),
+        );
+        let attrs: Vec<String> = (0..80).map(|n| format!("p{n}")).collect();
+        for a in &attrs {
+            i.pkgs.insert(
+                a.clone(),
+                Package {
+                    pname: a.clone(),
+                    ..Default::default()
+                },
+            );
+        }
+        h.set_upstream(attrs.iter().map(|a| (a.clone(), "2".into())).collect(), now);
+        let s = Snapshot::default();
+        let out = set_events(&s, &i, &h, &attrs, now - Duration::days(FEED_DAYS));
+        assert_eq!(out.len(), SET_EVENTS);
     }
 }

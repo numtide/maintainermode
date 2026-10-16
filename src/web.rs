@@ -964,8 +964,7 @@ pub async fn refresh_health(app: &App) -> Result<()> {
     if stale(h.repology_at) {
         match crate::health::repology().await {
             Ok(u) => {
-                h.upstream = u;
-                h.repology_at = Some(Utc::now());
+                h.set_upstream(u, Utc::now());
             }
             Err(e) => tracing::warn!("repology: {e:#}"),
         }
