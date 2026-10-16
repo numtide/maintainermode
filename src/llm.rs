@@ -3,7 +3,7 @@
 //! pull request rows offer a Claude Code session.
 
 use axum::Router;
-use axum::extract::{Form, State};
+use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -12,6 +12,8 @@ use serde::Deserialize;
 use std::fmt::Write;
 
 use crate::catalog::head;
+use crate::github::urlencode;
+use crate::model::Pr;
 use crate::sets::token_hash;
 use crate::web::{App, Shared, esc, icon, octicon, page, random_id};
 
@@ -24,6 +26,7 @@ pub fn routes() -> Router<Shared> {
         .route("/me/settings", get(settings_page).post(save_settings))
         .route("/me/mcp-token", post(new_mcp_token))
         .route("/me/mcp-token/delete", post(delete_mcp_token))
+        .route("/claude/pr/:number", get(claude_page))
 }
 
 pub fn opted_in(app: &App, login: &str) -> bool {
@@ -189,4 +192,158 @@ async fn delete_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Resp
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     Redirect::to("/me/settings#mcp").into_response()
+}
+
+const POLICY: &str =
+    "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy";
+
+/// A small button for a pull request row, for a person who opted in.
+pub fn claude_button(number: u64) -> String {
+    format!(
+        "<a class=\"btn btn-sm ml-2\" href=\"/claude/pr/{number}\" title=\"open a Claude Code session on the web for this pull request\">Claude Code</a>"
+    )
+}
+
+/// The first message of a Claude Code session on one pull request. It
+/// carries the nixpkgs AI policy and keeps every GitHub write with the
+/// person.
+fn prompt(pr: &Pr, mcp: Option<&str>) -> String {
+    let mut p = format!(
+        "Help me review nixpkgs pull request #{n}: {t}\n\
+         URL: {u}\n\
+         Repository: NixOS/nixpkgs. Base branch: {b}. Author: {a}.\n\
+         Fetch it with: git fetch origin pull/{n}/head:pr-{n} && git checkout pr-{n}\n",
+        n = pr.number,
+        t = pr.title,
+        u = pr.url,
+        b = pr.base,
+        a = pr.author,
+    );
+    let total = pr.changed_files.max(pr.files.len() as u64);
+    if (pr.files.len() as u64) < total {
+        let _ = writeln!(
+            p,
+            "\nFiles it changes (the first {} of {total}):",
+            pr.files.len()
+        );
+    } else {
+        p.push_str("\nFiles it changes:\n");
+    }
+    for f in &pr.files {
+        let _ = writeln!(p, "- {f}");
+    }
+    let _ = write!(
+        p,
+        "\nTask: read the diff against {b}. Check that it does what its title says, that it builds, \
+         and that the package or module still works (run nixpkgs-review if nix is available). \
+         Report what you find, and draft review comments for me to read.\n\
+         \nRules:\n\
+         - Do not push to NixOS/nixpkgs. Do not comment, review, label, approve or merge on GitHub. \
+         Do nothing on GitHub in my name until I say so in this session.\n\
+         - Follow the nixpkgs automation/AI policy: {POLICY}\n\
+         - I am the person in the loop. I review and answer for everything that leaves this session.\n\
+         - Every commit you make must end with an Assisted-by: trailer that names the tool and the primary model with its version. \
+         A Co-authored-by: trailer does not satisfy the policy.\n\
+         - Review comments and pull request descriptions drafted with you must disclose the AI use on their own, apart from the commits.\n",
+        b = pr.base,
+    );
+    if let Some(url) = mcp {
+        let _ = write!(
+            p,
+            "\nMaintainer Mode has read-only data on this pull request, its packages and their health at the MCP server {url} \
+             (Streamable HTTP). I connect it with my own token; do not ask me to paste the token here.\n"
+        );
+    }
+    p
+}
+
+fn claude_link(text: &str) -> String {
+    format!(
+        "https://claude.ai/code?prompt={}&repositories=NixOS/nixpkgs",
+        urlencode(text)
+    )
+}
+
+async fn claude_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Path(number): Path<u64>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    if !opted_in(&app, &login) {
+        return Redirect::to("/me/settings#llm").into_response();
+    }
+    let s = app.snap();
+    let Some(pr) = s.pr_at.get(&number).map(|&i| &s.pr_data[i]) else {
+        let body = format!(
+            "<div class=\"blankslate\"><p>Pull request #{number} is not in the synced data.</p></div>"
+        );
+        return (StatusCode::NOT_FOUND, page(&app, Some(&login), "", &body)).into_response();
+    };
+    let mcp = has_mcp_token(&app, &login).then(|| mcp_url(&app));
+    let text = prompt(pr, mcp.as_deref());
+    let mut out = head(
+        &format!("Claude Code on #{number}"),
+        &format!(
+            "<a href=\"{}\">{}</a> · a session on the web, in your own Claude account",
+            esc(&pr.url),
+            esc(&pr.title)
+        ),
+        "",
+    );
+    let _ = write!(
+        out,
+        "<div class=\"Box mb-4\"><div class=\"Box-row\">\
+         <p>The button opens <a href=\"https://claude.ai/code\">claude.ai/code</a> with NixOS/nixpkgs selected and the prompt below filled in. \
+         Nothing runs until you send it. Read it first.</p>\
+         <a class=\"btn btn-primary mb-3\" href=\"{l}\" rel=\"noreferrer\" target=\"_blank\">{p} Open in Claude Code</a>\
+         <label class=\"f6 d-block\" for=\"prompt\">The prompt, to copy if the link does not fill it in</label>\
+         <textarea class=\"form-control width-full text-mono f6\" id=\"prompt\" rows=\"24\" readonly>{t}</textarea>\
+         </div></div>",
+        l = esc(&claude_link(&text)),
+        p = icon(octicon!("play")),
+        t = esc(&text),
+    );
+    page(&app, Some(&login), "", &out).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pr() -> Pr {
+        serde_json::from_value(serde_json::json!({
+            "number": 42, "title": "hello: 2.12 -> 2.13", "url": "https://github.com/NixOS/nixpkgs/pull/42",
+            "author": "alice", "author_is_bot": false, "state": "OPEN", "is_draft": false,
+            "base": "staging", "created_at": "2026-01-01T00:00:00Z", "updated_at": "2026-01-01T00:00:00Z",
+            "merged_at": null, "mergeable": "MERGEABLE", "head_oid": "abc",
+            "files": ["pkgs/by-name/he/hello/package.nix"], "ci": null, "reviews": [],
+            "author_activity": [], "pushes": [], "voids": [], "changed_files": 3,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn the_prompt_carries_the_pull_request_and_the_policy() {
+        let p = prompt(&pr(), Some("https://mm.example/mcp"));
+        for want in [
+            "#42",
+            "https://github.com/NixOS/nixpkgs/pull/42",
+            "Base branch: staging",
+            "- pkgs/by-name/he/hello/package.nix",
+            "the first 1 of 3",
+            "Assisted-by:",
+            "Do not push to NixOS/nixpkgs",
+            POLICY,
+            "https://mm.example/mcp",
+        ] {
+            assert!(p.contains(want), "{want} is missing from:\n{p}");
+        }
+        assert!(!prompt(&pr(), None).contains("MCP"));
+        let link = claude_link(&p);
+        assert!(link.starts_with("https://claude.ai/code?prompt=Help%20me"));
+        assert!(link.ends_with("&repositories=NixOS/nixpkgs"));
+    }
 }

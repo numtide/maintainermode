@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
+use crate::actions::Act;
 use crate::area::{Index, area_key, under};
 use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Build, Health, Hydra};
@@ -407,7 +408,7 @@ impl Flags {
     }
 }
 
-fn pr_row(p: &Pr, act: bool) -> String {
+fn pr_row(p: &Pr, act: Act) -> String {
     let (ic, class) = match p.state.as_str() {
         "MERGED" => (icon(octicon!("git-merge")), "color-fg-done"),
         "CLOSED" => (icon(octicon!("git-pull-request-closed")), "color-fg-danger"),
@@ -431,8 +432,8 @@ fn pr_row(p: &Pr, act: bool) -> String {
         t = esc(&p.title),
         n = p.number,
         a = esc(&p.author),
-        button = if act && p.is_open() {
-            crate::actions::review_button(p.number)
+        button = if p.is_open() {
+            act.buttons(p.number)
         } else {
             String::new()
         },
@@ -956,11 +957,12 @@ async fn package_page(
         out.push_str(&kv("Teams", &teams_html(&index, &p.teams)));
     }
     out.push_str("</div>");
+    let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
         "Pull requests",
         &prs,
         |p| p.is_open(),
-        |p| pr_row(p, viewer.is_some()),
+        |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()
@@ -1010,11 +1012,12 @@ async fn module_page(
         ),
     ));
     out.push_str("</div>");
+    let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
         "Pull requests",
         &prs,
         |p| p.is_open(),
-        |p| pr_row(p, viewer.is_some()),
+        |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()
@@ -1151,11 +1154,12 @@ async fn area_page(
             subject_rows(&rows)
         );
     }
+    let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
         "Pull requests",
         &prs,
         |p| p.is_open(),
-        |p| pr_row(p, viewer.is_some()),
+        |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
     page(&app, viewer.as_deref(), "packages", &out).into_response()

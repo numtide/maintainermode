@@ -403,7 +403,7 @@ fn people(logins: &[String]) -> String {
         .join(", ")
 }
 
-fn rows(entries: &[&Entry], empty: &str, act: bool) -> String {
+fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
     if entries.is_empty() {
         return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
     }
@@ -446,11 +446,7 @@ fn rows(entries: &[&Entry], empty: &str, act: bool) -> String {
             url = esc(&e.url),
             title = esc(&e.title),
             ci = ci_label(e),
-            act = if act {
-                crate::actions::review_button(e.number)
-            } else {
-                String::new()
-            },
+            act = act.buttons(e.number),
         );
     }
     if entries.len() > 200 {
@@ -472,7 +468,11 @@ async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
          <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
          Ordered by the author's credit, so people who review rise. Work it from the top.</div></div>{}",
-        rows(&entries, "Nothing is ready yet.", viewer.is_some())
+        rows(
+            &entries,
+            "Nothing is ready yet.",
+            crate::actions::Act::of(&app, viewer.as_deref())
+        )
     );
     page(&app, viewer.as_deref(), "merge", &body)
 }
@@ -543,7 +543,11 @@ async fn review_page(
          you comment on a changed line, or it merges within {} days.</div></div>\
          <div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
         ledger::MOVE_DAYS,
-        rows(&entries, "Nothing here.", viewer.is_some())
+        rows(
+            &entries,
+            "Nothing here.",
+            crate::actions::Act::of(&app, viewer.as_deref())
+        )
     );
     page(&app, viewer.as_deref(), "review", &body)
 }
