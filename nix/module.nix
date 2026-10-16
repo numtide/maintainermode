@@ -101,6 +101,19 @@ in
       description = "Package sets the daily sweep evaluates; `pkgs` is the top level.";
     };
 
+    channels = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [
+        "nixos-unstable"
+        "stable"
+      ];
+      example = [
+        "nixos-unstable"
+        "nixos-26.05"
+      ];
+      description = "nixpkgs channels indexed next to master. `stable` is the newest stable channel.";
+    };
+
     eventCopy = {
       enable = lib.mkEnableOption "the daily copy of the nixpkgs event log to an S3-compatible store";
 
@@ -152,6 +165,7 @@ in
         MAINTAINER_MODE_DB = "${state}/maintainer-mode.sqlite";
         MAINTAINER_MODE_PUBLIC_URL = cfg.publicUrl;
         MAINTAINER_MODE_INDEX_SETS = lib.concatStringsSep "," cfg.indexSets;
+        MAINTAINER_MODE_CHANNELS = lib.concatStringsSep "," cfg.channels;
         MAINTAINER_MODE_HISTORY_SINCE = cfg.historySince;
         HOME = state;
       }

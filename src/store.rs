@@ -84,6 +84,10 @@ impl Store {
                scanned_at TEXT,
                nixpkgs_rev TEXT
              );
+             CREATE TABLE IF NOT EXISTS channel (
+               key TEXT PRIMARY KEY,
+               data TEXT NOT NULL
+             );
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -420,6 +424,42 @@ impl Store {
              ON CONFLICT(login, key) DO UPDATE SET value = excluded.value",
             [login, key, value],
         )?;
+        Ok(())
+    }
+}
+
+impl Store {
+    pub fn put_channel(&self, c: &crate::channels::Channel) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO channel (key, data) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET data = excluded.data",
+            params![c.key, serde_json::to_string(c)?],
+        )?;
+        Ok(())
+    }
+
+    pub fn channels(&self) -> Result<Vec<crate::channels::Channel>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT data FROM channel")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
+    }
+
+    /// Drops the channels no longer configured.
+    pub fn keep_channels(&self, keys: &[String]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT key FROM channel")?;
+        let stored: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        for k in stored.iter().filter(|k| !keys.contains(k)) {
+            conn.execute("DELETE FROM channel WHERE key = ?1", [k])?;
+        }
         Ok(())
     }
 }

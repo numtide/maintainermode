@@ -67,6 +67,8 @@ pub struct App {
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,
     pub health: RwLock<Arc<crate::health::Health>>,
+    /// nixpkgs channels next to master, in the configured order.
+    pub channels: RwLock<Arc<crate::channels::Channels>>,
     pub hydra: crate::health::Hydra,
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,

@@ -7,6 +7,10 @@ pkgs.testers.runNixOSTest {
       imports = [ self.nixosModules.default ];
       services.maintainer-mode.enable = true;
       services.maintainer-mode.githubAppId = 1;
+      services.maintainer-mode.channels = [
+        "nixos-unstable"
+        "nixos-26.05"
+      ];
       # a throwaway key, made for the test only
       services.maintainer-mode.githubAppKeyFile = pkgs.runCommand "test-github-app-key" {
         nativeBuildInputs = [ pkgs.openssl ];
@@ -74,6 +78,11 @@ pkgs.testers.runNixOSTest {
     # reads nothing and says so
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync2.json && grep -q '0 records read' /tmp/sync2.json")
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync3.json && grep -q 'waiting for an index with source URLs' /tmp/sync3.json")
+    # the channels wait for a master index, which never comes offline
+    machine.succeed("grep -q 'Channel nixos-unstable' /tmp/sync")
+    machine.succeed("grep -q 'Channel nixos-26.05</div><div class=\"flex-auto\">not read yet' /tmp/sync")
+    machine.succeed("grep -q '\"rev\":null' /tmp/sync.json && grep -q '\"channel\":\"nixos-26.05\"' /tmp/sync.json")
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'channels wait for the master index' /tmp/log")
     machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 403")

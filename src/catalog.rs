@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::area::{Index, area_key, under};
+use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Build, Health, Hydra};
 use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
@@ -694,21 +695,120 @@ fn osv_worst(h: &Health, v: Option<&crate::osv::Vuln>) -> Worst {
     w
 }
 
+/// Advisories whose nixpkgs issue closed in the synced window: fixed in
+/// master, as far as the tracker knows.
+fn closed_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
+    h.advisories
+        .get(attr)
+        .into_iter()
+        .flatten()
+        .filter(|a| {
+            a.issue
+                .and_then(|n| s.issue_at.get(&n))
+                .is_some_and(|&i| !s.issues[i].is_open())
+        })
+        .collect()
+}
+
+fn channel_names(list: &[&Channel]) -> String {
+    list.iter()
+        .map(|c| c.label())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn hover(list: &[&Channel], attr: &str, master: &str) -> String {
+    let has: Vec<String> = list
+        .iter()
+        .map(|c| {
+            format!(
+                "{} has {}",
+                c.label(),
+                c.versions.get(attr).map_or("?", String::as_str)
+            )
+        })
+        .collect();
+    format!("master has {master}; {}", has.join("; "))
+}
+
+fn backport_label(backport: &[&Channel], attr: &str, master: &str) -> String {
+    if backport.is_empty() {
+        return String::new();
+    }
+    format!(
+        " <span class=\"Label Label--attention\" title=\"{}\">needs backport to {}</span>",
+        esc(&hover(backport, attr, master)),
+        esc(&channel_names(backport))
+    )
+}
+
+fn channels_html(ch: &Channels, attr: &str, master: &str) -> String {
+    let seen = ch.of(attr, master);
+    if seen.is_empty() {
+        return "<span class=\"color-fg-muted\">no channel read yet</span>".into();
+    }
+    let mut parts = vec![format!("master {}", esc(master))];
+    for s in &seen {
+        parts.push(format!(
+            "<a href=\"{}\">{}</a> {}",
+            esc(&s.channel.url()),
+            esc(s.channel.label()),
+            match s.version {
+                Some(v) if s.behind =>
+                    format!("<span class=\"color-fg-attention\">{}</span>", esc(v)),
+                Some(v) => esc(v),
+                None => "<span class=\"color-fg-muted\">absent</span>".into(),
+            }
+        ));
+    }
+    let behind: Vec<&Channel> = seen
+        .iter()
+        .filter(|s| s.behind)
+        .map(|s| s.channel)
+        .collect();
+    let tail = if behind.is_empty() {
+        " <span class=\"color-fg-muted f6\">no channel is behind master</span>".to_string()
+    } else {
+        format!(
+            " <span class=\"Label Label--attention\">master is ahead of {}</span>",
+            esc(&channel_names(&behind))
+        )
+    };
+    format!("{}{tail}", parts.join(" · "))
+}
+
 fn advisories_html(
     h: &Health,
     list: &[&Advisory],
     osv: &[(&str, Option<&crate::osv::Vuln>)],
+    fixed: &[&Advisory],
+    backport: &[&Channel],
+    attr: &str,
+    master: &str,
 ) -> String {
-    if list.is_empty() && osv.is_empty() {
+    let hint = backport_label(backport, attr, master);
+    let fixed: Vec<&&Advisory> = fixed.iter().filter(|_| !hint.is_empty()).collect();
+    if list.is_empty() && osv.is_empty() && fixed.is_empty() {
         return "<span class=\"color-fg-success\">none open</span>".into();
     }
+    let fixed_html: String = fixed
+        .iter()
+        .map(|a| {
+            format!(
+                "<div><a href=\"{}\">{}</a> {} <span class=\"color-fg-muted f6\">fixed in master</span>{hint}</div>",
+                esc(&a.url()),
+                esc(&a.code),
+                esc(&a.title),
+            )
+        })
+        .collect();
     let tracker = rated(h, list).into_iter().map(|(a, w)| {
         let issue = a
             .issue
             .map(|n| format!(" · <a href=\"https://github.com/NixOS/nixpkgs/issues/{n}\">#{n}</a>"))
             .unwrap_or_default();
         format!(
-            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
+            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}{hint}<div class=\"f6 color-fg-muted\">{}</div></div>",
             esc(&a.url()),
             esc(&a.code),
             severity_html(&w),
@@ -726,7 +826,10 @@ fn advisories_html(
             esc(&v.map(|v| v.cves.join(", ")).unwrap_or_default())
         )
     });
-    tracker.chain(osv).collect()
+    tracker
+        .chain(osv)
+        .chain(std::iter::once(fixed_html))
+        .collect()
 }
 
 fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Response {
@@ -826,10 +929,20 @@ async fn package_page(
         ),
     };
     out.push_str(&kv("Version", &version));
+    let ch = app.channels.read().unwrap().clone();
+    out.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
     out.push_str(&build_row("Hydra", &job, build.as_ref()));
     out.push_str(&kv(
         "Advisories",
-        &advisories_html(&h, &open_advisories(&h, &s, &attr), &h.osv_extra(&attr)),
+        &advisories_html(
+            &h,
+            &open_advisories(&h, &s, &attr),
+            &h.osv_extra(&attr),
+            &closed_advisories(&h, &s, &attr),
+            &ch.backport(&attr, &p.version),
+            &attr,
+            &p.version,
+        ),
     ));
     out.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
     if viewer.is_some() {
@@ -1208,10 +1321,24 @@ pub(crate) fn maintained(index: &Index, login: &str) -> Maintained {
     }
 }
 
+/// A small flag when a channel lags master, with both versions on hover.
+fn lag_label(ch: &Channels, attr: &str, master: &str) -> String {
+    let behind = ch.behind(attr, master);
+    if behind.is_empty() {
+        return String::new();
+    }
+    format!(
+        " <span class=\"Label\" title=\"{}\">behind in {}</span>",
+        esc(&hover(&behind, attr, master)),
+        esc(&channel_names(&behind))
+    )
+}
+
 fn maintained_rows(
     s: &Snapshot,
     index: &Index,
     h: &Health,
+    ch: &Channels,
     list: &[(Subject, Option<String>)],
 ) -> String {
     let mut out = String::new();
@@ -1227,8 +1354,9 @@ fn maintained_rows(
                 .get(a)
                 .map(|p| {
                     format!(
-                        " <span class=\"color-fg-muted f6\">{}</span>",
-                        esc(&p.version)
+                        " <span class=\"color-fg-muted f6\">{}</span>{}",
+                        esc(&p.version),
+                        lag_label(ch, a, &p.version)
                     )
                 })
                 .unwrap_or_default(),
@@ -1259,6 +1387,7 @@ async fn maintains_page(
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
+    let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let m = maintained(&index, &login);
     let own = viewer
@@ -1295,7 +1424,7 @@ async fn maintains_page(
         if m.packages.is_empty() {
             "<div class=\"Box-row color-fg-muted\">None.</div>".into()
         } else {
-            maintained_rows(&s, &index, &h, &m.packages)
+            maintained_rows(&s, &index, &h, &ch, &m.packages)
         }
     );
     let _ = write!(
@@ -1306,7 +1435,7 @@ async fn maintains_page(
         if m.modules.is_empty() {
             "<div class=\"Box-row color-fg-muted\">None.</div>".into()
         } else {
-            maintained_rows(&s, &index, &h, &m.modules)
+            maintained_rows(&s, &index, &h, &ch, &m.modules)
         }
     );
     page(&app, viewer.as_deref(), "packages", &out)
@@ -1735,10 +1864,35 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
     };
     let job = Hydra::package_job(&attr);
     let build = app.hydra.last(&job).await;
-    let (advisories, osv): (Vec<Value>, Vec<Value>) = {
+    let master = p.as_ref().map(|p| p.version.clone()).unwrap_or_default();
+    let (advisories, osv, channels, backport) = {
         let s = app.snap();
         let h = app.health.read().unwrap().clone();
-        let tracker = rated(&h, &open_advisories(&h, &s, &attr))
+        let ch = app.channels.read().unwrap().clone();
+        let open = open_advisories(&h, &s, &attr);
+        let codes: Vec<&String> = open
+            .iter()
+            .chain(&closed_advisories(&h, &s, &attr))
+            .map(|a| &a.code)
+            .collect();
+        let backport: Vec<Value> = ch
+            .backport(&attr, &master)
+            .iter()
+            .filter(|_| !codes.is_empty())
+            .map(|c| json!({ "channel": c.label(), "version": c.versions.get(&attr), "advisories": codes }))
+            .collect();
+        let channels: Vec<Value> = ch
+            .of(&attr, &master)
+            .iter()
+            .map(|seen| {
+                json!({
+                    "channel": seen.channel.label(), "rev": seen.channel.rev,
+                    "read_at": seen.channel.read_at, "version": seen.version,
+                    "behind_master": seen.behind,
+                })
+            })
+            .collect();
+        let tracker: Vec<Value> = rated(&h, &open)
             .into_iter()
             .map(|(a, w)| {
                 let mut v = json!(a);
@@ -1746,7 +1900,7 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
                 v
             })
             .collect();
-        let osv = h
+        let osv: Vec<Value> = h
             .osv_extra(&attr)
             .into_iter()
             .map(|(id, v)| {
@@ -1758,12 +1912,13 @@ async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Res
                 })
             })
             .collect();
-        (tracker, osv)
+        (tracker, osv, channels, backport)
     };
     let hygiene = p.as_ref().and_then(|p| hygiene::gaps(&attr, p));
     let extra = json!({
         "attr": attr, "package": p, "hydra": build, "hydra_job": job,
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
+        "channels": channels, "needs_backport": backport,
     });
     Json(subject_json(&app, &Subject::Pkg(attr.clone()), extra)).into_response()
 }
@@ -1811,6 +1966,7 @@ async fn api_area(State(app): State<Shared>, Path(path): Path<String>) -> Respon
 async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> Json<Value> {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
+    let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let m = maintained(&index, &login);
     let rows = |list: &[(Subject, Option<String>)]| -> Vec<Value> {
@@ -1825,9 +1981,16 @@ async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> 
                     Subject::Pkg(a) => index.pkgs.get(a).map(|p| p.version.clone()),
                     _ => None,
                 };
+                let behind: Vec<&str> = match (sub, &version) {
+                    (Subject::Pkg(a), Some(v)) => {
+                        ch.behind(a, v).iter().map(|c| c.label()).collect()
+                    }
+                    _ => vec![],
+                };
                 json!({
                     "key": sub.key(), "name": sub.label(), "version": version,
                     "via_team": how, "flags": f.json(),
+                    "channels_behind": behind,
                 })
             })
             .collect()
@@ -2072,6 +2235,51 @@ mod tests {
         // no maintainer outranks a prerelease repology reports, which counts for nothing
         assert_eq!(order, [("zzz".to_string(), 6), ("aaa".to_string(), 0)]);
         assert!(rows[0].1.html().contains("risk 6"));
+    }
+
+    #[test]
+    fn a_fix_in_master_shows_until_the_stable_channel_has_it() {
+        let a = |code: &str, issue| Advisory {
+            code: code.into(),
+            cves: vec![],
+            title: code.into(),
+            issue: Some(issue),
+        };
+        let mut h = Health::default();
+        h.advisories
+            .insert("cups".into(), vec![a("OPEN-1", 1), a("FIXED-2", 2)]);
+        let mut s = Snapshot {
+            issues: vec![issue(1, "OPEN"), issue(2, "CLOSED")],
+            ..Default::default()
+        };
+        s.issue_at = [(1, 0), (2, 1)].into();
+        let stable = Channel {
+            key: "stable".into(),
+            name: "nixos-26.05".into(),
+            rev: "r".into(),
+            read_at: None,
+            versions: [("cups".to_string(), "2.4.19".to_string())].into(),
+        };
+        let ch = Channels { list: vec![stable] };
+        let html = |master: &str| {
+            advisories_html(
+                &h,
+                &open_advisories(&h, &s, "cups"),
+                &[],
+                &closed_advisories(&h, &s, "cups"),
+                &ch.backport("cups", master),
+                "cups",
+                master,
+            )
+        };
+        let ahead = html("2.4.20");
+        assert_eq!(ahead.matches("needs backport to nixos-26.05").count(), 2);
+        assert!(ahead.contains("FIXED-2"));
+        let level = html("2.4.19");
+        assert!(!level.contains("needs backport"));
+        assert!(!level.contains("FIXED-2"));
+        assert!(channels_html(&ch, "cups", "2.4.20").contains("master is ahead of nixos-26.05"));
+        assert!(lag_label(&ch, "cups", "2.4.19").is_empty());
     }
 
     #[test]
