@@ -11,7 +11,7 @@ set login zimbatm
 set attr hello
 set module nixos/modules/services/web-servers/nginx/default.nix
 set area pkgs/by-name
-set pr 100171
+set pr 100174
 set token 0000000000000000000000000000000000000000000000000000000000000000
 
 both /
