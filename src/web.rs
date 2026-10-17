@@ -430,7 +430,7 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
 <nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
-  {prs} pull requests synced · nixpkgs index {rev} · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/rules#the-rules">the rules</a> · <a href="/sync">sync status</a> · <a href="/api/v1/status">API</a><br>
+  Data from the last {window} days · {updated} · <a href="/sync">Data status</a> · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/rules#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
   A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>
 </body>
@@ -441,13 +441,23 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
         } else {
             ""
         },
-        prs = s.prs,
-        rev = esc(if s.index_rev.is_empty() {
-            "pending"
-        } else {
-            &s.index_rev
-        }),
+        window = ledger::WINDOW_DAYS,
+        updated = updated(app),
     ))
+}
+
+fn updated(app: &App) -> String {
+    match app.store.get_time("last_sync").ok().flatten() {
+        Some(t) => {
+            let m = (Utc::now() - t).num_minutes().max(0);
+            if m < 120 {
+                format!("updated {m} min ago")
+            } else {
+                format!("updated {} ago", ago(t))
+            }
+        }
+        None => "not updated yet".into(),
+    }
 }
 
 pub(crate) const CONTRIBUTING: &str =
@@ -1225,7 +1235,7 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         guide_box(),
         anchor_headings(&html)
     );
-    page(&app, viewer.as_deref(), "rules", &body)
+    page(&app, viewer.as_deref(), "state", &body)
 }
 
 fn package_stats(app: &App) -> Arc<crate::catalog::PackageStats> {
