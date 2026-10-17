@@ -24,6 +24,7 @@ mod me;
 mod metrics;
 mod model;
 mod nixpkgs;
+mod notifications;
 mod notify;
 mod osv;
 mod progress;
@@ -149,6 +150,10 @@ enum Command {
         /// not asked without one.
         #[arg(long, env = "MAINTAINER_MODE_NVD_API_KEY_FILE")]
         nvd_api_key_file: Option<PathBuf>,
+        /// A classic token of the bot account that watches nixpkgs, with
+        /// the `notifications` scope. The poller is off without it.
+        #[arg(long, env = "MAINTAINER_MODE_NOTIFICATIONS_TOKEN_FILE")]
+        notifications_token_file: Option<PathBuf>,
         /// A GitHub App whose installation token is the first sync token.
         #[arg(long, env = "GITHUB_APP_ID")]
         github_app_id: Option<String>,
@@ -610,6 +615,7 @@ async fn run(cli: Cli) -> Result<i32> {
             client_secret_file,
             sync_token_file,
             nvd_api_key_file,
+            notifications_token_file,
             github_app_id,
             github_app_key_file,
             github_app_installation_id,
@@ -666,6 +672,7 @@ async fn run(cli: Cli) -> Result<i32> {
             if let Some(o) = &oauth {
                 tracing::info!("OAuth callback: {}", o.callback());
             }
+            let notifications_token = Secret::open(notifications_token_file)?.map(Arc::new);
             let app = Arc::new(App {
                 index: RwLock::new(web::load_index(&store)),
                 health: RwLock::new(Arc::new(web::load_health(&store))),
@@ -692,6 +699,11 @@ async fn run(cli: Cli) -> Result<i32> {
                 inbox: Default::default(),
                 smtp,
                 pr_cache: Default::default(),
+                notifications: if notifications_token.is_some() {
+                    notifications::Status::on()
+                } else {
+                    Default::default()
+                },
             });
             app.recompute()?;
             notify::recount(&app);
@@ -708,6 +720,13 @@ async fn run(cli: Cli) -> Result<i32> {
                 None => tracing::info!("no sync token: the event log takes GH Archive only"),
             }
             tokio::spawn(events::archive(app.clone()));
+            match notifications_token {
+                Some(t) => {
+                    tracing::info!("notifications poller on");
+                    tokio::spawn(notifications::run(app.clone(), t));
+                }
+                None => tracing::info!("no notifications token: the poller is off"),
+            }
             if !app.archive.is_empty() {
                 tokio::spawn(archive::walk(app.clone()));
             }
@@ -759,6 +778,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 inbox: Default::default(),
                 smtp: None,
                 pr_cache: Default::default(),
+                notifications: Default::default(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -804,6 +824,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 inbox: Default::default(),
                 smtp: None,
                 pr_cache: Default::default(),
+                notifications: Default::default(),
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();

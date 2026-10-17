@@ -474,6 +474,44 @@ pub fn normalize_issue(n: &Value) -> Option<Issue> {
     })
 }
 
+/// Pull requests and issues by number, with the fields of the walks, in one
+/// query. A number that GitHub does not know is left out.
+pub async fn by_number(
+    store: &Store,
+    client: &mut Client,
+    prs: &[u64],
+    issues: &[u64],
+) -> Result<(Vec<Pr>, Vec<Issue>)> {
+    if prs.is_empty() && issues.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let mut fields = String::new();
+    for n in prs {
+        fields.push_str(&format!(
+            "p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }} "
+        ));
+    }
+    for n in issues {
+        fields.push_str(&format!("i{n}: issue(number: {n}) {{ {ISSUE_FIELDS} }} "));
+    }
+    let query = format!(
+        "{{ rateLimit {{ cost remaining resetAt }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
+    );
+    let data = client
+        .graphql_allowing(store, &query, Value::Null, &["NOT_FOUND"])
+        .await?;
+    let repo = &data["repository"];
+    Ok((
+        prs.iter()
+            .filter_map(|n| normalize(&repo[format!("p{n}")]))
+            .collect(),
+        issues
+            .iter()
+            .filter_map(|n| normalize_issue(&repo[format!("i{n}")]))
+            .collect(),
+    ))
+}
+
 async fn issue_page(
     client: &mut Client,
     store: &Store,
