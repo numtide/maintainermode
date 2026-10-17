@@ -92,6 +92,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'id=\"intro\"' /tmp/page && grep -q 'nixpkgs/blob/master/CONTRIBUTING.md\">nixpkgs contributor guide' /tmp/page")
     machine.succeed("curl -s -D /tmp/intro.h -o /dev/null -X POST http://127.0.0.1:8790/intro/dismiss && grep -q '^HTTP/1.1 303' /tmp/intro.h && grep -qi '^set-cookie: intro=hidden' /tmp/intro.h")
     machine.succeed("curl -sf -H 'Cookie: intro=hidden' http://127.0.0.1:8790/ -o /tmp/page && ! grep -q 'id=\"intro\"' /tmp/page")
+    machine.succeed("grep -q '<h1 class=\"sr-only\">Maintainer Mode</h1>' /tmp/page && ! grep -q 'Subhead-heading' /tmp/page")
+    machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/page && grep -o '<h1' /tmp/page | wc -l > /tmp/h1 && grep -qx 1 /tmp/h1 && grep -q 'flex-auto\">Tools that make it easier' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/home && grep -q 'Pull requests with no maintainer' /tmp/home && grep -q 'nixpkgs in numbers' /tmp/home")
     machine.succeed("grep -q 'href=\"/review?tab=unowned\"' /tmp/home")
     machine.succeed("curl -s -D /tmp/merge.h -o /dev/null http://127.0.0.1:8790/merge && grep -qi '^location: /review?tab=ready' /tmp/merge.h")

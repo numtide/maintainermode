@@ -80,7 +80,7 @@ pub fn intro(app: &App, headers: &HeaderMap) -> String {
     };
     format!(
         "<div class=\"Box mb-4\" id=\"intro\"><div class=\"Box-body\">\
-         <div class=\"d-flex flex-items-start\"><h2 class=\"f3 flex-auto\">Tools that make it easier to contribute to nixpkgs</h2>\
+         <div class=\"d-flex flex-items-start\"><h1 class=\"f3 flex-auto\">Tools that make it easier to contribute to nixpkgs</h1>\
          <form method=\"post\" action=\"/intro/dismiss\"><button class=\"btn btn-sm\" type=\"submit\">Hide</button></form></div>\
          <ul class=\"ml-3 my-2\">\
          <li><strong>Navigate nixpkgs.</strong> <a href=\"/packages\">Packages and NixOS modules</a> with their issues, pull requests, version bumps and advisories, \
