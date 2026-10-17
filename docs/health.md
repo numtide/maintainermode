@@ -14,7 +14,10 @@ merged in the synced window.
   Hydra build of `nixpkgs/unstable/<attr>.x86_64-linux`, the open advisories
   of the [security tracker](https://tracker.security.nixos.org). An advisory
   counts as open while its nixpkgs issue is
-  open. Each advisory shows the worst severity of its CVEs (CVSS), whether
+  open. Each open advisory also shows its [verdict](#affected-versions):
+  "affects" the master version, "range unknown", fixed in master while a
+  channel still has an affected version, or "fixed in X · the tracker issue
+  #N can be closed". Each advisory shows the worst severity of its CVEs (CVSS), whether
   CISA saw an exploit, and its [EPSS](https://www.first.org/epss/) score: the
   chance of exploitation in the next 30 days. A package from PyPI,
   crates.io or npm also shows the [OSV](https://osv.dev) advisories for the
@@ -57,21 +60,90 @@ highest number first: the packages of an area, what you maintain, what you
 watch, your package set, and the same lists in the JSON API (`risk`,
 `risk_band`, `risk_reasons` in `flags`).
 
-| Cause                                     | Points                                                         |
-| ----------------------------------------- | -------------------------------------------------------------- |
-| Each open advisory, by its worst CVE      | critical 40, high 25, medium 10, low 3, no score 5; 60 at most |
-| One advisory exploited in the wild (CISA) | 20, or 8 for a public exploit                                  |
-| The highest EPSS                          | 10 from 10 %, 4 from 1 %                                       |
-| `meta.knownVulnerabilities`               | 15                                                             |
-| `meta.broken`                             | 5                                                              |
-| Behind upstream                           | 12 for a new major version, 8 otherwise                        |
-| No maintainer and no team                 | 6                                                              |
-| Packaging hygiene gaps                    | 1 each, 3 at most                                              |
+| Cause                                                    | Points                                                         |
+| -------------------------------------------------------- | -------------------------------------------------------------- |
+| Each open advisory that affects master, by its worst CVE | critical 40, high 25, medium 10, low 3, no score 5; 60 at most |
+| Each OSV match for the master version                    | the same points, in the same 60                                |
+| Each open advisory with an unknown range                 | the same points, in the same 60                                |
+| Each advisory fixed in master that a channel still has   | half the points, rounded up, in the same 60                    |
+| Each advisory fixed in master and in every channel       | 0                                                              |
+| One advisory exploited in the wild (CISA), not fixed     | 20, or 8 for a public exploit                                  |
+| The highest EPSS of an advisory that is not fixed        | 10 from 10 %, 4 from 1 %                                       |
+| `meta.knownVulnerabilities`                              | 15                                                             |
+| `meta.broken`                                            | 5                                                              |
+| Behind upstream                                          | 12 for a new major version, 8 otherwise                        |
+| No maintainer and no team                                | 6                                                              |
+| Packaging hygiene gaps                                   | 1 each, 3 at most                                              |
 
 The bands are: 0 ok, 1 to 14 low, 15 to 29 medium, 30 to 49 high, 50 and
 more critical. The weights are a policy, not a measurement. They come from
 nixfresh, simplified: there is no judgment of pull requests and no reading
 of the git log.
+
+The reasons name the verdict: "1 open advisory affects 1.26.0", "1 open
+advisory, range unknown" or "1 advisory fixed in master, still in
+nixos-26.05".
+
+## Affected versions
+
+The tracker keeps an advisory open until someone closes its nixpkgs issue.
+Often nixpkgs already ships the fix. Maintainer Mode compares the affected
+ranges with the versions that nixpkgs ships. It does not trust a range that
+it cannot read: in doubt, the verdict is "range unknown", and the advisory
+counts as open.
+
+- **Ranges.** The tracker copies the affected versions of each CVE record.
+  Maintainer Mode keeps them for each advisory and each attribute. It reads
+  these forms: `<1.0`, `=<1.0`, `==1.0`, `==< 1.0`, `==<= 1.0`, `=== 1.0`,
+  `==>= 1.0, < 1.2`, `==1.0 to 1.2` and `*`, as `affected`, `unaffected` or
+  `unknown`. A version may start with `v`.
+- **Which product.** A CVE record names products. A range counts for an
+  attribute only when the product name is the name of the attribute, or that
+  name with a major version or a build variant (`ffmpeg_9-headless`,
+  `unbound-with-systemd`). The range of `immich` does not judge
+  `gnomeExtensions.immich-wallpaper`.
+- **The title.** When the ranges of a CVE do not decide, the title of the
+  advisory can: `unbound: security issues < 1.26.1`, `Flower before 2.2.0`,
+  `foo through 3.1`. The title counts only when a word before the version
+  names the attribute.
+- **What stays unknown.** A version that is not a release (a commit hash,
+  `unstable`, a Go pseudo-version, a calendar version against a bound of
+  another scheme). A list of exact affected versions that does not name the
+  version: such a list often names only the version that someone tested. A
+  title that names an affected version which the checked version has not
+  passed: then the ranges are wrong.
+- **Order.** Versions compare as in [Upstream versions](#upstream-versions):
+  1.10 is newer than 1.9, and 1.0-rc1 is older than 1.0.
+- **The verdict.** One affected CVE makes the advisory affect a version.
+  Maintainer Mode checks the master version first, then the version in each
+  [channel](#channels):
+  - **affects master**: master has an affected version;
+  - **fixed in master**: master is fixed, and a channel still has an
+    affected version. A stable channel needs a backport;
+  - **fixed everywhere**: master and every channel read are fixed. The
+    tracker issue can be closed. With no channel read yet, master decides
+    alone;
+  - **range unknown**: the data does not tell.
+- **Counts.** "With open advisories" on `/state`, on the home page and in
+  the lists counts only advisories that affect master or have an unknown
+  range. `/state` also says how many packages have only advisories fixed in
+  master, and lists the tracker issues to close under "Tracker issues to
+  close". `GET /api/v1/metrics` gives the list under
+  `packages.tracker_issues_to_close`, with the attribute, the advisory, the
+  issue, the fix and the master version. `GET /api/v1/packages/<attr>` gives
+  each advisory its `verdict`. Maintainer Mode never writes to GitHub: a
+  person closes the issue.
+- **Needs you.** A machine report keeps the version of each package when the
+  client sends one. The client sends a version only when nixpkgs has that
+  exact version. When the ranges tell, that version decides: an affected
+  version makes an item, a version that is not affected makes none. Without
+  a version, or when the ranges do not tell, the verdict decides. "Fixed
+  everywhere" makes no item. "Fixed in master" still makes an item, because
+  the machine can run a channel.
+- **Pull requests.** The Security block of `/pr/<n>` shows the verdict of
+  each advisory on the packages that the pull request changes. Advisories
+  fixed everywhere go to an "Already fixed" line, and they alone do not show
+  the block.
 
 ## Upstream versions
 
@@ -131,9 +203,9 @@ comma-separated) or with the NixOS option
 - **Needs backport.** An advisory whose nixpkgs issue closed in the synced
   window counts as fixed in master. When a stable channel has an older
   version than master, that advisory shows "needs backport". It stays on the
-  page while a stable channel is behind. An open advisory gets no such hint:
-  master can still be vulnerable. The API lists the fixed advisories under
-  `needs_backport`.
+  page while a stable channel is behind. An open advisory whose verdict is
+  "fixed in master" gets the hint too, for each stable channel with an
+  affected version. The API lists both under `needs_backport`.
 - **What I maintain** marks each package that a channel has at an older
   version: "behind in …". The API gives `channels_behind`.
 - **`/state?tab=status`** has one line per channel, with its revision and when it was

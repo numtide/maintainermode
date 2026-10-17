@@ -26,14 +26,14 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 
 ### The items
 
-| Order | Cause                                                                                                                                                       | It opens         |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| 1     | An advisory on a package of your latest machine report. The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it.    | the package page |
-| 2     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                              | the pull request |
-| 3     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged. | the pull request |
-| 4     | Your open pull request has had no review for 7 days or more. The item names the maintainers of the files to ask, at most 5.                                 | the pull request |
-| 5     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.           | the pull request |
-| 6     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                        | the package page |
+| Order | Cause                                                                                                                                                                                                                                        | It opens         |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 1     | An advisory on a package of your latest machine report that can affect your version (see [Affected versions](health.md#affected-versions)). The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it. | the package page |
+| 2     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                                                                                                               | the pull request |
+| 3     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                                  | the pull request |
+| 4     | Your open pull request has had no review for 7 days or more. The item names the maintainers of the files to ask, at most 5.                                                                                                                  | the pull request |
+| 5     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                            | the pull request |
+| 6     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                                         | the package page |
 
 In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 2, the newest review comes first. In causes 3 and 4, the oldest comes first. In causes 5 and 6, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 2, and cause 3 for failing checks or a merge conflict.
 
@@ -41,7 +41,7 @@ The server uses only data that it already has. These signals are not in the list
 
 - A review request to you: the synced pull requests do not keep review requests.
 - A comment outside a review: the server keeps only the comments of the author.
-- The fixed version of an advisory: the security tracker data does not give it. The item shows an open pull request on the package and the newest upstream release, when they are known.
+- The fixed version of an advisory, when neither its ranges nor its title give it. The item then shows an open pull request on the package and the newest upstream release, when they are known.
 - A failed Hydra build that no page asked for in the last hour: the list never asks Hydra.
 
 ### Moods

@@ -754,7 +754,7 @@ fn packages_section(app: &App) -> String {
         "<p class=\"f6 color-fg-muted\">One package per package name, at nixpkgs {}. \
          <a href=\"/state?tab=rules#the-state-of-nixpkgs\">How each number is made</a></p>\
          <div class=\"d-flex flex-wrap gap-2 mb-2\">{}{}{}{}</div>\
-         <div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}</div>",
+         <div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}{}</div>",
         esc(&p.rev[..p.rev.len().min(12)]),
         stat(p.packages, "packages", "in the swept package sets"),
         stat(
@@ -766,16 +766,9 @@ fn packages_section(app: &App) -> String {
             p.with_advisories,
             "with open advisories",
             &format!(
-                "that can affect master; worst: {} critical, {} high, {} medium, {} low, {} with no score. \
-                 {} more are fixed in master but not yet in a channel; \
-                 <a href=\"#tracker-issues-to-close\">{} tracker issues</a> are fixed everywhere",
-                b.critical,
-                b.high,
-                b.medium,
-                b.low,
-                b.unscored,
-                p.fixed_in_master_only,
-                p.tracker_issues_to_close.len()
+                "that can affect master; worst: {} critical, {} high, {} medium, {} low, {} with no score; \
+                 {} more only in a channel",
+                b.critical, b.high, b.medium, b.low, b.unscored, p.fixed_in_master_only,
             )
         ),
         stat(
@@ -798,6 +791,11 @@ fn packages_section(app: &App) -> String {
                     format!("median age {d} days; <a href=\"/review?tab=bumps\">the list</a>"),
                 None => "<a href=\"/review?tab=bumps\">the list</a>".into(),
             }
+        ),
+        stat(
+            p.tracker_issues_to_close.len(),
+            "tracker issues to close",
+            "fixed in master and every channel; <a href=\"#tracker-issues-to-close\">the list</a>"
         ),
     );
     out.push_str(&to_close_section(&p.tracker_issues_to_close));
