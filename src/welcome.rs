@@ -16,7 +16,7 @@ const SEEN: &str = "welcome_at";
 const INTRO_COOKIE: &str = "intro";
 
 pub const CONTRIBUTING: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
-const MAINTAINERS_README: &str =
+pub(crate) const MAINTAINERS_README: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/maintainers/README.md";
 const GUIDES: [(&str, &str, &str); 5] = [
     (
@@ -233,7 +233,7 @@ fn checklist(f: &Facts) -> String {
             mark(f.maintained_watched == f.maintained),
             "What you maintain",
             &format!(
-                "nixpkgs names you on <a href=\"/me?tab=maintain\">{} packages and modules</a>. \
+                "nixpkgs names you on <a href=\"/packages?filter=maintain\">{} packages and modules</a>. \
                  You watch {} of them.{button}",
                 f.maintained, f.maintained_watched
             ),
@@ -277,7 +277,7 @@ fn checklist(f: &Facts) -> String {
     out.push_str(&step(
         mark(f.system),
         "Your system",
-        "Upload the closure of your machines to <a href=\"/me?tab=machines\">My machines</a>. \
+        "<a href=\"/me/settings#upload\">Upload the packages of your machines</a>, and see them first in <a href=\"/packages?filter=mine\">your packages</a>. \
          Your feed then tells you about advisories and releases of the packages you really run. It stays private.",
     ));
     out.push_str(&step(
@@ -420,7 +420,7 @@ mod tests {
             ..facts()
         };
         let html = checklist(&f);
-        assert!(html.contains("/me?tab=maintain"));
+        assert!(html.contains("/packages?filter=maintain"));
         assert!(html.contains("/me/watch/maintained"));
         assert!(html.contains("inbox"));
         let all = Facts {

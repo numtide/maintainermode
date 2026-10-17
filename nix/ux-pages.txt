@@ -46,9 +46,11 @@ both /actions
 public /confirm/${token} status=404
 public /unsubscribe/${token} status=404
 signed-in /inbox
-signed-in /me?tab=maintain
-signed-in /me?tab=watch
-signed-in /me?tab=machines
+signed-in /packages?filter=mine
+signed-in /packages?filter=machines
+signed-in /packages?filter=maintain
+signed-in /packages?filter=watch
+signed-in /packages?filter=all
 signed-in /me/settings
 signed-in /me/runs
 signed-in /me/progress
@@ -60,6 +62,7 @@ skip /bumps
 skip /rules
 skip /sync
 skip /welcome
+skip /me
 skip /watch
 skip /me/inbox
 skip /me/sets

@@ -56,6 +56,9 @@ let
     "mark-github"
     "file-diff"
     "comment"
+    "device-desktop"
+    "tools"
+    "upload"
     "checklist"
   ];
   trim = ''
