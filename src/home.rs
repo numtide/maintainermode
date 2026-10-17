@@ -122,7 +122,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
             "<div class=\"Box-row d-flex flex-wrap gap-4\">\
              <span><strong>{}</strong> open pull requests need review</span>\
              <span><strong>{}</strong> packages behind upstream</span>\
-             <span><strong>{}</strong> packages with an open advisory</span>\
+             <span><strong>{}</strong> packages with an open advisory in master</span>\
              <span><strong>{}</strong> packages with no maintainer</span>\
              <span><strong>{}</strong> open version bumps</span></div>",
             s.queues.review.len(),

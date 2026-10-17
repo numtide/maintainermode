@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::actions::Act;
+use crate::affected::Verdict;
 use crate::area::{Index, area_key, under};
 use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
@@ -274,6 +275,27 @@ pub(crate) fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Ve
         .collect()
 }
 
+/// The open advisories with their verdict against master and the channels.
+pub(crate) fn judged<'a>(
+    h: &'a Health,
+    s: &Snapshot,
+    attr: &str,
+) -> Vec<(&'a Advisory, &'a Verdict)> {
+    open_advisories(h, s, attr)
+        .into_iter()
+        .map(|a| (a, h.verdict(attr, &a.code)))
+        .collect()
+}
+
+/// The open advisories that can affect master: affected, or range unknown.
+pub(crate) fn affecting<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
+    judged(h, s, attr)
+        .into_iter()
+        .filter(|(_, v)| v.open())
+        .map(|(a, _)| a)
+        .collect()
+}
+
 /// The newest upstream release and its source, unless nixpkgs already
 /// carries it: under this attribute, or under another of the same package,
 /// like `openssl_3`.
@@ -327,7 +349,7 @@ fn score_label(s: &Score) -> String {
 /// The score of a package from everything the health sources know.
 fn score_of(s: &Snapshot, index: &Index, h: &Health, attr: &str) -> Option<Score> {
     let p = index.pkgs.get(attr)?;
-    let advisories = open_advisories(h, s, attr);
+    let advisories = judged(h, s, attr);
     let osv: Vec<Worst> = h
         .osv_extra(attr)
         .into_iter()
@@ -371,6 +393,52 @@ pub(crate) struct PackageStats {
     pub(crate) with_packaging_gaps: usize,
     pub(crate) open_bumps: usize,
     pub(crate) bumps_median_age_days: Option<f64>,
+    /// Packages whose open advisories master already fixes, while a channel
+    /// still carries an affected version.
+    pub(crate) fixed_in_master_only: usize,
+    /// Open tracker issues that master and every channel already fix.
+    pub(crate) tracker_issues_to_close: Vec<ToClose>,
+}
+
+/// An open tracker issue that nixpkgs already fixes everywhere.
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct ToClose {
+    pub(crate) attr: String,
+    pub(crate) code: String,
+    pub(crate) title: String,
+    pub(crate) issue: u64,
+    pub(crate) fixed_in: Option<String>,
+    /// The version in master.
+    pub(crate) version: String,
+}
+
+/// Every attribute the tracker names, not one per package name: a triager
+/// closes each issue.
+fn to_close(s: &Snapshot, index: &Index, h: &Health) -> Vec<ToClose> {
+    let mut out: Vec<ToClose> = Vec::new();
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+    for attr in h.advisories.keys() {
+        let Some(p) = index.pkgs.get(attr) else {
+            continue;
+        };
+        for (a, v) in judged(h, s, attr) {
+            let (Verdict::Fixed { fixed_in }, Some(issue)) = (v, a.issue) else {
+                continue;
+            };
+            if seen.insert((attr, &a.code)) {
+                out.push(ToClose {
+                    attr: attr.clone(),
+                    code: a.code.clone(),
+                    title: a.title.clone(),
+                    issue,
+                    fixed_in: fixed_in.clone(),
+                    version: p.version.clone(),
+                });
+            }
+        }
+    }
+    out.sort_by(|a, b| a.attr.cmp(&b.attr).then(a.code.cmp(&b.code)));
+    out
 }
 
 pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageStats {
@@ -386,8 +454,19 @@ pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageS
         if upstream(s, index, h, attr).is_some() {
             out.behind_upstream += 1;
         }
-        let open = open_advisories(h, s, attr);
+        let all = judged(h, s, attr);
+        let open: Vec<&Advisory> = all
+            .iter()
+            .filter(|(_, v)| v.open())
+            .map(|(a, _)| *a)
+            .collect();
         let osv = h.osv_extra(attr);
+        if open.is_empty()
+            && osv.is_empty()
+            && all.iter().any(|(_, v)| matches!(v, Verdict::Behind { .. }))
+        {
+            out.fixed_in_master_only += 1;
+        }
         if !open.is_empty() || !osv.is_empty() {
             out.with_advisories += 1;
             let band = rated(h, &open)
@@ -419,11 +498,13 @@ pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageS
     let bumps = crate::bumps::open(s, index, h);
     out.open_bumps = bumps.len();
     out.bumps_median_age_days = crate::bumps::median_age_days(&bumps, Utc::now());
+    out.tracker_issues_to_close = to_close(s, index, h);
     out
 }
 
 pub(crate) struct Flags {
     pub(crate) upstream: Option<String>,
+    /// Open advisories that can affect master, OSV matches included.
     pub(crate) advisories: usize,
     unmaintained: bool,
     pub(crate) open_prs: usize,
@@ -442,7 +523,7 @@ impl Flags {
                 let p = index.pkgs.get(attr);
                 (
                     upstream(s, index, h, attr).map(String::from),
-                    open_advisories(h, s, attr).len() + h.osv_extra(attr).len(),
+                    affecting(h, s, attr).len() + h.osv_extra(attr).len(),
                     p.is_some_and(|p| p.maintainers.is_empty() && p.teams.is_empty()),
                     score_of(s, index, h, attr),
                 )
@@ -940,9 +1021,77 @@ fn channels_html(ch: &Channels, attr: &str, master: &str) -> String {
     format!("{}{tail}", parts.join(" · "))
 }
 
+fn issue_link(a: &Advisory) -> String {
+    a.issue_url()
+        .map(|u| {
+            format!(
+                " · <a href=\"{}\">#{}</a>",
+                esc(&u),
+                a.issue.unwrap_or_default()
+            )
+        })
+        .unwrap_or_default()
+}
+
+/// What a verdict asks of a maintainer, as one line.
+pub(crate) fn verdict_html(a: &Advisory, v: &Verdict, master: &str) -> String {
+    match v {
+        Verdict::Affects => format!(
+            "<span class=\"color-fg-danger\">affects {}</span>",
+            esc(master)
+        ),
+        Verdict::Unknown => "<span class=\"color-fg-attention\" title=\"The tracker gives no affected version that Maintainer Mode can read\">range unknown</span>".into(),
+        Verdict::Behind { fixed_in, channels } => {
+            let fixed = fixed_in
+                .as_deref()
+                .map_or_else(|| "fixed in master".to_string(), |f| format!("fixed in {} in master", esc(f)));
+            let lags: Vec<String> = channels
+                .iter()
+                .map(|l| {
+                    let what = format!("{} has {}", esc(&l.channel), esc(&l.version));
+                    if l.stable {
+                        format!("<span class=\"Label Label--attention\">needs backport: {what}</span>")
+                    } else {
+                        format!("<span class=\"color-fg-attention\">{what}</span>")
+                    }
+                })
+                .collect();
+            format!(
+                "<span class=\"color-fg-success\">{fixed}</span> · {}",
+                lags.join(" · ")
+            )
+        }
+        Verdict::Fixed { fixed_in } => {
+            let fixed = fixed_in
+                .as_deref()
+                .map_or_else(|| format!("not affected: master has {}", esc(master)), |f| format!("fixed in {}", esc(f)));
+            let close = match (a.issue, a.issue_url()) {
+                (Some(n), Some(u)) => format!(
+                    "<a href=\"{}\">the tracker issue #{n} can be closed</a>",
+                    esc(&u)
+                ),
+                _ => format!(
+                    "<a href=\"{}\">the tracker advisory can be closed</a>",
+                    esc(&a.url())
+                ),
+            };
+            format!("<span class=\"color-fg-success\">{fixed}</span> · {close}")
+        }
+    }
+}
+
+fn verdict_order(v: &Verdict) -> u8 {
+    match v {
+        Verdict::Affects => 0,
+        Verdict::Unknown => 1,
+        Verdict::Behind { .. } => 2,
+        Verdict::Fixed { .. } => 3,
+    }
+}
+
 fn advisories_html(
     h: &Health,
-    list: &[&Advisory],
+    list: &[(&Advisory, &Verdict)],
     osv: &[(&str, Option<&crate::osv::Vuln>)],
     fixed: &[&Advisory],
     backport: &[&Channel],
@@ -965,18 +1114,33 @@ fn advisories_html(
             )
         })
         .collect();
-    let tracker = rated(h, list).into_iter().map(|(a, w)| {
-        let issue = a
-            .issue
-            .map(|n| format!(" · <a href=\"https://github.com/NixOS/nixpkgs/issues/{n}\">#{n}</a>"))
-            .unwrap_or_default();
+    let advisories: Vec<&Advisory> = list.iter().map(|(a, _)| *a).collect();
+    let mut rows: Vec<(&Advisory, Worst, &Verdict)> = rated(h, &advisories)
+        .into_iter()
+        .map(|(a, w)| {
+            let v = list
+                .iter()
+                .find(|(x, _)| std::ptr::eq(*x, a))
+                .map_or(&crate::affected::UNKNOWN, |(_, v)| *v);
+            (a, w, v)
+        })
+        .collect();
+    rows.sort_by_key(|(_, _, v)| verdict_order(v));
+    let tracker = rows.into_iter().map(|(a, w, v)| {
+        let class = if v.open() { " class=\"color-fg-danger\"" } else { "" };
+        let cves = if a.cves.is_empty() {
+            String::new()
+        } else {
+            format!("{} · ", esc(&a.cves.join(", ")))
+        };
         format!(
-            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {}{issue}<div class=\"f6 color-fg-muted\">{}</div></div>",
+            "<div><a{class} href=\"{}\">{}</a>{} {}{}<div class=\"f6 color-fg-muted\">{cves}{}</div></div>",
             esc(&a.url()),
             esc(&a.code),
             severity_html(&w),
             esc(&a.title),
-            esc(&a.cves.join(", "))
+            issue_link(a),
+            verdict_html(a, v, master)
         )
     });
     let osv = osv.iter().map(|(id, v)| {
@@ -1296,7 +1460,7 @@ async fn package_page(
         "Advisories",
         &advisories_html(
             &h,
-            &open_advisories(&h, &s, &attr),
+            &judged(&h, &s, &attr),
             &h.osv_extra(&attr),
             &closed_advisories(&h, &s, &attr),
             &ch.backport(&attr, &p.version),
@@ -2055,7 +2219,7 @@ fn events(
             }
         }
         if let Subject::Pkg(attr) = sub {
-            for a in open_advisories(h, s, attr) {
+            for (a, _) in judged(h, s, attr).into_iter().filter(|(_, v)| !v.fixed()) {
                 let at = a
                     .issue
                     .and_then(|n| s.issue_at.get(&n))
@@ -2091,7 +2255,7 @@ fn set_events(
 ) -> Vec<Event> {
     let mut out = Vec::new();
     for attr in attrs {
-        for a in open_advisories(h, s, attr) {
+        for (a, _) in judged(h, s, attr).into_iter().filter(|(_, v)| !v.fixed()) {
             let at = a
                 .issue
                 .and_then(|n| s.issue_at.get(&n))
@@ -2220,16 +2384,32 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
         let s = app.snap();
         let h = app.health.read().unwrap().clone();
         let ch = app.channels.read().unwrap().clone();
-        let open = open_advisories(&h, &s, &attr);
-        let codes: Vec<&String> = closed_advisories(&h, &s, &attr)
+        let open = judged(&h, &s, &attr);
+        let closed: Vec<&String> = closed_advisories(&h, &s, &attr)
             .into_iter()
             .map(|a| &a.code)
             .collect();
+        let behind = ch.backport(&attr, &master);
         let backport: Vec<Value> = ch
-            .backport(&attr, &master)
+            .list
             .iter()
-            .filter(|_| !codes.is_empty())
-            .map(|c| json!({ "channel": c.label(), "version": c.versions.get(&attr), "advisories": codes }))
+            .filter(|c| c.stable() && !c.rev.is_empty())
+            .filter_map(|c| {
+                let mut codes: Vec<&String> = if behind.iter().any(|b| b.key == c.key) {
+                    closed.clone()
+                } else {
+                    Vec::new()
+                };
+                codes.extend(open.iter().filter_map(|(a, v)| match v {
+                    Verdict::Behind { channels, .. }
+                        if channels.iter().any(|l| l.channel == c.label()) =>
+                    {
+                        Some(&a.code)
+                    }
+                    _ => None,
+                }));
+                (!codes.is_empty()).then(|| json!({ "channel": c.label(), "version": c.versions.get(&attr), "advisories": codes }))
+            })
             .collect();
         let channels: Vec<Value> = ch
             .of(&attr, &master)
@@ -2242,11 +2422,13 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
                 })
             })
             .collect();
-        let tracker: Vec<Value> = rated(&h, &open)
+        let list: Vec<&Advisory> = open.iter().map(|(a, _)| *a).collect();
+        let tracker: Vec<Value> = rated(&h, &list)
             .into_iter()
             .map(|(a, w)| {
                 let mut v = json!(a);
                 v["severity"] = json!(w);
+                v["verdict"] = json!(h.verdict(&attr, &a.code));
                 v
             })
             .collect();
@@ -2685,7 +2867,7 @@ mod tests {
         let html = |master: &str| {
             advisories_html(
                 &h,
-                &open_advisories(&h, &s, "cups"),
+                &judged(&h, &s, "cups"),
                 &[],
                 &closed_advisories(&h, &s, "cups"),
                 &ch.backport("cups", master),
@@ -2709,6 +2891,150 @@ mod tests {
         assert!(!level.contains("FIXED-2"));
         assert!(channels_html(&ch, "cups", "2.4.20").contains("master is ahead of nixos-26.05"));
         assert!(lag_label(&ch, "cups", "2.4.19").is_empty());
+    }
+
+    /// unbound 1.26.1 in master and in both channels, with the tracker issue
+    /// of "< 1.26.1" still open.
+    pub(crate) fn unbound(stable: &str) -> (Index, Health, Snapshot, Channels) {
+        let mut i = Index {
+            rev: "r".into(),
+            ..Default::default()
+        };
+        i.pkgs.insert(
+            "unbound".into(),
+            Package {
+                pname: "unbound".into(),
+                version: "1.26.1".into(),
+                maintainers: vec!["alice".into()],
+                ..Default::default()
+            },
+        );
+        i.by_pname.insert("unbound".into(), "unbound".into());
+        let mut h = Health::default();
+        h.cves.insert(
+            "CVE-2026-1".into(),
+            crate::severity::Cve {
+                band: Some(severity::Band::Critical),
+                cvss: Some(9.8),
+                ..Default::default()
+            },
+        );
+        h.advisories.insert(
+            "unbound".into(),
+            vec![Advisory {
+                code: "NIXPKGS-2026-2615".into(),
+                cves: vec!["CVE-2026-1".into()],
+                title: "unbound: security issues < 1.26.1".into(),
+                issue: Some(564154),
+                ranges: vec![crate::affected::Ranges {
+                    cve: Some("CVE-2026-1".into()),
+                    constraints: vec![(
+                        "affected".into(),
+                        "==13fcb641ed33d1472e4ffdec2846180b15405053".into(),
+                    )],
+                }],
+            }],
+        );
+        let mut s = Snapshot {
+            issues: vec![issue(564154, "OPEN")],
+            ..Default::default()
+        };
+        s.issue_at = [(564154, 0)].into();
+        let channel = |key: &str, name: &str, v: &str| Channel {
+            key: key.into(),
+            name: name.into(),
+            rev: format!("rev-{name}"),
+            read_at: None,
+            versions: [("unbound".to_string(), v.to_string())].into(),
+        };
+        let ch = Channels {
+            list: vec![
+                channel("nixos-unstable", "nixos-unstable", "1.26.1"),
+                channel("stable", "nixos-26.05", stable),
+            ],
+        };
+        h.assess(&i, &ch);
+        (i, h, s, ch)
+    }
+
+    #[test]
+    fn an_advisory_fixed_everywhere_scores_nothing_and_asks_to_close_the_issue() {
+        let (i, h, s, ch) = unbound("1.26.1");
+        assert_eq!(
+            h.verdict("unbound", "NIXPKGS-2026-2615"),
+            &Verdict::Fixed {
+                fixed_in: Some("1.26.1".into())
+            }
+        );
+        let f = Flags::of(&s, &i, &h, &Subject::Pkg("unbound".into()));
+        assert_eq!(f.risk(), 0);
+        assert_eq!(f.advisories, 0);
+        assert!(!crate::mine::attention(&f));
+        let html = advisories_html(
+            &h,
+            &judged(&h, &s, "unbound"),
+            &[],
+            &closed_advisories(&h, &s, "unbound"),
+            &ch.backport("unbound", "1.26.1"),
+            "unbound",
+            "1.26.1",
+        );
+        assert!(html.contains(
+            "fixed in 1.26.1</span> · <a href=\"https://github.com/NixOS/nixpkgs/issues/564154\">the tracker issue #564154 can be closed</a>"
+        ));
+        assert!(!html.contains("color-fg-danger\" href=\"https://tracker"));
+        let p = package_stats(&s, &i, &h);
+        assert_eq!(p.with_advisories, 0);
+        assert_eq!(p.fixed_in_master_only, 0);
+        assert_eq!(p.tracker_issues_to_close.len(), 1);
+        assert_eq!(p.tracker_issues_to_close[0].issue, 564154);
+        assert_eq!(
+            p.tracker_issues_to_close[0].fixed_in.as_deref(),
+            Some("1.26.1")
+        );
+    }
+
+    #[test]
+    fn an_advisory_fixed_only_in_master_asks_for_a_backport() {
+        let (i, h, s, ch) = unbound("1.25.0");
+        let f = Flags::of(&s, &i, &h, &Subject::Pkg("unbound".into()));
+        assert_eq!(f.risk(), 20);
+        assert_eq!(f.advisories, 0);
+        let reasons = &f.score.as_ref().unwrap().reasons;
+        assert_eq!(
+            reasons[0].text,
+            "1 advisory fixed in master, still in nixos-26.05"
+        );
+        let html = advisories_html(
+            &h,
+            &judged(&h, &s, "unbound"),
+            &[],
+            &[],
+            &ch.backport("unbound", "1.26.1"),
+            "unbound",
+            "1.26.1",
+        );
+        assert!(html.contains("needs backport: nixos-26.05 has 1.25.0"));
+        let p = package_stats(&s, &i, &h);
+        assert_eq!(p.with_advisories, 0);
+        assert_eq!(p.fixed_in_master_only, 1);
+        assert!(p.tracker_issues_to_close.is_empty());
+    }
+
+    #[test]
+    fn an_advisory_with_no_readable_range_stays_open() {
+        let (i, mut h, s, ch) = unbound("1.26.1");
+        let a = &mut h.advisories.get_mut("unbound").unwrap()[0];
+        a.title = "unbound: a flaw".into();
+        h.assess(&i, &ch);
+        let f = Flags::of(&s, &i, &h, &Subject::Pkg("unbound".into()));
+        assert_eq!(f.risk(), 40);
+        assert_eq!(f.advisories, 1);
+        assert_eq!(
+            f.score.as_ref().unwrap().reasons[0].text,
+            "1 open advisory, range unknown"
+        );
+        assert_eq!(package_stats(&s, &i, &h).with_advisories, 1);
     }
 
     #[test]

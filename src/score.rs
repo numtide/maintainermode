@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 
+use crate::affected::Verdict;
 use crate::area::Package;
 use crate::health::{Advisory, Health};
 use crate::severity::{self, Band, Worst};
@@ -70,36 +71,117 @@ fn major(v: &str) -> &str {
 /// The facts a score reads, gathered by the caller.
 pub struct Input<'a> {
     pub package: &'a Package,
-    pub advisories: &'a [&'a Advisory],
+    /// The open tracker advisories with their verdicts.
+    pub advisories: &'a [(&'a Advisory, &'a Verdict)],
     /// OSV matches the tracker does not name, with their worst severity.
     pub osv: &'a [Worst],
     pub upstream: Option<&'a str>,
     pub hygiene: Option<&'a [&'static str]>,
 }
 
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+fn channels_of(list: &[&Verdict]) -> String {
+    let mut names: Vec<&str> = list
+        .iter()
+        .flat_map(|v| match v {
+            Verdict::Behind { channels, .. } => {
+                channels.iter().map(|l| l.channel.as_str()).collect()
+            }
+            _ => Vec::new(),
+        })
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    names.join(", ")
+}
+
 pub fn score(h: &Health, i: &Input) -> Score {
     let mut s = Score::default();
-    let worst: Vec<(String, Worst)> = i
+    let p = i.package;
+    let live: Vec<(&Advisory, &Verdict, Worst)> = i
         .advisories
         .iter()
-        .map(|a| (a.code.clone(), severity::worst(h, &a.cves)))
+        .filter(|(_, v)| !v.fixed())
+        .map(|(a, v)| (*a, *v, severity::worst(h, &a.cves)))
+        .collect();
+    let group = |keep: fn(&Verdict) -> bool| -> (usize, u32) {
+        live.iter()
+            .filter(|(_, v, _)| keep(v))
+            .fold((0, 0), |(n, pts), (_, _, w)| {
+                (n + 1, pts + advisory_points(w.band))
+            })
+    };
+    let (affects, affects_pts) = group(|v| matches!(v, Verdict::Affects));
+    let osv_pts: u32 = i.osv.iter().map(|w| advisory_points(w.band)).sum();
+    let (unknown, unknown_pts) = group(|v| matches!(v, Verdict::Unknown));
+    let (behind, behind_pts) = group(|v| matches!(v, Verdict::Behind { .. }));
+    let lagging: Vec<&Verdict> = live
+        .iter()
+        .map(|(_, v, _)| *v)
+        .filter(|v| matches!(v, Verdict::Behind { .. }))
+        .collect();
+    let mut room = ADVISORY_CAP;
+    let mut take = |s: &mut Score, points: u32, text: String| {
+        let points = points.min(room);
+        room -= points;
+        s.add(points, text);
+    };
+    if affects > 0 {
+        take(
+            &mut s,
+            affects_pts,
+            format!(
+                "{} {} {}",
+                plural(affects, "open advisory", "open advisories"),
+                if affects == 1 { "affects" } else { "affect" },
+                p.version
+            ),
+        );
+    }
+    if !i.osv.is_empty() {
+        take(
+            &mut s,
+            osv_pts,
+            format!(
+                "{} for {}",
+                plural(i.osv.len(), "OSV advisory", "OSV advisories"),
+                p.version
+            ),
+        );
+    }
+    if unknown > 0 {
+        take(
+            &mut s,
+            unknown_pts,
+            format!(
+                "{}, range unknown",
+                plural(unknown, "open advisory", "open advisories")
+            ),
+        );
+    }
+    if behind > 0 {
+        take(
+            &mut s,
+            behind_pts.div_ceil(2),
+            format!(
+                "{} fixed in master, still in {}",
+                plural(behind, "advisory", "advisories"),
+                channels_of(&lagging)
+            ),
+        );
+    }
+    let worst: Vec<(String, Worst)> = live
+        .iter()
+        .map(|(a, _, w)| (a.code.clone(), w.clone()))
         .chain(
             i.osv
                 .iter()
                 .map(|w| ("an OSV advisory".to_string(), w.clone())),
         )
         .collect();
-    let points: u32 = worst.iter().map(|(_, w)| advisory_points(w.band)).sum();
-    if !worst.is_empty() {
-        s.add(
-            points.min(ADVISORY_CAP),
-            format!(
-                "{} open advisor{}",
-                worst.len(),
-                if worst.len() == 1 { "y" } else { "ies" }
-            ),
-        );
-    }
     // exploitation and likelihood count once, on the worst advisory
     if let Some((id, _)) = worst
         .iter()
@@ -130,7 +212,6 @@ pub fn score(h: &Health, i: &Input) -> Score {
             ),
         );
     }
-    let p = i.package;
     if let Some(f) = &p.facts {
         if f.insecure {
             s.add(15, "marked insecure: meta.knownVulnerabilities".into());
@@ -191,7 +272,7 @@ mod tests {
             &h,
             &Input {
                 package: &p,
-                advisories: &[&a],
+                advisories: &[(&a, &Verdict::Affects)],
                 osv: &[Worst::default()],
                 upstream: Some("2.0"),
                 hygiene: Some(&["no meta.homepage"]),
@@ -201,6 +282,76 @@ mod tests {
         assert_eq!(s.risk, 79);
         assert_eq!(s.reasons.iter().map(|r| r.points).sum::<u32>(), s.risk);
         assert_eq!(s.band(), "critical");
+    }
+
+    fn advisory_risk(v: Verdict) -> Score {
+        let mut h = Health::default();
+        h.cves.insert(
+            "CVE-1".into(),
+            Cve {
+                band: Some(Band::Critical),
+                ..Default::default()
+            },
+        );
+        let a = Advisory {
+            code: "NIXPKGS-2026-2615".into(),
+            cves: vec!["CVE-1".into()],
+            title: "unbound: security issues < 1.26.1".into(),
+            issue: Some(564154),
+            ranges: vec![],
+        };
+        let p = Package {
+            pname: "unbound".into(),
+            version: "1.26.1".into(),
+            maintainers: vec!["alice".into()],
+            ..Default::default()
+        };
+        score(
+            &h,
+            &Input {
+                package: &p,
+                advisories: &[(&a, &v)],
+                osv: &[],
+                upstream: None,
+                hygiene: Some(&[]),
+            },
+        )
+    }
+
+    #[test]
+    fn an_advisory_fixed_everywhere_scores_nothing() {
+        let s = advisory_risk(Verdict::Fixed {
+            fixed_in: Some("1.26.1".into()),
+        });
+        assert_eq!(s.risk, 0);
+        assert!(s.reasons.is_empty());
+    }
+
+    #[test]
+    fn an_advisory_fixed_only_in_master_scores_half_and_names_the_channel() {
+        let s = advisory_risk(Verdict::Behind {
+            fixed_in: Some("1.26.1".into()),
+            channels: vec![crate::affected::Lag {
+                channel: "nixos-26.05".into(),
+                version: "1.25.0".into(),
+                stable: true,
+            }],
+        });
+        assert_eq!(s.risk, 20);
+        assert_eq!(
+            s.reasons[0].text,
+            "1 advisory fixed in master, still in nixos-26.05"
+        );
+    }
+
+    #[test]
+    fn an_advisory_with_an_unknown_range_keeps_its_points() {
+        let s = advisory_risk(Verdict::Unknown);
+        assert_eq!(s.risk, 40);
+        assert_eq!(s.reasons[0].text, "1 open advisory, range unknown");
+        let s = advisory_risk(Verdict::Affects);
+        assert_eq!(s.risk, 40);
+        assert_eq!(s.reasons[0].text, "1 open advisory affects 1.26.1");
     }
 
     #[test]

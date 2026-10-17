@@ -766,8 +766,16 @@ fn packages_section(app: &App) -> String {
             p.with_advisories,
             "with open advisories",
             &format!(
-                "worst: {} critical, {} high, {} medium, {} low, {} with no score",
-                b.critical, b.high, b.medium, b.low, b.unscored
+                "that can affect master; worst: {} critical, {} high, {} medium, {} low, {} with no score. \
+                 {} more are fixed in master but not yet in a channel; \
+                 <a href=\"#tracker-issues-to-close\">{} tracker issues</a> are fixed everywhere",
+                b.critical,
+                b.high,
+                b.medium,
+                b.low,
+                b.unscored,
+                p.fixed_in_master_only,
+                p.tracker_issues_to_close.len()
             )
         ),
         stat(
@@ -792,6 +800,45 @@ fn packages_section(app: &App) -> String {
             }
         ),
     );
+    out.push_str(&to_close_section(&p.tracker_issues_to_close));
+    out
+}
+
+fn to_close_section(list: &[crate::catalog::ToClose]) -> String {
+    let mut out = String::from(
+        "<h2 class=\"f4 mt-4 mb-2\" id=\"tracker-issues-to-close\">Tracker issues to close</h2>\
+         <p class=\"f6 color-fg-muted\">The nixpkgs issue of these security tracker advisories is still open, \
+         but master and every channel read already ship a version outside the affected range. \
+         Check the fix, then close the issue. <code>GET /api/v1/metrics</code> gives the list under \
+         <code>packages.tracker_issues_to_close</code>.</p>",
+    );
+    if list.is_empty() {
+        out.push_str("<p class=\"color-fg-muted\">None.</p>");
+        return out;
+    }
+    let rows: Vec<Vec<String>> = list
+        .iter()
+        .map(|t| {
+            vec![
+                format!("<a href=\"/p/{0}\">{0}</a>", esc(&t.attr)),
+                format!(
+                    "<a href=\"https://tracker.security.nixos.org/issue/{0}\">{0}</a> {1}",
+                    esc(&t.code),
+                    esc(&t.title)
+                ),
+                esc(t.fixed_in.as_deref().unwrap_or("–")),
+                esc(&t.version),
+                format!(
+                    "<a href=\"https://github.com/NixOS/nixpkgs/issues/{0}\">#{0}</a>",
+                    t.issue
+                ),
+            ]
+        })
+        .collect();
+    out.push_str(&table(
+        &["package", "advisory", "fixed in", "master", "issue"],
+        &rows,
+    ));
     out
 }
 
