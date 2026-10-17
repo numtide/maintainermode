@@ -65,6 +65,8 @@ pub(crate) struct Page {
     pub body: String,
     /// The body brings its own `h1`.
     pub no_header: bool,
+    /// HTML for the `h1` in place of the escaped title.
+    pub heading: String,
 }
 
 impl Page {
@@ -103,6 +105,11 @@ impl Page {
 
     pub(crate) fn no_header(mut self) -> Self {
         self.no_header = true;
+        self
+    }
+
+    pub(crate) fn heading(mut self, html: impl Into<String>) -> Self {
+        self.heading = html.into();
         self
     }
 
@@ -213,11 +220,16 @@ fn updated(app: &App) -> String {
     }
 }
 
-pub(crate) fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
+fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     let head = if p.no_header {
         String::new()
     } else {
-        page_header(p.icon, &esc(&p.title), &p.sub, &p.actions)
+        let h1 = if p.heading.is_empty() {
+            esc(&p.title)
+        } else {
+            p.heading.clone()
+        };
+        page_header(p.icon, &h1, &p.sub, &p.actions)
     };
     let title = if p.title.is_empty() || p.title == "Maintainer Mode" {
         "Maintainer Mode".to_string()

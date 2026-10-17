@@ -721,13 +721,6 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
     )
 }
 
-pub(crate) fn head(title: &str, sub: &str, button: &str) -> String {
-    format!(
-        "<div class=\"Subhead d-flex flex-items-center\"><div class=\"flex-auto\"><h1 class=\"Subhead-heading\">{title}</h1>\
-         <div class=\"Subhead-description\">{sub}</div></div><div>{button}</div></div>"
-    )
-}
-
 fn build_row(label: &str, job: &str, last: &Last) -> String {
     let link = format!("<a href=\"{}\">{}</a>", esc(&Hydra::job_url(job)), esc(job));
     let body = match last {

@@ -4,14 +4,15 @@
 
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::Html;
+use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::fmt::Write;
 
-use crate::web::{App, Shared, ago, esc, page};
+use crate::ui::{Page, Section, kv};
+use crate::web::{App, Shared, ago, esc};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -232,12 +233,6 @@ fn done(v: &Value, yes: &str, no: &str) -> String {
     }
 }
 
-fn row(k: &str, v: &str) -> String {
-    format!(
-        "<div class=\"Box-row d-flex\"><div class=\"text-bold\" style=\"min-width:180px\">{k}</div><div class=\"flex-auto\">{v}</div></div>"
-    )
-}
-
 /// The health sources that report a pass: key, row label, what they read.
 const SOURCES: [(&str, &str, &str); 6] = [
     (
@@ -298,22 +293,18 @@ fn minutes(s: i64) -> String {
     }
 }
 
-async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
     let v = state(&app);
-    let mut out = String::from(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Sync status</h1>\
-         <div class=\"Subhead-description\">What this server has read from GitHub and the other sources, and how fresh it is. \
-         The same data is at <a href=\"/api/v1/sync\">/api/v1/sync</a>.</div></div>",
-    );
+    let mut out = String::new();
     let p = &v["pull_requests"];
     let i = &v["issues"];
     let x = &v["index"];
     let h = &v["health"];
     let e = &v["events"];
     let pass = &v["passes"];
-    out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">GitHub</div>");
-    out.push_str(&row(
+    out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">GitHub</h2></div>");
+    out.push_str(&kv(
         "Pull requests",
         &format!(
             "{} stored · {} · updates read up to {}",
@@ -326,7 +317,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             when(&p["up_to"])
         ),
     ));
-    out.push_str(&row(
+    out.push_str(&kv(
         "Issues",
         &format!(
             "{} stored · {} · updates read up to {}",
@@ -339,7 +330,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             when(&i["up_to"])
         ),
     ));
-    out.push_str(&row(
+    out.push_str(&kv(
         "History since 2020",
         &done(
             &v["history"]["done"],
@@ -347,7 +338,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             "still walking back; the state of nixpkgs fills in as it goes",
         ),
     ));
-    out.push_str(&row(
+    out.push_str(&kv(
         "Tokens",
         &format!(
             "{} · {} lent by people who signed in",
@@ -359,7 +350,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             v["tokens"]["lent"]
         ),
     ));
-    out.push_str(&row(
+    out.push_str(&kv(
         "Passes",
         &format!(
             "one every {} · the last took {} and ended {}",
@@ -371,8 +362,8 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             when(&pass["last_ended"])
         ),
     ));
-    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header text-bold\">nixpkgs and package health</div>");
-    out.push_str(&row(
+    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>");
+    out.push_str(&kv(
         "Index",
         &format!(
             "<code>{}</code> · {} packages, {} NixOS modules, {} teams · built {}",
@@ -388,7 +379,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     for c in v["channels"]["list"].as_array().into_iter().flatten() {
-        out.push_str(&row(
+        out.push_str(&kv(
             &format!("Channel {}", esc(c["channel"].as_str().unwrap_or(""))),
             &match c["rev"].as_str() {
                 Some(rev) => format!(
@@ -401,7 +392,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             },
         ));
     }
-    out.push_str(&row(
+    out.push_str(&kv(
         "Upstream versions",
         &format!(
             "repology, read {} · {} attributes behind upstream",
@@ -409,7 +400,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             h["outdated"]
         ),
     ));
-    out.push_str(&row(
+    out.push_str(&kv(
         "Advisories",
         &format!(
             "security tracker, read {} · {} attributes with advisories",
@@ -418,7 +409,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     let pk = &v["packaging"];
-    out.push_str(&row(
+    out.push_str(&kv(
         "Packaging hygiene",
         &if pk["checked"].as_u64().unwrap_or(0) == 0 {
             "from the index sweep, no network · the next index reads it".to_string()
@@ -430,9 +421,9 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         },
     ));
     for (key, label, what) in SOURCES {
-        out.push_str(&row(label, &source(&h["sources"][key], what)));
+        out.push_str(&kv(label, &source(&h["sources"][key], what)));
     }
-    out.push_str(&row(
+    out.push_str(&kv(
         "Health task",
         &format!(
             "its own task, one pass every {}: a slow source does not delay the GitHub sync",
@@ -440,7 +431,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     let hy = &v["hydra"];
-    out.push_str(&row(
+    out.push_str(&kv(
         "Hydra builds",
         &format!(
             "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
@@ -449,7 +440,7 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     let r = &v["rescans"];
-    out.push_str(&row(
+    out.push_str(&kv(
         "Flake rescans",
         &if r["enabled"].as_bool() == Some(true) {
             format!(
@@ -464,9 +455,9 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         },
     ));
     out.push_str(
-        "</div><div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Event log</div>",
+        "</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Event log</h2></div>",
     );
-    out.push_str(&row(
+    out.push_str(&kv(
         "Events",
         &format!(
             "{} stored · newest from {} · {}",
@@ -480,8 +471,8 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
         ),
     ));
     let m = &v["email"];
-    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Email</div>");
-    out.push_str(&row(
+    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Email</h2></div>");
+    out.push_str(&kv(
         "Notification emails",
         &if m["enabled"].as_bool() == Some(true) {
             let skipped = m["skipped_24h"].as_u64().unwrap_or(0);
@@ -504,20 +495,17 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
     out.push_str("</div>");
     if let Some(list) = v["archive"].as_array().filter(|l| !l.is_empty()) {
         out.push_str(
-            "<div class=\"Box mb-4\" id=\"archive\"><div class=\"Box-header text-bold\">Archive of issues and pull requests</div>",
+            "<div class=\"Box mb-4\" id=\"archive\"><div class=\"Box-header\"><h2 class=\"Box-title\">Archive of issues and pull requests</h2></div>",
         );
         for a in list {
-            out.push_str(&row(
-                &esc(a["repo"].as_str().unwrap_or("")),
-                &archive_row(a),
-            ));
+            out.push_str(&kv(&esc(a["repo"].as_str().unwrap_or("")), &archive_row(a)));
         }
         out.push_str("</div>");
     }
     let worst = pass["worst_delay_seconds"].as_i64();
     let _ = write!(
         out,
-        "<div class=\"Box\"><div class=\"Box-header text-bold\">Faster with forwarded events</div><div class=\"Box-row\">\
+        "<div class=\"Box\"><div class=\"Box-header\"><h2 class=\"Box-title\">Faster with forwarded events</h2></div><div class=\"Box-row\">\
          <p>Today this server polls. A review, push or merge on GitHub shows here after the next pass: \
          up to <strong>{}</strong> later{}. The Events API keeps only the last 300 events, so a busy hour loses some until \
          GH Archive brings them, about an hour later.</p>\
@@ -541,5 +529,11 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             ""
         },
     );
-    page(&app, viewer.as_deref(), "", &out)
+    Page::new(Section::Nixpkgs, "Data status")
+        .sub(
+            "What this server has read from GitHub and the other sources, and how fresh it is. \
+             The same data is at <a href=\"/api/v1/sync\">/api/v1/sync</a>.",
+        )
+        .body(out)
+        .render(&app, viewer.as_deref())
 }
