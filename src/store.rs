@@ -116,6 +116,9 @@ impl Store {
                created_at TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS mail_log (login TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL);
+             CREATE INDEX IF NOT EXISTS mail_log_at ON mail_log (at);
+             CREATE INDEX IF NOT EXISTS mail_log_own ON mail_log (login, kind, at);
+             CREATE TABLE IF NOT EXISTS mail_skip (hour TEXT PRIMARY KEY, n INTEGER NOT NULL);
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -664,6 +667,10 @@ pub struct FlakeRef {
     pub nixpkgs_rev: Option<String>,
 }
 
+fn mail_hour(at: DateTime<Utc>) -> String {
+    at.format("%Y-%m-%dT%H").to_string()
+}
+
 fn time_of(s: Option<String>) -> Option<DateTime<Utc>> {
     s.and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
         .map(|t| t.with_timezone(&Utc))
@@ -951,7 +958,8 @@ impl Store {
 
     /// Logs an email of `kind` when it fits under both limits of the 24
     /// hours before `now`: `total_max` for the server, `own_max` for this
-    /// login and kind. A refused email is logged as skipped, with no login.
+    /// login and kind. A refused email only adds one to the skip count of
+    /// its hour, so refusals cannot grow the tables.
     pub fn take_mail_slot(
         &self,
         login: &str,
@@ -962,12 +970,11 @@ impl Store {
     ) -> Result<bool> {
         let conn = self.conn.lock().unwrap();
         let since = (now - chrono::Duration::days(1)).to_rfc3339();
-        conn.execute(
-            "DELETE FROM mail_log WHERE at < ?1",
-            [(now - chrono::Duration::days(2)).to_rfc3339()],
-        )?;
+        let old = now - chrono::Duration::days(2);
+        conn.execute("DELETE FROM mail_log WHERE at < ?1", [old.to_rfc3339()])?;
+        conn.execute("DELETE FROM mail_skip WHERE hour < ?1", [mail_hour(old)])?;
         let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mail_log WHERE kind != 'skipped' AND at >= ?1",
+            "SELECT COUNT(*) FROM mail_log WHERE at >= ?1",
             [&since],
             |r| r.get(0),
         )?;
@@ -977,22 +984,34 @@ impl Store {
             |r| r.get(0),
         )?;
         let fits = (total as usize) < total_max && (own as usize) < own_max;
-        let (who, what) = if fits { (login, kind) } else { ("", "skipped") };
-        conn.execute(
-            "INSERT INTO mail_log (login, kind, at) VALUES (?1, ?2, ?3)",
-            [who, what, &now.to_rfc3339()],
-        )?;
+        if fits {
+            conn.execute(
+                "INSERT INTO mail_log (login, kind, at) VALUES (?1, ?2, ?3)",
+                [login, kind, &now.to_rfc3339()],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO mail_skip (hour, n) VALUES (?1, 1)
+                 ON CONFLICT(hour) DO UPDATE SET n = n + 1",
+                [mail_hour(now)],
+            )?;
+        }
         Ok(fits)
     }
 
-    /// Emails sent and skipped since `since`, for /sync.
+    /// Emails sent since `since`, and emails skipped since the start of
+    /// its hour, for /sync.
     pub fn mail_counts(&self, since: DateTime<Utc>) -> Result<(usize, usize)> {
         let conn = self.conn.lock().unwrap();
-        let (sent, skipped): (i64, i64) = conn.query_row(
-            "SELECT COUNT(*) FILTER (WHERE kind != 'skipped'), COUNT(*) FILTER (WHERE kind = 'skipped')
-             FROM mail_log WHERE at >= ?1",
+        let sent: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mail_log WHERE at >= ?1",
             [since.to_rfc3339()],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| r.get(0),
+        )?;
+        let skipped: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(n), 0) FROM mail_skip WHERE hour >= ?1",
+            [mail_hour(since)],
+            |r| r.get(0),
         )?;
         Ok((sent as usize, skipped as usize))
     }
@@ -1003,5 +1022,32 @@ impl Store {
             "DELETE FROM mail_confirm WHERE created_at < ?1",
             [before.to_rfc3339()],
         )?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refused_emails_add_no_rows() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = Utc::now();
+        assert!(s.take_mail_slot("alice", "confirm", 10, 1, now).unwrap());
+        for _ in 0..50 {
+            assert!(!s.take_mail_slot("alice", "confirm", 10, 1, now).unwrap());
+        }
+        let rows = |table: &str| -> i64 {
+            s.conn
+                .lock()
+                .unwrap()
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!((rows("mail_log"), rows("mail_skip")), (1, 1));
+        assert_eq!(
+            s.mail_counts(now - chrono::Duration::days(1)).unwrap(),
+            (1, 50)
+        );
     }
 }

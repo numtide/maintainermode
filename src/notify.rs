@@ -1460,6 +1460,10 @@ mod tests {
         assert!(!take("carol", Mail::Digest, now));
         assert!(!take("carol", Mail::Confirm, now));
         assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 3));
+        for _ in 0..100 {
+            assert!(!take("alice", Mail::Confirm, now));
+        }
+        assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 103));
         assert!(take("alice", Mail::Confirm, now + Duration::hours(25)));
     }
 
