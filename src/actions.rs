@@ -19,8 +19,9 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/actions", get(actions_page))
         .route("/me/settings/workflows", post(save_settings))
-        .route("/actions/review", post(start_review))
-        .route("/actions/update", post(start_update))
+        .route("/me/runs", get(runs_page))
+        .route("/me/runs/review", post(start_review))
+        .route("/me/runs/update", post(start_update))
 }
 
 pub struct Repos {
@@ -75,7 +76,7 @@ impl Act {
 /// A small button for a pull request row.
 pub fn review_button(number: u64) -> String {
     format!(
-        "<form method=\"post\" action=\"/actions/review\" class=\"d-inline ml-2\">\
+        "<form method=\"post\" action=\"/me/runs/review\" class=\"d-inline ml-2\">\
          <input type=\"hidden\" name=\"pr\" value=\"{number}\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"run nixpkgs-review in your GitHub Actions\">Review in CI</button></form>"
     )
@@ -84,7 +85,7 @@ pub fn review_button(number: u64) -> String {
 /// The update form for a package page, prefilled with the upstream release.
 pub fn update_form(attr: &str, version: Option<&str>) -> String {
     format!(
-        "<form method=\"post\" action=\"/actions/update\" class=\"d-flex flex-items-center gap-2\">\
+        "<form method=\"post\" action=\"/me/runs/update\" class=\"d-flex flex-items-center gap-2\">\
          <input type=\"hidden\" name=\"attr\" value=\"{a}\">\
          <input class=\"form-control input-sm input-narrow\" name=\"version\" value=\"{v}\" placeholder=\"newest\" aria-label=\"version\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"run nix-update in your GitHub Actions\">Update with nix-update</button></form>",
@@ -185,18 +186,41 @@ async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &s
         .collect()
 }
 
+const DOCS: &str = "https://github.com/numtide/maintainermode/blob/main/docs/actions.md";
+
+const WHAT: &str = "Run nixpkgs-review on a pull request, or nix-update on a package, in GitHub Actions of a repository you own. \
+     Maintainer Mode starts the workflow with your token when you press a button; the workflow acts as you. \
+     It never writes to nixpkgs itself.";
+
+/// Signed in, the runs are on `/me/runs`. Signed out, a short page says
+/// what the buttons do.
 async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
+    if app.viewer(&headers).is_some() {
+        return Redirect::to("/me/runs").into_response();
+    }
+    let sign_in = if app.oauth.is_some() {
+        "<a class=\"btn btn-primary\" href=\"/auth/login\">Sign in with GitHub</a> "
+    } else {
+        ""
+    };
+    Page::new(Section::Home, "Actions")
+        .icon(octicon!("play"))
+        .sub(WHAT)
+        .body(format!(
+            "<div class=\"blankslate\"><p>Sign in to run workflows. Your runs are then in the menu, under Runs.</p>\
+             <p>{sign_in}<a class=\"btn\" href=\"{DOCS}\">How to set it up</a></p></div>"
+        ))
+        .render(&app, None)
+}
+
+async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
-    let page = Page::new(Section::Home, "Actions").icon(octicon!("play")).sub(
-        "Run nixpkgs-review on a pull request, or nix-update on a package, in GitHub Actions of a repository you own. \
-         Maintainer Mode starts the workflow with your token when you press a button; the workflow acts as you. \
-         It never writes to nixpkgs itself.",
-    );
+    let page = Page::new(Section::Home, "Runs")
+        .icon(octicon!("play"))
+        .sub(WHAT);
     let mut out = String::new();
     let Some(login) = viewer.as_deref() else {
-        return page
-            .body("<div class=\"blankslate\"><p>Sign in to run workflows.</p></div>")
-            .render(&app, None);
+        return Redirect::to("/auth/login").into_response();
     };
     if let Some(m) = take_flash(&app, login) {
         let _ = write!(out, "<div class=\"flash mb-3\">{}</div>", esc(&m));
@@ -208,7 +232,7 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
         esc(&r.update)
     )));
     out.push_str(
-        "<form method=\"post\" action=\"/actions/review\" class=\"inline-form mb-4\">\
+        "<form method=\"post\" action=\"/me/runs/review\" class=\"inline-form mb-4\">\
          <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
          <button class=\"btn btn-primary\" type=\"submit\">Review in CI</button></form>",
     );
@@ -260,7 +284,7 @@ pub fn repos_box(app: &App, login: &str) -> String {
                  <form method=\"post\" action=\"/me/settings/workflows\">\
                  <label class=\"f6\" for=\"review_repo\">Your fork of <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, with <code>review.yml</code></label>\
                  <input class=\"form-control width-full mb-2\" id=\"review_repo\" name=\"review_repo\" value=\"{}\">\
-                 <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/actions.md\">docs/actions.md</a>); the same one works</label>\
+                 <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see <a href=\"{DOCS}\">docs/actions.md</a>); the same one works</label>\
                  <input class=\"form-control width-full mb-2\" id=\"update_repo\" name=\"update_repo\" value=\"{}\">\
                  <label class=\"f6\" for=\"nixpkgs_fork\">Your fork of nixpkgs, where updates push their branch</label>\
                  <input class=\"form-control width-full mb-2\" id=\"nixpkgs_fork\" name=\"nixpkgs_fork\" value=\"{}\">\
@@ -330,7 +354,7 @@ async fn start_review(
         Err(e) => format!("Could not start nixpkgs-review of #{pr}: {e:#}"),
     };
     flash(&app, &login, &msg);
-    Redirect::to("/actions").into_response()
+    Redirect::to("/me/runs").into_response()
 }
 
 #[derive(Deserialize)]
@@ -374,12 +398,31 @@ async fn start_update(
         Err(e) => format!("Could not start nix-update of {attr}: {e:#}"),
     };
     flash(&app, &login, &msg);
-    Redirect::to("/actions").into_response()
+    Redirect::to("/me/runs").into_response()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn actions_sends_a_person_to_their_runs() {
+        let app = crate::sets::tests::app(&[]);
+        let r = actions_page(State(app.clone()), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let r = runs_page(State(app.clone()), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        let h = crate::notify::tests::signed_in(&app, "alice");
+        let r = actions_page(State(app.clone()), h).await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        assert_eq!(r.headers()["location"], "/me/runs");
+    }
+
+    #[test]
+    fn the_buttons_post_under_me() {
+        assert!(review_button(1).contains("action=\"/me/runs/review\""));
+        assert!(update_form("hello", None).contains("action=\"/me/runs/update\""));
+    }
 
     #[test]
     fn an_update_row_tells_the_four_cases_apart() {

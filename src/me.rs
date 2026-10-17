@@ -10,13 +10,12 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use serde::Deserialize;
 
-use crate::ui::{Page, Section, Tab, section};
+use crate::ui::{Page, Section, Tab};
 use crate::web::{Shared, octicon};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/me", get(me_page))
-        .route("/me/runs", get(runs_page))
         .route("/me/settings", get(settings_page))
         .route(
             "/watch",
@@ -90,17 +89,6 @@ async fn settings_page(
         .subnav(jump)
         .body(body)
         .render(&app, Some(&login))
-}
-
-fn links(list: &[(&str, &str, &str)]) -> String {
-    list.iter()
-        .map(|(href, label, what)| {
-            format!(
-                "<div class=\"Box-row\"><a class=\"text-bold\" href=\"{href}\">{label}</a>\
-                 <div class=\"f6 color-fg-muted\">{what}</div></div>"
-            )
-        })
-        .collect()
 }
 
 /// What one tab of `/me` adds to the page. `sub`, `actions` and `body` are
@@ -190,27 +178,6 @@ async fn me_page(
         .subnav(tabs)
         .actions(t.actions)
         .body(t.body)
-        .render(&app, Some(&login))
-}
-
-async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let body = section(
-        "Workflow runs",
-        None,
-        None,
-        &links(&[(
-            "/actions",
-            "Actions",
-            "Your nixpkgs-review and nix-update runs, and the repositories they run in.",
-        )]),
-    );
-    Page::new(Section::Home, "Runs")
-        .icon(octicon!("play"))
-        .sub("The workflows you started in your own repositories.")
-        .body(body)
         .render(&app, Some(&login))
 }
 
