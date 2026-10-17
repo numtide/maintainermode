@@ -14,6 +14,7 @@ mod dossier;
 mod e2e;
 mod eval;
 mod events;
+mod followup;
 mod github;
 mod github_app;
 mod health;

@@ -139,6 +139,20 @@ impl Store {
                key TEXT NOT NULL,
                at TEXT NOT NULL,
                PRIMARY KEY (session, key)
+             );
+             CREATE TABLE IF NOT EXISTS followup (
+               login TEXT NOT NULL,
+               number INTEGER NOT NULL,
+               days INTEGER NOT NULL,
+               action TEXT NOT NULL,
+               since TEXT NOT NULL,
+               PRIMARY KEY (login, number)
+             );
+             CREATE TABLE IF NOT EXISTS mail_once (
+               login TEXT NOT NULL,
+               id TEXT NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (login, id)
              );",
         )?;
         let versions: i64 = conn.query_row(
@@ -1124,9 +1138,147 @@ impl Store {
     }
 }
 
+/// One row of `followup`: what the author of a pull request wants when
+/// nobody reviews it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FollowUp {
+    pub number: u64,
+    pub days: u32,
+    pub action: String,
+    pub since: DateTime<Utc>,
+}
+
+impl Store {
+    /// `since` stays from the first save, so a change of the action does
+    /// not move the deadline.
+    pub fn set_followup(
+        &self,
+        login: &str,
+        number: u64,
+        days: u32,
+        action: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO followup (login, number, days, action, since) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(login, number) DO UPDATE SET days = excluded.days, action = excluded.action",
+            params![login, number as i64, days, action, now.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_followup(&self, login: &str, number: u64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM followup WHERE login = ?1 AND number = ?2",
+            params![login, number as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn followups(&self, login: &str) -> Result<Vec<FollowUp>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT number, days, action, since FROM followup WHERE login = ?1 ORDER BY number",
+        )?;
+        let rows = stmt.query_map([login], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (number, days, action, since) = row?;
+            let Some(since) = time_of(Some(since)) else {
+                continue;
+            };
+            out.push(FollowUp {
+                number: number as u64,
+                days: days.clamp(0, u32::MAX as i64) as u32,
+                action,
+                since,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Plans of pull requests that are no longer in the synced data.
+    pub fn purge_followups(&self, keep: &[u64]) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let all: Vec<i64> = {
+            let mut stmt = tx.prepare("SELECT DISTINCT number FROM followup")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut n = 0;
+        for number in all.into_iter().filter(|x| !keep.contains(&(*x as u64))) {
+            n += tx.execute("DELETE FROM followup WHERE number = ?1", [number])?;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+
+    /// True the first time `id` is marked for `login`: an event that gets
+    /// its own email gets it once.
+    pub fn mail_once(&self, login: &str, id: &str, now: DateTime<Utc>) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM mail_once WHERE at < ?1",
+            [(now - chrono::Duration::days(45)).to_rfc3339()],
+        )?;
+        Ok(conn.execute(
+            "INSERT OR IGNORE INTO mail_once (login, id, at) VALUES (?1, ?2, ?3)",
+            params![login, id, now.to_rfc3339()],
+        )? == 1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_followup_keeps_its_first_time_and_goes_with_its_pull_request() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let t0: DateTime<Utc> = "2026-10-17T12:00:00Z".parse().unwrap();
+        let t1 = t0 + chrono::Duration::days(2);
+        s.set_followup("alice", 1, 7, "merge", t0).unwrap();
+        s.set_followup("alice", 1, 3, "ask", t1).unwrap();
+        s.set_followup("alice", 2, 5, "none", t1).unwrap();
+        s.set_followup("bob", 1, 9, "ask", t1).unwrap();
+        let a = s.followups("alice").unwrap();
+        assert_eq!(
+            a[0],
+            FollowUp {
+                number: 1,
+                days: 3,
+                action: "ask".into(),
+                since: t0
+            }
+        );
+        assert_eq!(a.len(), 2);
+        s.delete_followup("alice", 2).unwrap();
+        assert_eq!(s.followups("alice").unwrap().len(), 1);
+        assert_eq!(s.purge_followups(&[2]).unwrap(), 2);
+        assert!(s.followups("alice").unwrap().is_empty());
+        assert!(s.followups("bob").unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_event_mail_is_marked_once() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = Utc::now();
+        assert!(s.mail_once("alice", "mine-1-merged", now).unwrap());
+        assert!(!s.mail_once("alice", "mine-1-merged", now).unwrap());
+        assert!(s.mail_once("bob", "mine-1-merged", now).unwrap());
+        let later = now + chrono::Duration::days(46);
+        assert!(s.mail_once("alice", "mine-1-merged", later).unwrap());
+    }
 
     #[test]
     fn refused_emails_add_no_rows() {
