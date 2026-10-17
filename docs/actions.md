@@ -18,12 +18,15 @@ token, when you press a button. Nothing runs on the Maintainer Mode host.
   [nix-update](https://github.com/Mic92/nix-update): clone nixpkgs, run
   nix-update (the package's `updateScript` when it has one and no version is
   given), build the package, and push `update/<attr>` to your nixpkgs fork.
-  **The branch is pushed whether the build passes or not**, so a failed update
-  is a branch to keep working on. It never opens a pull request: the run and
+  When nix-update changes something, the workflow pushes the branch. **It pushes the branch whether the build passes or not**, so a failed update is a branch to keep working on. When nix-update changes nothing, the package is already up to date. The run then passes, its summary says "already up to date", and the workflow pushes no branch.
+  It never opens a pull request: the run and
   `/actions` link the page where you open one. A second job pushes the branch.
   Only that job gets `GH_TOKEN`, and it runs no code from nixpkgs or upstream.
-- `/actions` lists your recent runs of both workflows, and the branch of each
-  update.
+- `/actions` lists your recent runs of both workflows. For the last run of each attribute, it reads the jobs of the run and shows one of these results:
+  - **Open a pull request**: the update and the build passed, and the branch is on your fork.
+  - **See the branch, keep working**: the branch is on your fork, but the update or the build failed.
+  - **already up to date**: nix-update changed nothing, so the workflow pushed no branch.
+  - **no branch was pushed**: the run failed before it changed anything.
 
 To set it up:
 
@@ -36,6 +39,18 @@ To set it up:
    start a workflow.
 4. Check the repository names on `/actions`. They default to
    `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
+
+### Move the pin of the reusable workflow
+
+### Move the pin of the reusable workflow
+
+`gha/update.yml` calls the reusable workflow at a full commit SHA, not at `main`. A change on `main` therefore does not run with your `GH_TOKEN` until you move the pin. To move the pin:
+
+1. Find the newest commit that changes the reusable workflow: `gh api 'repos/numtide/maintainermode/commits?path=.github/workflows/update.yml&per_page=1' --jq '.[0].sha'`.
+2. Read the change at that commit.
+3. In `.github/workflows/update.yml` of your workflow repository, put the new SHA after `@` on the `uses:` line.
+4. Change the comment after the SHA to `# main of <date>`, with the date of that commit on `main`.
+5. Run `nix run nixpkgs#actionlint` on the file, then commit it.
 
 ## LLMs, if you want them
 

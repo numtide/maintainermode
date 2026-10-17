@@ -181,3 +181,23 @@ An empty list turns the archive off.
   intent. A title that names no package and touches no file of it is missed.
 - Bot authors (`r-ryantm` among them) are never listed, so their pull requests
   do not appear.
+
+## The pull request page
+
+`/pr/<number>` shows one nixpkgs pull request in Maintainer Mode. Links to pull requests across the site open this page. A small GitHub icon next to each title opens GitHub.
+
+- **From the synced data.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the review credit, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
+- **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the sync token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
+- **The conversation.** The description, the reviews, the inline comments and the comments come from the archive when it has a copy. If the copy is not current, one GraphQL query reads the first 100 of each kind. The page shows the latest 300 reviews and comments. A link opens the rest on GitHub.
+- **Who makes the server read GitHub.** Only signed-in people do. Anonymous visitors and the API get the cache or the archive copy. If neither has the data, they get a note and a link to GitHub.
+- **Budget.** The sync comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
+- **Cache.** The server keeps the files per head commit and the conversation per update. It keeps them in memory only, up to 32 MB. A restart clears them.
+- **Crawlers.** `/robots.txt` tells crawlers to stay off `/pr/` and `/api/v1/prs/`.
+- **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
+- **To act**, use "Review on GitHub" or "Open on GitHub". Maintainer Mode posts nothing on nixpkgs.
+- A pull request that is not in the synced data gets a short page with a link to GitHub.
+- `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request that is not synced gets 404 and `{"error": …, "url": …}`.
+
+```sh
+curl https://<host>/api/v1/prs/123456
+```
