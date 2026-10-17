@@ -36,6 +36,7 @@ let
     "git-pull-request-closed"
     "skip"
     "play"
+    "home"
     "key"
     "versions"
     "flame"

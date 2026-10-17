@@ -192,7 +192,8 @@ pub(crate) type Shared = Arc<App>;
 
 pub fn router(app: Shared) -> Router {
     Router::new()
-        .route("/", get(merge_page))
+        .route("/merge", get(merge_page))
+        .merge(crate::home::routes())
         .route("/review", get(review_page))
         .route("/record", get(record_page))
         .route("/rules", get(rules_page))
@@ -294,9 +295,10 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
         .map(|w| w.len().to_string())
         .unwrap_or_default();
     let mut tabs = vec![
+        ("home", "/", icon(octicon!("home")), "Home", String::new()),
         (
             "merge",
-            "/",
+            "/merge",
             icon(octicon!("git-merge")),
             "Ready to merge",
             s.queues.merge.len().to_string(),
@@ -534,13 +536,8 @@ async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let entries: Vec<&Entry> = s.queues.merge.iter().collect();
-    let intro = if viewer.is_none() {
-        crate::welcome::intro(&app, &headers)
-    } else {
-        String::new()
-    };
     let body = format!(
-        "{intro}<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
+        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
          <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
          Ordered by the author's credit, so people who review rise. Work it from the top. \
          <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a></div></div>{}",

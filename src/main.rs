@@ -12,6 +12,7 @@ mod events;
 mod github;
 mod github_app;
 mod health;
+mod home;
 mod hygiene;
 mod ledger;
 mod links;
