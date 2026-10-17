@@ -21,7 +21,9 @@ const REPOLOGY_REPO: &str = "nix_unstable";
 const REPOLOGY_PAUSE: Duration = Duration::from_millis(1100);
 const REPOLOGY_PAGES: usize = 100;
 const TRACKER: &str = "https://tracker.security.nixos.org/api/v1/issues";
-const TRACKER_PAGES: usize = 200;
+/// The tracker ignores `limit` and sends 10 issues a page: 3094 issues on
+/// 2026-10-17 are 310 pages, about 13 minutes a day with the pause.
+const TRACKER_PAGES: usize = 400;
 /// The tracker answers 429 after about 30 quick pages.
 const TRACKER_PAUSE: Duration = Duration::from_millis(2500);
 const HYDRA: &str = "https://hydra.nixos.org";
