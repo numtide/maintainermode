@@ -1094,9 +1094,9 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
             None => format!("{:.2}", c.value),
             Some(Dropped::DailyCap) => "over the daily cap".into(),
             Some(Dropped::Voided { by, url }) => format!(
-                "<a class=\"Label Label--danger\" href=\"{}\">voided by {}</a>",
+                "<a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
                 esc(url),
-                esc(by)
+                crate::web::person_link(by)
             ),
         };
         let _ = write!(

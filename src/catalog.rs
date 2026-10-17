@@ -619,7 +619,7 @@ fn issue_row(i: &Issue) -> String {
         &format!(
             "#{} by {} · {when} · {} comments",
             i.number,
-            esc(&i.author),
+            crate::web::person_link(&i.author),
             i.comments
         ),
         &labels,
@@ -685,7 +685,7 @@ fn people_links(logins: &[String]) -> String {
     }
     logins
         .iter()
-        .map(|l| format!("<a href=\"/u/{0}/maintains\">{0}</a>", esc(l)))
+        .map(|l| crate::web::person_link(l))
         .collect::<Vec<_>>()
         .join(", ")
 }

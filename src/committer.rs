@@ -15,7 +15,7 @@ use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
 use crate::ui::{Kind, empty, item_row, note, pager, section};
-use crate::web::{Snapshot, ago, ci_label, entry_rows, esc};
+use crate::web::{Snapshot, ago, ci_label, entry_rows, esc, person_link};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
@@ -134,6 +134,9 @@ pub struct Row {
     /// When the approval it waits on was given.
     pub waiting_since: DateTime<Utc>,
     pub why: String,
+    /// `why` with each login linked to its profile.
+    #[serde(skip)]
+    pub why_html: String,
 }
 
 /// Public data only: every viewer gets the same board.
@@ -207,7 +210,7 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
         };
         let mut keys = subjects.get(&pr.number).cloned().unwrap_or_default();
         keys.sort_unstable();
-        let mut by_maintainer: Vec<String> = Vec::new();
+        let mut by_maintainer: Vec<(&str, String)> = Vec::new();
         let mut since: Option<DateTime<Utc>> = None;
         for key in keys {
             let ms = maintainers_of(index, key);
@@ -216,7 +219,7 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
                 .filter(|(l, _)| ms.contains(&l.to_lowercase()))
             {
                 let label = Subject::parse(key).map(|s| s.label()).unwrap_or_default();
-                let said = format!("{login} for {label}");
+                let said = (*login, label);
                 if !by_maintainer.contains(&said) {
                     by_maintainer.push(said);
                 }
@@ -225,30 +228,49 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
         }
         let logins: Vec<&str> = approved.iter().map(|(l, _)| *l).collect();
         if let Some(at) = since {
-            let mut why = by_maintainer
-                .iter()
-                .take(3)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            if by_maintainer.len() > 3 {
-                let _ = write!(why, " and {} more", by_maintainer.len() - 3);
-            }
+            let said = |html: bool| {
+                let mut out = by_maintainer
+                    .iter()
+                    .take(3)
+                    .map(|(l, label)| {
+                        if html {
+                            format!("{} for {}", person_link(l), esc(label))
+                        } else {
+                            format!("{l} for {label}")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if by_maintainer.len() > 3 {
+                    let _ = write!(out, " and {} more", by_maintainer.len() - 3);
+                }
+                format!("A maintainer approved the current head: {out}.")
+            };
             b.maintainer_approved.push(Row {
                 entry: e.clone(),
                 waiting_since: at,
-                why: format!("A maintainer approved the current head: {why}."),
+                why: said(false),
+                why_html: said(true),
             });
         }
         if !ready(&e) {
             continue;
         }
         let approval = format!("checks pass, approved by {}", logins.join(", "));
+        let approval_html = format!(
+            "checks pass, approved by {}",
+            logins
+                .iter()
+                .map(|l| person_link(l))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         if pr.labels.iter().any(|l| l == SECURITY) {
             b.security.push(Row {
                 entry: e.clone(),
                 waiting_since: first,
                 why: format!("Labelled \"{SECURITY}\"; {approval}."),
+                why_html: format!("Labelled \"{}\"; {approval_html}.", esc(SECURITY)),
             });
         }
         if pr.base.starts_with("release-") {
@@ -256,12 +278,14 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
                 entry: e.clone(),
                 waiting_since: first,
                 why: format!("A backport to {}; {approval}.", pr.base),
+                why_html: format!("A backport to {}; {approval_html}.", esc(&pr.base)),
             });
         }
         b.waiting.push(Row {
             entry: e,
             waiting_since: first,
             why: format!("Ready: {approval}."),
+            why_html: format!("Ready: {approval_html}."),
         });
     }
     for rows in [
@@ -307,6 +331,7 @@ fn yours(app: &crate::web::App, s: &Snapshot, login: &str) -> impl Fn(&Entry) ->
 
 struct Line<'a> {
     entry: &'a Entry,
+    /// HTML.
     why: String,
     since: Option<DateTime<Utc>>,
 }
@@ -320,7 +345,7 @@ fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> String {
         let e = l.entry;
         let mut meta = format!(
             "{}<br>#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
-            esc(&l.why),
+            l.why,
             e.number,
             ago(e.created_at),
             esc(&e.base),
@@ -349,7 +374,7 @@ fn rows_of(rows: &[Row]) -> Vec<Line<'_>> {
     rows.iter()
         .map(|r| Line {
             entry: &r.entry,
-            why: r.why.clone(),
+            why: r.why_html.clone(),
             since: Some(r.waiting_since),
         })
         .collect()
@@ -515,8 +540,8 @@ fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec
         .filter(|e| e.author != login)
         .filter_map(|e| {
             mine(e).map(|why| Line {
+                why: esc(&why),
                 entry: e,
-                why,
                 since: None,
             })
         })
@@ -609,6 +634,11 @@ mod tests {
             b.maintainer_approved[0].why,
             "A maintainer approved the current head: mai for hello."
         );
+        assert!(
+            b.maintainer_approved[0]
+                .why_html
+                .contains("<a href=\"/u/mai\">mai</a> for hello")
+        );
         assert_eq!(nums(&b.security), [2]);
         assert_eq!(nums(&b.backports), [3]);
         assert_eq!(nums(&b.waiting), [2, 1, 3]);
@@ -659,6 +689,7 @@ mod tests {
                 entry: e,
                 waiting_since: t(0),
                 why: String::new(),
+                why_html: String::new(),
             });
         }
         let count = |html: &str| html.matches("class=\"Box-row").count();

@@ -315,10 +315,19 @@ pub(crate) fn ci_icon(ci: Option<&str>) -> String {
     }
 }
 
+/// A login, linked to its profile.
+pub(crate) fn person_link(login: &str) -> String {
+    format!(
+        "<a href=\"/u/{}\">{}</a>",
+        crate::github::urlencode(login),
+        esc(login)
+    )
+}
+
 fn people(logins: &[String]) -> String {
     logins
         .iter()
-        .map(|l| format!("<a href=\"/u/{0}\">{0}</a>", esc(l)))
+        .map(|l| person_link(l))
         .collect::<Vec<_>>()
         .join(", ")
 }
