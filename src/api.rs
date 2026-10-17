@@ -232,7 +232,7 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
         });
     let credits: Vec<_> = s.ledger.credits_of(login).cloned().collect();
     let dossier = crate::dossier::build(&s.pr_data, login);
-    let area = s.areas.get(login).cloned();
+    let area = s.areas.get(login).map(crate::area::Area::public);
     drop(s);
     let mut maintains = crate::catalog::maintains_value(app, login);
     if let Some(m) = maintains.as_object_mut() {
@@ -323,5 +323,15 @@ mod tests {
             prs_value(&app, &q, None).unwrap().value["section"],
             "security"
         );
+    }
+
+    #[test]
+    fn the_public_record_has_no_tags() {
+        let app = crate::sets::tests::app(&[]);
+        app.store.set_tags("alice", &["pkgs/secret".into()]).unwrap();
+        app.recompute().unwrap();
+        let v = person_value(&app, "alice");
+        assert!(v["area"].is_object());
+        assert!(!v.to_string().contains("pkgs/secret"));
     }
 }

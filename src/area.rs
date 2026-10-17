@@ -385,6 +385,14 @@ impl Area {
     pub fn covers(&self, files: &[String]) -> bool {
         files.iter().any(|f| self.prefixes().any(|p| under(f, p)))
     }
+
+    /// Tags are a private setting; the rest comes from public data.
+    pub fn public(&self) -> Area {
+        Area {
+            tags: Vec::new(),
+            ..self.clone()
+        }
+    }
 }
 
 /// Paths with a maintainer or an owner, flattened for lookups by ancestor.
