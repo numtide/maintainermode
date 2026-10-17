@@ -117,8 +117,9 @@ fn untagged(path: &str) -> bool {
         .any(|p| path.starts_with(p))
 }
 
-/// The data time and the cookies, which change what a page shows to a
-/// visitor who did not sign in.
+/// The data time, the cookies, which change what a page shows to a visitor
+/// who did not sign in, and a five-minute slot, so the "N min ago" texts
+/// stay close to the truth.
 fn tag(headers: &HeaderMap) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for v in headers.get_all(header::COOKIE) {
@@ -126,7 +127,8 @@ fn tag(headers: &HeaderMap) -> String {
             h = (h ^ u64::from(*b)).wrapping_mul(0x100000001b3);
         }
     }
-    format!("W/\"{:x}-{h:x}\"", DATA_AT.load(Ordering::Relaxed))
+    let slot = chrono::Utc::now().timestamp() / 300;
+    format!("W/\"{:x}-{slot:x}-{h:x}\"", DATA_AT.load(Ordering::Relaxed))
 }
 
 /// A public page carries an `ETag`; a request that sends it back gets a
