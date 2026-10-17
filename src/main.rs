@@ -1,4 +1,5 @@
 mod actions;
+mod affected;
 mod api;
 mod archive;
 mod area;

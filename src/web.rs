@@ -149,8 +149,24 @@ impl App {
             board,
         });
         drop(index);
-        self.recompute_packages();
+        self.reassess();
         Ok(())
+    }
+
+    /// Judges the advisories again after the index or a channel moved.
+    pub fn reassess(&self) {
+        let ch = self.channels.read().unwrap().clone();
+        let current = self.health.read().unwrap().clone();
+        let index = self.index.read().unwrap();
+        if !current.assessed_for(&index, &ch) {
+            let mut h = (*current).clone();
+            h.assess(&index, &ch);
+            drop(index);
+            *self.health.write().unwrap() = Arc::new(h);
+        } else {
+            drop(index);
+        }
+        self.recompute_packages();
     }
 
     /// Walks every package and every open pull request, so it runs when the

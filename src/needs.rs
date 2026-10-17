@@ -1163,6 +1163,7 @@ mod tests {
                     cves: vec![cve.into()],
                     title: "a flaw".into(),
                     issue: None,
+                    ranges: vec![],
                 });
             self.h.cves.insert(cve.into(), c);
         }
