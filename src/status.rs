@@ -136,6 +136,7 @@ pub(crate) fn state(app: &App) -> Value {
             "last_seconds": pass_seconds,
             "worst_delay_seconds": pass_seconds.map(|p| sync_every + p),
         },
+        "hydra": app.hydra.stats(),
         "rescans": rescans(app),
         "tokens": {
             "server": app.sync_token.is_some() || app.github_app.is_some(),
@@ -423,9 +424,14 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
             minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
     ));
+    let hy = &v["hydra"];
     out.push_str(&row(
         "Hydra builds",
-        "asked when a package or module page is shown, kept one hour",
+        &format!(
+            "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
+             {} jobs kept · {} page views not asked since the start",
+            hy["concurrent"], hy["per_minute"], hy["cached"], hy["not_asked"]
+        ),
     ));
     let r = &v["rescans"];
     out.push_str(&row(

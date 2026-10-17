@@ -96,6 +96,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'Packaging hygiene' /tmp/sync")
     machine.succeed("grep -q 'Upstream tags and registries' /tmp/sync")
     machine.succeed("grep -q 'OSV records' /tmp/sync")
+    machine.succeed("grep -q 'at most 4 at a time and 30 a minute' /tmp/sync")
+    machine.succeed("grep -q '\"not_asked\":0' /tmp/sync.json && grep -q '\"per_minute\":30' /tmp/sync.json")
     machine.succeed("grep -q with_gaps /tmp/sync.json")
     machine.succeed("grep -q cves_with_score /tmp/sync.json")
     # with no network the tracker names no CVE, so the first severity pass
