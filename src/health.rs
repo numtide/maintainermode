@@ -353,7 +353,9 @@ pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
                 Err(e) => tracing::warn!("repology: {e:#}"),
             }
         }
-        if stale(h.tracker_at) {
+        let no_ranges = !h.advisories.is_empty()
+            && h.advisories.values().flatten().all(|a| a.ranges.is_empty());
+        if stale(h.tracker_at) || no_ranges {
             match tracker().await {
                 Ok(a) => {
                     h.advisories = a;
