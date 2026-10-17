@@ -5,13 +5,14 @@
 use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::Html;
+use axum::response::Response;
 use axum::routing::get;
 use std::fmt::Write;
 
-use crate::catalog::{Flags, Subject, maintained, person_events};
+use crate::catalog::{Flags, Subject, maintained, person_events, subject_row};
 use crate::queue::Entry;
-use crate::web::{App, Shared, ago, esc, icon, octicon, page};
+use crate::ui::{Kind, Page, Section, empty, item_row};
+use crate::web::{App, Shared, ago, esc, icon, octicon};
 
 const SHOWN: usize = 8;
 
@@ -20,18 +21,7 @@ pub fn routes() -> Router<Shared> {
 }
 
 fn section(title: &str, more: Option<(&str, &str)>, body: &str) -> String {
-    let more = more
-        .map(|(href, label)| {
-            format!(" <a class=\"f6 text-normal ml-2\" href=\"{href}\">{label}</a>")
-        })
-        .unwrap_or_default();
-    format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{title}{more}</div>{body}</div>"
-    )
-}
-
-fn empty(text: &str) -> String {
-    format!("<div class=\"Box-row color-fg-muted\">{text}</div>")
+    crate::ui::section(title, None, more, body)
 }
 
 fn entry_rows(entries: &[&Entry]) -> String {
@@ -39,13 +29,18 @@ fn entry_rows(entries: &[&Entry]) -> String {
         .iter()
         .take(SHOWN)
         .map(|e| {
-            format!(
-                "<div class=\"Box-row\">{}\
-                 <div class=\"f6 color-fg-muted\">#{} by <a href=\"/u/{a}\">{a}</a> · {} old</div></div>",
-                crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
-                e.number,
-                ago(e.created_at),
-                a = esc(&e.author)
+            item_row(
+                Some(Kind::PR_OPEN),
+                &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+                "",
+                &format!(
+                    "#{} by <a href=\"/u/{a}\">{a}</a> · {} old",
+                    e.number,
+                    ago(e.created_at),
+                    a = esc(&e.author)
+                ),
+                &[],
+                "",
             )
         })
         .collect()
@@ -54,23 +49,14 @@ fn entry_rows(entries: &[&Entry]) -> String {
 fn subject_rows(rows: &[(Subject, Flags)]) -> String {
     rows.iter()
         .take(SHOWN)
-        .map(|(sub, f)| {
-            format!(
-                "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
-                 <a class=\"Link--primary text-bold flex-auto\" href=\"{}\">{} {}</a>{}</div>",
-                sub.href(),
-                sub.icon(),
-                esc(&sub.label()),
-                f.html()
-            )
-        })
+        .map(|(sub, f)| subject_row(sub, f, "", ""))
         .collect()
 }
 
 fn search_box() -> String {
     format!(
-        "<form method=\"get\" action=\"/packages\" class=\"d-flex mb-4\" style=\"gap:8px;max-width:560px\">\
-         <input class=\"form-control flex-auto\" name=\"q\" placeholder=\"a package, nixos/MODULE, or a path\" aria-label=\"search\">\
+        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">\
+         <input class=\"form-control flex-auto\" name=\"q\" placeholder=\"a package, nixos/MODULE, a path or @login\" aria-label=\"search\">\
          <button class=\"btn\" type=\"submit\">{} Search</button></form>",
         icon(octicon!("search"))
     )
@@ -129,7 +115,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
         "nixpkgs in numbers",
         Some(("/state", "the state of nixpkgs")),
         &format!(
-            "<div class=\"Box-row d-flex flex-wrap\" style=\"gap:24px\">\
+            "<div class=\"Box-row d-flex flex-wrap gap-4\">\
              <span><strong>{}</strong> open pull requests need review</span>\
              <span><strong>{}</strong> packages behind upstream</span>\
              <span><strong>{}</strong> packages with an open advisory</span>\
@@ -151,7 +137,7 @@ fn dashboard(app: &App, login: &str) -> String {
     let mut out = String::new();
     if crate::welcome::pending(app, login) {
         out.push_str(
-            "<div class=\"flash mb-3\">New here? <a href=\"/welcome\">Get started</a>: \
+            "<div class=\"note mb-3\">New here? <a href=\"/welcome\">Get started</a>: \
              subscribe to what you maintain, and set up your inbox.</div>",
         );
     }
@@ -304,11 +290,11 @@ fn dashboard(app: &App, login: &str) -> String {
     out
 }
 
-async fn home(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn home(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
-    let body = match viewer.as_deref() {
-        Some(login) => dashboard(&app, login),
-        None => visitor(&app, &headers),
+    let page = match viewer.as_deref() {
+        Some(login) => Page::new(Section::Home, "Home").body(dashboard(&app, login)),
+        None => Page::new(Section::Home, "Maintainer Mode").body(visitor(&app, &headers)),
     };
-    page(&app, viewer.as_deref(), "home", &body)
+    page.render(&app, viewer.as_deref())
 }

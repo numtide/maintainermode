@@ -18,6 +18,7 @@ use crate::ledger::{self, Dropped, Ledger, Trigger};
 use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
+use crate::ui::{Page, Section, Tab};
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
@@ -319,15 +320,15 @@ pub(crate) fn nixpkgs_guides() -> String {
 pub(crate) fn ci_label(e: &Entry) -> String {
     match e.ci.as_deref() {
         Some("SUCCESS") => format!(
-            "<span class=\"color-fg-success\" title=\"checks pass\">{}</span>",
+            "<span class=\"color-fg-success\" role=\"img\" title=\"checks pass\" aria-label=\"checks pass\">{}</span>",
             icon(octicon!("check-circle-fill"))
         ),
         Some("FAILURE" | "ERROR") => format!(
-            "<span class=\"color-fg-danger\" title=\"checks fail\">{}</span>",
+            "<span class=\"color-fg-danger\" role=\"img\" title=\"checks fail\" aria-label=\"checks fail\">{}</span>",
             icon(octicon!("x-circle-fill"))
         ),
         _ => format!(
-            "<span class=\"color-fg-attention\" title=\"checks pending\">{}</span>",
+            "<span class=\"color-fg-attention\" role=\"img\" title=\"checks pending\" aria-label=\"checks pending\">{}</span>",
             icon(octicon!("dot-fill"))
         ),
     }
@@ -341,22 +342,20 @@ fn people(logins: &[String]) -> String {
         .join(", ")
 }
 
-fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
+pub(crate) fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
+    use crate::ui::{Kind, Tone, badge, item_row};
     if entries.is_empty() {
         return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
     }
     let mut out = String::from("<div class=\"Box\">");
     for e in entries.iter().take(200) {
-        let conflict = if e.mergeable == "CONFLICTING" {
-            "<span class=\"Label Label--danger ml-1\">conflict</span>"
-        } else {
-            ""
-        };
-        let unowned = if e.unowned {
-            "<span class=\"Label Label--attention ml-1\">unowned</span>"
-        } else {
-            ""
-        };
+        let mut badges = Vec::new();
+        if e.mergeable == "CONFLICTING" {
+            badges.push(badge(Tone::Danger, "conflict"));
+        }
+        if e.unowned {
+            badges.push(badge(Tone::Attention, "unowned"));
+        }
         let mut meta = format!(
             "#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
             e.number,
@@ -370,21 +369,18 @@ fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
         if !e.credited_by.is_empty() {
             let _ = write!(meta, " · moved by {}", people(&e.credited_by));
         }
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-start\">\
-               <span class=\"mr-2 color-fg-open\">{pr}</span>\
-               <div class=\"flex-auto\">\
-                 {title}{conflict}{unowned}\
-                 <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
-               </div>\
-               <span class=\"ml-2\">{ci}</span>{act}\
-             </div>",
-            pr = icon(octicon!("git-pull-request")),
-            title = crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
-            ci = ci_label(e),
-            act = act.buttons(e.number),
-        );
+        out.push_str(&item_row(
+            Some(Kind::PR_OPEN),
+            &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            "",
+            &meta,
+            &badges,
+            &format!(
+                "<span class=\"ml-2\">{}</span>{}",
+                ci_label(e),
+                act.buttons(e.number)
+            ),
+        ));
     }
     if entries.len() > 200 {
         let _ = write!(
@@ -397,22 +393,23 @@ fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
     out
 }
 
-async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let entries: Vec<&Entry> = s.queues.merge.iter().collect();
-    let body = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Ready to merge</h1>\
-         <div class=\"Subhead-description\">Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
-         Ordered by the author's credit, so people who review rise. Work it from the top. \
-         <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a></div></div>{}",
-        rows(
+    Page::new(Section::Review, "Ready to merge")
+        .icon(octicon!("git-merge"))
+        .sub(format!(
+            "Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
+             Ordered by the author's credit, so people who review rise. Work it from the top. \
+             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a>"
+        ))
+        .body(rows(
             &entries,
             "Nothing is ready yet.",
-            crate::actions::Act::of(&app, viewer.as_deref())
-        )
-    );
-    page(&app, viewer.as_deref(), "merge", &body)
+            crate::actions::Act::of(&app, viewer.as_deref()),
+        ))
+        .render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -476,7 +473,7 @@ pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-const HYGIENE: &str = "<div class=\"flash mb-3\"><strong>The newcomer path.</strong> No maintainer, team or ci/OWNERS line covers these files, so they rot. \
+const HYGIENE: &str = "<div class=\"note mb-3\"><strong>The newcomer path.</strong> No maintainer, team or ci/OWNERS line covers these files, so they rot. \
 A first review needs no domain knowledge: is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
 Are hashes fixed-output and pinned? Are <code>platforms</code> right? Does a CLI have <code>versionCheckHook</code>? \
 Leave the finding as an inline comment on the changed line. A review here earns full credit at any age.</div>";
@@ -485,7 +482,7 @@ async fn review_page(
     State(app): State<Shared>,
     headers: HeaderMap,
     Query(q): Query<ReviewQuery>,
-) -> Html<String> {
+) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let bucket = match q.bucket.as_deref().and_then(bucket_name) {
@@ -496,7 +493,7 @@ async fn review_page(
     };
     let watched = watched_of(&app, viewer.as_deref());
     let mut entries = Vec::new();
-    let mut tabs = String::new();
+    let mut tabs = Vec::new();
     for id in BUCKETS {
         if id == "foryou" && viewer.is_none() {
             continue;
@@ -507,30 +504,20 @@ async fn review_page(
             "unowned" => "Unowned",
             _ => "All",
         };
-        let sel = if id == bucket { " selected" } else { "" };
-        let _ = write!(
-            tabs,
-            "<a class=\"SegmentedControl-item btn btn-sm{sel}\" href=\"/review?bucket={id}\">{label} <span class=\"Counter\">{}</span></a> ",
-            these.len()
-        );
+        tabs.push(Tab::new(format!("/review?bucket={id}"), label, id == bucket).count(these.len()));
         if id == bucket {
             entries = these;
         }
     }
     let intro = match bucket {
-        "foryou" => "Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-            own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/watch\">watch</a>. Oldest first."
+        "foryou" => "<p>Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
+            own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/watch\">watch</a>. Oldest first.</p>"
             .to_string(),
         "unowned" => HYGIENE.to_string(),
-        _ => "Every listed pull request that is not ready to merge. Oldest first.".to_string(),
+        _ => "<p>Every listed pull request that is not ready to merge. Oldest first.</p>".to_string(),
     };
     let body = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Needs review</h1>\
-         <div class=\"Subhead-description\">Credit comes when your review moves a pull request: the author pushes or replies, \
-         you comment on a changed line, or it merges within {} days. \
-         <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a></div></div>\
-         {}<div class=\"mb-3\">{tabs}</div><div class=\"mb-3\">{intro}</div>{}",
-        ledger::MOVE_DAYS,
+        "{}{intro}{}",
         viewer
             .as_deref()
             .map(|v| crate::progress::widget(&app, v))
@@ -541,7 +528,17 @@ async fn review_page(
             crate::actions::Act::of(&app, viewer.as_deref())
         )
     );
-    page(&app, viewer.as_deref(), "review", &body)
+    Page::new(Section::Review, "Needs review")
+        .icon(octicon!("eye"))
+        .sub(format!(
+            "Credit comes when your review moves a pull request: the author pushes or replies, \
+             you comment on a changed line, or it merges within {} days. \
+             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>",
+            ledger::MOVE_DAYS
+        ))
+        .subnav(tabs)
+        .body(body)
+        .render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -563,12 +560,15 @@ async fn record_page(
     if let Some(v) = &viewer {
         return Redirect::to(&format!("/u/{v}")).into_response();
     }
-    let body = "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Review record</h1>\
-        <div class=\"Subhead-description\">One person's reviews and what came of each. There is no ranking.</div></div>\
-        <form method=\"get\" action=\"/record\" class=\"d-flex\" style=\"gap:8px;max-width:420px\">\
-        <input class=\"form-control flex-auto\" name=\"login\" placeholder=\"GitHub login\" aria-label=\"GitHub login\">\
-        <button class=\"btn\" type=\"submit\">Show record</button></form>";
-    page(&app, None, "record", body).into_response()
+    Page::new(Section::Review, "Review record")
+        .icon(octicon!("law"))
+        .sub("One person's reviews and what came of each. There is no ranking.")
+        .body(
+            "<form method=\"get\" action=\"/record\" class=\"inline-form\">\
+             <input class=\"form-control flex-auto\" name=\"login\" placeholder=\"GitHub login\" aria-label=\"GitHub login\">\
+             <button class=\"btn\" type=\"submit\">Show record</button></form>",
+        )
+        .render(&app, None)
 }
 
 fn trigger_label(t: &Trigger) -> &'static str {
@@ -601,46 +601,45 @@ fn stat(n: usize, label: &str, hint: &str) -> String {
 }
 
 fn overlap(title: &str, list: &[(String, usize)]) -> String {
-    let mut out =
-        format!("<div class=\"Box flex-1\"><div class=\"Box-header text-bold\">{title}</div>");
-    if list.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">None yet.</div>");
-    }
-    for (l, n) in list {
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
-            l = esc(l)
-        );
-    }
-    out.push_str("</div>");
-    out
+    let rows: String = list
+        .iter()
+        .map(|(l, n)| {
+            format!(
+                "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
+                l = esc(l)
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"flex-1\">{}</div>",
+        crate::ui::section(title, None, None, &rows)
+    )
 }
 
 async fn person_page(
     State(app): State<Shared>,
     headers: HeaderMap,
     Path(login): Path<String>,
-) -> Html<String> {
+) -> Response {
+    use crate::ui::{Tone, badge, empty, section};
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let p = s.ledger.people.get(&login).cloned().unwrap_or_default();
     let d = dossier::build(&s.pr_data, &login);
     let listed = if p.listed {
-        "<span class=\"Label Label--success\">listed</span>".to_string()
+        badge(Tone::Success, "listed")
     } else {
-        format!(
-            "<span class=\"Label\">not listed: {} of {} authors</span>",
-            p.counterparties,
-            ledger::MIN_COUNTERPARTIES
+        badge(
+            Tone::Neutral,
+            &format!(
+                "not listed: {} of {} authors",
+                p.counterparties,
+                ledger::MIN_COUNTERPARTIES
+            ),
         )
     };
     let mut out = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{l} {listed}</h1>\
-         <div class=\"Subhead-description\">Evidence, not a verdict. Maintainer Mode grants nothing; nixpkgs committers do. \
-         Reviews in the synced data: the last {} days and every open pull request.</div></div>\
-         <div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\">{}{}</div>",
-        ledger::WINDOW_DAYS,
+        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(
             d.merged_unchanged,
             "merged unchanged after their review",
@@ -651,47 +650,40 @@ async fn person_page(
             "problems found",
             "the author changed the pull request after their review asked for it"
         ),
-        l = esc(&login)
     );
     if viewer.as_deref() == Some(login.as_str()) {
         let area = s.areas.get(&login).cloned().unwrap_or_default();
-        let _ = write!(
-            out,
-            "<div class=\"flash mb-4\">{} <a href=\"/me/progress\">Your progress</a>: your reviews, your streak, your goal and your badges. \
-             Only you see it.</div>",
+        out.push_str(&crate::ui::note(&format!(
+            "{} <a href=\"/me/progress\">Your progress</a>: your reviews, your streak, your goal and your badges. \
+             Only you see it.",
             icon(octicon!("flame"))
-        );
-        let _ = write!(
-            out,
-            "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} Your area</div>\
-             <div class=\"Box-row f6\">{} paths you maintain · {} you own in ci/OWNERS · {} you changed this year</div>\
-             <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
-             <label class=\"f6\" for=\"tags\">Tags: path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
-             <textarea class=\"form-control width-full my-2\" id=\"tags\" name=\"tags\" rows=\"3\">{}</textarea>\
-             <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div></div>",
-            icon(octicon!("tag")),
-            area.maintains.len(),
-            area.owns.len(),
-            area.committed.len(),
-            esc(&area.tags.join("\n"))
-        );
+        )));
+        out.push_str(&section(
+            &format!("{} Your area", icon(octicon!("tag"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row f6\">{} paths you maintain · {} you own in ci/OWNERS · {} you changed this year</div>\
+                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
+                 <label class=\"f6\" for=\"tags\">Tags: path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
+                 <textarea class=\"form-control width-full my-2\" id=\"tags\" name=\"tags\" rows=\"3\">{}</textarea>\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div>",
+                area.maintains.len(),
+                area.owns.len(),
+                area.committed.len(),
+                esc(&area.tags.join("\n"))
+            ),
+        ));
     }
-    let _ = write!(
-        out,
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Last {} reviews, and what came of each</div>",
-        dossier::RECENT
-    );
-    if d.recent.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">No reviews in the synced data.</div>");
-    }
+    let mut recent = String::new();
     for r in &d.recent {
         let found = if r.problem_found {
-            " <span class=\"Label Label--attention\">problem found</span>"
+            format!(" {}", badge(Tone::Attention, "problem found"))
         } else {
-            ""
+            String::new()
         };
         let _ = write!(
-            out,
+            recent,
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
              {t}\
              <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
@@ -708,16 +700,24 @@ async fn person_page(
             a = esc(&r.pr_author),
         );
     }
-    out.push_str("</div>");
+    if recent.is_empty() {
+        recent = empty("No reviews in the synced data.");
+    }
+    out.push_str(&section(
+        &format!("Last {} reviews, and what came of each", dossier::RECENT),
+        None,
+        None,
+        &recent,
+    ));
     let _ = write!(
         out,
-        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\">{}{}</div>",
+        "<div class=\"d-flex flex-wrap gap-3\">{}{}</div>",
         overlap("Reviewed alongside", &d.co_reviewers),
         overlap("Reviewed pull requests of", &d.authors)
     );
     let _ = write!(
         out,
-        "<details class=\"Box\"><summary class=\"Box-header text-bold\">Credit: {:.2}, reciprocity {:.0}% \
+        "<details class=\"Box mt-4\"><summary class=\"Box-header text-bold\">Credit: {:.2}, reciprocity {:.0}% \
          <span class=\"f6 color-fg-muted text-normal\">(decides listing only; reciprocity is shown, never acted on)</span></summary>",
         p.score,
         p.reciprocity * 100.0
@@ -771,7 +771,16 @@ async fn person_page(
         );
     }
     out.push_str("</details>");
-    page(&app, viewer.as_deref(), "record", &out)
+    Page::new(Section::Review, login.clone())
+        .icon(octicon!("person"))
+        .sub(format!(
+            "Evidence, not a verdict. Maintainer Mode grants nothing; nixpkgs committers do. \
+             Reviews in the synced data: the last {} days and every open pull request.",
+            ledger::WINDOW_DAYS
+        ))
+        .actions(listed)
+        .body(out)
+        .render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -1071,7 +1080,7 @@ fn guide_box() -> String {
     )
 }
 
-async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
     let mut html = String::new();
     pulldown_cmark::html::push_html(
@@ -1083,7 +1092,10 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         guide_box(),
         anchor_headings(&html)
     );
-    page(&app, viewer.as_deref(), "state", &body)
+    Page::new(Section::Nixpkgs, "Rules and numbers")
+        .no_header()
+        .body(body)
+        .render(&app, viewer.as_deref())
 }
 
 fn package_stats(app: &App) -> Arc<crate::catalog::PackageStats> {
@@ -1111,8 +1123,8 @@ fn packages_section(app: &App) -> String {
         out,
         "<p class=\"f6 color-fg-muted\">One package per package name, at nixpkgs {}. \
          <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a></p>\
-         <div class=\"d-flex flex-wrap mb-2\" style=\"gap:8px\">{}{}{}{}</div>\
-         <div class=\"d-flex flex-wrap mb-4\" style=\"gap:8px\">{}{}{}{}</div>",
+         <div class=\"d-flex flex-wrap gap-2 mb-2\">{}{}{}{}</div>\
+         <div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}</div>",
         esc(&p.rev[..p.rev.len().min(12)]),
         stat(p.packages, "packages", "in the swept package sets"),
         stat(
@@ -1196,8 +1208,7 @@ fn pct(v: Option<f64>) -> String {
 }
 
 fn table(head: &[&str], rows: &[Vec<String>]) -> String {
-    let mut out =
-        String::from("<div class=\"markdown-body\" style=\"overflow-x:auto\"><table><thead><tr>");
+    let mut out = String::from("<div class=\"markdown-body\"><table><thead><tr>");
     for h in head {
         let _ = write!(out, "<th>{h}</th>");
     }
@@ -1213,20 +1224,22 @@ fn table(head: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
-async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
     let r = app.metrics.read().unwrap().clone();
-    let mut body = String::from(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">State of nixpkgs</h1>\
-         <div class=\"Subhead-description\">Pull request flow and package health from public data. \
-         Aggregates only: no figure names a person. \
-         <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a> · \
-         <a href=\"/api/v1/metrics\">JSON</a></div></div>",
-    );
+    let page = Page::new(Section::Nixpkgs, "State of nixpkgs")
+        .icon(octicon!("graph"))
+        .sub(
+            "Pull request flow and package health from public data. \
+             Aggregates only: no figure names a person. \
+             <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a> · \
+             <a href=\"/api/v1/metrics\">JSON</a>",
+        );
+    let mut body = String::new();
     let Some(at) = r.generated_at else {
         body.push_str("<div class=\"flash\">The first sync has not finished yet.</div>");
         body.push_str(&packages_section(&app));
-        return page(&app, viewer.as_deref(), "state", &body);
+        return page.body(body).render(&app, viewer.as_deref());
     };
     let n = &r.now;
     let _ = write!(
@@ -1245,7 +1258,7 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     );
     let _ = write!(
         body,
-        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:8px\">{}{}{}{}{}</div>",
+        "<div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}{}</div>",
         stat(
             n.open,
             "open",
@@ -1299,7 +1312,7 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     };
     let _ = write!(
         body,
-        "<div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
+        "<div class=\"d-flex flex-wrap gap-3 mb-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
          <div class=\"flex-1\"><h2 class=\"f4 mb-2\">Who carries the load, last 365 days</h2>{}</div></div>",
         table(&["", "open"], &ages),
         table(
@@ -1383,7 +1396,7 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         .collect();
     let _ = write!(
         body,
-        "<div class=\"d-flex flex-wrap mt-4\" style=\"gap:16px\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">By area</h2>{}</div>\
+        "<div class=\"d-flex flex-wrap gap-3 mt-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">By area</h2>{}</div>\
          <div><h2 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h2>{}</div></div>",
         table(
             &[
@@ -1399,7 +1412,7 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
         table(&["tool", "pull requests"], &tools),
     );
     body.push_str(&packages_section(&app));
-    page(&app, viewer.as_deref(), "state", &body)
+    page.body(body).render(&app, viewer.as_deref())
 }
 
 /// SameSite=Lax still sends the session cookie on a POST from a sibling
