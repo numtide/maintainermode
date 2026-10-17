@@ -226,7 +226,7 @@ async fn forms_change_what_the_pages_show() {
     let a = site.post("/me/progress", SID, &[("goal", "3")]).await;
     assert_eq!(a.status, StatusCode::SEE_OTHER);
     let a = site.get("/me/progress", Some(SID)).await;
-    assert!(a.body.contains("3"), "{}", a.body);
+    assert!(a.body.contains("of your goal of 3 this week"), "{}", a.body);
     let a = site.post("/me/progress", SID, &[("goal", "many")]).await;
     assert_eq!(a.status, StatusCode::BAD_REQUEST);
 
@@ -268,12 +268,16 @@ async fn public_pages_keep_private_data_out() {
     site.post("/me/upload-token", SID, &[]).await;
     site.post("/me/tags", SID, &[("tags", "pkgs/secret-tag")])
         .await;
-    site.post(
-        "/me/notify",
-        SID,
-        &[("k_pr", "1"), ("email", "alice@example.org")],
-    )
-    .await;
+    app.store
+        .set_setting("alice", crate::notify::EMAIL, "alice@example.org")
+        .unwrap();
+    assert_eq!(
+        app.store
+            .setting("alice", crate::notify::EMAIL)
+            .unwrap()
+            .as_deref(),
+        Some("alice@example.org")
+    );
     let feed = app
         .store
         .feed_token("alice")
