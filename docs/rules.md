@@ -151,7 +151,9 @@ Your area is derived, never self-assessed. It is the union of:
 On top of that you can add **tags**, path prefixes such as
 `pkgs/development/python-modules`, for what you just started caring about.
 
-A pull request that no member's area covers is **unowned**. It gets its own
+A pull request is **unowned** when no `meta.maintainers`, `meta.teams` or
+`ci/OWNERS` line covers a file it changes. The same test decides the credit
+of a review on it, so the label and the credit agree. It gets its own
 bucket, which is the newcomer path: packaging hygiene (complete `meta`,
 pinned hashes, `platforms`, a missing `versionCheckHook`) needs no domain
 knowledge and is most of what a first review finds.
