@@ -85,6 +85,7 @@ pub struct App {
     pub archive: Vec<Arc<crate::archive::Archive>>,
     /// Server-side flake rescans; None while they are off.
     pub rescan: Option<crate::rescan::Config>,
+    pub inbox: crate::notify::Counts,
 }
 
 impl App {
@@ -221,6 +222,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::mcp::routes())
         .merge(crate::rescan::routes())
         .merge(crate::welcome::routes())
+        .merge(crate::notify::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
@@ -372,7 +374,8 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
     }
     let who = match viewer {
         Some(v) => format!(
-            "{}<a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
+            "{}<a class=\"Header-link mr-3\" href=\"/me/inbox\">{} Inbox{}</a>\
+             <a class=\"Header-link mr-3\" href=\"/u/{v}\">{} {v}</a>\
              <a class=\"Header-link mr-3\" href=\"/me/progress\">{} Progress</a>\
              <a class=\"Header-link mr-3\" href=\"/me/settings\">{} Settings</a>\
              <form method=\"post\" action=\"/auth/logout\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">{} Sign out</button></form>",
@@ -380,6 +383,11 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
                 "<a class=\"Header-link mr-3\" href=\"/welcome\">Get started</a>"
             } else {
                 ""
+            },
+            icon(octicon!("inbox")),
+            match app.inbox.get(v) {
+                0 => String::new(),
+                n => format!(" <span class=\"Counter\" title=\"unread\">{n}</span>"),
             },
             icon(octicon!("person")),
             icon(octicon!("flame")),

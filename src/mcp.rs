@@ -351,6 +351,7 @@ mod tests {
             channels: Default::default(),
             archive: Vec::new(),
             rescan: None,
+            inbox: Default::default(),
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
         })

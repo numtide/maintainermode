@@ -113,6 +113,7 @@ async fn settings_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     if on {
         out.push_str(&mcp_box(&app, &login));
     }
+    out.push_str(&crate::notify::settings_box(&app, &login));
     page(&app, Some(&login), "", &out).into_response()
 }
 

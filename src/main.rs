@@ -19,6 +19,7 @@ mod llm;
 mod mcp;
 mod metrics;
 mod model;
+mod notify;
 mod osv;
 mod progress;
 mod queue;
@@ -489,6 +490,7 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         if let Err(e) = app.recompute() {
             tracing::warn!("recompute: {e:#}");
         }
+        notify::recount(&app);
         let a = app.clone();
         match tokio::task::spawn_blocking(move || a.recompute_metrics()).await {
             Ok(Err(e)) => tracing::warn!("metrics: {e:#}"),
@@ -656,8 +658,10 @@ async fn run(cli: Cli) -> Result<i32> {
                     archive_items,
                 )?,
                 rescan,
+                inbox: Default::default(),
             });
             app.recompute()?;
+            notify::recount(&app);
             let a = app.clone();
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
@@ -718,6 +722,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 events,
                 archive: Vec::new(),
                 rescan: None,
+                inbox: Default::default(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -760,6 +765,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 events,
                 archive: Vec::new(),
                 rescan: None,
+                inbox: Default::default(),
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();

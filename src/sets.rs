@@ -418,6 +418,7 @@ pub(crate) mod tests {
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
             archive: Vec::new(),
             rescan: None,
+            inbox: Default::default(),
         })
     }
 

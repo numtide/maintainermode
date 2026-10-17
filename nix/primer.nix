@@ -40,6 +40,7 @@ let
     "versions"
     "flame"
     "circle"
+    "inbox"
   ];
 in
 runCommand "primer-assets" { } ''

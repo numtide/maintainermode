@@ -1769,6 +1769,7 @@ async fn add_watch(
     if let Err(e) = app.store.watch(&login, &subject.key()) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+    crate::notify::recount_one(&app, &login);
     let back = if f.name.is_some() {
         "/watch".to_string()
     } else {
@@ -1791,6 +1792,7 @@ async fn remove_watch(
     if let Err(e) = app.store.unwatch(&login, &key) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+    crate::notify::recount_one(&app, &login);
     let back = match Subject::parse(&key) {
         Some(s)
             if headers
@@ -1815,6 +1817,7 @@ async fn watch_maintained(State(app): State<Shared>, headers: HeaderMap) -> Resp
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
     }
+    crate::notify::recount_one(&app, &login);
     Redirect::to("/watch").into_response()
 }
 
@@ -1916,12 +1919,37 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     page(&app, viewer.as_deref(), "watch", &out)
 }
 
-struct Event {
-    at: DateTime<Utc>,
-    id: String,
-    title: String,
-    url: String,
-    subject: String,
+pub(crate) struct Event {
+    pub(crate) at: DateTime<Utc>,
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) url: String,
+    pub(crate) subject: String,
+}
+
+/// What a login's feed and inbox show: the events of their subscriptions,
+/// then those of their package set, newest first.
+pub(crate) fn person_events(app: &crate::web::App, login: &str) -> Vec<Event> {
+    let subs = subscriptions(app, login);
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let set = crate::sets::set_attrs(app, login);
+    let base = app.public_url.trim_end_matches('/');
+    let index = app.index.read().unwrap();
+    let since = Utc::now() - Duration::days(FEED_DAYS);
+    let mut list = events(&s, &index, &h, &subs, since);
+    let mut seen: HashSet<String> = list.iter().map(|e| e.id.clone()).collect();
+    for mut e in set_events(&s, &index, &h, &set, since) {
+        if seen.insert(e.id.clone()) {
+            if e.url.is_empty() {
+                e.url = format!("{base}/p/{}", e.subject);
+            }
+            list.push(e);
+        }
+    }
+    list.sort_by_key(|e| std::cmp::Reverse(e.at));
+    list.truncate(200);
+    list
 }
 
 fn events(
@@ -2056,28 +2084,8 @@ async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response 
     let Some(login) = app.store.feed_login(token).ok().flatten() else {
         return (StatusCode::NOT_FOUND, "no such feed").into_response();
     };
-    let subs = subscriptions(&app, &login);
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let set = crate::sets::set_attrs(&app, &login);
     let base = app.public_url.trim_end_matches('/');
-    let list = {
-        let index = app.index.read().unwrap();
-        let since = Utc::now() - Duration::days(FEED_DAYS);
-        let mut list = events(&s, &index, &h, &subs, since);
-        let mut seen: HashSet<String> = list.iter().map(|e| e.id.clone()).collect();
-        for mut e in set_events(&s, &index, &h, &set, since) {
-            if seen.insert(e.id.clone()) {
-                if e.url.is_empty() {
-                    e.url = format!("{base}/p/{}", e.subject);
-                }
-                list.push(e);
-            }
-        }
-        list.sort_by_key(|e| std::cmp::Reverse(e.at));
-        list.truncate(200);
-        list
-    };
+    let list = person_events(&app, &login);
     let updated = list.first().map_or_else(Utc::now, |e| e.at);
     let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\
