@@ -530,8 +530,10 @@ fn outcome_label(o: Outcome) -> &'static str {
 }
 
 fn overlap(title: &str, list: &[(String, usize)]) -> String {
-    let rows: String = list
+    const SHOWN: usize = 15;
+    let mut rows: String = list
         .iter()
+        .take(SHOWN)
         .map(|(l, n)| {
             format!(
                 "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
@@ -539,6 +541,12 @@ fn overlap(title: &str, list: &[(String, usize)]) -> String {
             )
         })
         .collect();
+    if list.len() > SHOWN {
+        rows.push_str(&format!(
+            "<div class=\"Box-row color-fg-muted\">and {} more</div>",
+            list.len() - SHOWN
+        ));
+    }
     format!(
         "<div class=\"col-grow\">{}</div>",
         section(title, None, None, &rows)
