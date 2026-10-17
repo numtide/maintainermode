@@ -463,7 +463,7 @@ section.Box > .Box-header {
   }
 }
 .col-grow {
-  flex: 1 1 280px;
+  flex: 1 1 280px !important;
   min-width: 0;
 }
 /* Primer's clearfix on .subnav becomes a flex item and shifts the first
@@ -529,4 +529,18 @@ section.Box > .Box-header {
 .decide-list summary {
   padding: 4px 0;
   cursor: pointer;
+}
+
+/* side-by-side blocks wrap on a phone instead of squeezing: a table
+   block wants 280px, a number card 140px; min-width 0 then lets a
+   table scroll inside its own box; Primer utilities are !important */
+.d-flex.flex-wrap > .flex-1 {
+  flex: 1 1 280px !important;
+  min-width: 0;
+}
+.d-flex.flex-wrap > .Box.flex-1 {
+  flex-basis: 140px !important;
+}
+.color-fg-attention {
+  overflow-wrap: anywhere;
 }
