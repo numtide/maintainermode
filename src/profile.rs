@@ -591,9 +591,9 @@ fn reviews(s: &Snapshot, login: &str) -> String {
                 "<span class=\"Label\">over the daily cap</span>".to_string()
             }
             Some(Dropped::Voided { by, url }) => format!(
-                "<a class=\"Label Label--danger\" href=\"{}\">voided by {}</a>",
+                "<a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
                 esc(url),
-                esc(by)
+                crate::web::person_link(by)
             ),
         };
         let mut factors = Vec::new();
