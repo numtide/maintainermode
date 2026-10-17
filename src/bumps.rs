@@ -1,13 +1,7 @@
 //! Version bumps: open pull requests titled `<name>: <old> -> <new>`, the
 //! form of the nixpkgs commit conventions and of r-ryantm.
 
-use axum::Json;
-use axum::Router;
-use axum::extract::{Query, State};
-use axum::http::HeaderMap;
-use axum::routing::get;
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::fmt::Write;
@@ -19,13 +13,9 @@ use crate::health::Health;
 use crate::links::pkg_key;
 use crate::model::Pr;
 use crate::ui::{Kind, Tone, badge, empty, item_row, pager, section};
-use crate::web::{App, Shared, Snapshot, ago, esc};
+use crate::web::{App, Snapshot, ago, esc};
 
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
-
-pub fn routes() -> Router<Shared> {
-    Router::new().route("/api/v1/bumps", get(api_bumps))
-}
 
 #[derive(Debug, PartialEq)]
 pub struct Bump<'a> {
@@ -140,8 +130,15 @@ pub(crate) fn median_age_days(rows: &[Row], now: DateTime<Utc>) -> Option<f64> {
 /// Only what the viewer maintains or watches. What they maintain comes from
 /// `index.maintainers`, built once per index, not from a walk over every
 /// package. A watched package counts by its file, so an alias and its target
-/// count as one.
-fn mine<'a>(app: &App, index: &Index, login: &str, rows: Vec<Row<'a>>) -> Vec<Row<'a>> {
+/// count as one. Subscriptions are private: pass `watched` only for the
+/// viewer.
+pub(crate) fn mine<'a>(
+    app: &App,
+    index: &Index,
+    login: &str,
+    watched: bool,
+    rows: Vec<Row<'a>>,
+) -> Vec<Row<'a>> {
     let mut files: HashSet<String> = HashSet::new();
     let mut areas: Vec<String> = index
         .maintainers
@@ -149,7 +146,12 @@ fn mine<'a>(app: &App, index: &Index, login: &str, rows: Vec<Row<'a>>) -> Vec<Ro
         .map(|s| s.iter().cloned().collect())
         .unwrap_or_default();
     let file_of = |attr: &str| index.pkgs.get(attr).and_then(|p| p.file.clone());
-    for sub in subscriptions(app, login) {
+    let subs = if watched {
+        subscriptions(app, login)
+    } else {
+        Vec::new()
+    };
+    for sub in subs {
         match sub {
             Subject::Pkg(a) => files.extend(file_of(&a)),
             Subject::Area(p) => areas.push(p),
@@ -228,11 +230,6 @@ fn row_html(r: &Row, act: Act) -> String {
     )
 }
 
-#[derive(Deserialize)]
-struct Filter {
-    filter: Option<String>,
-}
-
 /// The Bumps tab of `/review`. `rows` are all open bumps; `only_mine` keeps
 /// what the viewer maintains or watches.
 pub(crate) fn tab(
@@ -245,7 +242,7 @@ pub(crate) fn tab(
 ) -> String {
     let only_mine = only_mine && viewer.is_some();
     if let (true, Some(v)) = (only_mine, viewer) {
-        rows = mine(app, index, v, rows);
+        rows = mine(app, index, v, true, rows);
     }
     let mut out = format!(
         "<p>Open pull requests with a title like <code>name: old -&gt; new</code>. Most come from r-ryantm. Oldest first. \
@@ -277,7 +274,7 @@ pub(crate) fn tab(
     }
     let _ = write!(
         out,
-        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/bumps\">JSON</a></p>",
+        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/prs?queue=bumps\">JSON</a></p>",
         rows.len(),
         median_age_days(&rows, Utc::now())
             .map(|d| format!(", median age {d} days"))
@@ -298,7 +295,7 @@ pub(crate) fn tab(
     out
 }
 
-fn row_json(r: &Row) -> Value {
+pub(crate) fn row_json(r: &Row) -> Value {
     let p = r.pr;
     json!({
         "number": p.number, "title": p.title, "url": p.url, "author": p.author,
@@ -306,27 +303,6 @@ fn row_json(r: &Row) -> Value {
         "name": r.bump.name, "old": r.bump.old, "new": r.bump.new,
         "package": r.attr, "upstream": r.upstream, "approvals": r.approvals,
     })
-}
-
-async fn api_bumps(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<Filter>,
-) -> Json<Value> {
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let mut rows = open(&s, &index, &h);
-    let mine_only = q.filter.as_deref() == Some("mine");
-    if let (true, Some(v)) = (mine_only, viewer.as_deref()) {
-        rows = mine(&app, &index, v, rows);
-    }
-    Json(json!({
-        "filter": if mine_only && viewer.is_some() { "mine" } else { "all" },
-        "median_age_days": median_age_days(&rows, Utc::now()),
-        "bumps": rows.iter().map(row_json).collect::<Vec<_>>(),
-    }))
 }
 
 /// The open bumps of one package, from the pull requests attached to it.
@@ -466,7 +442,7 @@ mod tests {
                 approvals: 0,
             })
             .collect();
-        let kept: Vec<u64> = mine(&app, &index, "Alice", rows)
+        let kept: Vec<u64> = mine(&app, &index, "Alice", true, rows)
             .iter()
             .map(|r| r.pr.number)
             .collect();

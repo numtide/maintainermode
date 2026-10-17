@@ -66,7 +66,6 @@ pub fn routes() -> Router<Shared> {
         .route("/api/v1/packages/:attr", get(api_package))
         .route("/api/v1/modules/*file", get(api_module))
         .route("/api/v1/areas/*path", get(api_area))
-        .route("/api/v1/maintainers/:login", get(api_maintains))
         .route("/api/v1/find/*name", get(api_find))
 }
 
@@ -2418,10 +2417,6 @@ pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
         "packages": rows(&m.packages),
         "modules": rows(&m.modules),
     })
-}
-
-async fn api_maintains(State(app): State<Shared>, Path(login): Path<String>) -> Json<Value> {
-    Json(maintains_value(&app, &login))
 }
 
 fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {

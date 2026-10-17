@@ -1,12 +1,9 @@
 //! Who has merge rights, from public data, and the view for them.
 
 use anyhow::{Result, bail};
-use axum::extract::State;
-use axum::routing::get;
-use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -18,7 +15,7 @@ use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
 use crate::ui::{Kind, empty, item_row, note, pager, section};
-use crate::web::{Shared, Snapshot, ago, ci_label, entry_rows, esc};
+use crate::web::{Snapshot, ago, ci_label, entry_rows, esc};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
@@ -465,29 +462,6 @@ pub(crate) fn ready_tab(
         ));
     }
     out
-}
-
-/// Public data only, the same for every caller: the personal order reads
-/// private subscriptions, so it stays on the page.
-async fn api_committer(State(app): State<Shared>) -> Json<Value> {
-    let s = app.snap();
-    Json(json!({
-        "ready": s.queues.merge,
-        "maintainer_approved": s.board.maintainer_approved,
-        "security": s.board.security,
-        "backports": s.board.backports,
-        "waiting": s.board.waiting,
-        "committers": {
-            "logins": s.committers.len(),
-            "merged_last_365_days": s.committers.from_merges,
-            "team": TEAM,
-            "team_members": s.committers.from_team,
-        },
-    }))
-}
-
-pub fn routes() -> Router<Shared> {
-    Router::new().route("/api/v1/committer", get(api_committer))
 }
 
 #[cfg(test)]

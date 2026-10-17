@@ -1,4 +1,5 @@
 mod actions;
+mod api;
 mod archive;
 mod area;
 mod assets;
@@ -208,14 +209,21 @@ enum Command {
         )]
         db: PathBuf,
     },
-    /// The ready-to-merge queue
-    Merge,
-    /// The review queue: foryou (needs --login; mine is an alias), unowned, or all
-    Review {
-        #[arg(long, default_value = "all", value_parser = ["foryou", "mine", "unowned", "all"])]
-        bucket: String,
+    /// Open pull requests in one queue: foryou (needs --login), unowned,
+    /// bumps, all, or ready
+    Prs {
+        #[arg(long, default_value = "all", value_parser = api::QUEUES)]
+        queue: String,
+        /// With --queue ready
+        #[arg(long, value_parser = api::SECTIONS)]
+        section: Option<String>,
         #[arg(long)]
         login: Option<String>,
+        #[arg(long, default_value_t = api::LIMIT)]
+        limit: usize,
+        /// The next_cursor of the page before
+        #[arg(long)]
+        cursor: Option<String>,
     },
     /// One person's review record: outcomes, not a rank
     Record { login: String },
@@ -559,14 +567,16 @@ macro_rules! out {
 }
 
 fn print_entries(v: &Value) -> Result<()> {
-    for e in v.as_array().into_iter().flatten() {
+    for e in v["items"].as_array().into_iter().flatten() {
         out!(
-            "#{:<7} {:<20} {:>6.2}  {}",
+            "#{:<7} {:<20} {}",
             e["number"],
             e["author"].as_str().unwrap_or(""),
-            e["author_score"].as_f64().unwrap_or(0.0),
             e["title"].as_str().unwrap_or("")
         );
+    }
+    if let Some(c) = v["next_cursor"].as_str() {
+        eprintln!("{} in all; next page: --cursor {c}", v["total"]);
     }
     Ok(())
 }
@@ -806,22 +816,21 @@ async fn run(cli: Cli) -> Result<i32> {
             );
             Ok(0)
         }
-        Command::Merge => {
-            let v = fetch(&cli.server, "/api/v1/queue/merge").await?;
-            if cli.json {
-                out!("{v}");
-            } else {
-                print_entries(&v)?;
+        Command::Prs {
+            queue,
+            section,
+            login,
+            limit,
+            cursor,
+        } => {
+            if queue == "foryou" && login.is_none() {
+                bail!("--queue foryou needs --login");
             }
-            Ok(0)
-        }
-        Command::Review { bucket, login } => {
-            if (bucket == "foryou" || bucket == "mine") && login.is_none() {
-                bail!("--bucket {bucket} needs --login");
-            }
-            let mut path = format!("/api/v1/queue/review?bucket={bucket}");
-            if let Some(l) = login {
-                path.push_str(&format!("&login={}", github::urlencode(&l)));
+            let mut path = format!("/api/v1/prs?queue={queue}&limit={limit}");
+            for (k, v) in [("section", section), ("login", login), ("cursor", cursor)] {
+                if let Some(v) = v {
+                    path.push_str(&format!("&{k}={}", github::urlencode(&v)));
+                }
             }
             let v = fetch(&cli.server, &path).await?;
             if cli.json {
@@ -978,15 +987,15 @@ async fn run(cli: Cli) -> Result<i32> {
         Command::Maintains { login } => {
             let v = fetch(
                 &cli.server,
-                &format!("/api/v1/maintainers/{}", github::urlencode(&login)),
+                &format!("/api/v1/people/{}", github::urlencode(&login)),
             )
             .await?;
             if cli.json {
-                out!("{v}");
+                out!("{}", v["maintains"]);
                 return Ok(0);
             }
             for kind in ["packages", "modules"] {
-                for r in v[kind].as_array().into_iter().flatten() {
+                for r in v["maintains"][kind].as_array().into_iter().flatten() {
                     let f = &r["flags"];
                     out!(
                         "{:<40} {:<14} risk {:<3} upstream {:<12} advisories {:<2} prs {:<3} issues {}",

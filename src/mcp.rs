@@ -11,11 +11,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
 
+use crate::api::{LIMIT, MAX_LIMIT};
 use crate::web::{App, Shared};
 
 const VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
-const LIMIT: usize = 50;
-const MAX_LIMIT: usize = 200;
 
 pub fn routes() -> Router<Shared> {
     Router::new().route("/mcp", post(mcp).get(no_stream).delete(no_stream))
@@ -207,27 +206,22 @@ fn tools() -> Vec<Value> {
             &["path"],
         ),
         tool(
-            "maintains",
-            "What a login maintains",
-            "The packages and NixOS modules whose meta.maintainers or meta.teams name a GitHub login, with their flags.",
+            "person",
+            "A person",
+            "The public review record of a GitHub login, and the packages and NixOS modules whose meta.maintainers or meta.teams name it, with their flags. It never ranks people.",
             json!({ "login": s("a GitHub login") }),
             &["login"],
         ),
         tool(
-            "queue_merge",
-            "Ready to merge",
-            "Pull requests ready to merge: checks pass, no conflict, an approval on the head, and a review that earned credit. Best first.",
-            json!({ "limit": limit_prop() }),
-            &[],
-        ),
-        tool(
-            "queue_review",
-            "Needs review",
-            "Listed pull requests that need review, oldest first. bucket: foryou (the area of login, and the caller's subscriptions when login is the caller; the default), unowned, or all. mine is an alias of foryou.",
+            "prs",
+            "Open pull requests",
+            "Open pull requests in one queue, paged. queue: foryou (what login maintains, owns or changed, and the caller's subscriptions when login is the caller; the default), unowned (no maintainer), bumps (version bumps; with login, only what login maintains), all (needs review), or ready (ready to merge). With queue=ready, section picks ready (the default), maintainer_approved, security, backports or waiting. Pass next_cursor as cursor for the next page.",
             json!({
-                "bucket": { "type": "string", "enum": ["foryou", "mine", "unowned", "all"] },
-                "login": s("whose area for bucket=foryou; default the caller"),
+                "queue": { "type": "string", "enum": crate::api::QUEUES },
+                "section": { "type": "string", "enum": crate::api::SECTIONS },
+                "login": s("whose queue for foryou and bumps; default the caller"),
                 "limit": limit_prop(),
+                "cursor": s("next_cursor of the page before"),
             }),
             &[],
         ),
@@ -254,12 +248,6 @@ fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, (i64, String)> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or((-32602, format!("argument {key} is missing")))
-}
-
-fn limit(args: &Value) -> usize {
-    args["limit"]
-        .as_u64()
-        .map_or(LIMIT, |n| (n as usize).clamp(1, MAX_LIMIT))
 }
 
 /// The outer error is a bad call; the inner one is a tool result that
@@ -291,31 +279,19 @@ async fn call(
             let p = arg(args, "path")?;
             crate::catalog::area_value(app, p).ok_or_else(|| format!("{p} is not a nixpkgs path"))
         }
-        "maintains" => Ok(crate::catalog::maintains_value(app, arg(args, "login")?)),
-        "queue_merge" => {
-            let s = app.snap();
-            let q = &s.queues.merge;
-            Ok(
-                json!({ "total": q.len(), "entries": q.iter().take(limit(args)).collect::<Vec<_>>() }),
-            )
-        }
-        "queue_review" => {
-            let asked = args["bucket"].as_str().unwrap_or("foryou");
-            let Some(bucket) = crate::web::bucket_name(asked) else {
-                return Err((-32602, format!("no bucket {asked}")));
+        "person" => Ok(crate::api::person_value(app, arg(args, "login")?)),
+        "prs" => {
+            let q = crate::api::PrQuery {
+                queue: Some(args["queue"].as_str().unwrap_or("foryou").to_string()),
+                section: args["section"].as_str().map(String::from),
+                login: args["login"].as_str().map(String::from),
+                limit: args["limit"].as_u64().map(|n| n as usize),
+                cursor: args["cursor"].as_str().map(String::from),
             };
-            let who = args["login"].as_str().unwrap_or(login);
-            let watched = if who == login {
-                crate::web::watched_of(app, Some(login))
-            } else {
-                Vec::new()
-            };
-            let s = app.snap();
-            let q = crate::web::review_bucket(&s, Some(who), &watched, bucket);
-            Ok(json!({
-                "bucket": bucket, "login": who, "total": q.len(),
-                "entries": q.iter().take(limit(args)).collect::<Vec<_>>(),
-            }))
+            match crate::api::prs_value(app, &q, Some(login)) {
+                Ok(p) => Ok(p.value),
+                Err(e) => return Err((-32602, e)),
+            }
         }
         "watching" => Ok(crate::catalog::watching_value(app, login)),
         "sync_status" => Ok(crate::status::state(app)),
@@ -404,7 +380,7 @@ mod tests {
         opt_in(&app, "alice", "t");
         let (code, v) = post(&app, Some("t"), list).await;
         assert_eq!(code, StatusCode::OK);
-        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 8);
     }
 
     #[tokio::test]
