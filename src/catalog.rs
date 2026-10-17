@@ -2849,4 +2849,20 @@ mod tests {
         let out = set_events(&s, &i, &h, &attrs, now - Duration::days(FEED_DAYS));
         assert_eq!(out.len(), SET_EVENTS);
     }
+
+    #[test]
+    fn build_row_tells_each_answer_apart() {
+        let job = "nixpkgs/trunk/a<b>.x86_64-linux";
+        let link = "<a href=\"https://hydra.nixos.org/job/nixpkgs/trunk/a&lt;b&gt;.x86_64-linux\">nixpkgs/trunk/a&lt;b&gt;.x86_64-linux</a>";
+        for (last, text) in [
+            (Last::NotAsked, "not asked yet"),
+            (Last::Missing, "no finished build of"),
+            (Last::NoAnswer, "Hydra did not answer"),
+        ] {
+            let row = build_row("Hydra", job, &last);
+            assert!(row.contains(text), "{row}");
+            assert!(row.contains(link), "{row}");
+            assert!(!row.contains("a<b>"), "{row}");
+        }
+    }
 }
