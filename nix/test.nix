@@ -250,6 +250,8 @@ pkgs.testers.runNixOSTest {
     # a pull request that is not in the data gets a short page with a GitHub link
     machine.succeed("curl -s -o /tmp/pr1 -w '%{http_code}' http://127.0.0.1:8790/pr/1 > /tmp/pr1.code && grep -q 200 /tmp/pr1.code")
     machine.succeed("grep -q 'href=\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1 && grep -q 'not in the data of this site' /tmp/pr1")
+    machine.succeed("! grep -q 'id=\"decide\"' /tmp/pr1")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/pr/18446744073709551615 > /tmp/pr2.code && grep -q 200 /tmp/pr2.code && curl -sf http://127.0.0.1:8790/healthz")
     machine.succeed("curl -s -o /tmp/pr1.json -w '%{http_code}' http://127.0.0.1:8790/api/v1/prs/1 > /tmp/pr1.json.code && grep -q 404 /tmp/pr1.json.code")
     machine.succeed("grep -q '\"url\":\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1.json")
     machine.fail("curl -sf http://127.0.0.1:8790/pr/nope")
