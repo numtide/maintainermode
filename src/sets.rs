@@ -420,6 +420,7 @@ pub(crate) mod tests {
             rescan: None,
             inbox: Default::default(),
             smtp: None,
+            pr_cache: Default::default(),
         })
     }
 

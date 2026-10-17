@@ -1008,7 +1008,7 @@ const NO_TOKEN: &str =
 
 /// The server's own tokens only: a token that a person lent pays for
 /// their own reviews, not for the archive.
-async fn tokens(app: &App) -> Vec<String> {
+pub(crate) async fn tokens(app: &App) -> Vec<String> {
     let mut tokens = Vec::new();
     if let Some(g) = &app.github_app {
         if let Ok(t) = g.token().await {

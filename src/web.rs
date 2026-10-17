@@ -88,6 +88,8 @@ pub struct App {
     pub inbox: crate::notify::Counts,
     /// The SMTP server of the email digest; None while email is off.
     pub smtp: Option<crate::notify::Smtp>,
+    /// What pull request pages read from GitHub on demand.
+    pub pr_cache: crate::prpage::Cache,
 }
 
 impl App {
@@ -221,6 +223,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::archive::routes())
         .merge(crate::llm::routes())
         .merge(crate::progress::routes())
+        .merge(crate::prpage::routes())
         .merge(crate::mcp::routes())
         .merge(crate::rescan::routes())
         .merge(crate::welcome::routes())

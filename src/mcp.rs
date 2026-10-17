@@ -353,6 +353,7 @@ mod tests {
             rescan: None,
             inbox: Default::default(),
             smtp: None,
+            pr_cache: Default::default(),
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
         })
