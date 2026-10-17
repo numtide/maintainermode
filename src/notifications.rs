@@ -263,6 +263,26 @@ pub async fn apply(
     Ok(Applied { stored, failed })
 }
 
+/// While the poller is healthy, the full walk of pull requests and issues
+/// runs at most this often. A pass that starts up to a minute early counts.
+pub const WALK_EVERY_WHEN_HEALTHY: i64 = 1800;
+const WALK_SLACK: i64 = 60;
+
+/// The full walk runs on each pass, except while the poller is healthy:
+/// then only after the first walks are done and every
+/// `WALK_EVERY_WHEN_HEALTHY`.
+pub fn walk_due(
+    healthy: bool,
+    first_walks_done: bool,
+    last_walk: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> bool {
+    !healthy
+        || !first_walks_done
+        || last_walk
+            .is_none_or(|t| now - t >= Duration::seconds(WALK_EVERY_WHEN_HEALTHY - WALK_SLACK))
+}
+
 #[derive(Default)]
 pub struct Status(Mutex<Inner>);
 
@@ -533,6 +553,18 @@ mod tests {
         let v = s.json(now + Duration::seconds(121));
         assert_eq!(v["errors_last_hour"], 1);
         assert_eq!(v["last_error"]["message"], "boom");
+    }
+
+    #[test]
+    fn the_walk_waits_only_while_the_poller_is_healthy() {
+        let now = Utc::now();
+        let ago = |m: i64| Some(now - Duration::minutes(m));
+        assert!(walk_due(false, true, ago(1), now));
+        assert!(walk_due(true, false, ago(1), now));
+        assert!(walk_due(true, true, None, now));
+        assert!(!walk_due(true, true, ago(20), now));
+        assert!(walk_due(true, true, ago(29), now));
+        assert!(walk_due(true, true, ago(31), now));
     }
 
     const LAST_MODIFIED: &str = "Sat, 17 Oct 2026 10:00:00 GMT";

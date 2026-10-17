@@ -463,10 +463,20 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         let server_tokens = tokens.clone();
         tokens.extend(app.store.lent_tokens().unwrap_or_default());
         let mut client = github::Client::new(tokens);
-        if client.has_token() {
+        let walk = notifications::walk_due(
+            app.notifications.healthy(pass_started),
+            app.store.get("open_done").ok().flatten().is_some()
+                && app.store.get("issues_open_done").ok().flatten().is_some(),
+            app.store.get_time("walk_at").ok().flatten(),
+            pass_started,
+        );
+        if client.has_token() && !walk {
+            tracing::info!("the notifications poller is healthy; the full walk waits");
+        } else if client.has_token() {
             match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
                 Ok(n) => {
                     down = false;
+                    let _ = app.store.set("walk_at", &pass_started.to_rfc3339());
                     tracing::info!("synced {n} pull requests");
                 }
                 Err(e) => {
@@ -486,9 +496,11 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
         }
         failures = 0;
         if client.has_token() {
-            match github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await {
-                Ok(n) => tracing::info!("synced {n} issues"),
-                Err(e) => tracing::warn!("issues: {e:#}"),
+            if walk {
+                match github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await {
+                    Ok(n) => tracing::info!("synced {n} issues"),
+                    Err(e) => tracing::warn!("issues: {e:#}"),
+                }
             }
             if let Err(e) = settle(&app, &mut client).await {
                 tracing::warn!("mergeable: {e:#}");
