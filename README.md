@@ -37,6 +37,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
 - **What you maintain**: every package and module whose `meta.maintainers` or
   `meta.teams` names you, worst first.
 - **What you watch**: subscribe to any package, module or directory.
+- **Needs you**: the top of the home page. It lists what waits for you, the most urgent first: a serious advisory on your machines, a new review on your pull request, a blocked pull request, a pull request to review. Snooze an item, or push Next to go through them.
 - **Needs review, for you**: by default, the review queue shows the pull
   requests on what you maintain or watch.
 - **Your system**: upload the closure of your machines, and follow the
