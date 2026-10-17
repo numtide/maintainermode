@@ -330,7 +330,7 @@ fn mail_note(mail: Option<&str>) -> &'static str {
             "Confirm your address first: open the link in the confirmation email."
         }
         Some("limit") => {
-            "The server reached its daily email limit, or you got 3 confirmation emails today. Try again tomorrow."
+            "The server reached its daily email limit, or you got 3 emails of this kind today. Try again tomorrow."
         }
         _ => "",
     }
@@ -742,6 +742,7 @@ pub struct Smtp {
 }
 
 const CONFIRMS_PER_DAY: usize = 3;
+const TESTS_PER_DAY: usize = 3;
 
 #[derive(Clone, Copy)]
 enum Mail {
@@ -758,18 +759,21 @@ impl Mail {
             Mail::Digest => "digest",
         }
     }
+    fn own_max(self) -> usize {
+        match self {
+            Mail::Confirm => CONFIRMS_PER_DAY,
+            Mail::Test => TESTS_PER_DAY,
+            Mail::Digest => usize::MAX,
+        }
+    }
 }
 
 /// False when the email would go over the server limit, or over the
-/// confirmations a person gets in a day.
+/// confirmations or test emails a person gets in a day.
 fn take_slot(app: &App, smtp: &Smtp, login: &str, kind: Mail) -> bool {
-    let own_max = match kind {
-        Mail::Confirm => CONFIRMS_PER_DAY,
-        Mail::Test | Mail::Digest => usize::MAX,
-    };
     match app
         .store
-        .take_mail_slot(login, kind.key(), smtp.per_day, own_max, Utc::now())
+        .take_mail_slot(login, kind.key(), smtp.per_day, kind.own_max(), Utc::now())
     {
         Ok(true) => true,
         Ok(false) => {
@@ -1440,12 +1444,8 @@ mod tests {
         let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
         let now = Utc::now();
         let take = |login: &str, kind: Mail, at: DateTime<Utc>| {
-            let own = if matches!(kind, Mail::Confirm) {
-                CONFIRMS_PER_DAY
-            } else {
-                usize::MAX
-            };
-            s.take_mail_slot(login, kind.key(), 5, own, at).unwrap()
+            s.take_mail_slot(login, kind.key(), 5, kind.own_max(), at)
+                .unwrap()
         };
         let old = now - Duration::hours(25);
         for _ in 0..CONFIRMS_PER_DAY {
@@ -1465,6 +1465,22 @@ mod tests {
         }
         assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 103));
         assert!(take("alice", Mail::Confirm, now + Duration::hours(25)));
+    }
+
+    #[test]
+    fn test_emails_have_a_daily_limit_per_person() {
+        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = Utc::now();
+        let take = |login: &str, kind: Mail| {
+            s.take_mail_slot(login, kind.key(), 500, kind.own_max(), now)
+                .unwrap()
+        };
+        for _ in 0..TESTS_PER_DAY {
+            assert!(take("alice", Mail::Test));
+        }
+        assert!(!take("alice", Mail::Test));
+        assert!(take("alice", Mail::Digest));
+        assert!(take("bob", Mail::Test));
     }
 
     #[tokio::test]
