@@ -1,11 +1,11 @@
-//! Notifications: the inbox tab of `/me`, its unread count in the
+//! Notifications: the inbox at `/inbox`, its unread count in the
 //! header, and an optional daily email digest. The events are those of the
 //! private Atom feed. Only the owner sees their inbox, their choices and
 //! their address.
 
 use anyhow::{Context, bail};
 use axum::Router;
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -27,9 +27,10 @@ use crate::github::urlencode;
 use crate::secret::Secret;
 use crate::sets::token_hash;
 use crate::store::Confirmation;
-use crate::ui::{Page, Section, Tab};
+use crate::ui::{Page, Personal, Section, Tab};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
+pub(crate) const INBOX: &str = "/inbox";
 const READ_AT: &str = "inbox_read_at";
 const KINDS: &str = "notify_kinds";
 pub(crate) const EMAIL: &str = "digest_email";
@@ -42,6 +43,7 @@ const CONFIRM_HOURS: i64 = 24;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
+        .route("/inbox", get(inbox_page))
         .route("/me/inbox/read", post(mark_read))
         .route("/me/notify", post(save_notify))
         .route("/me/notify/test", post(test_mail))
@@ -173,29 +175,41 @@ pub fn recount(app: &App) {
 }
 
 fn inbox_href(sub: Option<&str>, kind: Option<Kind>) -> String {
-    let mut href = String::from("/me?tab=inbox");
+    let mut q = Vec::new();
     if let Some(s) = sub {
-        let _ = write!(href, "&sub={}", urlencode(s));
+        q.push(format!("sub={}", urlencode(s)));
     }
     if let Some(k) = kind {
-        let _ = write!(href, "&kind={}", k.key());
+        q.push(format!("kind={}", k.key()));
     }
-    href
+    if q.is_empty() {
+        INBOX.to_string()
+    } else {
+        format!("{INBOX}?{}", q.join("&"))
+    }
 }
 
-/// The Inbox tab of `/me`. Opening it counts the unread events again.
-pub(crate) fn inbox_tab(
-    app: &App,
-    login: &str,
-    sub: Option<&str>,
-    kind: Option<&str>,
-) -> crate::me::TabBody {
-    let all = person_events(app, login);
-    let read = read_at(app, login);
-    let n = unread_count(&all, read, &kinds(app, login));
-    app.inbox.set(login, n);
-    let sub = sub.filter(|s| !s.is_empty());
-    let kind = kind.and_then(Kind::parse);
+#[derive(Deserialize)]
+pub(crate) struct InboxQuery {
+    pub(crate) sub: Option<String>,
+    pub(crate) kind: Option<String>,
+}
+
+/// `/inbox`. Opening it counts the unread events again.
+async fn inbox_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let all = person_events(&app, &login);
+    let read = read_at(&app, &login);
+    let n = unread_count(&all, read, &kinds(&app, &login));
+    app.inbox.set(&login, n);
+    let sub = q.sub.as_deref().filter(|s| !s.is_empty());
+    let kind = q.kind.as_deref().and_then(Kind::parse);
     let actions = if all.iter().any(|e| unread(e, read)) {
         "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>".to_string()
     } else {
@@ -209,12 +223,12 @@ pub(crate) fn inbox_tab(
             kind == Some(k),
         ));
     }
-    let mut out = crate::ui::subnav(&tabs);
+    let mut out = String::new();
     let subjects: BTreeSet<&str> = all.iter().map(|e| e.subject.as_str()).collect();
     if !subjects.is_empty() {
         let _ = write!(
             out,
-            "<form method=\"get\" action=\"/me\" class=\"d-flex gap-2 mb-3\"><input type=\"hidden\" name=\"tab\" value=\"inbox\">{}\
+            "<form method=\"get\" action=\"{INBOX}\" class=\"d-flex gap-2 mb-3\">{}\
              <select class=\"form-select\" name=\"sub\" aria-label=\"what you watch\"><option value=\"\">Everything you watch</option>",
             kind.map(|k| format!(
                 "<input type=\"hidden\" name=\"kind\" value=\"{}\">",
@@ -241,8 +255,8 @@ pub(crate) fn inbox_tab(
         .collect();
     if shown.is_empty() {
         out.push_str(
-            "<div class=\"blankslate\"><p>Nothing here. <a href=\"/me?tab=watch\">Watch</a> a package, a module or a directory, \
-             or send the packages of <a href=\"/me?tab=machines\">your machines</a>.</p></div>",
+            "<div class=\"blankslate\"><p>Nothing here. <a href=\"/packages?filter=watch\">Watch</a> a package, a module or a directory, \
+             or send the packages of <a href=\"/me/settings#upload\">your machines</a>.</p></div>",
         );
     } else {
         out.push_str("<div class=\"Box\">");
@@ -251,7 +265,7 @@ pub(crate) fn inbox_tab(
             let _ = write!(
                 out,
                 "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-muted\">{}</span>\
-                 <div class=\"flex-auto\">{}\
+                 <div class=\"flex-auto min-width-0 wb-break-word\">{}\
                  <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{}</div>",
                 Kind::of(&e.id).icon(),
                 crate::prpage::link(
@@ -274,13 +288,16 @@ pub(crate) fn inbox_tab(
         }
         out.push_str("</div>");
     }
-    crate::me::TabBody {
-        sub: "What happened in the last 30 days to what you watch and to your machines, newest first. \
-              Your Atom feed has the same events."
-            .into(),
-        actions,
-        body: out,
-    }
+    Page::new(Section::Personal(Personal::Inbox), "Inbox")
+        .icon(octicon!("inbox"))
+        .sub(
+            "What happened in the last 30 days to what you watch and to your machines, newest first. \
+             Your Atom feed has the same events. Only you see this page.",
+        )
+        .subnav(tabs)
+        .actions(actions)
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -294,7 +311,7 @@ async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     app.inbox.set(&login, 0);
-    Redirect::to("/me?tab=inbox").into_response()
+    Redirect::to(INBOX).into_response()
 }
 
 fn mail_note(mail: Option<&str>) -> &'static str {
@@ -408,7 +425,7 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
             &format!(
                 "<div class=\"Box-row\">{note}\
                  <form method=\"post\" action=\"/me/notify\">\
-                 <p>Your <a href=\"/me?tab=inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
+                 <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
                  {boxes}{email}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form>{test}</div>"
             )
         )
@@ -883,7 +900,7 @@ async fn send(
     let base = app.public_url.trim_end_matches('/');
     let unsubscribe = format!("{base}/unsubscribe/{token}");
     let body = format!(
-        "{body}\n--\nYour inbox: {base}/me?tab=inbox\nYour notification settings: {base}/me/settings#email\n\
+        "{body}\n--\nYour inbox: {base}/inbox\nYour notification settings: {base}/me/settings#email\n\
          Unsubscribe from these emails: {unsubscribe}\n"
     );
     deliver(smtp, address, subject, body, Some(&unsubscribe)).await
@@ -1154,8 +1171,24 @@ pub(crate) mod tests {
         assert!(read_at(&app, "alice").is_none());
         let h = signed_in(&app, "alice");
         app.inbox.set("alice", 3);
-        let tab = inbox_tab(&app, "alice", None, Some("advisory"));
-        assert!(tab.body.contains("aria-current=\"page\""));
+        let q = |kind: Option<&str>| {
+            Query(InboxQuery {
+                sub: None,
+                kind: kind.map(String::from),
+            })
+        };
+        let r = inbox_page(State(app.clone()), HeaderMap::new(), q(None)).await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        let r = inbox_page(State(app.clone()), h.clone(), q(Some("advisory"))).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::CACHE_CONTROL], "private, no-store");
+        let b = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(b.to_vec()).unwrap();
+        assert!(html.contains("href=\"/inbox?kind=advisory\" aria-current=\"page\""));
+        assert!(html.contains("<a href=\"/inbox\" aria-current=\"page\">"));
+        assert!(!html.contains("UnderlineNav-item\" href=\"/\" aria-current"));
         assert_eq!(app.inbox.get("alice"), 0);
         app.inbox.set("alice", 3);
         assert_eq!(app.inbox.get("alice"), 3);
@@ -1551,10 +1584,10 @@ pub(crate) mod tests {
 
     #[test]
     fn a_filter_link_keeps_the_other_filter() {
-        assert_eq!(inbox_href(None, None), "/me?tab=inbox");
+        assert_eq!(inbox_href(None, None), "/inbox");
         assert_eq!(
             inbox_href(Some("pkgs/by-name/"), Some(Kind::Advisory)),
-            "/me?tab=inbox&sub=pkgs%2Fby-name%2F&kind=advisory"
+            "/inbox?sub=pkgs%2Fby-name%2F&kind=advisory"
         );
     }
 }

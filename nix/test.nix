@@ -251,7 +251,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf -o /tmp/robots http://127.0.0.1:8790/robots.txt && grep -q '^Disallow: /pr/' /tmp/robots && grep -q '^Disallow: /api/v1/prs/' /tmp/robots")
     # notifications: the inbox and its settings need a session; email is off
     # without SMTP, and an unknown unsubscribe link is not found
-    machine.succeed("curl -s -D /tmp/n1.h -o /dev/null http://127.0.0.1:8790/me/inbox && grep -qi '^location: /me?tab=inbox' /tmp/n1.h && grep -qi '^cache-control: private, no-store' /tmp/n1.h")
+    machine.succeed("curl -s -D /tmp/n1.h -o /dev/null http://127.0.0.1:8790/me/inbox && grep -qi '^location: /inbox' /tmp/n1.h && grep -qi '^cache-control: private, no-store' /tmp/n1.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/inbox/read > /tmp/n2 && grep -q 303 /tmp/n2")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d k_pr=1 -d email=a@example.org http://127.0.0.1:8790/me/notify > /tmp/n3 && grep -q 303 /tmp/n3")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/notify/test > /tmp/n4 && grep -q 303 /tmp/n4")
@@ -306,13 +306,16 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"curl -s {cookie} -D {out}.h -o {out} -w '%{{http_code}}' -X POST {data} '{base}{path}' > {out}.code && grep -qx {code} {out}.code")
         machine.succeed(f"grep -qi '^cache-control: private, no-store' {out}.h")
 
-    for path, out in [("/", "home"), ("/me", "me"), ("/me/settings", "settings"), ("/me/runs", "runs"),
+    for path, out in [("/", "home"), ("/inbox", "inbox"), ("/me/settings", "settings"), ("/me/runs", "runs"),
                       ("/me/progress", "progress"), ("/review", "review"), ("/review?tab=ready", "ready"),
                       ("/u/alice", "u"), ("/packages", "packages"), ("/state", "state")]:
         signed_in(path, f"/tmp/s-{out}")
         machine.succeed(f"grep -q 'menu-login\">alice<' /tmp/s-{out}")
     machine.succeed("grep -q 'Pull requests for you to review' /tmp/s-home")
-    for tab, label in [("inbox", "Inbox"), ("maintain", "Maintain"), ("watch", "Watch"), ("machines", "My machines")]:
+    machine.succeed("grep -q '<a href=\"/inbox\" aria-current=\"page\">' /tmp/s-inbox && ! grep -q 'UnderlineNav-item\" href=\"[^\"]*\" aria-current' /tmp/s-inbox")
+    machine.succeed("grep -q '<a href=\"/me/settings\" aria-current=\"page\">' /tmp/s-settings && ! grep -q 'UnderlineNav-item\" href=\"[^\"]*\" aria-current' /tmp/s-settings")
+    machine.succeed("curl -s -D /tmp/inbox0.h -o /dev/null http://127.0.0.1:8790/inbox && grep -q '^HTTP/1.1 303' /tmp/inbox0.h && grep -qi '^cache-control: private, no-store' /tmp/inbox0.h")
+    for tab, label in [("maintain", "Maintain"), ("watch", "Watch"), ("machines", "My machines")]:
         signed_in(f"/me?tab={tab}", f"/tmp/s-me-{tab}")
         machine.succeed(f"grep -q 'href=\"/me?tab={tab}\" aria-current=\"page\">{label}' /tmp/s-me-{tab}")
     for anchor in ["email", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
