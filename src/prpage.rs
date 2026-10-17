@@ -1738,6 +1738,12 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         ))
         .actions(exits(n));
     let mut out = panel;
+    out.push_str(&crate::followup::pr_box(
+        &app,
+        viewer.as_deref(),
+        pr,
+        s.committers.is(&pr.author),
+    ));
     out.push_str(&description_html(pr, &talk));
     out.push_str(&about(pr));
     out.push_str(&place_html(&place, &credits, for_you));

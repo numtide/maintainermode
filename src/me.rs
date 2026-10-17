@@ -51,8 +51,9 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-const SETTINGS: [(&str, &str); 9] = [
+const SETTINGS: [(&str, &str); 10] = [
     ("email", "Email"),
+    ("followup", "Pull requests"),
     ("feed", "Feed"),
     ("upload", "Upload"),
     ("llm", "LLMs"),
@@ -84,6 +85,7 @@ async fn settings_page(
     let workflows = crate::actions::repos_box(&app, &login).await;
     let body = [
         crate::notify::settings_box(&app, &login, q.mail.as_deref()),
+        crate::followup::settings_box(&app, &login),
         crate::catalog::feed_box(&app, &login),
         crate::sets::token_box(&app, &login),
         crate::llm::llm_box(&app, &login),
@@ -208,6 +210,7 @@ mod tests {
         }
         for action in [
             "/me/notify",
+            "/me/settings/followup",
             "/me/feed",
             "/me/upload-token",
             "/me/settings/llm",
