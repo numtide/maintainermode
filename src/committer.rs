@@ -2,8 +2,6 @@
 
 use anyhow::{Result, bail};
 use axum::extract::State;
-use axum::http::HeaderMap;
-use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -19,8 +17,8 @@ use crate::links::Links;
 use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
-use crate::ui::{Kind, Page, Section, empty, item_row, section};
-use crate::web::{Shared, Snapshot, ago, ci_label, esc, octicon};
+use crate::ui::{Kind, empty, item_row, note, pager, section};
+use crate::web::{Shared, Snapshot, ago, ci_label, entry_rows, esc};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
@@ -358,101 +356,107 @@ fn rows_of(rows: &[Row]) -> Vec<Line<'_>> {
         .collect()
 }
 
-fn guide() -> String {
-    format!(
-        "<p class=\"f6\">Maintainer Mode never merges: each row links to GitHub, and you decide. \
-         nixpkgs says how to review and merge in its <a href=\"{GUIDE}\">contributor guide</a>; \
-         <a href=\"/rules\">the rules</a> of this site only decide which pull requests get listed.</p>"
-    )
-}
-
-async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let page = Page::new(Section::Review, "For committers")
-        .icon(octicon!("key"))
-        .sub(
-            "What waits for someone with merge rights: the ready queue in your areas first, \
-             pull requests a maintainer approved, security fixes, backports, and what waits longest.",
-        )
-        .actions("<a class=\"btn btn-sm\" href=\"/api/v1/committer\">JSON</a>");
-    let mut out = String::new();
-    let Some(login) = viewer.as_deref().filter(|v| s.committers.is(v)) else {
-        let _ = write!(
-            out,
-            "<div class=\"callout mb-3\">This view is for people with merge rights in nixpkgs. \
-             Maintainer Mode counts a login as a committer when it merged a pull request in the last {MERGED_DAYS} days, \
-             or when it is in the team {TEAM}. {}</div>{}\
-             <p class=\"f6\">The lists without the personal part are in <a href=\"/api/v1/committer\">the JSON API</a>, \
-             and the <a href=\"/merge\">ready-to-merge queue</a> is open to all.</p>",
-            if viewer.is_some() {
-                "Your login has not merged a pull request in the synced data."
-            } else {
-                "Sign in to see it."
-            },
-            guide()
-        );
-        return page.body(out).render(&app, viewer.as_deref());
-    };
-    out.push_str(&guide());
-    let act = crate::actions::Act::of(&app, Some(login));
-    let mine = yours(&app, &s, login);
-    let mut first: Vec<Line> = Vec::new();
-    let mut rest: Vec<Line> = Vec::new();
-    for e in s.queues.merge.iter().filter(|e| e.author != login) {
-        match mine(e) {
-            Some(why) => first.push(Line {
-                entry: e,
-                why,
-                since: None,
-            }),
-            None => rest.push(Line {
-                entry: e,
-                why: "Ready to merge, outside your areas and subscriptions.".into(),
-                since: None,
-            }),
+/// The Ready to merge tab of `/review`. Its lists are public. A committer
+/// who signed in also gets "In your areas", which reads their private
+/// subscriptions.
+pub(crate) fn ready_tab(
+    app: &crate::web::App,
+    s: &Snapshot,
+    viewer: Option<&str>,
+    after: Option<u64>,
+) -> String {
+    let act = crate::actions::Act::of(app, viewer);
+    let first = after.is_none();
+    let mut out = format!(
+        "<p class=\"f6\">Maintainer Mode never merges. Each row links to GitHub, and you decide. \
+         Read <a href=\"{GUIDE}#how-to-merge-pull-requests-yourself\">how nixpkgs merges</a>. \
+         <a href=\"/rules\">The rules</a> of this site only decide which pull requests are in the queues.</p>"
+    );
+    match viewer.filter(|v| s.committers.is(v)) {
+        Some(login) if first => {
+            let mine = yours(app, s, login);
+            let mut list: Vec<Line> = s
+                .queues
+                .merge
+                .iter()
+                .filter(|e| e.author != login)
+                .filter_map(|e| {
+                    mine(e).map(|why| Line {
+                        entry: e,
+                        why,
+                        since: None,
+                    })
+                })
+                .collect();
+            let n = list.len();
+            list.truncate(SECTION);
+            out.push_str(&section(
+                "In your areas",
+                Some(n),
+                None,
+                &format!(
+                    "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
+                     Only you see this section.</div>{}",
+                    lines(&list, "Nothing ready touches your areas or what you watch.", act)
+                ),
+            ));
         }
+        None if first => out.push_str(&note(&format!(
+            "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
+             when it merged a pull request in the last {MERGED_DAYS} days, or when it is in the team {TEAM}."
+        ))),
+        _ => {}
     }
-    let ready_n = first.len() + rest.len();
-    first.extend(rest);
-    first.truncate(SECTION * 2);
-    let b = &s.board;
-    for ((title, count), sub, list, empty) in [
-        (
-            ("Ready to merge", Some(ready_n)),
-            "The <a href=\"/merge\">ready-to-merge queue</a>: what touches your areas and subscriptions comes first, then the rest.",
-            first,
-            "Nothing is ready yet.",
+    let all: Vec<&Entry> = s.queues.merge.iter().collect();
+    let (page, next) = crate::review::paged(&all, after, |e| e.number);
+    let rows = if page.is_empty() {
+        empty("Nothing is ready yet.")
+    } else {
+        entry_rows(page, act)
+    };
+    out.push_str(&section(
+        "Ready to merge",
+        Some(all.len()),
+        None,
+        &format!(
+            "<div class=\"Box-row f6 color-fg-muted\">Checks pass, there is no conflict, someone approved the current head, \
+             and a review on it got credit. Authors with more review credit come first.</div>{rows}"
         ),
+    ));
+    out.push_str(&pager("/review?tab=ready", next.as_deref()));
+    if !first {
+        return out;
+    }
+    let b = &s.board;
+    for (title, sub, list, empty) in [
         (
-            ("Approved by a maintainer", None),
+            "Approved by a maintainer",
             "An approval on the current head by a login in the <code>meta.maintainers</code> or <code>meta.teams</code> of a package or module it changes. No known conflict. Longest wait first.",
             rows_of(&b.maintainer_approved),
             "No pull request waits with a maintainer's approval.",
         ),
         (
-            ("Security fixes", None),
+            "Security fixes",
             "Labelled <code>1.severity: security</code>, checks pass, no known conflict, and the current head is approved.",
             rows_of(&b.security),
             "No security fix is ready.",
         ),
         (
-            ("Backports", None),
+            "Backports",
             "To a <code>release-*</code> branch, checks pass, no known conflict, and the current head is approved.",
             rows_of(&b.backports),
             "No backport is ready.",
         ),
         (
-            ("Waiting longest", None),
-            "Checks pass, no known conflict, and the current head is approved. Oldest approval first.",
+            "Waiting longest",
+            "Checks pass, no known conflict, and the current head is approved. No credit is necessary. Oldest approval first.",
             rows_of(&b.waiting),
             "Nothing waits.",
         ),
     ] {
-        let count = count.unwrap_or(list.len());
         out.push_str(&section(
             title,
-            Some(count),
+            Some(list.len()),
             None,
             &format!(
                 "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
@@ -460,7 +464,7 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Respon
             ),
         ));
     }
-    page.body(out).render(&app, viewer.as_deref())
+    out
 }
 
 /// Public data only, the same for every caller: the personal order reads
@@ -483,9 +487,7 @@ async fn api_committer(State(app): State<Shared>) -> Json<Value> {
 }
 
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/committer", get(committer_page))
-        .route("/api/v1/committer", get(api_committer))
+    Router::new().route("/api/v1/committer", get(api_committer))
 }
 
 #[cfg(test)]

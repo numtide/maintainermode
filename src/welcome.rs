@@ -217,7 +217,7 @@ fn checklist(f: &Facts, login: &str) -> String {
             "Start as a reviewer",
             &format!(
                 "No package or module names you in <code>meta.maintainers</code> yet. \
-                 Start with <a href=\"/review?bucket=unowned\">the unowned pull requests</a>: nobody watches them, \
+                 Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>: nobody watches them, \
                  and a first review needs no domain knowledge. Is <code>meta</code> complete? Are the hashes pinned? \
                  Are <code>platforms</code> right? Leave each finding as an inline comment on the changed line. \
                  To maintain a package later, read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a>."
@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn a_newcomer_gets_the_unowned_queue_and_the_maintainer_guide() {
         let html = checklist(&facts(), "alice");
-        assert!(html.contains("/review?bucket=unowned"));
+        assert!(html.contains("/review?tab=unowned"));
         assert!(html.contains(MAINTAINERS_README));
         assert!(!html.contains("/watch/maintained"));
         assert!(!html.contains("inbox"));

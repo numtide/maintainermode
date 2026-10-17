@@ -28,6 +28,7 @@ mod prpage;
 mod queue;
 mod report;
 mod rescan;
+mod review;
 mod scan;
 mod score;
 mod secret;
