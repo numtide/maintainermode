@@ -250,3 +250,7 @@ a:hover {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--borderColor-muted);
 }
+.flux {
+  background: var(--bgColor-attention-muted);
+  border-bottom: 1px solid var(--borderColor-attention-emphasis);
+}
