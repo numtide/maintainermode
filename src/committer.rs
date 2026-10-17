@@ -21,6 +21,8 @@ pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
 pub const SECURITY: &str = "1.severity: security";
 const SECTION: usize = 50;
+/// Rows of each board list on the first page of the tab.
+const PREVIEW: usize = 5;
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
 
 /// Logins are kept in lower case: `meta.maintainers` and GitHub disagree on case.
@@ -268,7 +270,6 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
         &mut b.waiting,
     ] {
         rows.sort_by_key(|r| (r.waiting_since, r.entry.number));
-        rows.truncate(SECTION);
     }
     b
 }
@@ -424,45 +425,92 @@ pub(crate) fn ready_tab(
     if !first {
         return out;
     }
-    let b = &s.board;
-    for (title, sub, list, empty) in [
-        (
-            "Approved by a maintainer",
-            "An approval on the current head by a login in the <code>meta.maintainers</code> or <code>meta.teams</code> of a package or module it changes. No known conflict. Longest wait first.",
-            rows_of(&b.maintainer_approved),
-            "No pull request waits with a maintainer's approval.",
-        ),
-        (
-            "Security fixes",
-            "Labelled <code>1.severity: security</code>, checks pass, no known conflict, and the current head is approved.",
-            rows_of(&b.security),
-            "No security fix is ready.",
-        ),
-        (
-            "Backports",
-            "To a <code>release-*</code> branch, checks pass, no known conflict, and the current head is approved.",
-            rows_of(&b.backports),
-            "No backport is ready.",
-        ),
-        (
-            "Waiting longest",
-            "Checks pass, no known conflict, and the current head is approved. No credit is necessary. Oldest approval first.",
-            rows_of(&b.waiting),
-            "Nothing waits.",
-        ),
-    ] {
+    for (id, title, sub, rows, empty) in board_lists(&s.board) {
+        let href = format!("/review?tab=ready&amp;section={id}");
+        let more = (rows.len() > PREVIEW).then_some((href.as_str(), "see all"));
         out.push_str(&section(
             title,
-            Some(list.len()),
-            None,
+            Some(rows.len()),
+            more,
             &format!(
                 "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
-                lines(&list, empty, act)
+                lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty, act)
             ),
         ));
     }
     out.push_str(&api_links());
     out
+}
+
+type List<'a> = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'a [Row],
+    &'static str,
+);
+
+/// The four lists of the board: id, title, intro, rows and the text when it
+/// is empty. The ids are the `section` values of the API.
+fn board_lists(b: &Board) -> [List<'_>; 4] {
+    [
+        (
+            "maintainer_approved",
+            "Approved by a maintainer",
+            "An approval on the current head by a login in the <code>meta.maintainers</code> or <code>meta.teams</code> of a package or module it changes. No known conflict. Longest wait first.",
+            &b.maintainer_approved,
+            "No pull request waits with a maintainer's approval.",
+        ),
+        (
+            "security",
+            "Security fixes",
+            "Labelled <code>1.severity: security</code>, checks pass, no known conflict, and the current head is approved.",
+            &b.security,
+            "No security fix is ready.",
+        ),
+        (
+            "backports",
+            "Backports",
+            "To a <code>release-*</code> branch, checks pass, no known conflict, and the current head is approved.",
+            &b.backports,
+            "No backport is ready.",
+        ),
+        (
+            "waiting",
+            "Waiting longest",
+            "Checks pass, no known conflict, and the current head is approved. No credit is necessary. Oldest approval first.",
+            &b.waiting,
+            "Nothing waits.",
+        ),
+    ]
+}
+
+/// One list of the board on its own page, paged by offset. `None` when no
+/// list has that id.
+pub(crate) fn board_page(
+    app: &crate::web::App,
+    s: &Snapshot,
+    viewer: Option<&str>,
+    id: &str,
+    after: Option<u64>,
+) -> Option<String> {
+    let act = crate::actions::Act::of(app, viewer);
+    let (id, title, sub, rows, empty_text) =
+        board_lists(&s.board).into_iter().find(|l| l.0 == id)?;
+    let (page, next) = crate::review::paged_by_offset(rows, after);
+    Some(format!(
+        "<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>{}{}",
+        section(
+            title,
+            Some(rows.len()),
+            None,
+            &format!(
+                "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
+                lines(&rows_of(page), empty_text, act)
+            ),
+        ),
+        pager(&format!("/review?tab=ready&section={id}"), next.as_deref())
+    ))
 }
 
 fn api_links() -> String {

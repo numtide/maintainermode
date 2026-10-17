@@ -80,6 +80,7 @@ struct ReviewQuery {
     tab: Option<String>,
     after: Option<u64>,
     filter: Option<String>,
+    section: Option<String>,
 }
 
 fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
@@ -124,7 +125,11 @@ async fn review_page(
                 q.filter.as_deref() == Some("mine"),
                 q.after,
             ),
-            "ready" => crate::committer::ready_tab(&app, &s, v, q.after),
+            "ready" => q
+                .section
+                .as_deref()
+                .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
+                .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
             _ => {
                 let entries = review_bucket(&s, v, &watched, tab);
                 let (page, next) = paged(&entries, q.after, |e| e.number);
