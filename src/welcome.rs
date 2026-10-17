@@ -180,7 +180,7 @@ impl Facts {
             queue: crate::web::review_bucket(
                 &s,
                 Some(login),
-                &watched.iter().cloned().collect::<Vec<_>>(),
+                Some(&watched.iter().cloned().collect::<Vec<_>>()),
                 "foryou",
             )
             .len(),

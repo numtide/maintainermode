@@ -1497,7 +1497,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     let for_you = place.queue == "review"
         && viewer.as_deref().is_some_and(|v| {
             let watched = crate::web::watched_of(&app, Some(v));
-            crate::web::review_bucket(&s, Some(v), &watched, "foryou")
+            crate::web::review_bucket(&s, Some(v), Some(&watched), "foryou")
                 .iter()
                 .any(|e| e.number == n)
         });

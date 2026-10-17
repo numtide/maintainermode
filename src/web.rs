@@ -371,18 +371,20 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
     }
 }
 
-/// `watched` are subscription keys. They are private: pass them only for
-/// the person who asks for their own queue.
+/// `own` holds the subscription keys of `viewer`, and is `Some` only when
+/// the person asks for their own queue: subscriptions and tags are private.
 pub(crate) fn review_bucket<'a>(
     s: &'a Snapshot,
     viewer: Option<&str>,
-    watched: &[String],
+    own: Option<&[String]>,
     bucket: &str,
 ) -> Vec<&'a Entry> {
-    let mine = viewer.and_then(|v| s.areas.get(v));
+    let mine = viewer
+        .and_then(|v| s.areas.get(v))
+        .map(|a| if own.is_some() { a.clone() } else { a.public() });
     let mut prs: std::collections::HashSet<u64> = std::collections::HashSet::new();
     let mut paths: Vec<&str> = Vec::new();
-    for key in watched {
+    for key in own.unwrap_or_default() {
         match crate::catalog::Subject::parse(key) {
             Some(crate::catalog::Subject::Area(_)) => {
                 paths.extend(key.strip_prefix("area:"));
@@ -402,7 +404,7 @@ pub(crate) fn review_bucket<'a>(
         .iter()
         .filter(|e| Some(e.author.as_str()) != viewer)
         .filter(|e| match bucket_name(bucket) {
-            Some("foryou") => mine.is_some_and(|a| a.covers(&e.files)) || watches(e),
+            Some("foryou") => mine.as_ref().is_some_and(|a| a.covers(&e.files)) || watches(e),
             Some("unowned") => e.unowned,
             _ => true,
         })
@@ -1261,18 +1263,44 @@ mod tests {
         ];
         let numbers = |v: Vec<&Entry>| v.iter().map(|e| e.number).collect::<Vec<_>>();
         assert_eq!(
-            numbers(review_bucket(&s, Some("bob"), &watched, "foryou")),
+            numbers(review_bucket(&s, Some("bob"), Some(&watched), "foryou")),
             vec![1, 2, 3]
         );
         assert_eq!(
-            numbers(review_bucket(&s, Some("bob"), &[], "mine")),
+            numbers(review_bucket(&s, Some("bob"), Some(&[]), "mine")),
             vec![1]
         );
         assert_eq!(
-            numbers(review_bucket(&s, Some("bob"), &watched, "unowned")),
+            numbers(review_bucket(&s, Some("bob"), Some(&watched), "unowned")),
             vec![4]
         );
-        assert_eq!(numbers(review_bucket(&s, None, &[], "all")).len(), 5);
+        assert_eq!(numbers(review_bucket(&s, None, None, "all")).len(), 5);
+    }
+
+    #[test]
+    fn the_queue_of_someone_else_ignores_their_tags() {
+        let mut s = Snapshot::default();
+        s.queues.review = vec![
+            entry(1, "x", "pkgs/by-name/he/hello/package.nix", false),
+            entry(2, "x", "lib/strings.nix", false),
+        ];
+        s.areas.insert(
+            "bob".into(),
+            Area {
+                maintains: vec!["pkgs/by-name/he/hello".into()],
+                tags: vec!["lib".into()],
+                ..Default::default()
+            },
+        );
+        let numbers = |v: Vec<&Entry>| v.iter().map(|e| e.number).collect::<Vec<_>>();
+        assert_eq!(
+            numbers(review_bucket(&s, Some("bob"), Some(&[]), "foryou")),
+            vec![1, 2]
+        );
+        assert_eq!(
+            numbers(review_bucket(&s, Some("bob"), None, "foryou")),
+            vec![1]
+        );
     }
 
     #[test]

@@ -60,7 +60,7 @@ The queues:
 - **`ready`**: pull requests ready to merge. The other sections are the lists
   of the committer view.
 
-Your subscriptions are private. They count only when `login` is your own
+Your subscriptions and tags are private. They count only when `login` is your own
 session. Then the answer has `Cache-Control: private, no-store`.
 
 ```sh
