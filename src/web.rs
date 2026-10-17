@@ -157,6 +157,7 @@ impl App {
         let h = self.health.read().unwrap().clone();
         let p = crate::catalog::package_stats(&s, &self.index.read().unwrap(), &h);
         *self.packages.write().unwrap() = Arc::new(p);
+        crate::assets::touch();
     }
 
     /// Reads every stored pull request, so it runs after a sync pass rather
@@ -164,6 +165,7 @@ impl App {
     pub fn recompute_metrics(&self) -> Result<()> {
         let facts = metrics::merge(self.store.facts()?, &self.snap().pr_data);
         *self.metrics.write().unwrap() = Arc::new(metrics::compute(&facts, Utc::now()));
+        crate::assets::touch();
         Ok(())
     }
 
@@ -232,6 +234,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::me::routes())
         .layer(axum::middleware::from_fn(crate::me::no_store))
         .layer(axum::middleware::from_fn(same_origin))
+        .layer(axum::middleware::from_fn(crate::assets::etag))
         .with_state(app)
 }
 
