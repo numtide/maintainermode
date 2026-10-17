@@ -77,9 +77,31 @@ pkgs.testers.runNixOSTest {
               "python3Packages.requests" = pkg "requests" "2.31";
             };
           };
+          own = builtins.toJSON {
+            number = 575334;
+            title = "hello: 2.12 -> 2.12.1";
+            url = "https://github.com/NixOS/nixpkgs/pull/575334";
+            author = "alice";
+            author_is_bot = false;
+            state = "OPEN";
+            is_draft = false;
+            base = "master";
+            created_at = "2026-10-10T00:00:00Z";
+            updated_at = "2026-10-10T00:00:00Z";
+            merged_at = null;
+            mergeable = "MERGEABLE";
+            head_oid = "1111111111111111111111111111111111111111";
+            files = [ ];
+            ci = "SUCCESS";
+            reviews = [ ];
+            author_activity = [ ];
+            pushes = [ "2026-10-10T00:00:00Z" ];
+            voids = [ ];
+          };
         in
         ''
           INSERT OR REPLACE INTO meta (key, value) VALUES ('index', '${index}');
+          INSERT OR REPLACE INTO pr (number, updated_at, state, data) VALUES (575334, '2026-10-10T00:00:00Z', 'OPEN', '${own}');
           INSERT OR REPLACE INTO upload_token (login, hash, created_at) VALUES ('alice', 'dcee570f548b91c5fed14f8ada7d88205aad29a2654869a557d3720e982a0b63', '2026-10-01T00:00:00Z');
         '';
     };
@@ -344,7 +366,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'No report yet.' /tmp/s-pk-machines && grep -q 'id=\"flakes\"' /tmp/s-pk-machines")
     machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'name=\"filter\" value=\"all\"' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
-    for anchor in ["email", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
+    for anchor in ["email", "followup", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
         machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Runs</h1>' /tmp/s-runs && grep -q 'Your weekly goal' /tmp/s-progress")
     machine.succeed("grep -q 'selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review")
@@ -369,6 +391,15 @@ pkgs.testers.runNixOSTest {
     signed_in("/me/progress", "/tmp/s-progress2")
     machine.succeed("grep -q 'of 4' /tmp/s-progress2")
     form("/me/progress", "/tmp/f-goal2", "-d goal=many", 400)
+    # the default follow-up plan of your pull requests; a plan needs a
+    # pull request of yours in the synced data
+    machine.succeed("grep -q 'action=\"/me/settings/followup\"' /tmp/s-settings && grep -q 'Not saved yet' /tmp/s-settings")
+    form("/me/settings/followup", "/tmp/f-fdef", "-d days=10 -d action=ask")
+    machine.succeed("grep -qi '^location: /me/settings#followup' /tmp/f-fdef.h")
+    form("/me/settings/followup", "/tmp/f-fdef2", "-d days=0 -d action=ask", 400)
+    signed_in("/me/settings", "/tmp/s-settings5")
+    machine.succeed("grep -q 'id=\"followup-default-days\" name=\"days\" value=\"10\"' /tmp/s-settings5 && grep -q 'Saved.' /tmp/s-settings5")
+    form("/me/followup", "/tmp/f-plan0", "-d number=575334 -d days=5 -d action=merge", 400)
     form("/me/settings/llm", "/tmp/f-llm", "-d llm_ok=1")
     signed_in("/me/settings", "/tmp/s-settings3")
     machine.succeed("grep -q 'name=\"llm_ok\" value=\"1\" checked' /tmp/s-settings3")
@@ -422,6 +453,20 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf -H 'Accept-Encoding: gzip' -D /tmp/pigz.h -o /tmp/pi.gz http://127.0.0.1:8790/api/v1/packages/index && grep -qi '^content-encoding: gzip' /tmp/pigz.h && gzip -dc /tmp/pi.gz > /tmp/pi2.json && cmp /tmp/pi.json /tmp/pi2.json")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -H 'If-None-Match: \"1111111111111111111111111111111111111111\"' http://127.0.0.1:8790/api/v1/packages/index > /tmp/pi.code && grep -q 304 /tmp/pi.code")
     machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 > /tmp/submit.json && grep -q '\"kept\":2' /tmp/submit.json && grep -q '\"dropped\":2' /tmp/submit.json")
+    # a follow-up plan on a pull request of alice: only she sees the form
+    signed_in("/pr/575334", "/tmp/s-pr")
+    machine.succeed("grep -q 'Your follow-up plan' /tmp/s-pr && grep -q 'action=\"/me/followup\"' /tmp/s-pr && grep -q 'Your default plan applies' /tmp/s-pr")
+    machine.succeed("curl -sf -o /tmp/pub-pr http://127.0.0.1:8790/pr/575334 && ! grep -q 'Your follow-up plan' /tmp/pub-pr")
+    form("/me/followup", "/tmp/f-plan", "-d number=575334 -d days=5 -d action=merge")
+    machine.succeed("grep -qi '^location: /pr/575334#followup' /tmp/f-plan.h")
+    signed_in("/pr/575334", "/tmp/s-pr2")
+    machine.succeed("grep -q 'you get a reminder to merge it yourself.' /tmp/s-pr2 && grep -q 'option value=\"merge\" selected' /tmp/s-pr2 && grep -q 'Use my default' /tmp/s-pr2")
+    form("/me/followup", "/tmp/f-plan2", "-d number=575334 -d days=500 -d action=merge", 400)
+    signed_in("/api/v1/needs", "/tmp/s-needs2.json")
+    machine.succeed("grep -q '\"source\":\"pull_request\"' /tmp/s-needs2.json && grep -q '\"number\":575334' /tmp/s-needs2.json")
+    form("/me/followup", "/tmp/f-plan3", "-d number=575334 -d reset=1")
+    signed_in("/pr/575334", "/tmp/s-pr3")
+    machine.succeed("grep -q 'Your default plan applies' /tmp/s-pr3")
     # with a machine report, the machines filter comes back in the bar, and
     # its packages lead the list
     signed_in("/packages", "/tmp/s-pk-mine2")

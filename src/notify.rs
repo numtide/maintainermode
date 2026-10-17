@@ -313,7 +313,7 @@ async fn inbox_page(
                 esc(&e.subject),
                 ago(e.at),
                 if new {
-                    "<span class=\"Label Label--accent ml-2\">new</span>"
+                    "<span class=\"Label Label--accent ml-2 flex-shrink-0\">new</span>"
                 } else {
                     ""
                 }

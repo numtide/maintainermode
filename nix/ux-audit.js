@@ -21,7 +21,8 @@ Options:
   --bin <path>         the maintainer-mode binary for --local
                        (default $MAINTAINER_MODE_BIN, else target/debug/maintainer-mode)
   --seed               with --local: fill the database with a small index and
-                       the packages, machines and watches of the signed-in person
+                       the packages, machines, watches and follow-up plans
+                       of the signed-in person
   --out <dir>          output folder (default ./ux-audit)
   --pages <regex>      audit only the pages whose path matches
   --only-public        skip the signed-in pages
@@ -334,11 +335,13 @@ function seedSql() {
     inline_on_change: inline,
   });
   // a reviewer with credit from three authors, so their own pull request
-  // is in the review queue
+  // is in the review queue; the first merge makes the seed login a
+  // committer
   const merged = ["one", "two", "three"].map((a, i) =>
     pr(100160 + i, `author-${a}`, `ripgrep: small fix ${a}`, 20 + i, {
       state: "MERGED",
       merged_at: daysAgo(10 + i),
+      merged_by: i === 0 ? SEED_LOGIN : "someone",
       files: [file("ripgrep")],
       reviews: [
         review(100160 + i, "contributor", "COMMENTED", daysAgo(12 + i), true),
@@ -389,6 +392,13 @@ function seedSql() {
     ].map(
       (k) =>
         `INSERT OR IGNORE INTO watch (login, package, created_at) VALUES ('${SEED_LOGIN}', '${k}', '${now}');`,
+    ),
+    ...[
+      [100173, 7, "merge", daysAgo(8)],
+      [100172, 3, "merge", now],
+    ].map(
+      ([n, days, action, since]) =>
+        `INSERT OR REPLACE INTO followup (login, number, days, action, since) VALUES ('${SEED_LOGIN}', ${n}, ${days}, '${action}', '${since}');`,
     ),
   ].join("\n");
 }
