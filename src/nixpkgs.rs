@@ -17,7 +17,7 @@ const RULES: &str = include_str!("../docs/rules.md");
 const REPO: &str = "https://github.com/numtide/maintainermode/blob/main";
 
 /// Every file in `docs/` but `rules.md`, which has its own tab.
-const DOCS: [(&str, &str, &str); 9] = [
+const DOCS: [(&str, &str, &str); 10] = [
     (
         "health",
         "Package pages, the risk score, upstream versions and channels.",
@@ -42,6 +42,11 @@ const DOCS: [(&str, &str, &str); 9] = [
         "operations",
         "How to run the server, and its variables.",
         include_str!("../docs/operations.md"),
+    ),
+    (
+        "api",
+        "The JSON API, its paging, and the command line.",
+        include_str!("../docs/api.md"),
     ),
     (
         "events",
