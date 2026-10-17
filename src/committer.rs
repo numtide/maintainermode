@@ -647,4 +647,39 @@ mod tests {
         assert!(!c.is("olda"));
         assert_eq!(c.from_merges, 1);
     }
+
+    #[test]
+    fn the_ready_tab_shows_a_preview_and_each_list_pages_on_its_own() {
+        let app = crate::sets::tests::app(&[]);
+        let mut s = Snapshot::default();
+        for n in 1..=60 {
+            let e = queue::entry(&pr(n, "alice", 0), &s.ledger, &Default::default());
+            s.queues.merge.push(e.clone());
+            s.board.security.push(Row {
+                entry: e,
+                waiting_since: t(0),
+                why: String::new(),
+            });
+        }
+        let count = |html: &str| html.matches("class=\"Box-row").count();
+        let tab = ready_tab(&app, &s, None, None);
+        let main = tab.split("Ready to merge").nth(1).unwrap();
+        assert_eq!(
+            count(main.split("Approved by a maintainer").next().unwrap()),
+            1 + FIRST
+        );
+        let security = tab.split("Security fixes").nth(1).unwrap();
+        let security = security.split("Backports").next().unwrap();
+        assert_eq!(count(security), 1 + PREVIEW);
+        assert!(tab.contains("href=\"/review?tab=ready&amp;section=security\">see all</a>"));
+        assert!(tab.contains("/review?tab=ready&amp;after=20\">Next page"));
+        let page = board_page(&app, &s, None, "security", None).unwrap();
+        assert_eq!(count(&page), 1 + crate::review::PAGE);
+        assert!(page.contains("/review?tab=ready&amp;section=security&amp;after=50\">Next page"));
+        let last = board_page(&app, &s, None, "security", Some(50)).unwrap();
+        assert_eq!(count(&last), 1 + 10);
+        assert!(!last.contains("Next page"));
+        assert!(board_page(&app, &s, None, "yours", None).is_none());
+        assert!(board_page(&app, &s, None, "nonsense", None).is_none());
+    }
 }
