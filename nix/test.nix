@@ -17,11 +17,11 @@ pkgs.testers.runNixOSTest {
       } "openssl genrsa -traditional -out $out 2048";
       # a stand-in for sops-nix: /run/secrets links to one generation, and a
       # new secret comes as a new generation
-      services.maintainer-mode.syncTokenFile = "/run/secrets/sync-token";
+      services.maintainer-mode.botTokenFile = "/run/secrets/bot-token";
       system.activationScripts.secrets = ''
         mkdir -p /run/secrets.d/1
-        echo old-token > /run/secrets.d/1/sync-token
-        chmod 0400 /run/secrets.d/1/sync-token
+        echo old-token > /run/secrets.d/1/bot-token
+        chmod 0400 /run/secrets.d/1/bot-token
         ln -sfn /run/secrets.d/1 /run/secrets
       '';
       virtualisation.memorySize = 1024;
@@ -139,11 +139,15 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/status.json && grep -q nixpkgs-committers /tmp/status.json")
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'How fast changes show here' /tmp/sync")
-    # without a bot token the notifications poller is off, and the page says so
-    machine.succeed("grep -q 'Notifications</div><div class=\"flex-auto min-width-0\">off: this server has no token of a bot account' /tmp/sync")
-    machine.succeed("grep -q 'With the token of a bot account that watches nixpkgs' /tmp/sync")
+    # the bot token turns the notifications poller on; with no network its
+    # polls fail, so the page says so and the full walk keeps its interval
+    machine.succeed("grep -q 'Notifications</div><div class=\"flex-auto min-width-0\">the notifications of the bot account' /tmp/sync")
+    machine.succeed("grep -q 'the poll of its notifications fails now' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
-    machine.succeed("grep -q '\"notifications\":{[^}]*\"enabled\":false' /tmp/sync.json && grep -q '\"walk_every_seconds\":600' /tmp/sync.json")
+    machine.succeed("grep -q '\"notifications\":{[^}]*\"enabled\":true' /tmp/sync.json && grep -q '\"walk_every_seconds\":600' /tmp/sync.json")
+    machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync.n && grep -q 'errors in the last hour; the last: ' /tmp/sync.n")
+    machine.succeed("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'notifications poller on' /tmp/log")
+    machine.succeed("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q 'MAINTAINER_MODE_BOT_TOKEN_FILE=' /tmp/env && ! grep -q SYNC_TOKEN /tmp/env")
     machine.succeed("grep -q 'CVE Program records' /tmp/sync")
     machine.succeed("grep -q 'its own task' /tmp/sync")
     machine.succeed("grep -q 'Packaging hygiene' /tmp/sync")
@@ -239,7 +243,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("cd /tmp/scan && maintainer-mode submit --to http://127.0.0.1:8790")
     machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=nope maintainer-mode submit --to http://127.0.0.1:8790")
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
-    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'sync token from GitHub App 1' /tmp/log")
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App 1 syncs first' /tmp/log")
     # the key parsed and the JWT was signed; only the request found no network
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App token: error sending request' /tmp/log")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'next pass in 10 s' /tmp/log")
@@ -249,13 +253,13 @@ pkgs.testers.runNixOSTest {
     machine.succeed("systemctl start maintainer-mode-credentials.service")
     machine.succeed("journalctl -u maintainer-mode-credentials -o cat > /tmp/cred.log && ! grep -q changed /tmp/cred.log")
     pid = machine.succeed("systemctl show -p MainPID --value maintainer-mode.service").strip()
-    machine.succeed("mkdir -p /run/secrets.d/2 && echo new-token > /run/secrets.d/2/sync-token && ln -s /run/secrets.d/2 /run/secrets.tmp && mv -T /run/secrets.tmp /run/secrets && rm -r /run/secrets.d/1")
+    machine.succeed("mkdir -p /run/secrets.d/2 && echo new-token > /run/secrets.d/2/bot-token && ln -s /run/secrets.d/2 /run/secrets.tmp && mv -T /run/secrets.tmp /run/secrets && rm -r /run/secrets.d/1")
     # LoadCredential copied the file at start; the copy does not follow
-    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/sync_token > /tmp/cred && grep -qx old-token /tmp/cred")
+    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/bot_token > /tmp/cred && grep -qx old-token /tmp/cred")
     machine.succeed("systemctl start maintainer-mode-credentials.service")
-    machine.succeed("journalctl -u maintainer-mode-credentials -o cat > /tmp/cred.log && grep -q 'credential sync_token changed' /tmp/cred.log")
-    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/sync_token > /tmp/cred && grep -qx new-token /tmp/cred")
-    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'sync_token changed; the new secret is in use' /tmp/log")
+    machine.succeed("journalctl -u maintainer-mode-credentials -o cat > /tmp/cred.log && grep -q 'credential bot_token changed' /tmp/cred.log")
+    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/bot_token > /tmp/cred && grep -qx new-token /tmp/cred")
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'bot_token changed; the new secret is in use' /tmp/log")
     machine.succeed(f"systemctl show -p MainPID --value maintainer-mode.service > /tmp/pid && grep -qx {pid} /tmp/pid")
     machine.fail("journalctl -o cat > /tmp/all.log && grep -q -e new-token -e old-token /tmp/all.log")
   '';

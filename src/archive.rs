@@ -1004,7 +1004,7 @@ async fn pass(
 }
 
 const NO_TOKEN: &str =
-    "no GitHub App token and no sync token; the walk does not use the tokens that people lend";
+    "no GitHub App token and no bot token; the walk does not use the tokens that people lend";
 
 /// The server's own tokens only: a token that a person lent pays for
 /// their own reviews, not for the archive.
@@ -1015,7 +1015,7 @@ pub(crate) async fn tokens(app: &App) -> Vec<String> {
             tokens.push(t);
         }
     }
-    tokens.extend(app.sync_token.iter().map(|s| s.get()));
+    tokens.extend(app.bot_token.iter().map(|s| s.get()));
     tokens
 }
 

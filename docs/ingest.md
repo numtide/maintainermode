@@ -66,7 +66,7 @@ repository:
 
 The budget is a fixed number of items per repository per pass
 (`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses only the
-GitHub App token and the sync token of the server, through
+GitHub App token and the bot token of the server, through
 `github::Client`. It never uses the tokens that people lend when they sign
 in. With neither server token, the walk does not run, and `/state?tab=status` says so.
 It stops for the pass when the token has less than 1000 points left, so

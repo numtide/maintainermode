@@ -371,7 +371,8 @@ impl Status {
     }
 }
 
-/// The sync's tokens; the bot token only when there is no other.
+/// The tokens of the sync, in its order: the GitHub App, the bot, then the
+/// tokens that people lend.
 async fn client(app: &App, bot: &str) -> github::Client {
     let mut tokens = Vec::new();
     if let Some(a) = &app.github_app {
@@ -380,11 +381,8 @@ async fn client(app: &App, bot: &str) -> github::Client {
             Err(e) => tracing::warn!("notifications: GitHub App token: {e:#}"),
         }
     }
-    tokens.extend(app.sync_token.iter().map(|s| s.get()));
+    tokens.push(bot.to_string());
     tokens.extend(app.store.lent_tokens().unwrap_or_default());
-    if tokens.is_empty() {
-        tokens.push(bot.to_string());
-    }
     github::Client::new(tokens)
 }
 

@@ -313,7 +313,7 @@ mod tests {
         std::sync::Arc::new(App {
             store: crate::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
             oauth: None,
-            sync_token: None,
+            bot_token: None,
             index: Default::default(),
             snapshot: Default::default(),
             secure_cookies: false,

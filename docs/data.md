@@ -19,10 +19,13 @@ its known limits.
   nixpkgs data with it. The rate limit grows with the number of people who use
   it. The login asks for no scope. The token reads public data, and it can
   start workflows only in the repositories where you install the Maintainer
-  Mode GitHub App (see [Actions](actions.md)). The sync uses it to read only. A
-  deployment may also give the server a token of its own
-  (`MAINTAINER_MODE_SYNC_TOKEN_FILE`), which is used first. Signing out deletes
-  your session and its token.
+  Mode GitHub App (see [Actions](actions.md)). The sync uses it to read only.
+  Signing out deletes your session and its token.
+- **The bot token.** A deployment can give the server the classic token of
+  its bot account (`MAINTAINER_MODE_BOT_TOKEN_FILE`). The sync uses it before
+  the tokens that people lend. The same token reads the notifications of the
+  bot account (see [the notifications poller](#the-notifications-poller)) and
+  polls the Events API.
 - **A GitHub App.** A deployment can sync with the token of a GitHub App
   installation (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`). The service signs a
   JWT with the App's private key and exchanges it for an installation token.
@@ -31,9 +34,7 @@ its known limits.
   Install the App on the account that owns it. People also install the App on
   their own repositories, so the service never takes their installations. Set
   `GITHUB_APP_INSTALLATION_ID` to use a different installation.
-  When the App is set up, remove `MAINTAINER_MODE_SYNC_TOKEN_FILE`: the
-  deployment then needs no token of a person. The token file stays as a
-  fallback.
+  The App token comes before the bot token.
 - **No network yet.** On first boot, a pass can start before the network is
   up. When the GitHub sync fails to connect, the pass stops and the next pass
   starts after 5 seconds. The wait doubles after each failed pass, up to 5
@@ -102,11 +103,11 @@ its known limits.
 Maintainer Mode keeps every public event on NixOS/nixpkgs that it can see.
 [docs/events.md](events.md) gives the plan and the measured size.
 
-- **Sources.** With a sync token, the server polls the Events API at the
+- **Sources.** With a bot token, the server polls the Events API at the
   interval GitHub asks for (`X-Poll-Interval`). It sends the last `ETag`, so
   an answer of `304` costs no rate limit. Each hour, it also reads the
   GH Archive file of the past hour and adds the events that the poll missed.
-  Without a sync token, GH Archive is the only source. GH Archive holds only
+  Without a bot token, GH Archive is the only source. GH Archive holds only
   about 2 to 3 % of the nixpkgs events.
 - **Storage.** One SQLite file per month: `events/YYYY-MM.sqlite`, next to
   the database. Each event has a `seq` that continues across the files. The
@@ -187,7 +188,7 @@ An empty list turns the archive off.
 `/pr/<number>` shows one nixpkgs pull request in Maintainer Mode. Links to pull requests across the site open this page. A small GitHub icon next to each title opens GitHub.
 
 - **From the synced data.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the review credit, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
-- **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the sync token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
+- **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the bot token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
 - **The conversation.** The description, the reviews, the inline comments and the comments come from the archive when it has a copy. If the copy is not current, one GraphQL query reads the first 100 of each kind. The page shows the latest 300 reviews and comments. A link opens the rest on GitHub.
 - **Who makes the server read GitHub.** Only signed-in people do. Anonymous visitors and the API get the cache or the archive copy. If neither has the data, they get a note and a link to GitHub.
 - **Budget.** The sync comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
