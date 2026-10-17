@@ -256,7 +256,7 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
 
 async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
-    let page = Page::new(Section::Home, "Runs")
+    let page = Page::new(Section::Personal(crate::ui::Personal::Runs), "Runs")
         .icon(octicon!("play"))
         .sub(WHAT);
     let mut out = String::new();

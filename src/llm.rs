@@ -184,11 +184,14 @@ async fn new_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Respons
         t = esc(&token),
         a = esc(&add),
     );
-    Page::new(Section::Home, "Your MCP token")
-        .icon(octicon!("key"))
-        .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
-        .body(out)
-        .render(&app, Some(&login))
+    Page::new(
+        Section::Personal(crate::ui::Personal::Settings),
+        "Your MCP token",
+    )
+    .icon(octicon!("key"))
+    .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
+    .body(out)
+    .render(&app, Some(&login))
 }
 
 async fn delete_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
