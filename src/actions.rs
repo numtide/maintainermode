@@ -78,10 +78,10 @@ impl Act {
     }
 }
 
-/// Whether a button starts its workflow, or links to the setup. A person
-/// never checked can press it; the click runs the check first.
+/// Whether a button starts its workflow, or links to the setup. Without a
+/// fresh check, the person can press it; the click runs the check first.
 pub fn ready(app: &App, login: &str, button: Needed) -> bool {
-    last_check(app, login).is_none_or(|c| c.blocker(button).is_none())
+    fresh_check(app, login).is_none_or(|c| c.blocker(button).is_none())
 }
 
 fn setup_link(label: &str, class: &str) -> String {
@@ -344,23 +344,25 @@ fn last_check(app: &App, login: &str) -> Option<Check> {
     serde_json::from_str(&v).ok()
 }
 
+fn fresh_check(app: &App, login: &str) -> Option<Check> {
+    last_check(app, login).filter(|c| (Utc::now() - c.at).num_seconds() < CHECK_TTL_SECS)
+}
+
 pub(crate) fn store_check(app: &App, login: &str, c: &Check) {
     if let Ok(v) = serde_json::to_string(c) {
         let _ = app.store.set_setting(login, CHECK_KEY, &v);
     }
 }
 
-fn forget_check(app: &App, login: &str) {
+pub(crate) fn forget_check(app: &App, login: &str) {
     let _ = app.store.set_setting(login, CHECK_KEY, "");
 }
 
 /// The setup check of the person, from the cache while it is fresh. `None`
 /// without a token.
 async fn setup(app: &App, login: &str) -> Option<Check> {
-    if let Some(c) = last_check(app, login) {
-        if (Utc::now() - c.at).num_seconds() < CHECK_TTL_SECS {
-            return Some(c);
-        }
+    if let Some(c) = fresh_check(app, login) {
+        return Some(c);
     }
     let t = token(app, login)?;
     let r = repos(app, login);
@@ -700,6 +702,17 @@ mod tests {
         let form = update_form("hello", None, false);
         assert!(form.contains(&format!("href=\"{SETUP}\"")));
         assert!(!form.contains("<form"));
+    }
+
+    #[test]
+    fn a_stale_check_leaves_the_buttons_as_forms() {
+        let app = crate::sets::tests::app(&[]);
+        missing_app(&app, "alice");
+        let mut c = last_check(&app, "alice").unwrap();
+        c.at = Utc::now() - chrono::Duration::seconds(CHECK_TTL_SECS + 1);
+        store_check(&app, "alice", &c);
+        assert!(ready(&app, "alice", Needed::Review));
+        assert!(Act::of(&app, Some("alice")).buttons(1).contains("<form"));
     }
 
     fn missing_app(app: &App, login: &str) {
