@@ -218,6 +218,33 @@ a:hover {
   background: none;
   padding: 0;
 }
+.diff {
+  margin: 0;
+  padding: 8px 0;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 20px;
+}
+.diff span {
+  display: block;
+  min-width: max-content;
+  padding: 0 16px;
+  white-space: pre;
+}
+.diff .diff-add {
+  background: var(--bgColor-success-muted);
+}
+.diff .diff-del {
+  background: var(--bgColor-danger-muted);
+}
+.diff .diff-hunk {
+  color: var(--fgColor-muted);
+  background: var(--bgColor-accent-muted);
+}
+.diff .diff-note {
+  color: var(--fgColor-muted);
+}
 .markdown-body h2 {
   margin-top: 32px;
   padding-bottom: 8px;

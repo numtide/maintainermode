@@ -153,7 +153,7 @@ fn ready(e: &Entry) -> bool {
 }
 
 /// Approvals on the current head by someone other than the author, oldest first.
-fn approvals(pr: &Pr) -> Vec<(&str, DateTime<Utc>)> {
+pub(crate) fn approvals(pr: &Pr) -> Vec<(&str, DateTime<Utc>)> {
     let mut out: Vec<(&str, DateTime<Utc>)> = pr
         .reviews
         .iter()

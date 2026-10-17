@@ -43,6 +43,10 @@ let
     "circle"
     "inbox"
     "mail"
+    "mark-github"
+    "file-diff"
+    "comment"
+    "checklist"
   ];
 in
 runCommand "primer-assets" { } ''

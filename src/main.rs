@@ -23,6 +23,7 @@ mod model;
 mod notify;
 mod osv;
 mod progress;
+mod prpage;
 mod queue;
 mod report;
 mod rescan;
@@ -673,6 +674,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 rescan,
                 inbox: Default::default(),
                 smtp,
+                pr_cache: Default::default(),
             });
             app.recompute()?;
             notify::recount(&app);
@@ -739,6 +741,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 rescan: None,
                 inbox: Default::default(),
                 smtp: None,
+                pr_cache: Default::default(),
             };
             if index {
                 web::refresh_index(&app).await?;
@@ -783,6 +786,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 rescan: None,
                 inbox: Default::default(),
                 smtp: None,
+                pr_cache: Default::default(),
             };
             web::refresh_index(&app).await?;
             let index = app.index.read().unwrap();

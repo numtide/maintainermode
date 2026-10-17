@@ -479,7 +479,7 @@ impl Flags {
         out.join(" ")
     }
 
-    fn json(&self) -> Value {
+    pub(crate) fn json(&self) -> Value {
         json!({
             "risk": self.score.as_ref().map(|s| s.risk),
             "risk_band": self.score.as_ref().map(|s| s.band()),
