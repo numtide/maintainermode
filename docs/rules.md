@@ -2,6 +2,7 @@
 
 How Maintainer Mode decides what to show, what earns credit, and how the
 numbers on /state are made. The site serves this page at `/rules`.
+These rules decide what Maintainer Mode shows and credits. nixpkgs has its own rules for every contribution: read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md).
 
 ## Maintainer Mode grants nothing
 
@@ -167,6 +168,7 @@ in line with "no leaderboard".
   `12.first-time contribution`. The other kinds come from the nixpkgs labels
   (`1.severity: security`, `8.has: package (new)`, `10.rebuild-linux: 501+`)
   and from a `release-*` base branch.
+- **Packages.** One package per package name, from the nixpkgs index, the health sources and the open pull requests. The numbers are: packages; behind upstream; with an open advisory, by the worst band of their advisories (critical, high, medium, low, no score); unmaintained (no `meta.maintainers` and no `meta.teams`); broken (`meta.broken`); insecure (`meta.knownVulnerabilities`); with packaging gaps; and open version bumps with their median age in days. The server computes them after each sync pass and after each health update, not on each request. `GET /api/v1/metrics` gives them under `packages`. No personal data goes into them.
 - **Disclosed AI use.** A pull request counts when its last commit or its
   description has an `Assisted-by:` trailer, or when it has the
   `llm-assisted` label. AI attribution in another form, such as a
