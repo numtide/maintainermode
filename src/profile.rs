@@ -629,7 +629,9 @@ fn reviews(s: &Snapshot, login: &str) -> String {
     if credits.is_empty() {
         out.push_str("<div class=\"Box-row color-fg-muted\">No credit yet.</div>");
     }
-    for c in credits {
+    const SHOWN: usize = 100;
+    let more = credits.len().saturating_sub(SHOWN);
+    for c in credits.into_iter().take(SHOWN) {
         let why: Vec<&str> = c.triggers.iter().map(trigger_label).collect();
         let status = match &c.dropped {
             None => format!(
@@ -670,6 +672,13 @@ fn reviews(s: &Snapshot, login: &str) -> String {
             n = c.pr,
             t = esc(&c.pr_title),
             a = esc(&c.pr_author),
+        );
+    }
+    if more > 0 {
+        let _ = write!(
+            out,
+            "<div class=\"Box-row color-fg-muted\">and {more} older credits, in <a href=\"/api/v1/people/{}\">the JSON</a></div>",
+            esc(login)
         );
     }
     out.push_str("</details>");
