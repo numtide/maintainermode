@@ -111,6 +111,9 @@ async fn review_page(
     let tab = tab_id(q.tab.as_deref(), v.is_some());
     let watched = watched_of(&app, v);
     let act = crate::actions::Act::of(&app, v);
+    let foryou = v
+        .map(|l| crate::mine::for_you(&app, &s, l))
+        .unwrap_or_default();
     let (bumps, body) = {
         let index = app.index.read().unwrap();
         let h = app.health.read().unwrap();
@@ -131,13 +134,21 @@ async fn review_page(
                 .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
                 .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
             _ => {
-                let entries = review_bucket(&s, v, v.map(|_| watched.as_slice()), tab);
-                let (page, next) = paged(&entries, q.after, |e| e.number);
+                let entries = if tab == "foryou" {
+                    foryou.clone()
+                } else {
+                    review_bucket(&s, v, v.map(|_| watched.as_slice()), tab)
+                };
+                let (page, next) = if tab == "foryou" {
+                    paged_by_offset(&entries, q.after)
+                } else {
+                    paged(&entries, q.after, |e| e.number)
+                };
                 let (title, intro) = match tab {
                     "foryou" => (
                         "For you",
-                        "<p>Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-                         own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/packages?filter=watch\">watch</a>. Oldest first.</p>",
+                        "<p>Pull requests that touch the packages of <a href=\"/packages?filter=machines\">your machines</a> come first. Then those that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
+                         own in <code>ci/OWNERS</code>, changed this year or tagged. Then those on what you <a href=\"/packages?filter=watch\">watch</a>. Oldest first in each group.</p>",
                     ),
                     "unowned" => ("No maintainer", NO_MAINTAINER),
                     _ => (
@@ -165,6 +176,7 @@ async fn review_page(
             "foryou" if v.is_none() => continue,
             "bumps" => bumps,
             "ready" => s.queues.merge.len(),
+            "foryou" => foryou.len(),
             _ => review_bucket(&s, v, v.map(|_| watched.as_slice()), id).len(),
         };
         tabs.push(Tab::new(format!("/review?tab={id}"), label, id == tab).count(count));

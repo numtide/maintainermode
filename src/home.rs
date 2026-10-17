@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::routing::get;
 use std::fmt::Write;
 
-use crate::catalog::{Flags, Subject, maintained, person_events, subject_row};
+use crate::catalog::{Flags, Subject, person_events, subject_row};
 use crate::queue::Entry;
 use crate::ui::{Kind, Page, Section, empty, item_row};
 use crate::web::{App, Shared, ago, esc, icon, octicon};
@@ -136,7 +136,6 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
 
 fn dashboard(app: &App, login: &str) -> String {
     let s = app.snap();
-    let h = app.health.read().unwrap().clone();
     let mut out = String::from("<h1 class=\"sr-only\">Home</h1>");
     out.push_str(&crate::welcome::card(app, login));
     out.push_str(&crate::progress::widget(app, login));
@@ -173,37 +172,29 @@ fn dashboard(app: &App, login: &str) -> String {
         },
     ));
 
-    let mine: Vec<(Subject, Flags)> = {
+    let mine = crate::mine::needs_you(app, login);
+    let mine_html: String = {
+        let ch = app.channels.read().unwrap().clone();
         let index = app.index.read().unwrap();
-        let m = maintained(&index, login);
-        let mut v: Vec<(Subject, Flags)> = m
-            .packages
-            .iter()
-            .chain(&m.modules)
-            .map(|(sub, _)| {
-                let f = Flags::of(&s, &index, &h, sub);
-                (sub.clone(), f)
-            })
-            .filter(|(_, f)| f.risk() > 0 || f.open_prs > 0)
-            .collect();
-        v.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
-        v
+        mine.iter()
+            .take(SHOWN)
+            .map(|r| crate::mine::row_html(&index, &ch, r, ""))
+            .collect()
     };
     out.push_str(&section(
         &format!(
-            "{} What you maintain that needs you",
+            "{} Your packages that need you",
             icon(octicon!("package"))
         ),
-        Some(("/packages?filter=maintain", "everything you maintain")),
-        &if mine.is_empty() {
-            empty("Nothing needs you now. Or nixpkgs does not name you as a maintainer yet.")
+        Some(("/packages?filter=mine", "all your packages")),
+        &if mine_html.is_empty() {
+            empty("Nothing needs you now. The packages of your machines, what you maintain and what you watch show here when they get an advisory, a new release, a failed build or a pull request.")
         } else {
-            subject_rows(&mine)
+            mine_html
         },
     ));
 
-    let watched = app.store.watched(login).unwrap_or_default();
-    let review = crate::web::review_bucket(&s, Some(login), Some(&watched), "foryou");
+    let review = crate::mine::for_you(app, &s, login);
     out.push_str(&section(
         &format!("{} Pull requests for you to review", icon(octicon!("eye"))),
         Some(("/review?tab=foryou", "the whole queue")),

@@ -373,38 +373,60 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
 
 /// `own` holds the subscription keys of `viewer`, and is `Some` only when
 /// the person asks for their own queue: subscriptions and tags are private.
+/// What makes a pull request "for you": an area of the person (what they
+/// maintain, own, changed or tagged), or what they watch.
+pub(crate) struct Interest<'a> {
+    mine: Option<Area>,
+    prs: std::collections::HashSet<u64>,
+    paths: Vec<&'a str>,
+}
+
+impl<'a> Interest<'a> {
+    /// `own` is the person's subscriptions, given only when the person
+    /// asks for their own queue; it also opens their private tags.
+    pub(crate) fn of(s: &Snapshot, viewer: Option<&str>, own: Option<&'a [String]>) -> Self {
+        let mine = viewer
+            .and_then(|v| s.areas.get(v))
+            .map(|a| if own.is_some() { a.clone() } else { a.public() });
+        let mut prs = std::collections::HashSet::new();
+        let mut paths: Vec<&str> = Vec::new();
+        for key in own.unwrap_or_default() {
+            match crate::catalog::Subject::parse(key) {
+                Some(crate::catalog::Subject::Area(_)) => {
+                    paths.extend(key.strip_prefix("area:"));
+                }
+                Some(_) => prs.extend(s.links.prs.get(key).into_iter().flatten()),
+                None => {}
+            }
+        }
+        Interest { mine, prs, paths }
+    }
+
+    pub(crate) fn maintains(&self, e: &Entry) -> bool {
+        self.mine.as_ref().is_some_and(|a| a.covers(&e.files))
+    }
+
+    pub(crate) fn watches(&self, e: &Entry) -> bool {
+        self.prs.contains(&e.number)
+            || e.files
+                .iter()
+                .any(|f| self.paths.iter().any(|p| area::under(f, p)))
+    }
+}
+
 pub(crate) fn review_bucket<'a>(
     s: &'a Snapshot,
     viewer: Option<&str>,
     own: Option<&[String]>,
     bucket: &str,
 ) -> Vec<&'a Entry> {
-    let mine = viewer
-        .and_then(|v| s.areas.get(v))
-        .map(|a| if own.is_some() { a.clone() } else { a.public() });
-    let mut prs: std::collections::HashSet<u64> = std::collections::HashSet::new();
-    let mut paths: Vec<&str> = Vec::new();
-    for key in own.unwrap_or_default() {
-        match crate::catalog::Subject::parse(key) {
-            Some(crate::catalog::Subject::Area(_)) => {
-                paths.extend(key.strip_prefix("area:"));
-            }
-            Some(_) => prs.extend(s.links.prs.get(key).into_iter().flatten()),
-            None => {}
-        }
-    }
-    let watches = |e: &Entry| {
-        prs.contains(&e.number)
-            || e.files
-                .iter()
-                .any(|f| paths.iter().any(|p| area::under(f, p)))
-    };
+    let interest = Interest::of(s, viewer, own);
     s.queues
         .review
         .iter()
         .filter(|e| Some(e.author.as_str()) != viewer)
         .filter(|e| match bucket_name(bucket) {
-            Some("foryou") => mine.as_ref().is_some_and(|a| a.covers(&e.files)) || watches(e),
+            Some("foryou") => interest.maintains(e) || interest.watches(e),
             Some("unowned") => e.unowned,
             _ => true,
         })
@@ -1275,6 +1297,25 @@ mod tests {
             vec![4]
         );
         assert_eq!(numbers(review_bucket(&s, None, None, "all")).len(), 5);
+        s.queues
+            .review
+            .push(entry(6, "x", "pkgs/by-name/jq/jq/package.nix", false));
+        s.links.prs.insert("pkg:jq".into(), vec![6]);
+        let machines: std::collections::HashSet<String> =
+            ["pkg:jq".to_string(), "pkg:curl".to_string()].into();
+        assert_eq!(
+            numbers(crate::mine::rank_prs(&s, "bob", &watched, &machines)),
+            vec![2, 6, 1, 3]
+        );
+        assert_eq!(
+            numbers(crate::mine::rank_prs(
+                &s,
+                "bob",
+                &watched,
+                &Default::default()
+            )),
+            vec![1, 2, 3]
+        );
     }
 
     #[test]
