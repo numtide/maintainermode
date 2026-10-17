@@ -221,7 +221,18 @@ function seedSql() {
   });
   const pkgs = {
     hello: pkg("hello", "2.12.1", [SEED_LOGIN]),
-    curl: pkg("curl", "8.9.1", []),
+    curl: {
+      ...pkg("curl", "8.9.1", ["someone"]),
+      facts: {
+        description: "Command line tool for transferring files with URL syntax",
+        homepage: true,
+        license: true,
+        main_program: true,
+        src_url:
+          "https://github.com/curl/curl/releases/download/curl-8_9_1/curl-8.9.1.tar.xz",
+      },
+      meta: { changelog: ["https://curl.se/ch/8.9.1.html"] },
+    },
     openssl: pkg("openssl", "3.0.14", []),
     jq: pkg("jq", "1.7.1", [SEED_LOGIN]),
     ripgrep: pkg("ripgrep", "14.1.0", ["someone"]),
@@ -253,6 +264,14 @@ function seedSql() {
           code: "NIXPKGS-2026-0001",
           cves: ["CVE-2026-0001"],
           title: "openssl: a buffer overflow in the TLS handshake",
+          issue: null,
+        },
+      ],
+      curl: [
+        {
+          code: "NIXPKGS-2026-0002",
+          cves: ["CVE-2024-8096"],
+          title: "curl: OCSP stapling bypass with GnuTLS",
           issue: null,
         },
       ],
@@ -324,8 +343,19 @@ function seedSql() {
     pr(100173, SEED_LOGIN, "ripgrep: enable the pcre2 feature", 9, {
       files: [file("ripgrep")],
     }),
-    pr(100174, "contributor", "curl: 8.9.1 -> 8.10.0", 3, {
+    pr(100174, "contributor", "curl: 8.9.1 -> 8.10.0 (CVE-2024-8096)", 3, {
       files: [file("curl")],
+      mergeable: "CONFLICTING",
+      ci: "FAILURE",
+      additions: 2,
+      deletions: 2,
+      changed_files: 1,
+      labels: [
+        "10.rebuild-linux: 1001-2500",
+        "10.rebuild-darwin: 501-1000",
+        "1.severity: security",
+      ],
+      association: "CONTRIBUTOR",
     }),
   ];
   return [
