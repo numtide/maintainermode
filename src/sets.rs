@@ -412,6 +412,7 @@ pub(crate) mod tests {
             data_dir: Default::default(),
             index_sets: vec![],
             metrics: Default::default(),
+            packages: Default::default(),
             public_url: String::new(),
             github_app: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),

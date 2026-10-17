@@ -341,6 +341,7 @@ mod tests {
             data_dir: Default::default(),
             index_sets: vec![],
             metrics: Default::default(),
+            packages: Default::default(),
             public_url: "https://mm.example".into(),
             channels: Default::default(),
             archive: Vec::new(),

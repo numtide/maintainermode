@@ -74,6 +74,7 @@ pub struct App {
     pub data_dir: std::path::PathBuf,
     pub index_sets: Vec<String>,
     pub metrics: RwLock<Arc<Report>>,
+    pub(crate) packages: RwLock<Arc<crate::catalog::PackageStats>>,
     /// The URL people reach, for links that leave the site, like feeds.
     pub public_url: String,
     pub events: Arc<crate::events::Log>,
@@ -127,7 +128,18 @@ impl App {
             open_by_dir,
             versions,
         });
+        drop(index);
+        self.recompute_packages();
         Ok(())
+    }
+
+    /// Walks every package and every open pull request, so it runs when the
+    /// index, the pull requests or the health data change, not on a request.
+    pub fn recompute_packages(&self) {
+        let s = self.snap();
+        let h = self.health.read().unwrap().clone();
+        let p = crate::catalog::package_stats(&s, &self.index.read().unwrap(), &h);
+        *self.packages.write().unwrap() = Arc::new(p);
     }
 
     /// Reads every stored pull request, so it runs after a sync pass rather
@@ -1071,17 +1083,14 @@ async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     page(&app, viewer.as_deref(), "rules", &body)
 }
 
-fn package_stats(app: &App) -> crate::catalog::PackageStats {
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    crate::catalog::package_stats(&s, &index, &h)
+fn package_stats(app: &App) -> Arc<crate::catalog::PackageStats> {
+    app.packages.read().unwrap().clone()
 }
 
 async fn api_metrics(State(app): State<Shared>) -> Json<serde_json::Value> {
     let mut v = serde_json::to_value(Report::clone(&app.metrics.read().unwrap()))
         .unwrap_or_else(|_| json!({}));
-    v["packages"] = json!(package_stats(&app));
+    v["packages"] = json!(*package_stats(&app));
     Json(v)
 }
 
@@ -1459,5 +1468,21 @@ mod tests {
         assert_eq!(f.kind.as_deref(), Some("PushEvent"));
         assert_eq!(f.number, Some(123));
         assert_eq!(f.actor.as_deref(), Some("alice"));
+    }
+
+    #[tokio::test]
+    async fn package_numbers_come_from_the_last_recompute() {
+        let app = crate::sets::tests::app(&["hello"]);
+        app.index
+            .write()
+            .unwrap()
+            .by_pname
+            .insert("hello".into(), "hello".into());
+        let packages = |v: Json<serde_json::Value>| v.0["packages"]["packages"].clone();
+        assert_eq!(packages(api_metrics(State(app.clone())).await), 0);
+        app.recompute().unwrap();
+        assert_eq!(packages(api_metrics(State(app.clone())).await), 1);
+        app.index.write().unwrap().by_pname.clear();
+        assert_eq!(packages(api_metrics(State(app.clone())).await), 1);
     }
 }

@@ -202,6 +202,7 @@ fn publish(app: &App, h: &Health) {
         Err(e) => tracing::warn!("health: {e:#}"),
     }
     *app.health.write().unwrap() = Arc::new(h.clone());
+    app.recompute_packages();
 }
 
 /// One attribute per package name, plus every attribute someone maintains

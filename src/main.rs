@@ -641,6 +641,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                packages: Default::default(),
                 events,
                 archive: archive::open_all(
                     &data_dir(&db).join("archive"),
@@ -706,6 +707,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                packages: Default::default(),
                 events,
                 archive: Vec::new(),
                 rescan: None,
@@ -747,6 +749,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 data_dir: data_dir(&db),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
+                packages: Default::default(),
                 events,
                 archive: Vec::new(),
                 rescan: None,
