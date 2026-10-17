@@ -47,7 +47,8 @@
         in
         {
           default = pkgs.mkShell {
-            PRIMER_DIR = "${self.packages.${system}.maintainer-mode.primer}";
+            # the full primer.css, so a new class works before the build trims it
+            PRIMER_DIR = "${self.packages.${system}.maintainer-mode.primer.override { classes = null; }}";
             packages = [
               pkgs.cargo
               pkgs.rustc

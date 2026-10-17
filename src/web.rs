@@ -20,8 +20,6 @@ use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
 use crate::ui::{Page, Section, Tab};
 
-const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
-const CLUB_CSS: &str = include_str!("club.css");
 /// Pull request pages read GitHub on a miss of the cache; crawlers must
 /// not walk them.
 const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /api/v1/prs/\n";
@@ -207,8 +205,7 @@ pub fn router(app: Shared) -> Router {
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/auth/logout", post(logout))
-        .route("/static/primer.css", get(|| css(PRIMER_CSS)))
-        .route("/static/club.css", get(|| css(CLUB_CSS)))
+        .merge(crate::assets::routes())
         .route("/robots.txt", get(|| async { ROBOTS }))
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/v1/status", get(api_status))
@@ -285,16 +282,6 @@ pub(crate) fn ago(t: DateTime<Utc>) -> String {
     } else {
         format!("{}y", days / 365)
     }
-}
-
-async fn css(body: &'static str) -> impl IntoResponse {
-    (
-        [
-            (header::CONTENT_TYPE, "text/css; charset=utf-8"),
-            (header::CACHE_CONTROL, "public, max-age=86400"),
-        ],
-        body,
-    )
 }
 
 pub(crate) const CONTRIBUTING: &str =

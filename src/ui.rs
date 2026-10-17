@@ -230,6 +230,7 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     let nav = nav(p.section);
     let subnav = subnav(&p.subnav);
     let sprite = crate::assets::sprite(&[&club, &menu, &nav, &head, &subnav, &p.body]);
+    let css = crate::assets::stylesheets();
     format!(
         r#"<!doctype html>
 <html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
@@ -237,8 +238,7 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
-<link rel="stylesheet" href="/static/primer.css">
-<link rel="stylesheet" href="/static/club.css">
+{css}
 </head>
 <body class="color-bg-default color-fg-default">
 {sprite}<header class="Header">

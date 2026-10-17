@@ -75,7 +75,7 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 
 | Package                                                              | Version | Licence | Used for                                                                                            |
 | -------------------------------------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
-| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, served as-is                                                                     |
+| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, trimmed to the classes in `src/` and to the light and dark themes                |
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | 16px SVG icons, sent as one hidden sprite on each page                                              |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
@@ -91,6 +91,8 @@ are server-rendered HTML; there is no JavaScript.
 
 ### Page weight and caching
 
+- `nix/primer.nix` trims `primer.css`. It keeps a rule only when each class in it is a word in `src/`. It drops all themes except light and dark. The dev shell uses the full file, so a new class works before the next build.
+- The style sheets have the hash of their content in the name, for example `/static/primer.a023dd1c09a8.css`. The server sends them with `Cache-Control: public, max-age=31536000, immutable`.
 - `icon()` writes `<svg><use href="#i-NAME"></use></svg>`. Each page holds one hidden sprite with the icons it uses.
 
 Version 22 of `@primer/css` no longer ships `Box`, `Label`, `UnderlineNav`,
