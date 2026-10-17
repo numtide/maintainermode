@@ -64,6 +64,20 @@ fn rescans(app: &App) -> Value {
     })
 }
 
+/// Counts of emails only: no address or login.
+fn email(app: &App) -> Value {
+    let (sent, skipped) = app
+        .store
+        .mail_counts(Utc::now() - chrono::Duration::days(1))
+        .unwrap_or_default();
+    json!({
+        "enabled": app.smtp.is_some(),
+        "per_day": app.smtp.as_ref().map(|s| s.per_day),
+        "sent_24h": sent,
+        "skipped_24h": skipped,
+    })
+}
+
 pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
@@ -138,6 +152,7 @@ pub(crate) fn state(app: &App) -> Value {
         },
         "hydra": app.hydra.stats(),
         "rescans": rescans(app),
+        "email": email(app),
         "tokens": {
             "server": app.sync_token.is_some() || app.github_app.is_some(),
             "lent": app.store.lent_tokens().map(|t| t.len()).unwrap_or(0),
@@ -463,6 +478,28 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String
                 "only GH Archive, each hour: there is no server token to poll with"
             }
         ),
+    ));
+    let m = &v["email"];
+    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Email</div>");
+    out.push_str(&row(
+        "Notification emails",
+        &if m["enabled"].as_bool() == Some(true) {
+            let skipped = m["skipped_24h"].as_u64().unwrap_or(0);
+            format!(
+                "{} sent in the last 24 hours, at most {} · {}",
+                m["sent_24h"],
+                m["per_day"],
+                if skipped == 0 {
+                    "none skipped".to_string()
+                } else {
+                    format!(
+                        "<span class=\"color-fg-attention\">{skipped} skipped over a daily limit</span>"
+                    )
+                }
+            )
+        } else {
+            "off on this server: its operator did not set up SMTP".into()
+        },
     ));
     out.push_str("</div>");
     if let Some(list) = v["archive"].as_array().filter(|l| !l.is_empty()) {
