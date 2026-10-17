@@ -582,7 +582,7 @@ fn accept(
     })
 }
 
-async fn scan_in(app: &App, cfg: &Config, r: &FlakeRef, work: &Path) -> Result<PackageSet> {
+async fn scan_in(app: &Arc<App>, cfg: &Config, r: &FlakeRef, work: &Path) -> Result<PackageSet> {
     check_reference(&r.reference).map_err(|e| anyhow!(e))?;
     check_output(&r.output).map_err(|e| anyhow!(e))?;
     let deadline = Instant::now() + cfg.timeout;
@@ -660,10 +660,11 @@ async fn scan_in(app: &App, cfg: &Config, r: &FlakeRef, work: &Path) -> Result<P
             .await??;
     let rev = crate::scan::nixpkgs_rev_named(&root, None)
         .filter(|r| r.len() <= 64 && r.chars().all(|c| c.is_ascii_hexdigit()));
-    accept(app, pairs, rev)
+    let app = Arc::clone(app);
+    tokio::task::spawn_blocking(move || accept(&app, pairs, rev)).await?
 }
 
-pub async fn scan(app: &App, cfg: &Config, r: &FlakeRef) -> Result<PackageSet> {
+pub async fn scan(app: &Arc<App>, cfg: &Config, r: &FlakeRef) -> Result<PackageSet> {
     let work = crate::eval::private_dir("rescan")?;
     let result = scan_in(app, cfg, r, &work).await;
     let _ = tokio::task::spawn_blocking(move || std::fs::remove_dir_all(work)).await;
@@ -687,7 +688,7 @@ pub fn seen_since() -> chrono::DateTime<Utc> {
 /// One scan at a time, in order: never scanned first, then the oldest.
 /// A reference is due once per nixpkgs index; a person over the daily
 /// limit waits for the next day.
-async fn pass(app: &App, cfg: &Config) -> Result<()> {
+async fn pass(app: &Arc<App>, cfg: &Config) -> Result<()> {
     if app.index.read().unwrap().rev.is_empty() {
         return Ok(());
     }
