@@ -109,6 +109,12 @@ impl Store {
                login TEXT NOT NULL,
                created_at TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS mail_confirm (
+               hash TEXT PRIMARY KEY,
+               login TEXT NOT NULL,
+               address TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -890,6 +896,62 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
             "DELETE FROM unsubscribe WHERE created_at < ?1",
+            [before.to_rfc3339()],
+        )?)
+    }
+}
+
+/// A link that confirms a digest address. Only the hash of its token is kept.
+pub struct Confirmation {
+    pub login: String,
+    pub address: String,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Store {
+    pub fn add_confirmation(
+        &self,
+        login: &str,
+        address: &str,
+        hash: &str,
+        at: DateTime<Utc>,
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO mail_confirm (hash, login, address, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![hash, login, address, at.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn confirmation(&self, hash: &str) -> Result<Option<Confirmation>> {
+        let conn = self.conn.lock().unwrap();
+        let row: Option<(String, String, String)> = conn
+            .query_row(
+                "SELECT login, address, created_at FROM mail_confirm WHERE hash = ?1",
+                [hash],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        Ok(row.and_then(|(login, address, at)| {
+            Some(Confirmation {
+                login,
+                address,
+                created_at: time_of(Some(at))?,
+            })
+        }))
+    }
+
+    pub fn delete_confirmations(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM mail_confirm WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    pub fn purge_confirmations(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "DELETE FROM mail_confirm WHERE created_at < ?1",
             [before.to_rfc3339()],
         )?)
     }

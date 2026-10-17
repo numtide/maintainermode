@@ -24,6 +24,7 @@ use std::sync::RwLock;
 use crate::catalog::{Event, head, person_events};
 use crate::github::urlencode;
 use crate::sets::token_hash;
+use crate::store::Confirmation;
 use crate::web::{App, Shared, ago, esc, icon, octicon, page, random_id};
 
 const READ_AT: &str = "inbox_read_at";
@@ -31,6 +32,10 @@ const KINDS: &str = "notify_kinds";
 const EMAIL: &str = "digest_email";
 const DIGEST_AT: &str = "digest_at";
 const TEST_AT: &str = "test_mail_at";
+/// The address the person confirmed; the digest goes only to an address
+/// equal to it.
+const CONFIRMED: &str = "digest_confirmed";
+const CONFIRM_HOURS: i64 = 24;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -38,6 +43,8 @@ pub fn routes() -> Router<Shared> {
         .route("/me/inbox/read", post(mark_read))
         .route("/me/notify", post(save_notify))
         .route("/me/notify/test", post(test_mail))
+        .route("/me/notify/confirm", post(resend_confirmation))
+        .route("/confirm/:token", get(confirm_page).post(confirm))
         .route(
             "/unsubscribe/:token",
             get(unsubscribe_page).post(unsubscribe),
@@ -316,8 +323,29 @@ fn mail_note(mail: Option<&str>) -> &'static str {
         Some("wait") => "Wait 10 minutes between two test emails.",
         Some("invalid") => "Use an address like name@example.org, with no spaces and no name.",
         Some("none") => "Save an address first.",
+        Some("confirm") => {
+            "We sent a confirmation email. Open its link in the next 24 hours to start the digest."
+        }
+        Some("unconfirmed") => {
+            "Confirm your address first: open the link in the confirmation email."
+        }
         _ => "",
     }
+}
+
+fn stored_address(app: &App, login: &str) -> Option<String> {
+    app.store
+        .setting(login, EMAIL)
+        .ok()
+        .flatten()
+        .filter(|a| !a.is_empty())
+}
+
+/// The digest address, only once its owner confirmed it.
+fn confirmed_address(app: &App, login: &str) -> Option<String> {
+    let address = stored_address(app, login)?;
+    let confirmed = app.store.setting(login, CONFIRMED).ok().flatten()?;
+    (confirmed == address).then_some(address)
 }
 
 /// The section of `/me/settings`. The address shows only here, to its owner.
@@ -334,17 +362,21 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
             key = k.key()
         );
     }
-    let address = app
-        .store
-        .setting(login, EMAIL)
-        .ok()
-        .flatten()
-        .unwrap_or_default();
+    let address = stored_address(app, login).unwrap_or_default();
+    let confirmed = confirmed_address(app, login).is_some();
+    let state = match (address.is_empty(), confirmed) {
+        (true, _) => "",
+        (false, true) => " <span class=\"Label Label--success ml-1\">confirmed</span>",
+        (false, false) => {
+            " <span class=\"Label Label--attention ml-1\">pending confirmation</span>"
+        }
+    };
     let email = if app.smtp.is_some() {
         format!(
-            "<label class=\"d-block mt-3\" for=\"email\">Daily email digest to</label>\
+            "<label class=\"d-block mt-3\" for=\"email\">Daily email digest to</label>{state}\
              <input class=\"form-control width-full my-1\" type=\"email\" id=\"email\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
              <p class=\"note\">At most one email a day, with the unread events of these kinds since the last digest. \
+             A new address gets a confirmation email first; the digest starts when you open its link. \
              Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>",
             esc(&address)
         )
@@ -352,7 +384,14 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
         "<p class=\"note mt-3\">Email is off on this server: its operator did not set up SMTP.</p>"
             .into()
     };
-    let test = if app.smtp.is_some() && !address.is_empty() {
+    let test = if app.smtp.is_none() || address.is_empty() {
+        String::new()
+    } else if !confirmed {
+        format!(
+            "<form method=\"post\" action=\"/me/notify/confirm\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send the confirmation email again</button></form>",
+            icon(octicon!("mail"))
+        )
+    } else {
         let last = app
             .store
             .setting(login, DIGEST_AT)
@@ -371,8 +410,6 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
              <span class=\"f6 color-fg-muted ml-2\">{last}</span></form>",
             icon(octicon!("mail"))
         )
-    } else {
-        String::new()
     };
     let note = match mail_note(mail) {
         "" => String::new(),
@@ -429,18 +466,154 @@ async fn save_notify(
         return Redirect::to("/me/settings?mail=invalid#notify").into_response();
     }
     let keys: Vec<&str> = f.chosen().into_iter().map(Kind::key).collect();
-    let mut saved = app.store.set_setting(&login, KINDS, &keys.join(","));
-    if let (Some(a), Some(_)) = (address, &app.smtp) {
-        saved = saved.and_then(|_| app.store.set_setting(&login, EMAIL, a));
-        if a.is_empty() {
-            saved = saved.and_then(|_| app.store.delete_unsubscribes(&login));
-        }
-    }
-    if let Err(e) = saved {
+    if let Err(e) = app.store.set_setting(&login, KINDS, &keys.join(",")) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     recount_one(&app, &login);
-    Redirect::to("/me/settings#notify").into_response()
+    let mut note = "";
+    let changed = |a: &str| stored_address(&app, &login).as_deref().unwrap_or("") != a;
+    if let (Some(a), Some(smtp)) = (address.filter(|a| changed(a)), &app.smtp) {
+        let saved =
+            forget_address(&app, &login).and_then(|_| app.store.set_setting(&login, EMAIL, a));
+        if let Err(e) = saved {
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        }
+        if !a.is_empty() {
+            note = request_confirmation(&app, smtp, &login, a).await;
+        }
+    }
+    settings_redirect(note)
+}
+
+fn settings_redirect(note: &str) -> Response {
+    if note.is_empty() {
+        Redirect::to("/me/settings#notify").into_response()
+    } else {
+        Redirect::to(&format!("/me/settings?mail={note}#notify")).into_response()
+    }
+}
+
+/// Removes the address with everything that points to it.
+fn forget_address(app: &App, login: &str) -> anyhow::Result<()> {
+    app.store.set_setting(login, EMAIL, "")?;
+    app.store.set_setting(login, CONFIRMED, "")?;
+    app.store.delete_unsubscribes(login)?;
+    app.store.delete_confirmations(login)
+}
+
+fn new_confirmation(
+    app: &App,
+    login: &str,
+    address: &str,
+    at: DateTime<Utc>,
+) -> anyhow::Result<String> {
+    let token = random_id();
+    app.store
+        .add_confirmation(login, address, &token_hash(&token), at)?;
+    Ok(token)
+}
+
+/// Sends one confirmation email and gives the note for the settings page.
+async fn request_confirmation(app: &App, smtp: &Smtp, login: &str, address: &str) -> &'static str {
+    let token = match new_confirmation(app, login, address, Utc::now()) {
+        Ok(t) => t,
+        Err(e) => {
+            tracing::warn!("confirmation of {login}: {e:#}");
+            return "failed";
+        }
+    };
+    let base = app.public_url.trim_end_matches('/');
+    let body = format!(
+        "Someone asked Maintainer Mode to send a daily digest to this address, for the GitHub account {login}.\n\n\
+         To confirm, open this link in the next {CONFIRM_HOURS} hours and push the button:\n\
+         {base}/confirm/{token}\n\n\
+         If you did not ask for this, ignore this email. \
+         Without a confirmation, Maintainer Mode sends no more email to this address.\n"
+    );
+    match deliver(
+        smtp,
+        address,
+        "Maintainer Mode: confirm your address",
+        body,
+        None,
+    )
+    .await
+    {
+        Ok(()) => "confirm",
+        Err(e) => {
+            tracing::warn!("confirmation of {login}: {e:#}");
+            "failed"
+        }
+    }
+}
+
+async fn resend_confirmation(State(app): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let Some(smtp) = &app.smtp else {
+        return settings_redirect("off");
+    };
+    let Some(address) = stored_address(&app, &login) else {
+        return settings_redirect("none");
+    };
+    if confirmed_address(&app, &login).is_some() {
+        return settings_redirect("");
+    }
+    settings_redirect(request_confirmation(&app, smtp, &login, &address).await)
+}
+
+/// The confirmation of a token: known, younger than `CONFIRM_HOURS`, and
+/// for the address the person holds now.
+fn pending_confirmation(app: &App, token: &str, now: DateTime<Utc>) -> Option<Confirmation> {
+    if !valid_token(token) {
+        return None;
+    }
+    let c = app.store.confirmation(&token_hash(token)).ok().flatten()?;
+    let fresh = now - c.created_at < Duration::hours(CONFIRM_HOURS);
+    (fresh && stored_address(app, &c.login).as_deref() == Some(c.address.as_str())).then_some(c)
+}
+
+const UNKNOWN_CONFIRM: &str = "<div class=\"blankslate\"><p>This confirmation link is unknown, used or older than 24 hours. \
+     Sign in and send a new one from your settings page.</p></div>";
+
+/// A link scanner opens every link of an email, so a GET only asks.
+async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
+    if pending_confirmation(&app, &token, Utc::now()).is_none() {
+        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_CONFIRM);
+    }
+    let body = format!(
+        "{}<form method=\"post\" action=\"/confirm/{}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>",
+        head(
+            "Confirm your address",
+            "Start the daily email digest of Maintainer Mode at this address.",
+            ""
+        ),
+        esc(&token)
+    );
+    unsubscribe_reply(&app, StatusCode::OK, &body)
+}
+
+async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Response {
+    let Some(c) = pending_confirmation(&app, &token, Utc::now()) else {
+        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_CONFIRM);
+    };
+    let done = app
+        .store
+        .set_setting(&c.login, CONFIRMED, &c.address)
+        .and_then(|_| app.store.delete_confirmations(&c.login));
+    if let Err(e) = done {
+        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+    }
+    unsubscribe_reply(
+        &app,
+        StatusCode::OK,
+        &head(
+            "Address confirmed",
+            "The daily digest goes to this address from now on. Each email has a link to unsubscribe.",
+            "",
+        ),
+    )
 }
 
 async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -451,14 +624,11 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(smtp) = &app.smtp else {
         return back("off");
     };
-    let Some(address) = app
-        .store
-        .setting(&login, EMAIL)
-        .ok()
-        .flatten()
-        .filter(|a| !a.is_empty())
-    else {
+    if stored_address(&app, &login).is_none() {
         return back("none");
+    }
+    let Some(address) = confirmed_address(&app, &login) else {
+        return back("unconfirmed");
     };
     let last = app
         .store
@@ -609,9 +779,6 @@ async fn send(
     subject: &str,
     body: String,
 ) -> anyhow::Result<()> {
-    if !valid_address(address) {
-        bail!("the stored address is not valid");
-    }
     let token = random_id();
     app.store.add_unsubscribe(login, &token_hash(&token))?;
     let base = app.public_url.trim_end_matches('/');
@@ -620,19 +787,36 @@ async fn send(
         "{body}\n--\nYour inbox: {base}/me/inbox\nYour notification settings: {base}/me/settings#notify\n\
          Unsubscribe from these emails: {unsubscribe}\n"
     );
+    deliver(smtp, address, subject, body, Some(&unsubscribe)).await
+}
+
+async fn deliver(
+    smtp: &Smtp,
+    address: &str,
+    subject: &str,
+    body: String,
+    unsubscribe: Option<&str>,
+) -> anyhow::Result<()> {
+    if !valid_address(address) {
+        bail!("the stored address is not valid");
+    }
     let raw = |name: &'static str, value: String| {
         HeaderValue::new(HeaderName::new_from_ascii_str(name), value)
     };
-    let message = Message::builder()
+    let mut message = Message::builder()
         .from(smtp.from.clone())
         .to(address.parse()?)
         .subject(subject)
-        .header(ContentType::TEXT_PLAIN)
-        .raw_header(raw("List-Unsubscribe", format!("<{unsubscribe}>")))
-        .raw_header(raw(
-            "List-Unsubscribe-Post",
-            "List-Unsubscribe=One-Click".into(),
-        ))
+        .header(ContentType::TEXT_PLAIN);
+    if let Some(u) = unsubscribe {
+        message = message
+            .raw_header(raw("List-Unsubscribe", format!("<{u}>")))
+            .raw_header(raw(
+                "List-Unsubscribe-Post",
+                "List-Unsubscribe=One-Click".into(),
+            ));
+    }
+    let message = message
         .raw_header(raw("Auto-Submitted", "auto-generated".into()))
         .body(body)?;
     smtp.transport.send(message).await?;
@@ -702,8 +886,13 @@ fn digest_body(list: &[&Event]) -> String {
 async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
     app.store
         .purge_unsubscribes(Utc::now() - Duration::days(UNSUBSCRIBE_DAYS))?;
+    app.store
+        .purge_confirmations(Utc::now() - Duration::hours(CONFIRM_HOURS))?;
     let mut sent = 0;
     for (login, address) in app.store.settings_with(EMAIL)? {
+        if confirmed_address(app, &login).as_deref() != Some(address.as_str()) {
+            continue;
+        }
         let now = Utc::now();
         let last = digest_at(app, &login);
         if !digest_due(last, now) {
@@ -789,11 +978,7 @@ async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Re
     let Some(login) = unsubscribe_login(&app, &token) else {
         return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_LINK);
     };
-    let done = app
-        .store
-        .set_setting(&login, EMAIL, "")
-        .and_then(|_| app.store.delete_unsubscribes(&login));
-    if let Err(e) = done {
+    if let Err(e) = forget_address(&app, &login) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     unsubscribe_reply(
@@ -1116,11 +1301,73 @@ mod tests {
         );
         let html = settings_box(&app, "alice", Some("invalid"));
         assert!(html.contains("value=\"alice@example.org\""));
-        assert!(html.contains("Send me a test email"));
+        assert!(html.contains("pending confirmation"));
+        assert!(html.contains("Send the confirmation email again"));
+        assert!(!html.contains("Send me a test email"));
         assert!(html.contains("with no spaces"));
         assert!(!settings_box(&app, "bob", None).contains("alice@example.org"));
+        let r = test_mail(State(app.clone()), h.clone()).await;
+        assert_eq!(
+            r.headers()[header::LOCATION],
+            "/me/settings?mail=unconfirmed#notify"
+        );
+        let token = new_confirmation(&app, "alice", "alice@example.org", Utc::now()).unwrap();
+        confirm(State(app.clone()), Path(token)).await;
+        let html = settings_box(&app, "alice", None);
+        assert!(html.contains("confirmed"));
+        assert!(html.contains("Send me a test email"));
         save("").await;
         assert!(app.store.settings_with(EMAIL).unwrap().is_empty());
+        assert!(confirmed_address(&app, "alice").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_confirmation_link_works_once_for_a_day_and_only_for_the_current_address() {
+        let app = crate::sets::tests::app(&[]);
+        app.store
+            .set_setting("alice", EMAIL, "alice@example.org")
+            .unwrap();
+        let now = Utc::now();
+        let token = new_confirmation(&app, "alice", "alice@example.org", now).unwrap();
+        let stored = app
+            .store
+            .confirmation(&token_hash(&token))
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.address, "alice@example.org");
+        assert!(app.store.confirmation(&token).unwrap().is_none());
+        let get = |t: &str| confirm_page(State(app.clone()), Path(t.to_string()));
+        let post = |t: &str| confirm(State(app.clone()), Path(t.to_string()));
+        assert_eq!(get("nope").await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(get(&random_id()).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(post(&random_id()).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(get(&token).await.status(), StatusCode::OK);
+        assert!(confirmed_address(&app, "alice").is_none());
+        assert!(pending_confirmation(&app, &token, now + Duration::hours(23)).is_some());
+        assert!(pending_confirmation(&app, &token, now + Duration::hours(25)).is_none());
+        let old = new_confirmation(
+            &app,
+            "alice",
+            "alice@example.org",
+            now - Duration::hours(25),
+        )
+        .unwrap();
+        assert_eq!(get(&old).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(post(&old).await.status(), StatusCode::NOT_FOUND);
+        let other = new_confirmation(&app, "alice", "old@example.org", now).unwrap();
+        assert_eq!(post(&other).await.status(), StatusCode::NOT_FOUND);
+        assert_eq!(post(&token).await.status(), StatusCode::OK);
+        assert_eq!(
+            confirmed_address(&app, "alice").as_deref(),
+            Some("alice@example.org")
+        );
+        assert_eq!(post(&token).await.status(), StatusCode::NOT_FOUND);
+        app.store
+            .set_setting("alice", EMAIL, "new@example.org")
+            .unwrap();
+        assert!(confirmed_address(&app, "alice").is_none());
+        app.store.purge_confirmations(now).unwrap();
+        assert!(app.store.confirmation(&token_hash(&old)).unwrap().is_none());
     }
 
     #[test]
