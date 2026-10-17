@@ -232,6 +232,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::rescan::routes())
         .merge(crate::welcome::routes())
         .merge(crate::notify::routes())
+        .merge(crate::me::routes())
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }

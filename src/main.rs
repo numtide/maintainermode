@@ -18,6 +18,7 @@ mod ledger;
 mod links;
 mod llm;
 mod mcp;
+mod me;
 mod metrics;
 mod model;
 mod notify;
