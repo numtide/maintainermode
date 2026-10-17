@@ -178,7 +178,7 @@ fn dashboard(app: &App, login: &str) -> String {
         let index = app.index.read().unwrap();
         mine.iter()
             .take(SHOWN)
-            .map(|r| crate::mine::row_html(&index, &ch, r, ""))
+            .map(|r| crate::mine::row_html(&index, &ch, r, r.why, ""))
             .collect()
     };
     out.push_str(&section(
@@ -199,7 +199,7 @@ fn dashboard(app: &App, login: &str) -> String {
         &format!("{} Pull requests for you to review", icon(octicon!("eye"))),
         Some(("/review?tab=foryou", "the whole queue")),
         &if review.is_empty() {
-            empty("No open pull request touches what you maintain or watch. The pull requests with <a href=\"/review?tab=unowned\">no maintainer</a> need reviews too.")
+            empty("No open pull request touches your machines, what you maintain or what you watch. The pull requests with <a href=\"/review?tab=unowned\">no maintainer</a> need reviews too.")
         } else {
             entry_rows(&review)
         },

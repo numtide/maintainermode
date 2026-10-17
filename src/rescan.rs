@@ -852,7 +852,7 @@ pub fn panel(app: &App, login: &str) -> String {
     match &app.rescan {
         None => out.push_str(
             "<div class=\"Box-row color-fg-muted\">This server does not scan flakes: the operator has not turned \
-             server rescans on. Scan on your machine and upload the report, as above.</div>",
+             server rescans on. Scan on your machine and upload the report.</div>",
         ),
         Some(cfg) if refs.len() >= cfg.max_flakes => {
             let _ = write!(

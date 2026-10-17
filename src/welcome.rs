@@ -248,7 +248,7 @@ fn checklist(f: &Facts) -> String {
         mark(f.credited > 0),
         "The review queue for you",
         &format!(
-            "<a href=\"/review\">{} pull requests</a> touch what you maintain, own, changed this year or tagged. \
+            "<a href=\"/review\">{} pull requests</a> touch your machines, or what you maintain, own, changed this year, tagged or watch. \
              A review gets credit when it leads to a change, a reply or a merge within {} days. You have {} credited reviews.",
             f.queue,
             crate::ledger::MOVE_DAYS,
