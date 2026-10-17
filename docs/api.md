@@ -76,7 +76,7 @@ It gives the public data of one login:
 - `area`: what it maintains, owns and changed;
 - `maintains`: its packages and NixOS modules, with their flags.
 
-It never ranks people. Private data, like subscriptions, is never in it.
+It never ranks people. Private data, like subscriptions and tags, is never in it.
 
 ## `GET /api/v1/packages/index`
 
