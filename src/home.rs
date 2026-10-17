@@ -40,10 +40,9 @@ fn entry_rows(entries: &[&Entry]) -> String {
         .take(SHOWN)
         .map(|e| {
             format!(
-                "<div class=\"Box-row\"><a class=\"Link--primary text-bold\" href=\"{}\">{}</a>\
+                "<div class=\"Box-row\">{}\
                  <div class=\"f6 color-fg-muted\">#{} by <a href=\"/u/{a}\">{a}</a> · {} old</div></div>",
-                esc(&e.url),
-                esc(&e.title),
+                crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
                 e.number,
                 ago(e.created_at),
                 a = esc(&e.author)
@@ -165,11 +164,10 @@ fn dashboard(app: &App, login: &str) -> String {
         .take(5)
         .map(|e| {
             format!(
-                "<div class=\"Box-row f6\"><span class=\"color-fg-muted\">{} ago · {}</span> <a href=\"{}\">{}</a></div>",
+                "<div class=\"Box-row f6\"><span class=\"color-fg-muted\">{} ago · {}</span> {}</div>",
                 ago(e.at),
                 esc(&e.subject),
-                esc(&e.url),
-                esc(&e.title)
+                crate::prpage::link(&e.url, &esc(&e.title), "")
             )
         })
         .collect();
@@ -265,11 +263,13 @@ fn dashboard(app: &App, login: &str) -> String {
             let mut line = String::new();
             let _ = write!(
                 line,
-                "<div class=\"Box-row d-flex\"><a class=\"Link--primary flex-auto\" href=\"{}\">#{} {}</a>\
+                "<div class=\"Box-row d-flex\"><span class=\"flex-auto\">{}</span>\
                  <span class=\"Label\">{state}</span></div>",
-                esc(&p.url),
-                p.number,
-                esc(&p.title)
+                crate::prpage::title_link(
+                    p.number,
+                    &format!("#{} {}", p.number, esc(&p.title)),
+                    "Link--primary"
+                )
             );
             line
         })

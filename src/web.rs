@@ -512,14 +512,13 @@ fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
             "<div class=\"Box-row d-flex flex-items-start\">\
                <span class=\"mr-2 color-fg-open\">{pr}</span>\
                <div class=\"flex-auto\">\
-                 <a class=\"Link--primary text-bold\" href=\"{url}\">{title}</a>{conflict}{unowned}\
+                 {title}{conflict}{unowned}\
                  <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
                </div>\
                <span class=\"ml-2\">{ci}</span>{act}\
              </div>",
             pr = icon(octicon!("git-pull-request")),
-            url = esc(&e.url),
-            title = esc(&e.title),
+            title = crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
             ci = ci_label(e),
             act = act.buttons(e.number),
         );
@@ -831,14 +830,17 @@ async fn person_page(
         let _ = write!(
             out,
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
-             <a class=\"Link--primary\" href=\"https://github.com/NixOS/nixpkgs/pull/{n}\">#{n} {t}</a>\
+             {t}\
              <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
              <div class=\"text-right\">{}{found}</div></div>",
             r.at.format("%Y-%m-%d"),
             esc(&r.state.to_lowercase().replace('_', " ")),
             outcome_label(r.outcome),
-            n = r.pr,
-            t = esc(&r.pr_title),
+            t = crate::prpage::title_link(
+                r.pr,
+                &format!("#{} {}", r.pr, esc(&r.pr_title)),
+                "Link--primary"
+            ),
             u = esc(&r.review_url),
             a = esc(&r.pr_author),
         );
@@ -890,7 +892,7 @@ async fn person_page(
         let _ = write!(
             out,
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
-             <a href=\"{u}\">review</a> of <a href=\"https://github.com/NixOS/nixpkgs/pull/{n}\">#{n}</a> {t} by <a href=\"/u/{a}\">{a}</a>\
+             <a href=\"{u}\">review</a> of <a href=\"/pr/{n}\">#{n}</a> {t} by <a href=\"/u/{a}\">{a}</a>\
              <div class=\"f6 color-fg-muted\">{} · {} {}</div></div><div class=\"text-right\">{status}</div></div>",
             c.at.format("%Y-%m-%d"),
             why.join(", "),
