@@ -1057,6 +1057,36 @@ fn people_block(c: &Ctx) -> String {
     block("people", "People", &lines)
 }
 
+/// A tracker advisory on a package, with what nixpkgs already fixes.
+fn advisory_ref(c: &Ctx, attr: &str, a: &crate::health::Advisory) -> String {
+    use crate::affected::Verdict;
+    let status = match c.health.verdict(attr, &a.code) {
+        Verdict::Affects => String::new(),
+        Verdict::Unknown => " <span class=\"color-fg-muted f6\">range unknown</span>".into(),
+        Verdict::Behind { channels, .. } => format!(
+            " <span class=\"color-fg-attention f6\">fixed in master, still in {}</span>",
+            esc(&channels
+                .iter()
+                .map(|l| l.channel.as_str())
+                .collect::<Vec<_>>()
+                .join(", "))
+        ),
+        Verdict::Fixed { fixed_in } => format!(
+            " <span class=\"color-fg-success f6\">{}, the tracker issue can be closed</span>",
+            fixed_in.as_deref().map_or_else(
+                || "fixed everywhere".to_string(),
+                |f| format!("fixed in {}", esc(f))
+            )
+        ),
+    };
+    format!(
+        "<a href=\"{}\">{}</a> on <code>{}</code>{status}",
+        esc(&a.url()),
+        esc(&a.code),
+        esc(attr)
+    )
+}
+
 /// The block, or nothing when no CVE, security label or open advisory
 /// relates to the pull request.
 fn security_block(c: &Ctx) -> String {
@@ -1082,7 +1112,10 @@ fn security_block(c: &Ctx) -> String {
                 .map(move |adv| (*a, adv))
         })
         .collect();
-    if named.is_empty() && !label && tracked.is_empty() {
+    let live = tracked
+        .iter()
+        .any(|(attr, a)| !c.health.verdict(attr, &a.code).fixed());
+    if named.is_empty() && !label && !live {
         return String::new();
     }
     let mut lines = String::new();
@@ -1107,14 +1140,7 @@ fn security_block(c: &Ctx) -> String {
         let adv = tracked
             .iter()
             .find(|(_, a)| a.cves.iter().any(|x| x.eq_ignore_ascii_case(id)))
-            .map(|(attr, a)| {
-                format!(
-                    " · <a href=\"{}\">{}</a> on <code>{}</code>",
-                    esc(&a.url()),
-                    esc(&a.code),
-                    esc(attr)
-                )
-            })
+            .map(|(attr, a)| format!(" · {}", advisory_ref(c, attr, a)))
             .unwrap_or_default();
         fixes.push(format!(
             "<a href=\"https://nvd.nist.gov/vuln/detail/{0}\">{0}</a>{band}{adv}",
@@ -1127,24 +1153,27 @@ fn security_block(c: &Ctx) -> String {
         fixes.join("<br>")
     };
     lines.push_str(&line("Fixes", &fixes));
-    let other: Vec<String> = tracked
-        .iter()
-        .filter(|(_, a)| {
-            !a.cves
-                .iter()
-                .any(|x| named.iter().any(|n| n.eq_ignore_ascii_case(x)))
-        })
-        .map(|(attr, a)| {
-            format!(
-                "<a href=\"{}\">{}</a> on <code>{}</code>",
-                esc(&a.url()),
-                esc(&a.code),
-                esc(attr)
-            )
-        })
-        .collect();
+    let (fixed, other): (Vec<String>, Vec<String>) = {
+        let (f, o): (Vec<_>, Vec<_>) = tracked
+            .iter()
+            .filter(|(_, a)| {
+                !a.cves
+                    .iter()
+                    .any(|x| named.iter().any(|n| n.eq_ignore_ascii_case(x)))
+            })
+            .partition(|(attr, a)| c.health.verdict(attr, &a.code).fixed());
+        let refs = |l: Vec<&(&str, &crate::health::Advisory)>| {
+            l.into_iter()
+                .map(|(attr, a)| advisory_ref(c, attr, a))
+                .collect()
+        };
+        (refs(f), refs(o))
+    };
     if !other.is_empty() {
         lines.push_str(&line("Not named", &other.join(", ")));
+    }
+    if !fixed.is_empty() {
+        lines.push_str(&line("Already fixed", &fixed.join(", ")));
     }
     if c.body.is_none() {
         lines.push_str(&line(
@@ -1610,6 +1639,60 @@ mod tests {
             approved_by: vec![],
         }];
         (p, index, h, touched)
+    }
+
+    #[test]
+    fn the_security_block_says_what_nixpkgs_already_fixes() {
+        let (mut p, _, _, _) = sample_ctx_parts();
+        p.title = "unbound: 1.26.1 -> 1.26.2".into();
+        p.labels.clear();
+        let (index, h, _, _) = crate::catalog::tests::unbound("1.26.1");
+        let touched = vec![Touched {
+            subject: Subject::Pkg("unbound".into()),
+            flags: crate::catalog::Flags::of(
+                &Default::default(),
+                &index,
+                &h,
+                &Subject::Pkg("unbound".into()),
+            ),
+            maintainers: vec![],
+            teams: vec![],
+            approved_by: vec![],
+        }];
+        let committers = Committers::default();
+        let author = crate::profile::Facts::default();
+        let files: Vec<File> = vec![];
+        let mut c = Ctx {
+            pr: &p,
+            body: Some("Update."),
+            files: Ok(&files),
+            touched: &touched,
+            index: &index,
+            health: &h,
+            committers: &committers,
+            author: &author,
+            hydra: &[],
+            run: None,
+            notes: None,
+            mine: None,
+            buttons: String::new(),
+            extra_actions: String::new(),
+        };
+        assert_eq!(security_block(&c), "");
+        let body = "Fixes CVE-2026-26001 again.";
+        c.body = Some(body);
+        let html = security_block(&c);
+        assert!(
+            html.contains("fixed in 1.26.1, the tracker issue can be closed"),
+            "{html}"
+        );
+        let mut labelled = p.clone();
+        labelled.labels = vec!["1.severity: security".into()];
+        c.pr = &labelled;
+        c.body = Some("Update.");
+        let html = security_block(&c);
+        assert!(html.contains("Already fixed"), "{html}");
+        assert!(!html.contains("Not named"), "{html}");
     }
 
     #[test]

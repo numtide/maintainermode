@@ -2912,7 +2912,7 @@ pub(crate) mod tests {
         i.by_pname.insert("unbound".into(), "unbound".into());
         let mut h = Health::default();
         h.cves.insert(
-            "CVE-2026-1".into(),
+            "CVE-2026-26001".into(),
             crate::severity::Cve {
                 band: Some(severity::Band::Critical),
                 cvss: Some(9.8),
@@ -2923,11 +2923,11 @@ pub(crate) mod tests {
             "unbound".into(),
             vec![Advisory {
                 code: "NIXPKGS-2026-2615".into(),
-                cves: vec!["CVE-2026-1".into()],
+                cves: vec!["CVE-2026-26001".into()],
                 title: "unbound: security issues < 1.26.1".into(),
                 issue: Some(564154),
                 ranges: vec![crate::affected::Ranges {
-                    cve: Some("CVE-2026-1".into()),
+                    cve: Some("CVE-2026-26001".into()),
                     constraints: vec![(
                         "affected".into(),
                         "==13fcb641ed33d1472e4ffdec2846180b15405053".into(),
