@@ -1594,6 +1594,7 @@ mod tests {
                 cves: vec!["CVE-2026-1111".into()],
                 title: "x".into(),
                 issue: None,
+                ranges: vec![],
             }],
         );
         let touched = vec![Touched {

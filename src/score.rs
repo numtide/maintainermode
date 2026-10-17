@@ -180,6 +180,7 @@ mod tests {
             cves: vec!["CVE-1".into()],
             title: String::new(),
             issue: None,
+            ranges: vec![],
         };
         let p = Package {
             pname: "x".into(),

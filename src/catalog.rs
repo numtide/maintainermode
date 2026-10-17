@@ -2566,6 +2566,7 @@ mod tests {
                     cves: vec![],
                     title: code.into(),
                     issue,
+                    ranges: vec![],
                 })
                 .collect(),
         );
@@ -2663,6 +2664,7 @@ mod tests {
             cves: vec![],
             title: code.into(),
             issue: Some(issue),
+            ranges: vec![],
         };
         let mut h = Health::default();
         h.advisories
@@ -2745,6 +2747,7 @@ mod tests {
                 cves: vec![],
                 title: String::new(),
                 issue: None,
+                ranges: vec![],
             }],
         );
         let mut bump = crate::ledger::tests::pr(1, "r-ryantm", 0);
@@ -2858,6 +2861,7 @@ mod tests {
                     cves: vec![],
                     title: String::new(),
                     issue: Some(n),
+                    ranges: vec![],
                 }],
             );
         }

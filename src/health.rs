@@ -40,11 +40,19 @@ pub struct Advisory {
     pub title: String,
     /// The nixpkgs issue the tracker opened for it.
     pub issue: Option<u64>,
+    /// The affected ranges of each CVE for this attribute.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ranges: Vec<crate::affected::Ranges>,
 }
 
 impl Advisory {
     pub fn url(&self) -> String {
         format!("https://tracker.security.nixos.org/issue/{}", self.code)
+    }
+
+    pub fn issue_url(&self) -> Option<String> {
+        self.issue
+            .map(|n| format!("https://github.com/NixOS/nixpkgs/issues/{n}"))
     }
 }
 
@@ -81,6 +89,13 @@ pub struct Health {
     /// source → what its last pass did.
     #[serde(default)]
     pub runs: BTreeMap<String, Run>,
+    /// attribute → advisory code → its verdict against master and the
+    /// channels. Derived, so never stored; see [`Health::assess`].
+    #[serde(skip)]
+    pub verdicts: HashMap<String, HashMap<String, crate::affected::Verdict>>,
+    /// The index and channel revisions the verdicts were made from.
+    #[serde(skip)]
+    pub assessed: String,
 }
 
 /// What one source did on its last pass, for `/sync`.
@@ -142,6 +157,52 @@ impl Health {
             .filter(|(v, _)| v == version)
             .map(|(_, at)| *at);
         direct.into_iter().chain(repology).min()
+    }
+
+    /// A verdict not made yet is unknown, which keeps the advisory open.
+    pub fn verdict(&self, attr: &str, code: &str) -> &crate::affected::Verdict {
+        self.verdicts
+            .get(attr)
+            .and_then(|m| m.get(code))
+            .unwrap_or(&crate::affected::UNKNOWN)
+    }
+
+    fn assess_key(&self, index: &crate::area::Index, ch: &crate::channels::Channels) -> String {
+        let tracker = self.tracker_at.map(|t| t.to_rfc3339()).unwrap_or_default();
+        [tracker.as_str(), index.rev.as_str()]
+            .into_iter()
+            .chain(ch.list.iter().map(|c| c.rev.as_str()))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// The verdicts were made from this index, these channels and this sweep.
+    pub fn assessed_for(&self, index: &crate::area::Index, ch: &crate::channels::Channels) -> bool {
+        self.assessed == self.assess_key(index, ch)
+    }
+
+    pub fn assess(&mut self, index: &crate::area::Index, ch: &crate::channels::Channels) {
+        let key = self.assess_key(index, ch);
+        let mut out: HashMap<String, HashMap<String, crate::affected::Verdict>> = HashMap::new();
+        for (attr, list) in &self.advisories {
+            let Some(p) = index.pkgs.get(attr) else {
+                continue;
+            };
+            let seen = ch.of(attr, &p.version);
+            let channels: Vec<(&str, &str, bool)> = seen
+                .iter()
+                .filter_map(|s| Some((s.channel.label(), s.version?, s.channel.stable())))
+                .collect();
+            let m = out.entry(attr.clone()).or_default();
+            for a in list {
+                m.insert(
+                    a.code.clone(),
+                    crate::affected::judge(&a.ranges, &a.title, &p.version, &channels),
+                );
+            }
+        }
+        self.verdicts = out;
+        self.assessed = key;
     }
 
     /// OSV matches the tracker does not already name by a CVE.
@@ -208,7 +269,13 @@ fn publish(app: &App, h: &Health) {
         }
         Err(e) => tracing::warn!("health: {e:#}"),
     }
-    *app.health.write().unwrap() = Arc::new(h.clone());
+    let mut h = h.clone();
+    {
+        let index = app.index.read().unwrap();
+        let ch = app.channels.read().unwrap().clone();
+        h.assess(&index, &ch);
+    }
+    *app.health.write().unwrap() = Arc::new(h);
     app.recompute_packages();
 }
 
@@ -397,6 +464,77 @@ fn issue_number(url: &str) -> Option<u64> {
         .ok()
 }
 
+/// Some tracker fields can come as JSON inside a string.
+fn field(v: &Value, key: &str) -> Value {
+    match &v[key] {
+        Value::String(s) => serde_json::from_str(s).unwrap_or(Value::Null),
+        other => other.clone(),
+    }
+}
+
+/// The ranges one suggestion gives each of its attributes.
+fn suggestion_ranges(s: &Value) -> Vec<(String, crate::affected::Ranges)> {
+    let products = field(s, "affected_products");
+    let products: Vec<&Value> = products.as_array().into_iter().flatten().collect();
+    let names: Vec<&str> = products
+        .iter()
+        .map(|p| p["name"].as_str().unwrap_or(""))
+        .collect();
+    let packages = field(s, "packages");
+    let cve = s["cve_id"].as_str().map(String::from);
+    packages
+        .as_object()
+        .into_iter()
+        .flat_map(|m| m.keys())
+        .map(|attr| {
+            let constraints = crate::affected::products_for(attr, &names)
+                .into_iter()
+                .flat_map(|i| products[i]["version_constraints"].as_array())
+                .flatten()
+                .filter_map(|c| Some((c[0].as_str()?.to_string(), c[1].as_str()?.to_string())))
+                .collect();
+            (
+                attr.clone(),
+                crate::affected::Ranges {
+                    cve: cve.clone(),
+                    constraints,
+                },
+            )
+        })
+        .collect()
+}
+
+/// One page of tracker issues into advisories by attribute.
+pub fn read_page(page: &Value, out: &mut BTreeMap<String, Vec<Advisory>>) {
+    for issue in page["results"].as_array().into_iter().flatten() {
+        let Some(code) = issue["code"].as_str() else {
+            continue;
+        };
+        let suggestions = issue["suggestions"].as_array().cloned().unwrap_or_default();
+        let mut cves: Vec<String> = suggestions
+            .iter()
+            .filter_map(|s| s["cve_id"].as_str().map(String::from))
+            .collect();
+        cves.sort();
+        cves.dedup();
+        let mut by_attr: BTreeMap<String, Vec<crate::affected::Ranges>> = BTreeMap::new();
+        for s in &suggestions {
+            for (attr, r) in suggestion_ranges(s) {
+                by_attr.entry(attr).or_default().push(r);
+            }
+        }
+        for (attr, ranges) in by_attr {
+            out.entry(attr).or_default().push(Advisory {
+                code: code.to_string(),
+                cves: cves.clone(),
+                title: issue["title"].as_str().unwrap_or(code).to_string(),
+                issue: issue["github_issue_url"].as_str().and_then(issue_number),
+                ranges,
+            });
+        }
+    }
+}
+
 /// Every tracker issue with its suggestions; each names the attributes it
 /// affects.
 pub async fn tracker() -> Result<BTreeMap<String, Vec<Advisory>>> {
@@ -423,34 +561,7 @@ pub async fn tracker() -> Result<BTreeMap<String, Vec<Advisory>>> {
             }
             Err(e) => return Err(e),
         };
-        for issue in page["results"].as_array().into_iter().flatten() {
-            let Some(code) = issue["code"].as_str() else {
-                continue;
-            };
-            let suggestions = issue["suggestions"].as_array().cloned().unwrap_or_default();
-            let mut cves: Vec<String> = suggestions
-                .iter()
-                .filter_map(|s| s["cve_id"].as_str().map(String::from))
-                .collect();
-            cves.sort();
-            cves.dedup();
-            let advisory = Advisory {
-                code: code.to_string(),
-                cves,
-                title: issue["title"].as_str().unwrap_or(code).to_string(),
-                issue: issue["github_issue_url"].as_str().and_then(issue_number),
-            };
-            let mut attrs: Vec<&str> = suggestions
-                .iter()
-                .filter_map(|s| s["packages"].as_object())
-                .flat_map(|p| p.keys().map(String::as_str))
-                .collect();
-            attrs.sort();
-            attrs.dedup();
-            for a in attrs {
-                out.entry(a.to_string()).or_default().push(advisory.clone());
-            }
-        }
+        read_page(&page, &mut out);
         tokio::time::sleep(TRACKER_PAUSE).await;
         match page["next"].as_str() {
             Some(next) => url = next.replacen("http://", "https://", 1),
@@ -702,6 +813,48 @@ mod tests {
     }
 
     #[test]
+    fn a_tracker_page_keeps_the_ranges_of_each_attribute() {
+        let page = serde_json::json!({ "results": [{
+            "code": "NIXPKGS-2026-3072",
+            "title": "cups: security issues < 2.4.20",
+            "github_issue_url": "https://github.com/NixOS/nixpkgs/issues/574783",
+            "suggestions": [
+                {
+                    "cve_id": "CVE-2026-1",
+                    "affected_products": [
+                        { "name": "libcups", "version_constraints": [["affected", "<9"]] },
+                        { "name": "cups", "version_constraints": [["affected", "==< 2.4.20"]] }
+                    ],
+                    "packages": { "cups": { "branches": {} } }
+                },
+                {
+                    "cve_id": "CVE-2026-2",
+                    "affected_products": "[{\"name\":\"x\",\"version_constraints\":[[\"unaffected\",\"==2.4.20\"],[\"affected\",\"<2.4.20\"]]}]",
+                    "packages": "{\"cups\":{},\"cups-filters\":{}}"
+                }
+            ]
+        }]});
+        let mut out = BTreeMap::new();
+        read_page(&page, &mut out);
+        let cups = &out["cups"][0];
+        assert_eq!(cups.cves, ["CVE-2026-1", "CVE-2026-2"]);
+        assert_eq!(cups.issue, Some(574783));
+        assert_eq!(cups.ranges.len(), 2);
+        assert_eq!(
+            cups.ranges[0].constraints,
+            [("affected".to_string(), "==< 2.4.20".to_string())]
+        );
+        assert_eq!(cups.ranges[1].constraints.len(), 2);
+        assert_eq!(out["cups-filters"][0].ranges.len(), 1);
+        let v = serde_json::to_value(cups).unwrap();
+        let back: Advisory = serde_json::from_value(v).unwrap();
+        assert_eq!(back.ranges, cups.ranges);
+        let old: Advisory =
+            serde_json::from_str(r#"{"code":"A","cves":[],"title":"t","issue":null}"#).unwrap();
+        assert!(old.ranges.is_empty());
+    }
+
+    #[test]
     fn an_osv_match_shows_once_and_not_beside_its_tracker_advisory() {
         let mut h = Health::default();
         h.advisories.insert(
@@ -711,6 +864,7 @@ mod tests {
                 cves: vec!["CVE-1".into()],
                 title: String::new(),
                 issue: None,
+                ranges: vec![],
             }],
         );
         h.osv.insert(
