@@ -27,7 +27,7 @@ permissions: {}
 
 jobs:
   update:
-    uses: numtide/maintainermode/.github/workflows/update.yml@a280fb3e4289856ba8521434bf35d128cdffec65 # main of 2026-10-16
+    uses: numtide/maintainermode/.github/workflows/update.yml@661bdf4c921ad0079fc301bb2f5bca2208abf2ce # main of 2026-10-17
     with:
       attr: ${{ inputs.attr }}
       version: ${{ inputs.version }}
