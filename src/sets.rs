@@ -8,7 +8,7 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::post;
 use chrono::{Duration, Utc};
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -22,11 +22,10 @@ use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MACHINES: &str = "/me/sets";
+pub(crate) const MACHINES: &str = "/me?tab=machines";
 
 pub fn routes() -> Router<Shared> {
     Router::new()
-        .route("/me/sets", get(panel))
         .route("/me/sets/delete", post(delete_set))
         .route("/me/upload-token", post(new_token))
         .route("/me/upload-token/delete", post(delete_token))
@@ -154,15 +153,13 @@ it keeps the reference, the output, the same attributes from the last good scan,
 the server scans it only while you open this page at least once in 90 days, and those attributes expire 90 days \
 after the last good scan or your last visit. The button below deletes the set and your flakes now.</div>";
 
-async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let _ = app.store.touch_flake_refs(&login);
-    let set = app.store.package_set(&login).ok().flatten();
+/// The My machines tab of `/me`. Opening it keeps the scanned flakes alive.
+pub(crate) fn machines_tab(app: &App, login: &str) -> crate::me::TabBody {
+    let _ = app.store.touch_flake_refs(login);
+    let set = app.store.package_set(login).ok().flatten();
     let watched: Vec<String> = app
         .store
-        .watched(&login)
+        .watched(login)
         .unwrap_or_default()
         .iter()
         .filter_map(|k| match Subject::parse(k) {
@@ -178,22 +175,22 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
     for a in &watched {
         from.entry(a.clone()).or_default().watched = true;
     }
-    for r in app.store.flake_refs(&login).unwrap_or_default() {
+    for r in app.store.flake_refs(login).unwrap_or_default() {
         for a in r.attrs {
             from.entry(a).or_default().flake = true;
         }
     }
     out.push_str(&summary(set.as_ref()));
-    out.push_str(&crate::rescan::panel(&app, &login));
-    out.push_str(&rows(&app, &from));
-    Page::new(Section::Home, "Your package set")
-        .icon(octicon!("package"))
-        .sub(
-            "The packages you run, from your latest report, and the packages you watch. \
-             Only you see this page. New advisories and upstream releases for them reach your private Atom feed.",
-        )
-        .body(out)
-        .render(&app, Some(&login))
+    out.push_str(&crate::rescan::panel(app, login));
+    out.push_str(&rows(app, &from));
+    crate::me::TabBody {
+        sub:
+            "The packages your machines run, from your latest report, and the packages you watch. \
+              New advisories and upstream releases for them reach your inbox and your Atom feed."
+                .into(),
+        actions: String::new(),
+        body: out,
+    }
 }
 
 fn summary(set: Option<&PackageSet>) -> String {
@@ -368,7 +365,7 @@ async fn delete_set(State(app): State<Shared>, headers: HeaderMap) -> Response {
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/me/sets").into_response()
+    Redirect::to(MACHINES).into_response()
 }
 
 #[cfg(test)]

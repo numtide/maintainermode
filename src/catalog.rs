@@ -58,9 +58,9 @@ pub fn routes() -> Router<Shared> {
         .route("/m/*file", get(module_page))
         .route("/a/*path", get(area_page))
         .route("/u/:login/maintains", get(maintains_page))
-        .route("/watch", get(watch_page).post(add_watch))
-        .route("/watch/remove", post(remove_watch))
-        .route("/watch/maintained", post(watch_maintained))
+        .route("/me/watch", post(add_watch))
+        .route("/me/watch/remove", post(remove_watch))
+        .route("/me/watch/maintained", post(watch_maintained))
         .route("/me/feed", post(new_feed))
         .route("/feed/:token", get(feed))
         .route("/api/v1/packages/:attr", get(api_package))
@@ -698,13 +698,13 @@ fn subscribe_button(watching: Option<bool>, subject: &Subject) -> String {
     match watching {
         None => "<a class=\"btn btn-sm\" href=\"/auth/login\">Sign in to subscribe</a>".into(),
         Some(false) => format!(
-            "<form method=\"post\" action=\"/watch\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
+            "<form method=\"post\" action=\"/me/watch\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
              <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Subscribe</button></form>",
             esc(&subject.key()),
             icon(octicon!("bell"))
         ),
         Some(true) => format!(
-            "<form method=\"post\" action=\"/watch/remove\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
+            "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
              <button class=\"btn btn-sm\" type=\"submit\">Unsubscribe</button></form>",
             esc(&subject.key())
         ),
@@ -1537,14 +1537,10 @@ async fn browse(
         icon(octicon!("search"))
     );
     match &viewer {
-        Some(v) => {
-            let _ = write!(
-                out,
-                "<p><a href=\"/u/{0}/maintains\">What you maintain</a> · <a href=\"/watch\">What you watch</a> · \
-                 <a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>",
-                esc(v)
-            );
-        }
+        Some(_) => out.push_str(
+            "<p><a href=\"/me?tab=maintain\">What you maintain</a> · <a href=\"/me?tab=watch\">What you watch</a> · \
+             <a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>",
+        ),
         None => out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>"),
     }
     if q.is_empty() {
@@ -1753,18 +1749,6 @@ async fn maintains_page(
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let m = maintained(&index, &login);
-    let own = viewer
-        .as_deref()
-        .is_some_and(|v| v.eq_ignore_ascii_case(&login));
-    let button = if own && !(m.packages.is_empty() && m.modules.is_empty()) {
-        format!(
-            "<form method=\"post\" action=\"/watch/maintained\" class=\"d-inline\">\
-             <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Subscribe to all of them</button></form>",
-            icon(octicon!("bell"))
-        )
-    } else {
-        String::new()
-    };
     let mut out = crate::ui::section(
         &format!("{} Packages", icon(octicon!("package"))),
         Some(m.packages.len()),
@@ -1788,7 +1772,6 @@ async fn maintains_page(
                 &index.rev[..index.rev.len().min(12)]
             })
         ))
-        .actions(button)
         .body(out)
         .render(&app, viewer.as_deref())
 }
@@ -1826,7 +1809,7 @@ async fn add_watch(
     }
     crate::notify::recount_one(&app, &login);
     let back = if f.name.is_some() {
-        "/watch".to_string()
+        "/me?tab=watch".to_string()
     } else {
         subject.href()
     };
@@ -1853,11 +1836,11 @@ async fn remove_watch(
             if headers
                 .get(header::REFERER)
                 .and_then(|r| r.to_str().ok())
-                .is_some_and(|r| !r.ends_with("/watch")) =>
+                .is_some_and(|r| !(r.ends_with("/me") || r.contains("/me?"))) =>
         {
             s.href()
         }
-        _ => "/watch".into(),
+        _ => "/me?tab=watch".into(),
     };
     Redirect::to(&back).into_response()
 }
@@ -1873,7 +1856,7 @@ async fn watch_maintained(State(app): State<Shared>, headers: HeaderMap) -> Resp
         }
     }
     crate::notify::recount_one(&app, &login);
-    Redirect::to("/watch").into_response()
+    Redirect::to("/me?tab=maintain").into_response()
 }
 
 async fn new_feed(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -1895,63 +1878,107 @@ pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> 
         .collect()
 }
 
-async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
-    let page = Page::new(Section::Home, "Watching")
-        .icon(octicon!("bell"))
-        .sub(
-            "Packages, modules and areas you subscribed to, with what needs attention first. \
-             New pull requests, merges, issues and advisories reach you through your Atom feed.",
-        );
-    let Some(login) = viewer.as_deref() else {
-        return page
-            .body("<div class=\"blankslate\"><p>Sign in to subscribe.</p></div>")
-            .render(&app, None);
-    };
-    let page = page.actions("<a class=\"btn btn-sm\" href=\"/me/sets\">Your package set</a>");
+/// The Watch tab of `/me`.
+pub(crate) fn watch_tab(app: &crate::web::App, login: &str) -> crate::me::TabBody {
     let mut out = String::from(
-        "<form method=\"post\" action=\"/watch\" class=\"inline-form mb-3\">\
-         <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to subscribe to\">\
-         <button class=\"btn btn-primary\" type=\"submit\">Subscribe</button></form>",
+        "<form method=\"post\" action=\"/me/watch\" class=\"inline-form mb-3\">\
+         <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
+         <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>",
     );
-    let _ = write!(
-        out,
-        "<p class=\"f6\"><a href=\"/u/{0}/maintains\">What you maintain</a>: subscribe to all of it in one step.</p>",
-        esc(login)
-    );
-    let subs = subscriptions(&app, login);
+    let subs = subscriptions(app, login);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
-    {
-        let index = app.index.read().unwrap();
-        if subs.is_empty() {
-            out.push_str("<div class=\"blankslate\"><p>You watch nothing yet.</p></div>");
+    let index = app.index.read().unwrap();
+    let mut rows: Vec<(Subject, Flags)> = subs
+        .into_iter()
+        .map(|sub| {
+            let f = Flags::of(&s, &index, &h, &sub);
+            (sub, f)
+        })
+        .collect();
+    rows.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
+    let list: String = rows
+        .iter()
+        .map(|(sub, f)| {
+            subject_row(
+                sub,
+                f,
+                "",
+                &format!(
+                    "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
+                     <button class=\"btn btn-sm\" type=\"submit\">Stop watching</button></form>",
+                    esc(&sub.key())
+                ),
+            )
+        })
+        .collect();
+    out.push_str(&crate::ui::section(
+        "What you watch",
+        Some(rows.len()),
+        None,
+        &if list.is_empty() {
+            empty(
+                "You watch nothing yet. To watch all you maintain in one step, open the <a href=\"/me?tab=maintain\">Maintain</a> tab.",
+            )
         } else {
-            let mut rows: Vec<(Subject, Flags)> = subs
-                .into_iter()
-                .map(|sub| {
-                    let f = Flags::of(&s, &index, &h, &sub);
-                    (sub, f)
-                })
-                .collect();
-            rows.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
-            out.push_str("<div class=\"Box mb-4\">");
-            for (sub, f) in &rows {
-                out.push_str(&subject_row(
-                    sub,
-                    f,
-                    "",
-                    &format!(
-                        "<form method=\"post\" action=\"/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
-                         <button class=\"btn btn-sm\" type=\"submit\">Unsubscribe</button></form>",
-                        esc(&sub.key())
-                    ),
-                ));
-            }
-            out.push_str("</div>");
-        }
+            list
+        },
+    ));
+    crate::me::TabBody {
+        sub: "The packages, modules and directories you watch. Those that need attention come first. \
+              Their news reaches your inbox and your <a href=\"/me/settings#feed\">Atom feed</a>."
+            .into(),
+        actions: String::new(),
+        body: out,
     }
-    page.body(out).render(&app, viewer.as_deref())
+}
+
+/// The Maintain tab of `/me`: the list of the public page, with one button
+/// to watch all of it.
+pub(crate) fn maintain_tab(app: &crate::web::App, login: &str) -> crate::me::TabBody {
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let ch = app.channels.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let m = maintained(&index, login);
+    let watched: std::collections::HashSet<String> = app
+        .store
+        .watched(login)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    let all = m.packages.iter().chain(&m.modules);
+    let missing = all.filter(|(sub, _)| !watched.contains(&sub.key())).count();
+    let actions = if missing > 0 {
+        format!(
+            "<form method=\"post\" action=\"/me/watch/maintained\" class=\"d-inline\">\
+             <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch all of them</button></form>",
+            icon(octicon!("bell"))
+        )
+    } else {
+        String::new()
+    };
+    let mut out = crate::ui::section(
+        &format!("{} Packages", icon(octicon!("package"))),
+        Some(m.packages.len()),
+        None,
+        &maintained_rows(&s, &index, &h, &ch, &m.packages),
+    );
+    out.push_str(&crate::ui::section(
+        &format!("{} NixOS modules", icon(octicon!("gear"))),
+        Some(m.modules.len()),
+        None,
+        &maintained_rows(&s, &index, &h, &ch, &m.modules),
+    ));
+    crate::me::TabBody {
+        sub: format!(
+            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name you. \
+             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{0}/maintains\">/u/{0}/maintains</a>.",
+            esc(login)
+        ),
+        actions,
+        body: out,
+    }
 }
 
 /// The `#feed` section of `/me/settings`.
@@ -2149,7 +2176,7 @@ async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response 
     let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\
          <title>Maintainer Mode: what {l} watches</title><id>{b}/feed/{l}</id><updated>{}</updated>\
-         <link rel=\"alternate\" href=\"{b}/watch\"/>",
+         <link rel=\"alternate\" href=\"{b}/me?tab=inbox\"/>",
         updated.to_rfc3339(),
         l = xml(&login),
         b = xml(base)

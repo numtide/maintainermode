@@ -688,7 +688,7 @@ fn short(e: &anyhow::Error) -> String {
     }
 }
 
-/// A flake whose owner has not visited `/me/sets` for the 90 days of an
+/// A flake whose owner has not visited the My machines tab of `/me` for the 90 days of an
 /// upload is not scanned any more.
 pub fn seen_since() -> chrono::DateTime<Utc> {
     Utc::now() - chrono::Duration::days(crate::sets::RETENTION_DAYS)
@@ -778,7 +778,7 @@ async fn add(State(app): State<Shared>, headers: HeaderMap, Form(f): Form<AddFor
         .store
         .add_flake_ref(&login, reference, output, cfg.max_flakes)
     {
-        Ok(true) => Redirect::to("/me/sets#flakes").into_response(),
+        Ok(true) => Redirect::to("/me?tab=machines#flakes").into_response(),
         Ok(false) => (
             StatusCode::FORBIDDEN,
             format!("at most {} flakes a person", cfg.max_flakes),
@@ -804,7 +804,7 @@ async fn remove(
     if let Err(e) = app.store.delete_flake_ref(&login, f.id) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/me/sets#flakes").into_response()
+    Redirect::to("/me?tab=machines#flakes").into_response()
 }
 
 fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
@@ -837,7 +837,7 @@ fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
     s
 }
 
-/// The flakes box of /me/sets.
+/// The flakes box of the My machines tab of /me.
 pub fn panel(app: &App, login: &str) -> String {
     let refs = app.store.flake_refs(login).unwrap_or_default();
     let index_at = app.store.get_time("index_at").ok().flatten();
