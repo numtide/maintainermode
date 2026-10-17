@@ -43,7 +43,7 @@ show twice or not at all.
 | --------- | ------------------------------------------------------------------------------------------------------ |
 | `queue`   | `foryou`, `unowned`, `bumps`, `all` (the default) or `ready`                                           |
 | `section` | with `queue=ready`: `ready` (the default), `maintainer_approved`, `security`, `backports` or `waiting` |
-| `login`   | whose queue, for `foryou` and `bumps`; the default is your session                                     |
+| `login`   | whose queue, for `foryou` and `bumps`; for `foryou` only, the default is your session                  |
 | `limit`   | rows per page                                                                                          |
 | `cursor`  | the `next_cursor` of the page before                                                                   |
 
@@ -53,7 +53,7 @@ The queues:
   maintains, owns in `ci/OWNERS` or changed this year. It needs `login` or a
   session.
 - **`unowned`**: pull requests that need review, with no maintainer.
-- **`bumps`**: open version bumps, the oldest first. With `login`, only what
+- **`bumps`**: all open version bumps, the oldest first. With `login`, only what
   that login maintains.
 - **`all`**: every pull request that needs review, the oldest first.
 - **`ready`**: pull requests ready to merge. The other sections are the lists

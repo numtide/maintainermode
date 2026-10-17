@@ -135,7 +135,7 @@ pub(crate) fn prs_value(app: &App, q: &PrQuery, caller: Option<&str>) -> Result<
         .as_deref()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .or(caller);
+        .or(caller.filter(|_| queue == "foryou"));
     let own = login.is_some() && login == caller;
     let s = app.snap();
     let mut out;
@@ -292,6 +292,19 @@ mod tests {
             ..Default::default()
         };
         assert!(!prs_value(&app, &q, Some("alice")).unwrap().private);
+        let q = PrQuery {
+            queue: Some("bumps".into()),
+            ..Default::default()
+        };
+        let p = prs_value(&app, &q, Some("alice")).unwrap();
+        assert!(!p.private);
+        assert!(p.value["login"].is_null());
+        let q = PrQuery {
+            queue: Some("bumps".into()),
+            login: Some("alice".into()),
+            ..Default::default()
+        };
+        assert!(prs_value(&app, &q, Some("alice")).unwrap().private);
         let q = PrQuery {
             queue: Some("nope".into()),
             ..Default::default()
