@@ -1762,8 +1762,11 @@ async fn maintains_page(
         &maintained_rows(&s, &index, &h, &ch, &m.modules),
     ));
     Page::new(Section::Packages, format!("What {login} maintains"))
+        .heading(esc(&login))
+        .icon(octicon!("person"))
+        .subnav(crate::web::person_tabs(&login, true))
         .sub(format!(
-            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name <a href=\"/u/{0}\">{0}</a>, \
+            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name {0}, \
              at nixpkgs {1}. Change the list in nixpkgs, not here.",
             esc(&login),
             esc(if index.rev.is_empty() {

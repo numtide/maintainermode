@@ -18,7 +18,7 @@ use crate::ledger::{self, Dropped, Ledger, Trigger};
 use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
-use crate::ui::{Page, Section};
+use crate::ui::{Page, Section, Tab};
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
@@ -197,42 +197,42 @@ pub(crate) type Shared = Arc<App>;
 
 pub fn router(app: Shared) -> Router {
     Router::new()
-    .merge(crate::home::routes())
-    .merge(crate::review::routes())
-    .route("/record", get(record_page))
-    .route("/u/:login", get(person_page))
-    .route("/me/tags", post(set_tags))
-    .route("/auth/login", get(login))
-    .route("/auth/callback", get(callback))
-    .route("/auth/logout", post(logout))
-    .route("/static/primer.css", get(|| css(PRIMER_CSS)))
-    .route("/static/club.css", get(|| css(CLUB_CSS)))
-    .route("/robots.txt", get(|| async { ROBOTS }))
-    .route("/healthz", get(|| async { "ok" }))
-    .route("/api/v1/status", get(api_status))
-    .route("/api/v1/queue/merge", get(api_merge))
-    .route("/api/v1/queue/review", get(api_review))
-    .route("/api/v1/people/:login", get(api_person))
-    .route("/api/v1/metrics", get(api_metrics))
-    .route("/api/v1/events", get(api_events))
-    .merge(crate::nixpkgs::routes())
-    .merge(crate::catalog::routes())
-    .merge(crate::bumps::routes())
-    .merge(crate::committer::routes())
-    .merge(crate::actions::routes())
-    .merge(crate::status::routes())
-    .merge(crate::sets::routes())
-    .merge(crate::archive::routes())
-    .merge(crate::llm::routes())
-    .merge(crate::progress::routes())
-    .merge(crate::prpage::routes())
-    .merge(crate::mcp::routes())
-    .merge(crate::rescan::routes())
-    .merge(crate::welcome::routes())
-    .merge(crate::notify::routes())
-    .merge(crate::me::routes())
-    .layer(axum::middleware::from_fn(crate::me::no_store))
-    .layer(axum::middleware::from_fn(same_origin))    .with_state(app)
+        .merge(crate::home::routes())
+        .merge(crate::review::routes())
+        .route("/u/:login", get(person_page))
+        .route("/me/tags", post(set_tags))
+        .route("/auth/login", get(login))
+        .route("/auth/callback", get(callback))
+        .route("/auth/logout", post(logout))
+        .route("/static/primer.css", get(|| css(PRIMER_CSS)))
+        .route("/static/club.css", get(|| css(CLUB_CSS)))
+        .route("/robots.txt", get(|| async { ROBOTS }))
+        .route("/healthz", get(|| async { "ok" }))
+        .route("/api/v1/status", get(api_status))
+        .route("/api/v1/queue/merge", get(api_merge))
+        .route("/api/v1/queue/review", get(api_review))
+        .route("/api/v1/people/:login", get(api_person))
+        .route("/api/v1/metrics", get(api_metrics))
+        .route("/api/v1/events", get(api_events))
+        .merge(crate::nixpkgs::routes())
+        .merge(crate::catalog::routes())
+        .merge(crate::bumps::routes())
+        .merge(crate::committer::routes())
+        .merge(crate::actions::routes())
+        .merge(crate::status::routes())
+        .merge(crate::sets::routes())
+        .merge(crate::archive::routes())
+        .merge(crate::llm::routes())
+        .merge(crate::progress::routes())
+        .merge(crate::prpage::routes())
+        .merge(crate::mcp::routes())
+        .merge(crate::rescan::routes())
+        .merge(crate::welcome::routes())
+        .merge(crate::notify::routes())
+        .merge(crate::me::routes())
+        .layer(axum::middleware::from_fn(crate::me::no_store))
+        .layer(axum::middleware::from_fn(same_origin))
+        .with_state(app)
 }
 
 pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -422,36 +422,6 @@ pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-#[derive(Deserialize)]
-struct RecordQuery {
-    login: Option<String>,
-}
-
-/// There is deliberately no ranking of people: a leaderboard drives volume,
-/// and a global order lets five people dominate while the rest disengage.
-async fn record_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<RecordQuery>,
-) -> Response {
-    let viewer = app.viewer(&headers);
-    if let Some(l) = q.login.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
-        return Redirect::to(&format!("/u/{}", crate::github::urlencode(l))).into_response();
-    }
-    if let Some(v) = &viewer {
-        return Redirect::to(&format!("/u/{v}")).into_response();
-    }
-    Page::new(Section::Review, "Review record")
-        .icon(octicon!("law"))
-        .sub("One person's reviews and what came of each. There is no ranking.")
-        .body(
-            "<form method=\"get\" action=\"/record\" class=\"inline-form\">\
-             <input class=\"form-control flex-auto\" name=\"login\" placeholder=\"GitHub login\" aria-label=\"GitHub login\">\
-             <button class=\"btn\" type=\"submit\">Show record</button></form>",
-        )
-        .render(&app, None)
-}
-
 fn trigger_label(t: &Trigger) -> &'static str {
     match t {
         Trigger::AuthorPushed => "author pushed",
@@ -497,6 +467,18 @@ fn overlap(title: &str, list: &[(String, usize)]) -> String {
     )
 }
 
+/// The tabs of `/u/<login>`. Both are public, so they never show private
+/// data: that goes under `/me`.
+pub(crate) fn person_tabs(login: &str, maintains: bool) -> Vec<Tab> {
+    let base = format!("/u/{}", crate::github::urlencode(login));
+    vec![
+        Tab::new(base.clone(), "Record", !maintains),
+        Tab::new(format!("{base}/maintains"), "Maintains", maintains),
+    ]
+}
+
+/// There is deliberately no ranking of people: a leaderboard drives volume,
+/// and a global order lets five people dominate while the rest disengage.
 async fn person_page(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -628,8 +610,10 @@ async fn person_page(
         );
     }
     out.push_str("</details>");
-    Page::new(Section::Review, login.clone())
+    Page::new(Section::Packages, format!("Review record of {login}"))
+        .heading(esc(&login))
         .icon(octicon!("person"))
+        .subnav(person_tabs(&login, false))
         .sub(format!(
             "Evidence, not a verdict. Maintainer Mode grants nothing; nixpkgs committers do. \
              Reviews in the synced data: the last {} days and every open pull request.",
