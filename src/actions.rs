@@ -129,36 +129,59 @@ fn run_rows(runs: &[workflows::Run]) -> String {
         .collect()
 }
 
-/// `update hello 2.13` → the compare link of `update/hello`.
-fn update_links(runs: &[workflows::Run], fork: &str) -> String {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = String::new();
-    for r in runs {
-        let Some(attr) = r
-            .name
-            .strip_prefix("update ")
-            .and_then(|s| s.split_whitespace().next())
-        else {
-            continue;
+/// What an update run left: a branch to open a pull request from, a branch
+/// to keep working on, or no branch. `pushed` is `None` when GitHub did not
+/// say.
+fn update_row(attr: &str, fork: &str, conclusion: Option<&str>, pushed: Option<bool>) -> String {
+    let success = conclusion == Some("success");
+    if pushed == Some(false) {
+        let text = if success {
+            format!("{} is already up to date; no branch was pushed", esc(attr))
+        } else {
+            format!(
+                "{}: {}; no branch was pushed",
+                esc(attr),
+                esc(conclusion.unwrap_or("not finished"))
+            )
         };
-        if r.status != "completed" || !seen.insert(attr.to_string()) {
-            continue;
-        }
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><span class=\"branch-name\">{b}</span> on {f}</span>\
-             <a class=\"btn btn-sm\" href=\"{}\">{}</a></div>",
-            esc(&workflows::compare_url(fork, attr)),
-            if r.conclusion.as_deref() == Some("success") {
-                "Open a pull request"
-            } else {
-                "See the branch, keep working"
-            },
-            b = esc(&workflows::update_branch(attr)),
-            f = esc(fork),
-        );
+        return format!("<div class=\"Box-row color-fg-muted\">{text}</div>");
     }
-    out
+    format!(
+        "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><span class=\"branch-name\">{b}</span> on {f}</span>\
+         <a class=\"btn btn-sm\" href=\"{}\">{}</a></div>",
+        esc(&workflows::compare_url(fork, attr)),
+        if success {
+            "Open a pull request"
+        } else {
+            "See the branch, keep working"
+        },
+        b = esc(&workflows::update_branch(attr)),
+        f = esc(fork),
+    )
+}
+
+/// The last finished run of each attribute (`update hello 2.13`), and what
+/// it left.
+async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &str) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let latest: Vec<(&str, &workflows::Run)> = runs
+        .iter()
+        .filter_map(|r| {
+            let attr = r.name.strip_prefix("update ")?.split_whitespace().next()?;
+            (r.status == "completed" && seen.insert(attr)).then_some((attr, r))
+        })
+        .collect();
+    let pushed = futures_util::future::join_all(
+        latest
+            .iter()
+            .map(|(_, r)| workflows::pushed(token, repo, r.id)),
+    )
+    .await;
+    latest
+        .iter()
+        .zip(pushed)
+        .map(|((attr, r), p)| update_row(attr, fork, r.conclusion.as_deref(), p.ok()))
+        .collect()
 }
 
 async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
@@ -212,7 +235,7 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Str
             Ok(runs) => {
                 let mut b = run_rows(&runs);
                 if file == UPDATE {
-                    b.push_str(&update_links(&runs, &r.fork));
+                    b.push_str(&update_links(&t, repo, &runs, &r.fork).await);
                 }
                 b
             }
@@ -322,7 +345,7 @@ async fn start_update(
     let inputs = json!({ "attr": attr, "version": version, "fork": r.fork });
     let msg = match workflows::dispatch(&t, &r.update, UPDATE, inputs).await {
         Ok(()) => format!(
-            "Started nix-update of {attr} in {}. It pushes {} to {} either way.",
+            "Started nix-update of {attr} in {}. It pushes {} to {} when nix-update changes anything, even if the build fails.",
             r.update,
             workflows::update_branch(&attr),
             r.fork
@@ -331,4 +354,23 @@ async fn start_update(
     };
     flash(&app, &login, &msg);
     Redirect::to("/actions").into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_update_row_tells_the_four_cases_apart() {
+        let row = |c, p| update_row("hello", "alice/nixpkgs", Some(c), p);
+        assert!(row("success", Some(true)).contains("Open a pull request"));
+        assert!(row("failure", Some(true)).contains("See the branch, keep working"));
+        let fresh = row("success", Some(false));
+        assert!(fresh.contains("hello is already up to date"));
+        assert!(!fresh.contains("href"));
+        let failed = row("failure", Some(false));
+        assert!(failed.contains("failure; no branch was pushed"));
+        assert!(!failed.contains("href"));
+        assert!(row("failure", None).contains("See the branch, keep working"));
+    }
 }

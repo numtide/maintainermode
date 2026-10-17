@@ -87,6 +87,7 @@ pub async fn dispatch(token: &str, repo: &str, workflow: &str, inputs: Value) ->
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Run {
+    pub id: u64,
     pub name: String,
     pub url: String,
     /// queued, in_progress or completed.
@@ -118,6 +119,7 @@ pub async fn runs(token: &str, repo: &str, workflow: &str) -> Result<Vec<Run>> {
         .into_iter()
         .flatten()
         .map(|r| Run {
+            id: r["id"].as_u64().unwrap_or(0),
             name: r["display_title"]
                 .as_str()
                 .or(r["name"].as_str())
@@ -134,7 +136,40 @@ pub async fn runs(token: &str, repo: &str, workflow: &str) -> Result<Vec<Run>> {
         .collect())
 }
 
-/// The branch the update workflow pushes to, whether the build passed or not.
+/// The step of `.github/workflows/update.yml` that pushes the branch.
+const PUSH_STEP: &str = "push the branch";
+
+fn pushed_in(jobs: &Value) -> bool {
+    jobs["jobs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|j| j["steps"].as_array().into_iter().flatten())
+        .any(|s| s["name"] == PUSH_STEP && s["conclusion"] == "success")
+}
+
+/// Whether an update run pushed its branch: the push job is skipped when
+/// nix-update changed nothing, and the run conclusion alone does not say so.
+pub async fn pushed(token: &str, repo: &str, run: u64) -> Result<bool> {
+    if !valid_repo(repo) {
+        bail!("{repo:?} is not owner/name");
+    }
+    let resp = api(
+        token,
+        reqwest::Method::GET,
+        &format!("/repos/{repo}/actions/runs/{run}/jobs?per_page=30"),
+    )
+    .send()
+    .await?;
+    let status = resp.status();
+    let body = resp.text().await?;
+    if !status.is_success() {
+        return Err(refused(status, &body, repo));
+    }
+    Ok(pushed_in(&serde_json::from_str(&body)?))
+}
+
+/// The branch the update workflow pushes to when nix-update changed something.
 pub fn update_branch(attr: &str) -> String {
     format!("update/{attr}")
 }
@@ -161,6 +196,26 @@ mod tests {
         assert!(!valid_repo("a/../b"));
         assert!(!valid_repo("a/.."));
         assert!(!valid_repo("a/b?x=1"));
+    }
+
+    #[test]
+    fn only_a_push_step_that_succeeded_counts_as_pushed() {
+        let jobs = |push: Value| {
+            json!({ "jobs": [
+                { "name": "update / update", "steps": [{ "name": "nix-update", "conclusion": "success" }] },
+                push,
+            ]})
+        };
+        let pushed = jobs(json!({ "name": "update / push", "conclusion": "success",
+            "steps": [{ "name": "push the branch", "conclusion": "success" }] }));
+        let skipped =
+            jobs(json!({ "name": "update / push", "conclusion": "skipped", "steps": [] }));
+        let failed = jobs(json!({ "name": "update / push", "conclusion": "failure",
+            "steps": [{ "name": "push the branch", "conclusion": "failure" }] }));
+        assert!(pushed_in(&pushed));
+        assert!(!pushed_in(&skipped));
+        assert!(!pushed_in(&failed));
+        assert!(!pushed_in(&json!({})));
     }
 
     #[test]

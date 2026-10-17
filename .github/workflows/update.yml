@@ -1,8 +1,9 @@
 # nix-update on one nixpkgs attribute, called from a workflow in your own
 # repository (see gha/update.yml). It pushes update/<attr> to your nixpkgs
 # fork whether the build passes or not, so a failed update is a branch to
-# keep working on. It never opens a pull request: the run summary links the
-# page where you open one yourself.
+# keep working on. When nix-update changes nothing, the package is already up
+# to date: the run passes and pushes nothing. It never opens a pull request:
+# the run summary links the page where you open one yourself.
 name: update
 
 on:
@@ -134,6 +135,8 @@ jobs:
               else
                 echo "- [See the branch and keep working]($compare)"
               fi
+            elif [[ "$UPDATED" == success ]]; then
+              echo "- already up to date: nix-update changed nothing, so no branch was pushed"
             else
               echo "- nothing changed, so no branch was pushed"
             fi
@@ -143,7 +146,11 @@ jobs:
               fi
             done
           } >> "$GITHUB_STEP_SUMMARY"
-          [[ "$UPDATED" == success && "$BUILT" == success ]]
+          if [[ "$CHANGED" == 1 ]]; then
+            [[ "$UPDATED" == success && "$BUILT" == success ]]
+          else
+            [[ "$UPDATED" == success ]]
+          fi
 
   # nix-update and the build run code from nixpkgs and from upstream, so the
   # token that can push lives in a job of its own, which runs none of it.
