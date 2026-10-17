@@ -75,6 +75,17 @@ fn email(app: &App) -> Value {
     })
 }
 
+fn notifications(app: &App, sync_every: i64) -> Value {
+    let now = Utc::now();
+    let mut v = app.notifications.json(now);
+    v["walk_every_seconds"] = json!(if app.notifications.healthy(now) {
+        crate::notifications::WALK_EVERY_WHEN_HEALTHY.max(sync_every)
+    } else {
+        sync_every
+    });
+    v
+}
+
 pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
@@ -147,6 +158,7 @@ pub(crate) fn state(app: &App) -> Value {
             "last_seconds": pass_seconds,
             "worst_delay_seconds": pass_seconds.map(|p| sync_every + p),
         },
+        "notifications": notifications(app, sync_every),
         "hydra": app.hydra.stats(),
         "rescans": rescans(app),
         "email": email(app),
@@ -358,6 +370,31 @@ pub(crate) fn body(app: &App) -> String {
             when(&pass["last_ended"])
         ),
     ));
+    let n = &v["notifications"];
+    let on = n["enabled"].as_bool() == Some(true);
+    let healthy = n["healthy"].as_bool() == Some(true);
+    out.push_str(&kv(
+        "Notifications",
+        &if on {
+            notifications_row(n)
+        } else {
+            "off: this server has no token of a bot account, so a change waits for the next update"
+                .to_string()
+        },
+    ));
+    out.push_str(&kv(
+        "Full walk",
+        &format!(
+            "every update reads the pull requests and issues that changed since the last walk, \
+             one every {} · {}",
+            minutes(n["walk_every_seconds"].as_i64().unwrap_or(600)),
+            if healthy {
+                "the notifications poller is healthy, so the walk is only the safety net"
+            } else {
+                "it runs every 30 minutes while the notifications poller is healthy"
+            }
+        ),
+    ));
     out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>");
     out.push_str(&kv(
         "Index",
@@ -499,23 +536,8 @@ pub(crate) fn body(app: &App) -> String {
         out.push_str("</div>");
     }
     let worst = pass["worst_delay_seconds"].as_i64();
-    let _ = write!(
-        out,
-        "<div class=\"Box\"><div class=\"Box-header\"><h2 class=\"Box-title\">Faster with forwarded events</h2></div><div class=\"Box-row\">\
-         <p>Today this server polls. A review, push or merge on GitHub shows here after the next update: \
-         up to <strong>{}</strong> later{}. The Events API keeps only the last 300 events, so a busy hour loses some until \
-         GH Archive brings them, about an hour later.</p>\
-         <p>If the NixOS organisation forwarded the nixpkgs webhooks here (an organisation webhook, or a GitHub App \
-         installed on the repository):</p>\
-         <ul class=\"ml-4\">\
-         <li>each change would show in <strong>seconds</strong>, not minutes;</li>\
-         <li>no event would be lost in a burst;</li>\
-         <li>the queues and the review credit would update the moment a review lands;</li>\
-         <li>the updates would only check, so the rate limit would go to the older data and to the issue bodies.</li>\
-         </ul>\
-         <p class=\"color-fg-muted f6\">Maintainer Mode has no webhook receiver yet: GitHub sends webhooks only to the \
-         administrators of a repository. See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/events.md\">docs/events.md</a>.</p>\
-         </div></div>",
+    let walk_delay = format!(
+        "up to <strong>{}</strong> later{}",
         worst
             .map(minutes)
             .unwrap_or_else(|| minutes(pass["every_seconds"].as_i64().unwrap_or(600))),
@@ -525,5 +547,77 @@ pub(crate) fn body(app: &App) -> String {
             ""
         },
     );
+    let now = if healthy {
+        format!(
+            "<p>A bot account watches nixpkgs, and GitHub notifies it of each issue and pull request that changes. \
+             This server reads those notifications every {}, and reads each changed item again at once. \
+             A review, push or merge on GitHub shows here in <strong>about a minute</strong>{}. \
+             The full walk runs every 30 minutes, for anything the notifications miss.</p>",
+            minutes(n["interval_seconds"].as_i64().unwrap_or(60)),
+            n["average_delay_seconds"]
+                .as_i64()
+                .map(|d| format!(" ({} on average in the last hour)", minutes(d)))
+                .unwrap_or_default()
+        )
+    } else if on {
+        format!(
+            "<p>A bot account watches nixpkgs, but the poll of its notifications fails now. \
+             Until it works again, a review, push or merge on GitHub shows here after the next update: {walk_delay}.</p>"
+        )
+    } else {
+        format!(
+            "<p>This server walks the updates on GitHub. A review, push or merge shows here after the next update: \
+             {walk_delay}. With the token of a bot account that watches nixpkgs, it shows in about a minute.</p>"
+        )
+    };
+    let _ = write!(
+        out,
+        "<div class=\"Box\"><div class=\"Box-header\"><h2 class=\"Box-title\">How fast changes show here</h2></div><div class=\"Box-row\">\
+         {now}\
+         <p>The Events API keeps only the last 300 events, so a busy hour loses some events of the event log until \
+         GH Archive brings them, about an hour later.</p>\
+         <p>If the NixOS organisation forwarded the nixpkgs webhooks here (an organisation webhook, or a GitHub App \
+         installed on the repository):</p>\
+         <ul class=\"ml-4\">\
+         <li>each change would show in <strong>seconds</strong>;</li>\
+         <li>no event would be lost in a burst;</li>\
+         <li>the updates would only check, so the rate limit would go to the older data and to the issue bodies.</li>\
+         </ul>\
+         <p class=\"color-fg-muted f6\">Maintainer Mode has no webhook receiver yet: GitHub sends webhooks only to the \
+         administrators of a repository. See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/events.md\">docs/events.md</a>.</p>\
+         </div></div>"
+    );
     out
+}
+
+fn notifications_row(n: &Value) -> String {
+    let mut parts = vec![format!(
+        "the notifications of the bot account, read every {} · the last read {}",
+        minutes(n["interval_seconds"].as_i64().unwrap_or(60)),
+        when(&n["last_poll"])
+    )];
+    parts.push(format!(
+        "{} threads in the last hour",
+        n["threads_last_hour"]
+    ));
+    if let Some(d) = n["average_delay_seconds"].as_i64() {
+        parts.push(format!(
+            "{} on average from a change on GitHub to its read here",
+            minutes(d)
+        ));
+    }
+    match n["errors_last_hour"].as_u64().unwrap_or(0) {
+        0 => parts.push("no errors in the last hour".into()),
+        e => parts.push(format!(
+            "<span class=\"color-fg-attention\">{e} errors in the last hour; the last: {}</span>",
+            esc(n["last_error"]["message"].as_str().unwrap_or(""))
+        )),
+    }
+    if n["healthy"].as_bool() != Some(true) {
+        parts.push(
+            "<span class=\"color-fg-attention\">not healthy: every update walks in full</span>"
+                .into(),
+        );
+    }
+    parts.join(" · ")
 }
