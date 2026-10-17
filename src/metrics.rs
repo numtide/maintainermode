@@ -281,6 +281,9 @@ pub struct Report {
     pub concentration_365d: Concentration,
     /// Disclosed AI tools on pull requests opened in the last 365 days.
     pub ai_tools_365d: Vec<(String, usize)>,
+    /// Lower-case login → when its first pull request in the data opened.
+    #[serde(skip)]
+    pub first_pr: HashMap<String, DateTime<Utc>>,
 }
 
 fn percentile(v: &mut [f64], p: f64) -> Option<f64> {
@@ -364,10 +367,13 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
         let e = first_seen.entry(f.author.as_str()).or_insert(f.created_at);
         *e = (*e).min(f.created_at);
     }
-    for t in first_seen.values() {
+    let mut first_pr: HashMap<String, DateTime<Utc>> = HashMap::new();
+    for (login, t) in &first_seen {
         if let Some(a) = acc.get_mut(&key(*t)) {
             a.m.new_authors += 1;
         }
+        let e = first_pr.entry(login.to_lowercase()).or_insert(*t);
+        *e = (*e).min(*t);
     }
 
     for f in facts {
@@ -491,6 +497,7 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
         areas: area_rows(facts, year_ago),
         concentration_365d: concentration(facts, year_ago),
         ai_tools_365d: ai_tools(facts, year_ago),
+        first_pr,
     }
 }
 

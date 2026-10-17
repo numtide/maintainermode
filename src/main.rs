@@ -30,6 +30,7 @@ mod nixpkgs;
 mod notifications;
 mod notify;
 mod osv;
+mod profile;
 mod progress;
 mod prpage;
 mod queue;

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -12,13 +12,12 @@ use std::fmt::Write;
 use std::sync::{Arc, RwLock};
 
 use crate::area::{self, Area, Index, Ownership};
-use crate::dossier::{self, Outcome};
+use crate::dossier;
 use crate::github::OAuth;
-use crate::ledger::{self, Dropped, Ledger, Trigger};
+use crate::ledger::{self, Ledger};
 use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
-use crate::ui::{Page, Section, Tab};
 
 /// Pull request pages read GitHub on a miss of the cache; crawlers must
 /// not walk them.
@@ -206,7 +205,6 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::home::routes())
         .merge(crate::review::routes())
         .route("/record", get(record_redirect))
-        .route("/u/:login", get(person_page))
         .route("/me/tags", post(set_tags))
         .route("/auth/login", get(login))
         .route("/auth/callback", get(callback))
@@ -220,6 +218,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::nixpkgs::routes())
         .merge(crate::api::routes())
         .merge(crate::catalog::routes())
+        .merge(crate::profile::routes())
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
@@ -296,7 +295,11 @@ pub(crate) fn nixpkgs_guides() -> String {
 }
 
 pub(crate) fn ci_label(e: &Entry) -> String {
-    match e.ci.as_deref() {
+    ci_icon(e.ci.as_deref())
+}
+
+pub(crate) fn ci_icon(ci: Option<&str>) -> String {
+    match ci {
         Some("SUCCESS") => format!(
             "<span class=\"color-fg-success\" role=\"img\" title=\"checks pass\" aria-label=\"checks pass\">{}</span>",
             icon(octicon!("check-circle-fill"))
@@ -439,195 +442,11 @@ pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn trigger_label(t: &Trigger) -> &'static str {
-    match t {
-        Trigger::AuthorPushed => "author pushed",
-        Trigger::AuthorReplied => "author replied",
-        Trigger::InlineOnChange => "comment on a changed line",
-        Trigger::Merged => "merged",
-    }
-}
-
-fn outcome_label(o: Outcome) -> &'static str {
-    match o {
-        Outcome::MergedUnchanged => "<span class=\"Label Label--success\">merged unchanged</span>",
-        Outcome::MergedAfterChanges => "<span class=\"Label\">merged after changes</span>",
-        Outcome::MergedByReviewer => "<span class=\"Label\">merged by the reviewer</span>",
-        Outcome::ChangedAfterReview => {
-            "<span class=\"Label Label--attention\">changed after review</span>"
-        }
-        Outcome::Open => "<span class=\"Label\">open</span>",
-        Outcome::Closed => "<span class=\"Label\">closed</span>",
-    }
-}
-
-fn stat(n: usize, label: &str, hint: &str) -> String {
+pub(crate) fn stat(n: usize, label: &str, hint: &str) -> String {
     format!(
         "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"text-bold\">{label}</div>\
          <div class=\"f6 color-fg-muted\">{hint}</div></div>"
     )
-}
-
-fn overlap(title: &str, list: &[(String, usize)]) -> String {
-    let rows: String = list
-        .iter()
-        .map(|(l, n)| {
-            format!(
-                "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
-                l = esc(l)
-            )
-        })
-        .collect();
-    format!(
-        "<div class=\"col-grow\">{}</div>",
-        crate::ui::section(title, None, None, &rows)
-    )
-}
-
-/// The tabs of `/u/<login>`. Both are public, so they never show private
-/// data: that goes under `/me`.
-pub(crate) fn person_tabs(login: &str, maintains: bool) -> Vec<Tab> {
-    let base = format!("/u/{}", crate::github::urlencode(login));
-    vec![
-        Tab::new(base.clone(), "Record", !maintains),
-        Tab::new(format!("{base}/maintains"), "Maintains", maintains),
-    ]
-}
-
-/// There is deliberately no ranking of people: a leaderboard drives volume,
-/// and a global order lets five people dominate while the rest disengage.
-async fn person_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Path(login): Path<String>,
-) -> Response {
-    use crate::ui::{Tone, badge, empty, section};
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let p = s.ledger.people.get(&login).cloned().unwrap_or_default();
-    let d = dossier::build(&s.pr_data, &login);
-    let listed = ledger::queues_badge(p.listed, p.counterparties);
-    let mut out = format!(
-        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
-        stat(
-            d.merged_unchanged,
-            "merged unchanged after their review",
-            "a committer merged it later, with no push after the review"
-        ),
-        stat(
-            d.problems_found,
-            "problems found",
-            "the author changed the pull request after their review asked for it"
-        ),
-    );
-    let mut recent = String::new();
-    for r in &d.recent {
-        let found = if r.problem_found {
-            format!(" {}", badge(Tone::Attention, "problem found"))
-        } else {
-            String::new()
-        };
-        let _ = write!(
-            recent,
-            "<div class=\"Box-row d-flex\"><div class=\"flex-auto min-width-0 wb-break-word\">\
-             {t}\
-             <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
-             <div class=\"text-right ml-2 flex-shrink-0\">{}{found}</div></div>",
-            r.at.format("%Y-%m-%d"),
-            esc(&r.state.to_lowercase().replace('_', " ")),
-            outcome_label(r.outcome),
-            t = crate::prpage::title_link(
-                r.pr,
-                &format!("#{} {}", r.pr, esc(&r.pr_title)),
-                "Link--primary"
-            ),
-            u = esc(&r.review_url),
-            a = esc(&r.pr_author),
-        );
-    }
-    if recent.is_empty() {
-        recent = empty("No reviews in the synced data.");
-    }
-    out.push_str(&section(
-        &format!("Last {} reviews, and what came of each", dossier::RECENT),
-        None,
-        None,
-        &recent,
-    ));
-    let _ = write!(
-        out,
-        "<div class=\"d-flex flex-wrap gap-3\">{}{}</div>",
-        overlap("Reviewed alongside", &d.co_reviewers),
-        overlap("Reviewed pull requests of", &d.authors)
-    );
-    let _ = write!(
-        out,
-        "<details class=\"Box mt-4\"><summary class=\"Box-header text-bold\">Credit: {:.2}, reciprocity {:.0}% \
-         <span class=\"f6 color-fg-muted text-normal\">(decides listing only; reciprocity is shown, never acted on)</span></summary>",
-        p.score,
-        p.reciprocity * 100.0
-    );
-    let mut credits: Vec<_> = s.ledger.credits_of(&login).collect();
-    credits.sort_by_key(|c| std::cmp::Reverse(c.at));
-    if credits.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">No credit yet.</div>");
-    }
-    for c in credits {
-        let why: Vec<&str> = c.triggers.iter().map(trigger_label).collect();
-        let status = match &c.dropped {
-            None => format!(
-                "{:.2} <span class=\"color-fg-muted\">of {:.2}</span>",
-                c.value, c.weight
-            ),
-            Some(Dropped::DailyCap) => {
-                "<span class=\"Label\">over the daily cap</span>".to_string()
-            }
-            Some(Dropped::Voided { by, url }) => format!(
-                "<a class=\"Label Label--danger\" href=\"{}\">voided by {}</a>",
-                esc(url),
-                esc(by)
-            ),
-        };
-        let mut factors = Vec::new();
-        if c.orphan {
-            factors.push("unowned".to_string());
-        } else if !c.queue_head {
-            factors.push(format!("picked fresh ×{}", ledger::PICKED_FACTOR));
-        }
-        if c.pair_factor < 1.0 {
-            factors.push(format!("repeat author ×{}", c.pair_factor));
-        }
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
-             <a href=\"{u}\">review</a> of <a href=\"/pr/{n}\">#{n}</a> {t} by <a href=\"/u/{a}\">{a}</a>\
-             <div class=\"f6 color-fg-muted\">{} · {} {}</div></div><div class=\"text-right\">{status}</div></div>",
-            c.at.format("%Y-%m-%d"),
-            why.join(", "),
-            if factors.is_empty() {
-                String::new()
-            } else {
-                format!("· {}", factors.join(", "))
-            },
-            u = esc(&c.review_url),
-            n = c.pr,
-            t = esc(&c.pr_title),
-            a = esc(&c.pr_author),
-        );
-    }
-    out.push_str("</details>");
-    Page::new(Section::Other, format!("Review record of {login}"))
-        .heading(esc(&login))
-        .icon(octicon!("person"))
-        .subnav(person_tabs(&login, false))
-        .sub(format!(
-            "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
-             It counts the reviews of the last {} days and on every open pull request.",
-            ledger::WINDOW_DAYS
-        ))
-        .actions(listed)
-        .body(out)
-        .render(&app, viewer.as_deref())
 }
 
 /// The `#tags` section of `/me/settings`.
