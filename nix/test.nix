@@ -26,9 +26,12 @@ pkgs.testers.runNixOSTest {
         ln -sfn /run/secrets.d/1 /run/secrets
       '';
       virtualisation.memorySize = 1024;
-      environment.systemPackages = [ config.services.maintainer-mode.package ];
-      # a tree with one private package and a stand-in nixpkgs that knows
-      # the other two, so the client scans with no network
+      environment.systemPackages = [
+        config.services.maintainer-mode.package
+        pkgs.sqlite
+      ];
+      # a tree with one private package and a saved public list that knows
+      # the other two, so the client exports with no network
       environment.etc."scan/host.nix".text = ''
         let
           mk = pname: version: deps: derivation {
@@ -41,17 +44,43 @@ pkgs.testers.runNixOSTest {
         in
         { top = mk "system" "1" [ private ]; }
       '';
-      environment.etc."scan/nixpkgs/default.nix".text = ''
-        { system ? builtins.currentSystem, ... }:
+      environment.etc."scan/index.json".text = builtins.toJSON {
+        rev = "test";
+        attrs = {
+          hello = [
+            "hello"
+            "2.12"
+          ];
+          "python3Packages.requests" = [
+            "requests"
+            "2.31"
+          ];
+        };
+      };
+      # an index and an upload token, put in the database while the service
+      # is stopped; the token is "vmtoken"
+      environment.etc."seed.sql".text =
         let
-          mk = pname: version: derivation {
-            name = "''${pname}-''${version}";
-            inherit pname version system;
-            builder = "/bin/sh";
+          pkg = pname: version: {
+            inherit pname version;
+            file = null;
+            maintainers = [ ];
+            teams = [ ];
+          };
+          index = builtins.toJSON {
+            rev = "1111111111111111111111111111111111111111";
+            maintainers = { };
+            owners = [ ];
+            pkgs = {
+              hello = pkg "hello" "2.12";
+              "python3Packages.requests" = pkg "requests" "2.31";
+            };
           };
         in
-        { hello = mk "hello" "2.12"; python3Packages.requests = mk "requests" "2.32"; }
-      '';
+        ''
+          INSERT OR REPLACE INTO meta (key, value) VALUES ('index', '${index}');
+          INSERT OR REPLACE INTO upload_token (login, hash, created_at) VALUES ('alice', 'dcee570f548b91c5fed14f8ada7d88205aad29a2654869a557d3720e982a0b63', '2026-10-01T00:00:00Z');
+        '';
     };
   # no network in the test: the sync and the sweep fail and retry, and the
   # pages must still answer
@@ -237,12 +266,16 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"email\":{\"enabled\":false,\"per_day\":null,\"sent_24h\":0,\"skipped_24h\":0}' /tmp/sync.json")
     machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_RESCAN /tmp/env")
     machine.succeed("cp -rL /etc/scan /tmp/scan")
-    machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top --nixpkgs ./nixpkgs")
+    # before the first index, the public list answers 503 and export stops
+    machine.succeed("curl -s -o /tmp/pi -w '%{http_code}' http://127.0.0.1:8790/api/v1/packages/index > /tmp/pi.code && grep -q 503 /tmp/pi.code && grep -q 'not built yet' /tmp/pi")
+    machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top")
     machine.succeed("grep -q our-private-daemon /tmp/scan/maintainer-mode-scan.json")
-    machine.succeed("cd /tmp/scan && maintainer-mode export --out report.json")
-    machine.succeed("grep -q '\"attr\": \"python3Packages.requests\"' /tmp/scan/report.json")
+    machine.fail("cd /tmp/scan && maintainer-mode --server http://127.0.0.1:8790 export --out report.json")
+    machine.succeed("cd /tmp/scan && maintainer-mode export --index-file index.json --out report.json")
+    machine.succeed("grep -q '\"attr\": \"python3Packages.requests\"' /tmp/scan/report.json && grep -q '\"modified\": true' /tmp/scan/report.json")
+    machine.succeed("grep -q '\"version\": \"2.12\"' /tmp/scan/report.json && grep -q '\"index_rev\": \"test\"' /tmp/scan/report.json")
     machine.succeed("grep -q '\"unknown\": 2' /tmp/scan/report.json")
-    machine.fail("grep -q -e our-private-daemon -e host.nix /tmp/scan/report.json")
+    machine.fail("grep -q -e our-private-daemon -e host.nix -e '\"2.32\"' -e '\"name\"' /tmp/scan/report.json")
     machine.fail("cd /tmp/scan && maintainer-mode submit --to http://127.0.0.1:8790")
     machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=nope maintainer-mode submit --to http://127.0.0.1:8790")
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
@@ -265,5 +298,18 @@ pkgs.testers.runNixOSTest {
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'bot_token changed; the new secret is in use' /tmp/log")
     machine.succeed(f"systemctl show -p MainPID --value maintainer-mode.service > /tmp/pid && grep -qx {pid} /tmp/pid")
     machine.fail("journalctl -o cat > /tmp/all.log && grep -q -e new-token -e old-token /tmp/all.log")
+    # with an index, the public list answers and the server takes only a
+    # strict report
+    machine.succeed("systemctl stop maintainer-mode.service")
+    machine.succeed("cd /var/lib/maintainer-mode && sqlite3 maintainer-mode.sqlite < /etc/seed.sql && chown $(stat -c %u:%g .) maintainer-mode.sqlite*")
+    machine.succeed("systemctl start maintainer-mode.service")
+    machine.wait_for_open_port(8790)
+    machine.succeed("curl -sf -D /tmp/pi.h -o /tmp/pi.json http://127.0.0.1:8790/api/v1/packages/index && grep -qi '^etag: \"1111111111111111111111111111111111111111\"' /tmp/pi.h && grep -qi '^cache-control: public' /tmp/pi.h")
+    machine.succeed("grep -q '\"python3Packages.requests\":\\[\"requests\",\"2.31\"\\]' /tmp/pi.json && grep -q '\"requests\":\\[\"python3Packages.requests\"\\]' /tmp/pi.json")
+    machine.succeed("curl -sf -H 'Accept-Encoding: gzip' -D /tmp/pigz.h -o /tmp/pi.gz http://127.0.0.1:8790/api/v1/packages/index && grep -qi '^content-encoding: gzip' /tmp/pigz.h && gzip -dc /tmp/pi.gz > /tmp/pi2.json && cmp /tmp/pi.json /tmp/pi2.json")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -H 'If-None-Match: \"1111111111111111111111111111111111111111\"' http://127.0.0.1:8790/api/v1/packages/index > /tmp/pi.code && grep -q 304 /tmp/pi.code")
+    machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 > /tmp/submit.json && grep -q '\"kept\":2' /tmp/submit.json && grep -q '\"dropped\":2' /tmp/submit.json")
+    machine.succeed("curl -s -o /tmp/r20 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"packages\":[{\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"1.2.3-acme-fix\"}]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r20.code && grep -q 400 /tmp/r20.code && grep -q 'does not have version 1.2.3-acme-fix' /tmp/r20")
+    machine.succeed("curl -s -o /tmp/r21 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"source\":{\"name\":\"/home/me/tree\"},\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r21.code && grep -q 400 /tmp/r21.code && grep -q 'unknown field' /tmp/r21")
   '';
 }
