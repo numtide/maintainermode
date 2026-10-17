@@ -18,6 +18,72 @@ On these pages, no tab is current. The menu marks the current page.
 
 Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has two tabs: **Record** and **Maintains**. Search for `@login` on `/packages` to open it.
 
+## Needs you
+
+Sign in, and the home page starts with **Needs you**. It is a list of open items. Each item is one thing that waits for you. Each item has one primary action: push its title to open its page. The most urgent item comes first. Only you see the list.
+
+The list does not show what happened. The [inbox](#the-menu) does that. The list shows what is still open. When the cause of an item is gone, the item leaves the list.
+
+### The items
+
+| Order | Cause                                                                                                                                                       | It opens         |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 1     | An advisory on a package of your latest machine report. The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it.    | the package page |
+| 2     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                              | the pull request |
+| 3     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged. | the pull request |
+| 4     | Your open pull request has had no review for 7 days or more. The item names the maintainers of the files to ask, at most 5.                                 | the pull request |
+| 5     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.           | the pull request |
+| 6     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                        | the package page |
+
+In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 2, the newest review comes first. In causes 3 and 4, the oldest comes first. In causes 5 and 6, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 2, and cause 3 for failing checks or a merge conflict.
+
+The server uses only data that it already has. These signals are not in the list:
+
+- A review request to you: the synced pull requests do not keep review requests.
+- A comment outside a review: the server keeps only the comments of the author.
+- The fixed version of an advisory: the security tracker data does not give it. The item shows an open pull request on the package and the newest upstream release, when they are known.
+- A failed Hydra build that no page asked for in the last hour: the list never asks Hydra.
+
+### Moods
+
+The chips above the list select a mood. Each chip shows its count.
+
+| Chip             | Address           | What it keeps                                          |
+| ---------------- | ----------------- | ------------------------------------------------------ |
+| All              | `/?mood=all`      | all items                                              |
+| My pull requests | `/?mood=mine`     | causes 2, 3 and 4                                      |
+| My machines      | `/?mood=machines` | cause 1, and cause 5 for the packages of your machines |
+| Review           | `/?mood=review`   | cause 5                                                |
+| Maintain         | `/?mood=maintain` | cause 6, and cause 1 for a package you maintain        |
+
+A cookie (`mood`) keeps your last mood for one year.
+
+### Snooze
+
+Push "Snooze" to remove an item from the list. The item comes back when its state changes: a new review, a new push, a new advisory, a new release or a new cause. The server keeps the key of the item and a fingerprint of its state. It does not keep more.
+
+### Next
+
+"Start" opens the first item of the mood. On the page of an item, "Next" opens the next item of the same mood. Snoozed items are skipped. The address is `/needs/next?mood=<mood>&from=<key>`. When no item is left, it goes back to the home page. The page of a pull request and the page of a package show "Next" when you are signed in. They also show "Snooze" when the page is an open item.
+
+The footer of the list shows how many items left the list since you signed in, for example "2 done this session". There is no score, no streak and no leaderboard here.
+
+### Keys
+
+On the list and on the pages that "Next" opens, you can use these keys:
+
+| Key          | What it does             |
+| ------------ | ------------------------ |
+| `j`          | select the next item     |
+| `k`          | select the previous item |
+| `o` or Enter | open the selected item   |
+| `n`          | open the next item       |
+| `s`          | snooze the selected item |
+
+The keys do nothing while you type in a field. Everything also works without JavaScript.
+
+The JSON API gives the same list at `GET /api/v1/needs`. See [api.md](api.md#get-apiv1needs).
+
 ## Your packages
 
 Signed out, `/packages` shows the catalog of nixpkgs: a search box and the directories. Signed in, it shows a filter bar on top. Each filter shows its count. The search box filters the list of the current filter.

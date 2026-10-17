@@ -14,6 +14,7 @@ removed, not redirected.
 | `GET /api/v1/prs`                             | open pull requests in one queue, paged                           |
 | `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
 | `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
+| `GET /api/v1/needs`                           | what waits for you, with your session only (private)             |
 | `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                    |
 | `GET /api/v1/modules/<file>`                  | one NixOS module                                                 |
 | `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
@@ -110,6 +111,46 @@ Each pull request in `open_prs` and `recent_prs` has these fields:
 - `checks`: `pass`, `fail`, `pending`, or `null` when it is not known.
 
 It never ranks people. Private data, like subscriptions and tags, is never in it.
+
+## `GET /api/v1/needs`
+
+It gives the items of [Needs you](personal.md#needs-you): what waits for you,
+the most urgent first. It reads your session cookie only. Without a session,
+the answer is 401. The answer always has `Cache-Control: private, no-store`.
+Snoozed items are not in it.
+
+`mood` keeps the items of one mood: `all` (the default), `mine`, `machines`,
+`review` or `maintain`. `counts` always gives the count of each mood.
+
+```json
+{
+  "login": "alice",
+  "mood": "all",
+  "counts": { "all": 2, "mine": 1, "machines": 1, "review": 0, "maintain": 0 },
+  "items": [
+    {
+      "key": "adv:curl",
+      "cause": "advisory",
+      "title": "curl: NIXPKGS-2026-1",
+      "detail": "On your machines. Upstream has 8.10.0.",
+      "href": "/p/curl",
+      "action": "Open the package",
+      "fingerprint": "3f2a9c0d1b7e4a55",
+      "moods": ["machines"],
+      "labels": ["critical 9.8"],
+      "at": null,
+      "link": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1"
+    }
+  ]
+}
+```
+
+- `cause`: `advisory`, `reviewed`, `blocked`, `waiting`, `review` or
+  `package`. This is also the order of urgency.
+- `href`: the page of the primary action, on this site.
+- `fingerprint`: it changes when the state behind the item changes.
+- `at`: the time of the event behind the item, or `null`.
+- `link`: a second link, such as the advisory, or `null`.
 
 ## `GET /api/v1/packages/index`
 
