@@ -104,6 +104,35 @@ fn valid_path(p: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_./+".contains(c))
 }
 
+fn valid_login(l: &str) -> bool {
+    !l.is_empty() && l.len() <= 39 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// A directory only when something lives under it, so a typo still lists
+/// what contains it.
+fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
+    match Subject::resolve(index, q)? {
+        Subject::Area(p)
+            if !s.open_by_dir.contains_key(&p)
+                && !index.modules.keys().any(|f| under(f, &p))
+                && !index
+                    .pkgs
+                    .values()
+                    .any(|x| x.file.as_deref().is_some_and(|f| under(f, &p))) =>
+        {
+            None
+        }
+        sub => Some(sub.href()),
+    }
+}
+
+/// `ci/OWNERS` names files too; their last segment has an extension.
+fn is_file(path: &str) -> bool {
+    path.rsplit('/')
+        .next()
+        .is_some_and(|last| last.find('.').is_some_and(|i| i > 0))
+}
+
 impl Subject {
     pub fn key(&self) -> String {
         match self {
@@ -1461,12 +1490,18 @@ async fn browse(
     State(app): State<Shared>,
     headers: HeaderMap,
     Query(q): Query<Search>,
-) -> Html<String> {
+) -> Response {
     let viewer = app.viewer(&headers);
     let q = q.q.unwrap_or_default().trim().to_string();
     let s = app.snap();
+    if let Some(login) = q.strip_prefix('@').filter(|l| valid_login(l)) {
+        return Redirect::to(&format!("/u/{login}")).into_response();
+    }
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
+    if let Some(href) = exact(&s, &index, &q) {
+        return Redirect::to(&href).into_response();
+    }
     let mut out = head(
         &format!("{} Packages, modules and areas", icon(octicon!("package"))),
         "Each has a page with its health, its issues and its pull requests. Subscribe to the ones you care about.",
@@ -1493,7 +1528,13 @@ async fn browse(
     }
     if q.is_empty() {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();
-        areas.extend(index.owners.iter().map(|(p, _)| p.clone()));
+        areas.extend(
+            index
+                .owners
+                .iter()
+                .map(|(p, _)| p.clone())
+                .filter(|p| !is_file(p)),
+        );
         areas.sort();
         areas.dedup();
         out.push_str("<div class=\"Box\"><div class=\"Box-header text-bold\">Areas</div>");
@@ -1508,7 +1549,7 @@ async fn browse(
             );
         }
         out.push_str("</div>");
-        return page(&app, viewer.as_deref(), "packages", &out);
+        return page(&app, viewer.as_deref(), "packages", &out).into_response();
     }
     let rows: Vec<(Subject, Flags)> = search(&s, &index, &q)
         .into_iter()
@@ -1522,7 +1563,7 @@ async fn browse(
     } else {
         let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
     }
-    page(&app, viewer.as_deref(), "packages", &out)
+    page(&app, viewer.as_deref(), "packages", &out).into_response()
 }
 
 /// What a name resolves to first, then packages, modules and busy
@@ -2390,6 +2431,16 @@ fn api_path(sub: &Subject) -> String {
 mod tests {
     use super::*;
     use crate::area::{Module, Package};
+
+    #[test]
+    fn owners_files_are_not_directories() {
+        assert!(is_file("doc/redirects.json"));
+        assert!(is_file("default.nix"));
+        assert!(!is_file("pkgs/development/python-modules"));
+        assert!(!is_file(".github"));
+        assert!(valid_login("zimbatm"));
+        assert!(!valid_login("a/b"));
+    }
 
     fn index() -> Index {
         let mut i = Index::default();

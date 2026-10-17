@@ -386,7 +386,7 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Html<S
              Maintainer Mode counts a login as a committer when it merged a pull request in the last {MERGED_DAYS} days, \
              or when it is in the team {TEAM}. {}</div>{}\
              <p class=\"f6\">The lists without the personal part are in <a href=\"/api/v1/committer\">the JSON API</a>, \
-             and the <a href=\"/\">ready-to-merge queue</a> is open to all.</p>",
+             and the <a href=\"/merge\">ready-to-merge queue</a> is open to all.</p>",
             if viewer.is_some() {
                 "Your login has not merged a pull request in the synced data."
             } else {
@@ -422,7 +422,7 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Html<S
     for (title, sub, list, empty) in [
         (
             format!("Ready to merge ({ready_n})"),
-            "The <a href=\"/\">ready-to-merge queue</a>: what touches your areas and subscriptions comes first, then the rest.",
+            "The <a href=\"/merge\">ready-to-merge queue</a>: what touches your areas and subscriptions comes first, then the rest.",
             first,
             "Nothing is ready yet.",
         ),

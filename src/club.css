@@ -137,6 +137,9 @@ a:hover {
 .Box > .Box-row:first-child {
   border-top: 0;
 }
+.Box-body {
+  padding: 16px;
+}
 .Box-row:hover {
   background: var(--bgColor-muted);
 }
@@ -151,6 +154,10 @@ a:hover {
   border-radius: 2em;
   color: var(--fgColor-muted);
   vertical-align: middle;
+}
+.Label--accent {
+  color: var(--fgColor-accent);
+  border-color: var(--borderColor-accent-emphasis);
 }
 .Label--success {
   color: var(--fgColor-success);

@@ -81,7 +81,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     let h = app.health.read().unwrap().clone();
     let mut out = crate::welcome::intro(app, headers);
     out.push_str(&search_box());
-    let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).rev().collect();
+    let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).collect();
     out.push_str(&section(
         "Pull requests that need a first review",
         Some(("/review?bucket=unowned", "all of them")),
