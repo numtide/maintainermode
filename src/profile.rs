@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
@@ -258,6 +259,55 @@ pub(crate) fn facts(app: &App, s: &Snapshot, login: &str) -> Facts {
         teams,
         first_pr_at: synced.into_iter().chain(walked).min(),
     }
+}
+
+fn checks(ci: Option<&str>) -> Option<&'static str> {
+    match ci? {
+        "SUCCESS" => Some("pass"),
+        "FAILURE" | "ERROR" => Some("fail"),
+        _ => Some("pending"),
+    }
+}
+
+pub(crate) fn pr_json(p: &Pr, now: DateTime<Utc>) -> Value {
+    json!({
+        "number": p.number,
+        "title": p.title,
+        "url": p.url,
+        "state": p.state,
+        "base": p.base,
+        "created_at": p.created_at,
+        "merged_at": p.merged_at,
+        "closed_at": p.closed_at,
+        "review": review_state(p),
+        "checks": checks(p.ci.as_deref()),
+        "waiting_for_first_review": p.is_open() && waiting(p, now),
+    })
+}
+
+/// The public profile for the API, beside the review record.
+pub(crate) fn profile_value(app: &App, login: &str) -> Value {
+    let s = app.snap();
+    let now = Utc::now();
+    let f = facts(app, &s, login);
+    let open: Vec<Value> = open_prs(&s.pr_data, login, now)
+        .into_iter()
+        .map(|p| pr_json(p, now))
+        .collect();
+    let recent: Vec<Value> = recent_prs(&s.pr_data, login, now)
+        .into_iter()
+        .map(|p| pr_json(p, now))
+        .collect();
+    let areas: Vec<Value> = top_areas(&s.pr_data, login, now)
+        .into_iter()
+        .map(|(path, n)| json!({ "path": path, "pull_requests": n }))
+        .collect();
+    json!({
+        "facts": f,
+        "open_prs": open,
+        "recent_prs": recent,
+        "areas": areas,
+    })
 }
 
 fn header_facts(login: &str, f: &Facts) -> String {
@@ -872,5 +922,15 @@ mod tests {
         )
         .await;
         assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    }
+    #[test]
+    fn the_api_gives_the_facts_and_the_open_pull_requests() {
+        let app = sample();
+        let v = profile_value(&app, "alice");
+        assert_eq!(v["facts"]["teams"], json!(["web"]));
+        assert_eq!(v["open_prs"][0]["number"], 1);
+        assert_eq!(v["open_prs"][0]["waiting_for_first_review"], true);
+        assert_eq!(v["open_prs"][1]["checks"], "fail");
+        assert_eq!(v["recent_prs"][0]["number"], 3);
     }
 }

@@ -31,7 +31,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ("/api/v1/prs/<number>", "one pull request"),
     (
         "/api/v1/people/<login>",
-        "the public review record of a login, and what it maintains",
+        "the public profile of a login: facts, open pull requests, review record, and what it maintains",
     ),
     (
         "/api/v1/packages/index",
@@ -235,8 +235,13 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
     if let Some(m) = maintains.as_object_mut() {
         m.remove("login");
     }
+    let profile = crate::profile::profile_value(app, login);
     json!({
         "login": login,
+        "facts": profile["facts"],
+        "open_prs": profile["open_prs"],
+        "recent_prs": profile["recent_prs"],
+        "areas": profile["areas"],
         "person": person,
         "dossier": dossier,
         "credits": credits,

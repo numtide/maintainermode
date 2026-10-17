@@ -13,7 +13,7 @@ removed, not redirected.
 | `GET /api/v1`                                 | the list of endpoints                                            |
 | `GET /api/v1/prs`                             | open pull requests in one queue, paged                           |
 | `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
-| `GET /api/v1/people/<login>`                  | the public record of a login, and what it maintains              |
+| `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
 | `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                    |
 | `GET /api/v1/modules/<file>`                  | one NixOS module                                                 |
 | `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
@@ -69,12 +69,45 @@ curl 'https://<host>/api/v1/prs?queue=unowned&limit=10'
 
 ## `GET /api/v1/people/<login>`
 
-It gives the public data of one login:
+It gives the public data of one login. It is the data of the profile page
+`/u/<login>`:
 
+- `facts`: `committer` (true or false), `packages` and `modules` (the number
+  it maintains), `teams` (the `lib.teams` teams that name it) and
+  `first_pr_at` (the first pull request in the data, or `null`);
+- `open_prs`: its open pull requests. The ones with no review for 7 days or
+  more come first, the longest wait first. The others follow, the newest
+  first;
+- `recent_prs`: its pull requests merged or closed in the last 60 days, at
+  most 20, the newest first;
+- `areas`: the directories its pull requests of the last year change most,
+  with the number of pull requests for each;
 - `person`: whether its pull requests are in the queues;
 - `dossier` and `credits`: its review record;
 - `area`: what it maintains, owns and changed;
 - `maintains`: its packages and NixOS modules, with their flags.
+
+Each pull request in `open_prs` and `recent_prs` has these fields:
+
+```json
+{
+  "number": 123456,
+  "title": "hello: 2.12.1 -> 2.12.2",
+  "url": "https://github.com/NixOS/nixpkgs/pull/123456",
+  "state": "OPEN",
+  "base": "master",
+  "created_at": "2026-10-01T12:00:00Z",
+  "merged_at": null,
+  "closed_at": null,
+  "review": "no_review",
+  "checks": "pass",
+  "waiting_for_first_review": true
+}
+```
+
+- `review`: `draft`, `no_review`, `changes_requested`, `approved` or
+  `reviewed`. The last approval or change request of each reviewer counts.
+- `checks`: `pass`, `fail`, `pending`, or `null` when it is not known.
 
 It never ranks people. Private data, like subscriptions and tags, is never in it.
 

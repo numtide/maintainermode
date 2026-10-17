@@ -178,7 +178,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"curl -s -D /tmp/old-{tab}.h -o /dev/null 'http://127.0.0.1:8790/me?tab={tab}' && grep -q '^HTTP/1.1 308' /tmp/old-{tab}.h && grep -qi '^location: {to}\\s*$' /tmp/old-{tab}.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d name=hello http://127.0.0.1:8790/me/watch > /tmp/watch2.code && grep -q 303 /tmp/watch2.code")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/watch/maintained > /tmp/watch3.code && grep -q 303 /tmp/watch3.code")
-    machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/people/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page && grep -q '\"dossier\"' /tmp/page")
+    machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/people/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page && grep -q '\"dossier\"' /tmp/page && grep -q '\"open_prs\":\\[\\]' /tmp/page && grep -q '\"facts\"' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/status.json && grep -q nixpkgs-committers /tmp/status.json")
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'How fast changes show here' /tmp/sync")
