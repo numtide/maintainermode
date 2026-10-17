@@ -40,7 +40,7 @@ pub fn routes() -> Router<Shared> {
 
 /// `after` is the number of the last pull request of the previous page. When
 /// that pull request left the list, the page starts at the first larger
-/// number.
+/// number, so `items` must be in ascending number order.
 pub(crate) fn paged<T>(
     items: &[T],
     after: Option<u64>,
@@ -61,6 +61,18 @@ pub(crate) fn paged<T>(
         .then(|| page.last().map(|x| number(x).to_string()))
         .flatten();
     (page, next)
+}
+
+/// For a list in another order: `after` is the count of rows on the
+/// previous pages. A row that leaves or moves shifts the next page by one
+/// row at most, never by a page.
+pub(crate) fn paged_by_offset<T>(items: &[T], after: Option<u64>) -> (&[T], Option<String>) {
+    let start = after
+        .map_or(0, |a| usize::try_from(a).unwrap_or(usize::MAX))
+        .min(items.len());
+    let end = (start + PAGE).min(items.len());
+    let next = (end < items.len()).then(|| end.to_string());
+    (&items[start..end], next)
 }
 
 #[derive(Deserialize)]
@@ -190,6 +202,24 @@ mod tests {
         let (p, _) = paged(&gone, Some(50), |n| *n);
         assert_eq!(p[0], 51);
         let (p, next) = paged(&items, Some(500), |n| *n);
+        assert!(p.is_empty() && next.is_none());
+    }
+
+    #[test]
+    fn a_ready_page_never_repeats_when_a_row_leaves() {
+        let mut items: Vec<u64> = vec![900];
+        items.extend(100..=200);
+        let (p, next) = paged_by_offset(&items, None);
+        assert_eq!((p[0], next.as_deref()), (900, Some("50")));
+        let cursor = next.and_then(|s| s.parse().ok());
+        let gone: Vec<u64> = items
+            .iter()
+            .copied()
+            .filter(|n| *n != p[PAGE - 1])
+            .collect();
+        let (p2, next) = paged_by_offset(&gone, cursor);
+        assert_eq!((p2[0], p2.len(), next.as_deref()), (150, PAGE, Some("100")));
+        let (p, next) = paged_by_offset(&items, Some(10_000));
         assert!(p.is_empty() && next.is_none());
     }
 

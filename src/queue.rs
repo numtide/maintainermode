@@ -118,6 +118,6 @@ pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queu
             .total_cmp(&a.author_score)
             .then(a.created_at.cmp(&b.created_at))
     });
-    q.review.sort_by_key(|e| e.created_at);
+    q.review.sort_by_key(|e| (e.created_at, e.number));
     q
 }

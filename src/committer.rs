@@ -408,7 +408,7 @@ pub(crate) fn ready_tab(
         _ => {}
     }
     let all: Vec<&Entry> = s.queues.merge.iter().collect();
-    let (page, next) = crate::review::paged(&all, after, |e| e.number);
+    let (page, next) = crate::review::paged_by_offset(&all, after);
     let rows = if page.is_empty() {
         empty("Nothing is ready yet.")
     } else {
