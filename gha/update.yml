@@ -1,6 +1,8 @@
 # Copy to .github/workflows/update.yml in your fork of nixpkgs-review-gha
 # (or any repository of yours), and set the GH_TOKEN secret: a token that can
 # push to your nixpkgs fork. Maintainer Mode starts it from a package page.
+# The reusable workflow is pinned to a commit; docs/actions.md says how to
+# move the pin.
 name: update
 run-name: update ${{ inputs.attr }} ${{ inputs.version }}
 
@@ -25,7 +27,7 @@ permissions: {}
 
 jobs:
   update:
-    uses: numtide/maintainermode/.github/workflows/update.yml@main
+    uses: numtide/maintainermode/.github/workflows/update.yml@a280fb3e4289856ba8521434bf35d128cdffec65 # main of 2026-10-16
     with:
       attr: ${{ inputs.attr }}
       version: ${{ inputs.version }}
