@@ -193,6 +193,8 @@ struct Serious {
     cvss: Option<f64>,
     epss: Option<f64>,
     active: bool,
+    /// Why it reaches the machine, as a sentence with a leading space.
+    note: String,
 }
 
 impl Serious {
@@ -207,6 +209,7 @@ impl Serious {
             cvss: w.cvss,
             epss: w.epss,
             active,
+            note: String::new(),
         })
     }
 
@@ -218,10 +221,51 @@ impl Serious {
     }
 }
 
+/// Whether an open advisory reaches a machine: the reported version
+/// decides when the report gives one and the ranges can tell; otherwise the
+/// verdict on master and the channels does. A fix only in master still
+/// counts, because a machine with no reported version can run a channel.
+fn on_machine(
+    a: &crate::health::Advisory,
+    v: &crate::affected::Verdict,
+    mine: Option<&String>,
+) -> Option<String> {
+    use crate::affected::{Check, Verdict};
+    if let Some(ver) = mine {
+        match crate::affected::check(&a.ranges, &a.title, ver) {
+            Check::Affected => return Some(format!(" Your version {ver} is affected.")),
+            Check::NotAffected => return None,
+            Check::Unknown => {}
+        }
+    }
+    match v {
+        Verdict::Fixed { .. } => None,
+        Verdict::Behind { fixed_in, channels } => Some(format!(
+            " Fixed in master{}; {} still affected.",
+            fixed_in
+                .as_deref()
+                .map(|f| format!(" ({f})"))
+                .unwrap_or_default(),
+            channels
+                .iter()
+                .map(|l| format!("{} {}", l.channel, l.version))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Verdict::Affects | Verdict::Unknown => Some(String::new()),
+    }
+}
+
 fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
-    let mut list: Vec<Serious> = crate::catalog::open_advisories(i.h, i.s, attr)
+    let mine = i.interests.versions.get(attr);
+    let mut list: Vec<Serious> = crate::catalog::judged(i.h, i.s, attr)
         .into_iter()
-        .filter_map(|a| Serious::of(&a.code, a.url(), &crate::severity::worst(i.h, &a.cves)))
+        .filter_map(|(a, v)| {
+            let note = on_machine(a, v, mine)?;
+            let mut s = Serious::of(&a.code, a.url(), &crate::severity::worst(i.h, &a.cves))?;
+            s.note = note;
+            Some(s)
+        })
         .chain(i.h.osv_extra(attr).into_iter().filter_map(|(id, v)| {
             Serious::of(
                 id,
@@ -258,7 +302,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
     } else {
         String::new()
     };
-    let mut detail = format!("On your machines.{}", fix_hint(i, attr));
+    let mut detail = format!("On your machines.{}{}", top.note, fix_hint(i, attr));
     if why.maintain {
         detail.push_str(" You maintain it.");
     }
@@ -1105,6 +1149,7 @@ mod tests {
         index: Index,
         h: Health,
         machines: Vec<String>,
+        versions: HashMap<String, String>,
         failed: HashSet<String>,
     }
 
@@ -1134,6 +1179,7 @@ mod tests {
                 h: Health::default(),
                 machines: vec!["curl".into(), "hello".into()],
                 failed: HashSet::new(),
+                versions: HashMap::new(),
             }
         }
 
@@ -1169,7 +1215,8 @@ mod tests {
         }
 
         fn items(&self) -> Vec<Item> {
-            let interests = Interests::build(&self.index, "alice", &self.machines, &[], true);
+            let mut interests = Interests::build(&self.index, "alice", &self.machines, &[], true);
+            interests.versions = self.versions.clone();
             collect(&Inputs {
                 login: "alice",
                 s: &self.s,
@@ -1231,6 +1278,56 @@ mod tests {
         assert!(hello.labels.iter().any(|(_, l)| l == "EPSS 40%"));
         assert_eq!(hello.moods, [Mood::Machines, Mood::Maintain]);
         assert_eq!(keys(&items), ["adv:curl", "adv:hello"]);
+    }
+
+    #[test]
+    fn an_advisory_fixed_everywhere_is_no_item() {
+        let (index, h, s, _) = crate::catalog::tests::unbound("1.26.1");
+        let mut w = World::new();
+        w.index = index;
+        w.h = h;
+        w.s = s;
+        w.machines = vec!["unbound".into()];
+        assert!(keys(&w.items()).is_empty());
+    }
+
+    #[test]
+    fn the_reported_version_decides_before_master() {
+        let (index, h, s, _) = crate::catalog::tests::unbound("1.26.1");
+        let mut w = World::new();
+        w.index = index;
+        w.h = h;
+        w.s = s;
+        w.machines = vec!["unbound".into()];
+        w.versions.insert("unbound".into(), "1.26.0".into());
+        let items = w.items();
+        assert_eq!(keys(&items), ["adv:unbound"]);
+        assert!(items[0].detail.contains("Your version 1.26.0 is affected."));
+        w.versions.insert("unbound".into(), "1.26.1".into());
+        assert!(w.items().is_empty());
+        w.h.advisories.get_mut("unbound").unwrap()[0].title = "unbound: a flaw".into();
+        let ch = crate::channels::Channels::default();
+        w.h.assess(&w.index, &ch);
+        assert_eq!(keys(&w.items()), ["adv:unbound"]);
+    }
+
+    #[test]
+    fn a_fix_only_in_master_stays_an_item_for_an_unknown_version() {
+        let (index, h, s, _) = crate::catalog::tests::unbound("1.25.0");
+        let mut w = World::new();
+        w.index = index;
+        w.h = h;
+        w.s = s;
+        w.machines = vec!["unbound".into()];
+        let items = w.items();
+        assert_eq!(keys(&items), ["adv:unbound"]);
+        assert!(
+            items[0]
+                .detail
+                .contains("Fixed in master (1.26.1); nixos-26.05 1.25.0 still affected."),
+            "{}",
+            items[0].detail
+        );
     }
 
     #[test]

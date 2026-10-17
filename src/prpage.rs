@@ -2179,6 +2179,7 @@ mod tests {
                     uploaded_at: Utc::now(),
                     scanned_at: None,
                     nixpkgs_rev: None,
+                    versions: Default::default(),
                 },
             )
             .unwrap();

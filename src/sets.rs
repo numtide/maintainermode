@@ -191,7 +191,14 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         Err(e) => return refuse(StatusCode::BAD_REQUEST, &e),
     };
     let dropped = stale + report.omitted.unknown;
+    let versions = report
+        .packages
+        .iter()
+        .filter(|p| attrs.contains(&p.attr))
+        .filter_map(|p| Some((p.attr.clone(), p.version.clone()?)))
+        .collect();
     let set = PackageSet {
+        versions,
         attrs: attrs.into_iter().collect(),
         dropped,
         uploaded_at: Utc::now(),
@@ -500,6 +507,10 @@ pub(crate) mod tests {
         assert_eq!(post(&app, "t", report()).await, StatusCode::ACCEPTED);
         let set = app.store.package_set("alice").unwrap().unwrap();
         assert_eq!(set.attrs, vec!["hello"]);
+        assert_eq!(
+            set.versions.get("hello").map(String::as_str),
+            Some("2.12.1")
+        );
         assert_eq!(set.dropped, 4);
         assert_eq!(
             post(&app, "t", json!({ "schema": 99, "packages": [] })).await,
@@ -611,6 +622,7 @@ pub(crate) mod tests {
                 uploaded_at: now - Duration::days(days),
                 scanned_at: None,
                 nixpkgs_rev: None,
+                versions: Default::default(),
             };
             app.store.put_package_set(login, &set).unwrap();
         }

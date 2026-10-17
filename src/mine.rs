@@ -3,7 +3,7 @@
 //! order ranks it everywhere: the packages list, the home page and the
 //! review queue. Only the owner sees it.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::area::Index;
@@ -178,18 +178,27 @@ pub(crate) struct Interests {
     pub(crate) items: BTreeMap<String, (Subject, Why, Option<String>)>,
     /// A machine report or a scanned flake exists.
     pub(crate) has_machines: bool,
+    /// Package attribute → the version the machine report gave.
+    pub(crate) versions: HashMap<String, String>,
 }
 
 impl Interests {
     pub(crate) fn of(app: &App, login: &str) -> Interests {
         let machines = crate::sets::set_attrs(app, login);
-        let has_machines = app.store.package_set(login).ok().flatten().is_some()
-            || !app.store.flake_refs(login).unwrap_or_default().is_empty();
+        let set = app.store.package_set(login).ok().flatten();
+        let has_machines =
+            set.is_some() || !app.store.flake_refs(login).unwrap_or_default().is_empty();
         let watched = subscriptions(app, login);
         let index = app.index.read().unwrap();
-        Interests::build(&index, login, &machines, &watched, has_machines)
+        let mut i = Interests::build(&index, login, &machines, &watched, has_machines);
+        i.versions = set
+            .map(|s| s.versions)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(a, v)| (canonical(&index, &a), v))
+            .collect();
+        i
     }
-
     pub(crate) fn build(
         index: &Index,
         login: &str,
@@ -224,6 +233,7 @@ impl Interests {
         Interests {
             items,
             has_machines,
+            versions: HashMap::new(),
         }
     }
 

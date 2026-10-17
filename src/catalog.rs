@@ -2615,7 +2615,7 @@ fn api_path(sub: &Subject) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::area::{Module, Package};
 
