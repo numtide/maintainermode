@@ -28,19 +28,35 @@ token, when you press one. Nothing runs on the Maintainer Mode host. Signed out,
   - **already up to date**: nix-update changed nothing, so the workflow pushed no branch.
   - **no branch was pushed**: the run failed before it changed anything.
 
-To set it up:
+### Set it up
 
-1. Fork nixpkgs-review-gha, and copy [`gha/update.yml`](../gha/update.yml) to its
-   `.github/workflows/`. It calls the reusable workflow in
-   `.github/workflows/update.yml` of this repository.
-2. Give it a `GH_TOKEN` secret that can push to your fork of nixpkgs.
-3. Install the Maintainer Mode GitHub App on that repository. The App needs
-   the "Actions: read and write" permission, so that your login token can
-   start a workflow.
-4. Check the repository names in `/me/settings#workflows`. They default to
-   `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
+`/me/settings#workflows` shows these steps as a checklist. Each step shows its state: done, to do, or not checked.
 
-### Move the pin of the reusable workflow
+1. Fork [Defelo/nixpkgs-review-gha](https://github.com/Defelo/nixpkgs-review-gha).
+2. Copy [`gha/update.yml`](../gha/update.yml) into `.github/workflows/` of your fork, on its default branch. It calls the reusable workflow in `.github/workflows/update.yml` of this repository.
+3. Add a `GH_TOKEN` secret that can push to your fork of nixpkgs. The step links to the secrets page of your fork.
+4. Install the GitHub App on that fork only. On maintainermode.org, the App is [maintainer-mode-app](https://github.com/apps/maintainer-mode-app). It needs the Repository permission "Actions: read and write" and nothing else. With it, your login token can start a workflow. After the installation, GitHub sends you back to `/me/settings#workflows`.
+5. Save the repository names. They default to `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
+
+An operator names the App with `MAINTAINER_MODE_GITHUB_APP_SLUG`, or the NixOS option `githubAppSlug`. Without it, step 4 shows no button.
+
+### The setup check
+
+When `/me/settings` opens, a check reads your setup with your own token. It only reads, and the page never shows the token. The check asks GitHub:
+
+| Step | Request                                            | OK when                                      |
+| ---- | -------------------------------------------------- | -------------------------------------------- |
+| 1    | `GET /repos/<repo>`                                | the workflow repository exists               |
+| 2    | `GET /repos/<repo>/contents/.github/workflows/...` | `review.yml` and `update.yml` exist          |
+| 3    | `GET /repos/<fork>`                                | your nixpkgs fork exists                     |
+| 4    | `GET /repos/<repo>/actions/workflows`              | the App is installed on the repository       |
+| 5    | none                                               | you saved the names; else the defaults apply |
+
+Each line says OK, or what is missing and how to fix it. The check cannot read secrets, so step 3 always asks you to check `GH_TOKEN` yourself. When GitHub does not answer, the line says "Check again later" and blocks nothing.
+
+The server keeps the result for five minutes. **Check again** drops it, and so does a save of the names or a run that failed to start.
+
+While a step is missing, **Review in CI** and **Update with nix-update** link to `/me/settings#workflows`. They do not start a run that fails. A missing `update.yml` or nixpkgs fork blocks only the update button. A click also runs the check first. When a step is missing, the click opens the settings and tells you which step.
 
 ### Move the pin of the reusable workflow
 

@@ -31,17 +31,17 @@ Only you see the pages under `/me`. The server sends them with `Cache-Control: p
 
 `/me/settings` is one page with these sections. The links at the top go to each section.
 
-| Section      | What you set                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------- |
-| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address |
-| `#feed`      | the private link of your Atom feed                                                          |
-| `#upload`    | the upload token for `maintainer-mode submit`                                               |
-| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                         |
-| `#mcp`       | the MCP token                                                                               |
-| `#workflows` | the repositories where "Review in CI" and "Update with nix-update" run                      |
-| `#tags`      | the path prefixes that the For you tab of `/review` adds                                    |
-| `#goal`      | your weekly goal                                                                            |
-| `#start`     | show or hide the Get started card                                                           |
+| Section      | What you set                                                                                   |
+| ------------ | ---------------------------------------------------------------------------------------------- |
+| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address    |
+| `#feed`      | the private link of your Atom feed                                                             |
+| `#upload`    | the upload token for `maintainer-mode submit`                                                  |
+| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                            |
+| `#mcp`       | the MCP token                                                                                  |
+| `#workflows` | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run |
+| `#tags`      | the path prefixes that the For you tab of `/review` adds                                       |
+| `#goal`      | your weekly goal                                                                               |
+| `#start`     | show or hide the Get started card                                                              |
 
 ## Get started
 
@@ -54,7 +54,7 @@ After you sign in, the home page shows the Get started card. It is a checklist. 
 3. The review queue for you, on `/review`.
 4. Notifications. Make your private Atom feed in `/me/settings#feed`.
 5. Your system. Upload your closure, and see it in the My machines tab.
-6. Actions. Save your workflow repositories in `/me/settings#workflows`.
+6. Actions. Follow the setup checklist in `/me/settings#workflows`.
 7. LLMs. They are off by default. Turn them on in `/me/settings#llm`.
 8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
 
