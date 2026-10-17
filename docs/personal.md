@@ -117,7 +117,7 @@ The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The M
 - **Badges**: first review; first review that earned credit on an unowned pull request; first review merged unchanged; 10, 50 and 100 reviews; reviews in 5 areas of the state of nixpkgs.
 - **Being listed**: how many more authors you need. You need credit from 3 different authors in 60 days.
 
-The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. Your menu and your own `/u/<login>` page link to the page.
+The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. Your menu links to the page.
 
 ## Notifications
 

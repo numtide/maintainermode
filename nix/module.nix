@@ -173,8 +173,8 @@ in
 
     rescan = {
       enable = lib.mkEnableOption ''
-        server-side scans of the public flakes that people register on
-        `/me/sets`. This evaluates third-party code in a bubblewrap sandbox;
+        server-side scans of the public flakes that people register on the
+        My machines tab of `/me`. This evaluates third-party code in a bubblewrap sandbox;
         read docs/rescan.md first'';
 
       maxFlakes = lib.mkOption {
