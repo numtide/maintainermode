@@ -1,13 +1,16 @@
-//! What keeps the pages small and cheap to load again.
+//! What keeps the pages small and cheap to load again: the icon sprite,
+//! style sheets under content-hash names, and `ETag`s on public pages.
 
 use axum::Router;
-use axum::extract::Path;
-use axum::http::{StatusCode, header};
+use axum::extract::{Path, Request};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use sha2::Digest;
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::web::Shared;
 
@@ -91,6 +94,89 @@ pub(crate) fn sprite(parts: &[&str]) -> String {
     out
 }
 
+/// Milliseconds of the last change to the data the public pages show.
+static DATA_AT: AtomicI64 = AtomicI64::new(0);
+
+/// Call after a change to the shared data, so public pages get a new tag.
+pub(crate) fn touch() {
+    let now = chrono::Utc::now().timestamp_millis();
+    let _ = DATA_AT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |t| {
+        Some(now.max(t + 1))
+    });
+}
+
+/// These pages read live state that no `touch` follows: the task status
+/// and the pull requests read from GitHub on demand.
+fn untagged(path: &str) -> bool {
+    path == "/me"
+        || [
+            "/me/", "/sync", "/pr/", "/claude/", "/auth/", "/api/", "/static/",
+        ]
+        .iter()
+        .any(|p| path.starts_with(p))
+}
+
+/// The data time and the cookies, which change what a page shows to a
+/// visitor who did not sign in.
+fn tag(headers: &HeaderMap) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for v in headers.get_all(header::COOKIE) {
+        for b in v.as_bytes() {
+            h = (h ^ u64::from(*b)).wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("W/\"{:x}-{h:x}\"", DATA_AT.load(Ordering::Relaxed))
+}
+
+/// A public page carries an `ETag`; a request that sends it back gets a
+/// 304 and no body. A page for a person who signed in never does: it says
+/// `no-store`.
+pub(crate) async fn etag(req: Request, next: Next) -> Response {
+    let get = matches!(*req.method(), Method::GET | Method::HEAD);
+    let public = get
+        && !untagged(req.uri().path())
+        && crate::web::cookie(req.headers(), "session").is_none();
+    if !public {
+        return next.run(req).await;
+    }
+    let tag = tag(req.headers());
+    let fresh = req
+        .headers()
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|t| t.trim() == tag);
+    if fresh {
+        return (
+            StatusCode::NOT_MODIFIED,
+            [
+                (header::ETAG, tag),
+                (header::CACHE_CONTROL, "no-cache".into()),
+            ],
+        )
+            .into_response();
+    }
+    let mut res = next.run(req).await;
+    let h = res.headers();
+    let html = h
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/html"));
+    if res.status() == StatusCode::OK
+        && html
+        && !h.contains_key(header::CACHE_CONTROL)
+        && !h.contains_key(header::SET_COOKIE)
+    {
+        if let Ok(v) = HeaderValue::from_str(&tag) {
+            res.headers_mut().insert(header::ETAG, v);
+            res.headers_mut()
+                .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
+        }
+    }
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +203,16 @@ mod tests {
     fn a_stylesheet_name_changes_with_its_content() {
         assert_ne!(asset("x", "a").path, asset("x", "b").path);
         assert!(stylesheets().contains(&format!("/static/{}", CLUB.path)));
+    }
+
+    #[test]
+    fn the_tag_follows_the_data_and_the_cookies() {
+        let none = HeaderMap::new();
+        let mut intro = HeaderMap::new();
+        intro.insert(header::COOKIE, "intro=hidden".parse().unwrap());
+        let before = tag(&none);
+        assert_ne!(before, tag(&intro));
+        touch();
+        assert_ne!(before, tag(&none));
     }
 }

@@ -346,6 +346,7 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
         })
         .collect();
     *app.channels.write().unwrap() = Arc::new(Channels { list });
+    crate::assets::touch();
     Ok(true)
 }
 

@@ -92,6 +92,11 @@ pkgs.testers.runNixOSTest {
     machine.fail("curl -sf http://127.0.0.1:8790/static/primer.css")
     # icons point into one hidden sprite on the page
     machine.succeed("grep -q '<use href=\"#i-eye\">' /tmp/review && grep -q '<symbol id=\"i-eye\"' /tmp/review")
+    machine.succeed("curl -s -H 'Accept-Encoding: gzip' -D /tmp/gz.h -o /dev/null http://127.0.0.1:8790/review && grep -qi '^content-encoding: gzip' /tmp/gz.h")
+    # a public page sends an ETag and answers 304 while the data stays the
+    # same; a background pass can change the data between the two requests
+    machine.wait_until_succeeds("curl -s -D /tmp/etag.h -o /dev/null http://127.0.0.1:8790/review && grep -i '^etag: W/' /tmp/etag.h | cut -d' ' -f2 | tr -d '\\r' > /tmp/etag && curl -s -o /dev/null -w '%{http_code}' -H \"If-None-Match: $(cat /tmp/etag)\" http://127.0.0.1:8790/review > /tmp/etag.code && grep -qx 304 /tmp/etag.code")
+    machine.succeed("curl -s -D /tmp/sync.h -o /dev/null 'http://127.0.0.1:8790/state?tab=status' && ! grep -qi '^etag' /tmp/sync.h")
     machine.succeed("grep -q 'href=\"/review\" aria-current=\"page\"' /tmp/review")
     machine.succeed("grep -o 'class=\"UnderlineNav-item\"' /tmp/review | wc -l > /tmp/tabs && grep -qx 4 /tmp/tabs")
     machine.succeed("grep -q 'Data from the last 60 days' /tmp/review")
