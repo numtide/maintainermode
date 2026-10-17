@@ -186,6 +186,10 @@ async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &s
         .collect()
 }
 
+pub fn app_page(slug: &str) -> String {
+    format!("https://github.com/apps/{slug}")
+}
+
 const DOCS: &str = "https://github.com/numtide/maintainermode/blob/main/docs/actions.md";
 
 const WHAT: &str = "Run nixpkgs-review on a pull request, or nix-update on a package, in GitHub Actions of a repository you own. \
@@ -203,12 +207,23 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
     } else {
         ""
     };
+    let app_link = app
+        .github_app_slug
+        .as_deref()
+        .map(|s| {
+            format!(
+                "<p class=\"f6 color-fg-muted\">The workflows start through the GitHub App <a href=\"{}\">{}</a>. You install it on your workflow repository only.</p>",
+                esc(&app_page(s)),
+                esc(s)
+            )
+        })
+        .unwrap_or_default();
     Page::new(Section::Home, "Actions")
         .icon(octicon!("play"))
         .sub(WHAT)
         .body(format!(
             "<div class=\"blankslate\"><p>Sign in to run workflows. Your runs are then in the menu, under Runs.</p>\
-             <p>{sign_in}<a class=\"btn\" href=\"{DOCS}\">How to set it up</a></p></div>"
+             <p>{sign_in}<a class=\"btn\" href=\"{DOCS}\">How to set it up</a></p>{app_link}</div>"
         ))
         .render(&app, None)
 }

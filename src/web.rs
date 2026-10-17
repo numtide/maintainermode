@@ -70,6 +70,8 @@ pub struct App {
     pub oauth: Option<OAuth>,
     pub bot_token: Option<Arc<crate::secret::Secret>>,
     pub github_app: Option<crate::github_app::GithubApp>,
+    /// The App people install on their workflow repository.
+    pub github_app_slug: Option<String>,
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,

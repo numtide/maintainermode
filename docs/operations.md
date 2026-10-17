@@ -17,6 +17,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_APP_ID`                        | GitHub App whose installation token syncs first             |
 | `GITHUB_APP_KEY_FILE`                  | file holding the PEM private key of the GitHub App          |
 | `GITHUB_APP_INSTALLATION_ID`           | installation to use; else the one on the account of the App |
+| `MAINTAINER_MODE_GITHUB_APP_SLUG`      | the App people install on their workflow repository         |
 | `MAINTAINER_MODE_UPLOAD_TOKEN`         | the client's upload token for `submit`                      |
 | `MAINTAINER_MODE_CHANNELS`             | channels next to master, default `nixos-unstable,stable`    |
 | `MAINTAINER_MODE_S3_ENDPOINT`          | S3-compatible endpoint for the copy of the event log        |

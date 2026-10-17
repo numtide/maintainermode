@@ -332,6 +332,7 @@ mod tests {
             pr_cache: Default::default(),
             notifications: Default::default(),
             github_app: None,
+            github_app_slug: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
         })
     }

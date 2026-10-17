@@ -161,6 +161,10 @@ enum Command {
         /// Without it, the App's only installation is used.
         #[arg(long, env = "GITHUB_APP_INSTALLATION_ID")]
         github_app_installation_id: Option<u64>,
+        /// The slug of the GitHub App that people install on their workflow
+        /// repository, for the link on `/me/settings#workflows`.
+        #[arg(long, env = "MAINTAINER_MODE_GITHUB_APP_SLUG")]
+        github_app_slug: Option<String>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
         #[command(flatten)]
@@ -628,6 +632,7 @@ async fn run(cli: Cli) -> Result<i32> {
             github_app_id,
             github_app_key_file,
             github_app_installation_id,
+            github_app_slug,
             sync_every,
             s3,
             archive_repos,
@@ -690,6 +695,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth,
                 bot_token: bot_token.clone(),
                 github_app,
+                github_app_slug: github_app_slug.filter(|s| !s.is_empty()),
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
                 hydra: Default::default(),
@@ -770,6 +776,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth: None,
                 bot_token: None,
                 github_app: None,
+                github_app_slug: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
@@ -816,6 +823,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth: None,
                 bot_token: None,
                 github_app: None,
+                github_app_slug: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
