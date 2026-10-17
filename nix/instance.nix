@@ -26,10 +26,10 @@ in
       default = null;
     };
 
-    syncTokenFile = lib.mkOption {
+    botTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "A fallback for the GitHub App token. Drop it once the App is set up.";
+      description = "The classic token of the bot account, scope `notifications`: it reads the notifications, polls the Events API, and syncs after the GitHub App.";
     };
 
     githubAppId = lib.mkOption {
@@ -61,7 +61,7 @@ in
       enable = true;
       inherit (cfg)
         domain
-        syncTokenFile
+        botTokenFile
         githubClientSecretFile
         githubAppId
         githubAppKeyFile

@@ -13,8 +13,8 @@ let
       path = cfg.githubClientSecretFile;
     }
     {
-      id = "sync_token";
-      path = cfg.syncTokenFile;
+      id = "bot_token";
+      path = cfg.botTokenFile;
     }
     {
       id = "nvd_api_key";
@@ -86,7 +86,7 @@ in
     githubClientId = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Client id of the GitHub OAuth app. Without it, login is off and the sync waits for a sync token.";
+      description = "Client id of the GitHub OAuth app. Without it, login is off and the sync waits for a bot token.";
     };
 
     githubClientSecretFile = lib.mkOption {
@@ -95,10 +95,10 @@ in
       description = "File holding the OAuth client secret, read through LoadCredential; never copied to the store.";
     };
 
-    syncTokenFile = lib.mkOption {
+    botTokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Optional GitHub token owned by the deployment, used before tokens lent by logged-in people. A GitHub App replaces it.";
+      description = "File holding a classic token of the bot account that watches nixpkgs, with the `notifications` scope, read through LoadCredential. The sync uses it after the GitHub App token and before tokens lent by logged-in people. The notifications poller and the Events API poll need it.";
     };
 
     nvdApiKeyFile = lib.mkOption {
@@ -110,7 +110,7 @@ in
     githubAppId = lib.mkOption {
       type = lib.types.nullOr lib.types.int;
       default = null;
-      description = "Id of a GitHub App. Its installation token is the first sync token, renewed before it expires.";
+      description = "Id of a GitHub App. Its installation token syncs first, renewed before it expires.";
     };
 
     githubAppKeyFile = lib.mkOption {
@@ -313,8 +313,8 @@ in
         GITHUB_CLIENT_ID = cfg.githubClientId;
         GITHUB_CLIENT_SECRET_FILE = "%d/client_secret";
       }
-      // lib.optionalAttrs (cfg.syncTokenFile != null) {
-        MAINTAINER_MODE_SYNC_TOKEN_FILE = "%d/sync_token";
+      // lib.optionalAttrs (cfg.botTokenFile != null) {
+        MAINTAINER_MODE_BOT_TOKEN_FILE = "%d/bot_token";
       }
       // lib.optionalAttrs (cfg.nvdApiKeyFile != null) {
         MAINTAINER_MODE_NVD_API_KEY_FILE = "%d/nvd_api_key";

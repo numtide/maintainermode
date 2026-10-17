@@ -49,7 +49,7 @@ The flake author controls `flake.nix`, the lock file and every input. The
 author can try to:
 
 - read the secrets of the service: the OAuth client secret, the GitHub App
-  key, the sync token, the session tokens in the database;
+  key, the bot token, the session tokens in the database;
 - read or change the database, the event log or the sets of other people;
 - reach the host, the local network or a cloud metadata service;
 - use all the memory, CPU time or disk of the host;

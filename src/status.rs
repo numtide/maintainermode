@@ -150,7 +150,7 @@ pub(crate) fn state(app: &App) -> Value {
         "events": {
             "stored": app.events.head(),
             "newest": last_event_at(app),
-            "polling": app.sync_token.is_some() || app.github_app.is_some(),
+            "polling": app.bot_token.is_some(),
         },
         "passes": {
             "every_seconds": sync_every,
@@ -163,7 +163,9 @@ pub(crate) fn state(app: &App) -> Value {
         "rescans": rescans(app),
         "email": email(app),
         "tokens": {
-            "server": app.sync_token.is_some() || app.github_app.is_some(),
+            "server": app.bot_token.is_some() || app.github_app.is_some(),
+            "bot": app.bot_token.is_some(),
+            "app": app.github_app.is_some(),
             "lent": app.store.lent_tokens().map(|t| t.len()).unwrap_or(0),
         },
         "archive": app.archive.iter().map(|a| a.progress(Utc::now()).unwrap_or_else(|e| {
@@ -349,11 +351,16 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str(&kv(
         "Tokens",
         &format!(
-            "{} · {} lent by people who signed in",
-            if v["tokens"]["server"].as_bool() == Some(true) {
-                "a server token"
+            "{} · {} · {} lent by people who signed in",
+            if v["tokens"]["app"].as_bool() == Some(true) {
+                "a GitHub App token"
             } else {
-                "no server token"
+                "no GitHub App"
+            },
+            if v["tokens"]["bot"].as_bool() == Some(true) {
+                "the bot token"
+            } else {
+                "no bot token"
             },
             v["tokens"]["lent"]
         ),
@@ -499,7 +506,7 @@ pub(crate) fn body(app: &App) -> String {
             if e["polling"].as_bool() == Some(true) {
                 "the Events API is polled, and GH Archive fills the gaps each hour"
             } else {
-                "only GH Archive, each hour: there is no server token to poll with"
+                "only GH Archive, each hour: there is no bot token to poll with"
             }
         ),
     ));

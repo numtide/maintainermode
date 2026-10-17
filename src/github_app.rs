@@ -1,4 +1,4 @@
-//! The sync token of a GitHub App installation. The App signs a short JWT with
+//! The token of a GitHub App installation, which syncs first. The App signs a short JWT with
 //! its private key and trades it for an installation token, which expires
 //! after one hour.
 
@@ -50,7 +50,7 @@ fn fresh(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
 }
 
 /// People install the same App on their own accounts to start workflows; a
-/// token of their installation must not become the sync token.
+/// token of their installation must not sync.
 fn owned(installations: &[Value], owner: &str) -> Option<u64> {
     installations
         .iter()
