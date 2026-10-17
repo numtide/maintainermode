@@ -134,13 +134,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
 fn dashboard(app: &App, login: &str) -> String {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
-    let mut out = String::new();
-    if crate::welcome::pending(app, login) {
-        out.push_str(
-            "<div class=\"callout mb-3\">New here? <a href=\"/welcome\">Get started</a>: \
-             subscribe to what you maintain, and set up your inbox.</div>",
-        );
-    }
+    let mut out = crate::welcome::card(app, login);
     out.push_str(&crate::progress::widget(app, login));
 
     let unread = app.inbox.get(login);
