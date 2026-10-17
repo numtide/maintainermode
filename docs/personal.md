@@ -94,6 +94,23 @@ once in 10 minutes.
   click. Unsubscribing deletes the address.
 - To stop the digest, you can also empty the address on `/me/settings`.
 
+### Confirm your address
+
+### Confirm your address
+
+The server sends no digest to an address that you did not confirm.
+When you enter or change the address on /me/settings, the server stores it as pending.
+The server then sends one confirmation email to the address.
+Open the link in that email in the next 24 hours.
+Push the Confirm button on the page that opens.
+The settings page then shows "confirmed".
+A link scanner can open the link, but it cannot confirm the address. Only the button confirms it.
+If the link is too old, push "Send the confirmation email again" on the settings page.
+You get at most 3 confirmation emails in 24 hours.
+A test email goes only to a confirmed address.
+You can send at most 3 test emails in 24 hours, with 10 minutes between them.
+Addresses that you saved before this change are pending. Confirm them again to get the digest.
+
 ## My package set
 
 Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you

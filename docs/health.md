@@ -44,6 +44,10 @@ merged in the synced window.
   `.github/ISSUE_TEMPLATE` (`Build failure: <name>`, `Update Request: <name> …`),
   and by the nixpkgs paths and the "Package name" field in their body.
 
+### Hydra
+
+Maintainer Mode asks Hydra for the last build when someone opens a package or module page. To protect hydra.nixos.org, it sends at most 4 requests at a time and at most 30 requests a minute. Over that limit, the page shows "not asked yet" and sends no request. An answer stays one hour. A job with no finished build also stays one hour. A request that fails stays five minutes. `/sync` shows the limits and how many page views were not asked. The JSON API gives `hydra_state` (`test_state` for a module): `build`, `no finished build`, `no answer` or `not asked yet`.
+
 ## The risk score
 
 Each package gets one number: how much it needs attention. The number is a

@@ -39,6 +39,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_SMTP_USER`            | SMTP user, with the password file                           |
 | `MAINTAINER_MODE_SMTP_PASSWORD_FILE`   | file holding the SMTP password                              |
 | `MAINTAINER_MODE_SMTP_FROM`            | the From address of the digest                              |
+| `MAINTAINER_MODE_MAIL_PER_DAY`         | emails the server sends in 24 hours, default 500            |
 
 CI is the flake's `checks`: `nix flake check`.
 
@@ -51,6 +52,24 @@ the email digest on. `MAINTAINER_MODE_SMTP_PORT` is 465 by default. Port
 together, or leave both unset. In the NixOS module, use
 `services.maintainer-mode.smtp`. The password file goes through
 LoadCredential.
+
+## Email limits
+
+The server sends at most 500 emails in 24 hours: digests, test emails and confirmations together.
+To change the limit, set `MAINTAINER_MODE_MAIL_PER_DAY` or the module option `services.maintainer-mode.smtp.perDay`.
+Each person gets at most 3 confirmation emails and 3 test emails in 24 hours.
+Over a limit, the server does not send the email and writes a warning to the log.
+The /sync page shows the emails sent and skipped in the last 24 hours. It shows no address and no login.
+
+## New secrets without a restart
+
+The service reads each secret file again when the file changes. It checks each file at most once a minute. The log names the file that changed. The log never shows the secret.
+
+systemd copies each secret file when the service starts (LoadCredential). The NixOS module adds a timer, `maintainer-mode-credentials.timer`. Each minute, the timer compares each secret file with its copy. When a file changed, the timer reloads `maintainer-mode.service`. The reload copies the secrets again (RefreshOnReload=credentials, systemd 260 or later). The service does not restart. With an older systemd, the service restarts.
+
+A new secret takes effect within two minutes after the deploy. You do not have to restart the service. This works with sops-nix, clan vars and plain files.
+
+To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u maintainer-mode | grep changed`.
 
 ## What we took, and under which licence
 
