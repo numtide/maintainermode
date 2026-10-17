@@ -17,7 +17,7 @@ use crate::actions::Act;
 use crate::area::{Index, area_key, under};
 use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
-use crate::health::{Advisory, Build, Health, Hydra};
+use crate::health::{Advisory, Health, Hydra, Last};
 use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
@@ -666,9 +666,10 @@ pub(crate) fn head(title: &str, sub: &str, button: &str) -> String {
     )
 }
 
-fn build_row(label: &str, job: &str, b: Option<&Build>) -> String {
-    let body = match b {
-        Some(b) => format!(
+fn build_row(label: &str, job: &str, last: &Last) -> String {
+    let link = format!("<a href=\"{}\">{}</a>", esc(&Hydra::job_url(job)), esc(job));
+    let body = match last {
+        Last::Build(b) => format!(
             "<a href=\"{}\" class=\"{}\">{}</a> <span class=\"color-fg-muted\">{}</span>",
             b.url(),
             if b.ok {
@@ -679,10 +680,14 @@ fn build_row(label: &str, job: &str, b: Option<&Build>) -> String {
             b.status,
             b.at.map(|t| format!("{} ago", ago(t))).unwrap_or_default()
         ),
-        None => format!(
-            "<span class=\"color-fg-muted\">no finished build of <a href=\"{}\">{}</a></span>",
-            esc(&Hydra::job_url(job)),
-            esc(job)
+        Last::Missing => {
+            format!("<span class=\"color-fg-muted\">no finished build of {link}</span>")
+        }
+        Last::NoAnswer => {
+            format!("<span class=\"color-fg-muted\">Hydra did not answer; see {link}</span>")
+        }
+        Last::NotAsked => format!(
+            "<span class=\"color-fg-muted\">not asked yet: this server asks Hydra a few times a minute; see {link}</span>"
         ),
     };
     kv(label, &body)
@@ -1214,7 +1219,7 @@ async fn package_page(
     out.push_str(&kv("Version", &version));
     let ch = app.channels.read().unwrap().clone();
     out.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
-    out.push_str(&build_row("Hydra", &job, build.as_ref()));
+    out.push_str(&build_row("Hydra", &job, &build));
     out.push_str(&kv(
         "Advisories",
         &advisories_html(
@@ -1279,7 +1284,7 @@ async fn module_page(
         &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
     );
     out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Health</div>");
-    out.push_str(&build_row("NixOS test", &job, build.as_ref()));
+    out.push_str(&build_row("NixOS test", &job, &build));
     out.push_str(&kv("Maintainers", &people_links(&m.maintainers)));
     if !m.teams.is_empty() {
         out.push_str(&kv("Teams", &teams_html(&index, &m.teams)));
@@ -2221,7 +2226,7 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
             .collect()
     };
     let extra = json!({
-        "attr": attr, "package": p, "hydra": build, "hydra_job": job,
+        "attr": attr, "package": p, "hydra": build.build(), "hydra_state": build.state(), "hydra_job": job,
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
         "channels": channels, "needs_backport": backport, "version_bumps": bumps,
     });
@@ -2243,7 +2248,7 @@ pub(crate) async fn module_value(app: &crate::web::App, file: &str) -> Option<Va
     let m = app.index.read().unwrap().modules.get(file).cloned()?;
     let job = Hydra::test_job(module_name(file).trim_start_matches("nixos/"));
     let build = app.hydra.last(&job).await;
-    let extra = json!({ "file": file, "module": m, "test": build, "test_job": job });
+    let extra = json!({ "file": file, "module": m, "test": build.build(), "test_state": build.state(), "test_job": job });
     Some(subject_json(app, &Subject::Module(file.to_string()), extra))
 }
 

@@ -1,13 +1,15 @@
 //! Package health from public sources: the newest upstream version from
 //! repology, advisories from the nixpkgs security tracker, and the last build
 //! on Hydra. The first two are bulk sweeps, kept a day; Hydra is asked per
-//! page view and cached. Adapted from nixfresh's collectors (MIT).
+//! page view, within a limit, and cached. Adapted from nixfresh's collectors
+//! (MIT).
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -24,6 +26,11 @@ const TRACKER_PAGES: usize = 200;
 const TRACKER_PAUSE: Duration = Duration::from_millis(2500);
 const HYDRA: &str = "https://hydra.nixos.org";
 const HYDRA_TTL: Duration = Duration::from_secs(3600);
+/// A failed request is asked again sooner than an answer.
+const HYDRA_RETRY: Duration = Duration::from_secs(300);
+const HYDRA_CONCURRENT: usize = 4;
+const HYDRA_PER_MINUTE: u32 = 30;
+const HYDRA_CACHE_MAX: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Advisory {
@@ -481,26 +488,102 @@ fn status_word(code: i64) -> &'static str {
     }
 }
 
-/// The last finished Hydra build of a job, cached an hour.
+/// What a page learns about a Hydra job.
+#[derive(Debug, Clone)]
+pub enum Last {
+    Build(Build),
+    /// Hydra knows no finished build of the job.
+    Missing,
+    /// Hydra did not answer in time, or answered with an error.
+    NoAnswer,
+    /// The limit was reached, so no request was made.
+    NotAsked,
+}
+
+impl Last {
+    pub fn build(&self) -> Option<&Build> {
+        match self {
+            Last::Build(b) => Some(b),
+            _ => None,
+        }
+    }
+
+    pub fn state(&self) -> &'static str {
+        match self {
+            Last::Build(_) => "build",
+            Last::Missing => "no finished build",
+            Last::NoAnswer => "no answer",
+            Last::NotAsked => "not asked yet",
+        }
+    }
+
+    fn ttl(&self) -> Duration {
+        match self {
+            Last::NoAnswer => HYDRA_RETRY,
+            _ => HYDRA_TTL,
+        }
+    }
+}
+
+/// A fixed one-minute window.
+struct Window {
+    start: Instant,
+    used: u32,
+}
+
+impl Window {
+    fn take(&mut self, now: Instant, cap: u32) -> bool {
+        if now.duration_since(self.start) >= Duration::from_secs(60) {
+            self.start = now;
+            self.used = 0;
+        }
+        if self.used >= cap {
+            return false;
+        }
+        self.used += 1;
+        true
+    }
+}
+
+/// The last finished Hydra build of a job, cached an hour. Page views ask
+/// for it, so a crawler would reach Hydra through us: a few requests at a
+/// time and a cap a minute keep that small.
 pub struct Hydra {
     http: reqwest::Client,
-    cache: Mutex<HashMap<String, (Instant, Option<Build>)>>,
+    base: String,
+    cache: Mutex<HashMap<String, (Instant, Last)>>,
+    running: tokio::sync::Semaphore,
+    window: Mutex<Window>,
+    per_minute: u32,
+    not_asked: AtomicU64,
 }
 
 impl Default for Hydra {
     fn default() -> Self {
+        Self::new(HYDRA, HYDRA_CONCURRENT, HYDRA_PER_MINUTE)
+    }
+}
+
+impl Hydra {
+    fn new(base: &str, concurrent: usize, per_minute: u32) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .user_agent("maintainer-mode")
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("http client"),
+            base: base.to_string(),
             cache: Mutex::new(HashMap::new()),
+            running: tokio::sync::Semaphore::new(concurrent),
+            window: Mutex::new(Window {
+                start: Instant::now(),
+                used: 0,
+            }),
+            per_minute,
+            not_asked: AtomicU64::new(0),
         }
     }
-}
 
-impl Hydra {
     pub fn package_job(attr: &str) -> String {
         format!("nixpkgs/unstable/{attr}.x86_64-linux")
     }
@@ -513,22 +596,77 @@ impl Hydra {
         format!("{HYDRA}/job/{job}")
     }
 
-    /// `None` when the job does not exist or Hydra does not answer in time.
-    pub async fn last(&self, job: &str) -> Option<Build> {
-        if let Some((at, b)) = self.cache.lock().unwrap().get(job) {
-            if at.elapsed() < HYDRA_TTL {
-                return b.clone();
-            }
+    /// The limits and the counts, for `/sync`.
+    pub fn stats(&self) -> Value {
+        serde_json::json!({
+            "concurrent": HYDRA_CONCURRENT,
+            "per_minute": self.per_minute,
+            "kept_seconds": HYDRA_TTL.as_secs(),
+            "cached": self.cache.lock().unwrap().len(),
+            "not_asked": self.not_asked.load(Ordering::Relaxed),
+        })
+    }
+
+    fn cached(&self, job: &str) -> Option<Last> {
+        let cache = self.cache.lock().unwrap();
+        let (at, last) = cache.get(job)?;
+        (at.elapsed() < last.ttl()).then(|| last.clone())
+    }
+
+    fn keep(&self, job: &str, last: &Last) {
+        let mut cache = self.cache.lock().unwrap();
+        if cache.len() >= HYDRA_CACHE_MAX {
+            cache.retain(|_, (at, l)| at.elapsed() < l.ttl());
         }
-        let resp = self
+        cache.insert(job.to_string(), (Instant::now(), last.clone()));
+    }
+
+    fn refuse(&self) -> Last {
+        self.not_asked.fetch_add(1, Ordering::Relaxed);
+        Last::NotAsked
+    }
+
+    /// Over the limit, the answer is `NotAsked` and nothing is sent.
+    pub async fn last(&self, job: &str) -> Last {
+        if let Some(last) = self.cached(job) {
+            return last;
+        }
+        let Ok(_permit) = self.running.try_acquire() else {
+            return self.refuse();
+        };
+        if !self
+            .window
+            .lock()
+            .unwrap()
+            .take(Instant::now(), self.per_minute)
+        {
+            return self.refuse();
+        }
+        let last = self.ask(job).await;
+        self.keep(job, &last);
+        last
+    }
+
+    async fn ask(&self, job: &str) -> Last {
+        let Ok(resp) = self
             .http
-            .get(format!("{}/latest-finished", Self::job_url(job)))
+            .get(format!("{}/job/{job}/latest-finished", self.base))
             .header("Accept", "application/json")
             .send()
             .await
-            .ok()?;
-        let b = if resp.status().is_success() {
-            resp.json::<Value>().await.ok().and_then(|v| {
+        else {
+            return Last::NoAnswer;
+        };
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Last::Missing;
+        }
+        if !resp.status().is_success() {
+            return Last::NoAnswer;
+        }
+        resp.json::<Value>()
+            .await
+            .ok()
+            .and_then(|v| {
                 let code = v["buildstatus"].as_i64()?;
                 Some(Build {
                     id: v["id"].as_u64()?,
@@ -540,16 +678,7 @@ impl Hydra {
                         .and_then(|t| DateTime::from_timestamp(t, 0)),
                 })
             })
-        } else if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            None
-        } else {
-            return None;
-        };
-        self.cache
-            .lock()
-            .unwrap()
-            .insert(job.to_string(), (Instant::now(), b.clone()));
-        b
+            .map_or(Last::Missing, Last::Build)
     }
 }
 
@@ -597,5 +726,81 @@ mod tests {
             .map(|(id, _)| id)
             .collect();
         assert_eq!(ids, vec!["GHSA-b"]);
+    }
+
+    #[test]
+    fn the_minute_window_stops_at_its_cap_and_opens_again() {
+        let t0 = Instant::now();
+        let mut w = Window { start: t0, used: 0 };
+        assert!(w.take(t0, 2));
+        assert!(w.take(t0, 2));
+        assert!(!w.take(t0 + Duration::from_secs(59), 2));
+        assert!(w.take(t0 + Duration::from_secs(60), 2));
+    }
+
+    /// A Hydra stand-in that answers 404 and counts the requests.
+    async fn not_found_server() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h = hits.clone();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                h.fetch_add(1, Ordering::SeqCst);
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let _ = s
+                    .write_all(
+                        b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                    )
+                    .await;
+            }
+        });
+        (base, hits)
+    }
+
+    #[tokio::test]
+    async fn a_missing_job_is_kept_and_not_asked_again() {
+        let (base, hits) = not_found_server().await;
+        let hydra = Hydra::new(&base, 4, 30);
+        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn over_the_minute_cap_nothing_is_sent() {
+        let (base, hits) = not_found_server().await;
+        let hydra = Hydra::new(&base, 4, 1);
+        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert!(matches!(hydra.last("b").await, Last::NotAsked));
+        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_eq!(hydra.stats()["not_asked"], 1);
+        assert_eq!(hydra.stats()["cached"], 1);
+    }
+
+    #[tokio::test]
+    async fn with_every_request_running_nothing_more_is_sent() {
+        let (base, hits) = not_found_server().await;
+        let hydra = Hydra::new(&base, 1, 30);
+        let held = hydra.running.try_acquire().unwrap();
+        assert!(matches!(hydra.last("a").await, Last::NotAsked));
+        drop(held);
+        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn no_answer_is_kept_a_short_time() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let hydra = Hydra::new(&base, 4, 1);
+        assert!(matches!(hydra.last("a").await, Last::NoAnswer));
+        assert!(matches!(hydra.last("a").await, Last::NoAnswer));
+        assert_eq!(hydra.stats()["not_asked"], 0);
+        assert_eq!(Last::NoAnswer.ttl(), HYDRA_RETRY);
     }
 }
