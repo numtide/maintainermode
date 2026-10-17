@@ -293,16 +293,19 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         section("Badges", None, None, &badges)
     );
     out.push_str(&crate::web::nixpkgs_guides());
-    Page::new(Section::Home, "Your progress")
-        .icon(octicon!("flame"))
-        .sub(format!(
-            "Only you see this page. It compares you with nobody: there is no leaderboard. \
+    Page::new(
+        Section::Personal(crate::ui::Personal::Progress),
+        "Your progress",
+    )
+    .icon(octicon!("flame"))
+    .sub(format!(
+        "Only you see this page. It compares you with nobody: there is no leaderboard. \
              It counts the reviews of the last {WINDOW_DAYS} days and on every open pull request. \
              Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
-            l = esc(&login)
-        ))
-        .body(out)
-        .render(&app, Some(&login))
+        l = esc(&login)
+    ))
+    .body(out)
+    .render(&app, Some(&login))
 }
 
 /// The `#goal` section of `/me/settings`.

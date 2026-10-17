@@ -422,6 +422,12 @@ section.Box > .Box-header {
   background: var(--bgColor-muted);
   text-decoration: none;
 }
+.menu-list a[aria-current] {
+  font-weight: 600;
+  box-shadow: inset 2px 0 0
+    var(--underlineNav-borderColor-active, var(--fgColor-accent));
+  background: var(--bgColor-muted);
+}
 .menu-sep {
   margin-top: 4px;
   padding-top: 4px;

@@ -10,7 +10,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use serde::Deserialize;
 
-use crate::ui::{Page, Section, Tab};
+use crate::ui::{Page, Personal, Section, Tab};
 use crate::web::{Shared, octicon};
 
 pub fn routes() -> Router<Shared> {
@@ -91,7 +91,7 @@ async fn settings_page(
         .iter()
         .map(|(id, label)| Tab::new(format!("#{id}"), *label, false))
         .collect();
-    Page::new(Section::Home, "Settings")
+    Page::new(Section::Personal(Personal::Settings), "Settings")
         .icon(octicon!("gear"))
         .sub("Choices and tokens that apply to you only. Only you see this page.")
         .subnav(jump)

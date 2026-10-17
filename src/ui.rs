@@ -15,6 +15,15 @@ pub(crate) enum Section {
     Review,
     Packages,
     Nixpkgs,
+    /// A page of the personal menu: no top tab is current.
+    Personal(Personal),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Personal {
+    Progress,
+    Runs,
+    Settings,
 }
 
 pub(crate) const NAV: [(Section, &str, &str, &str); 4] = [
@@ -167,7 +176,7 @@ pub(crate) fn subnav(tabs: &[Tab]) -> String {
     out
 }
 
-fn menu(app: &App, viewer: Option<&str>) -> String {
+fn menu(app: &App, viewer: Option<&str>, current: Section) -> String {
     let Some(v) = viewer else {
         return if app.oauth.is_some() {
             format!(
@@ -187,24 +196,43 @@ fn menu(app: &App, viewer: Option<&str>) -> String {
     } else {
         ""
     };
+    let mut items = String::from("<a href=\"/me\">");
+    items.push_str(&icon(octicon!("package")));
+    items.push_str(" My packages</a>");
+    for (item, href, svg, label) in MENU {
+        let cur = if current == Section::Personal(item) {
+            " aria-current=\"page\""
+        } else {
+            ""
+        };
+        let _ = write!(items, "<a href=\"{href}\"{cur}>{} {label}</a>", icon(svg));
+    }
     format!(
         "<details class=\"menu\"><summary class=\"Header-link\" aria-label=\"Your menu\">{person}<span class=\"menu-login\">{v}</span>{unread}</summary>\
-         <div class=\"menu-list\">{start}\
-         <a href=\"/me\">{pkg} My packages</a>\
-         <a href=\"/me/progress\">{flame} Progress</a>\
-         <a href=\"/me/runs\">{play} Runs</a>\
-         <a href=\"/me/settings\">{gear} Settings</a>\
+         <div class=\"menu-list\">{start}{items}\
          <form method=\"post\" action=\"/auth/logout\" class=\"menu-sep\"><button type=\"submit\">{out} Sign out</button></form>\
          </div></details>",
         person = icon(octicon!("person")),
-        pkg = icon(octicon!("package")),
-        flame = icon(octicon!("flame")),
-        play = icon(octicon!("play")),
-        gear = icon(octicon!("gear")),
         out = icon(octicon!("sign-out")),
         v = esc(v),
     )
 }
+
+const MENU: [(Personal, &str, &str, &str); 3] = [
+    (
+        Personal::Progress,
+        "/me/progress",
+        octicon!("flame"),
+        "Progress",
+    ),
+    (Personal::Runs, "/me/runs", octicon!("play"), "Runs"),
+    (
+        Personal::Settings,
+        "/me/settings",
+        octicon!("gear"),
+        "Settings",
+    ),
+];
 
 fn updated(app: &App) -> String {
     match app.store.get_time("last_sync").ok().flatten() {
@@ -237,7 +265,7 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
         format!("{} · Maintainer Mode", esc(&p.title))
     };
     let club = icon(octicon!("people"));
-    let menu = menu(app, viewer);
+    let menu = menu(app, viewer, p.section);
     let nav = nav(p.section);
     let subnav = subnav(&p.subnav);
     let sprite = crate::assets::sprite(&[&club, &menu, &nav, &head, &subnav, &p.body]);
@@ -470,6 +498,19 @@ mod tests {
             assert_eq!(NAV.iter().filter(|(n, ..)| *n == s).count(), 1);
             assert_eq!(nav(s).matches("aria-current").count(), 1);
         }
+    }
+
+    #[test]
+    fn a_personal_page_marks_its_menu_item_and_no_tab() {
+        let app = crate::sets::tests::app(&[]);
+        for (item, href, ..) in MENU {
+            let s = Section::Personal(item);
+            assert_eq!(nav(s).matches("aria-current").count(), 0);
+            let m = menu(&app, Some("alice"), s);
+            assert_eq!(m.matches("aria-current").count(), 1);
+            assert!(m.contains(&format!("href=\"{href}\" aria-current=\"page\"")));
+        }
+        assert!(!menu(&app, Some("alice"), Section::Home).contains("aria-current"));
     }
 
     #[test]

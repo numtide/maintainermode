@@ -427,11 +427,14 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
         t = esc(&token),
         u = esc(&usage(base)),
     );
-    Page::new(Section::Home, "Your upload token")
-        .icon(octicon!("key"))
-        .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
-        .body(out)
-        .render(&app, Some(&login))
+    Page::new(
+        Section::Personal(crate::ui::Personal::Settings),
+        "Your upload token",
+    )
+    .icon(octicon!("key"))
+    .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
+    .body(out)
+    .render(&app, Some(&login))
 }
 
 async fn delete_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
