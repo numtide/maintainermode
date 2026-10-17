@@ -15,6 +15,15 @@ pkgs.testers.runNixOSTest {
       services.maintainer-mode.githubAppKeyFile = pkgs.runCommand "test-github-app-key" {
         nativeBuildInputs = [ pkgs.openssl ];
       } "openssl genrsa -traditional -out $out 2048";
+      # a stand-in for sops-nix: /run/secrets links to one generation, and a
+      # new secret comes as a new generation
+      services.maintainer-mode.syncTokenFile = "/run/secrets/sync-token";
+      system.activationScripts.secrets = ''
+        mkdir -p /run/secrets.d/1
+        echo old-token > /run/secrets.d/1/sync-token
+        chmod 0400 /run/secrets.d/1/sync-token
+        ln -sfn /run/secrets.d/1 /run/secrets
+      '';
       virtualisation.memorySize = 1024;
       environment.systemPackages = [ config.services.maintainer-mode.package ];
       # a tree with one private package and a stand-in nixpkgs that knows
@@ -186,5 +195,20 @@ pkgs.testers.runNixOSTest {
     # the key parsed and the JWT was signed; only the request found no network
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App token: error sending request' /tmp/log")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'next pass in 10 s' /tmp/log")
+    # a new secret reaches the running service through a reload, not a
+    # restart, and the value never reaches the log
+    machine.succeed("systemctl is-active maintainer-mode-credentials.timer")
+    machine.succeed("systemctl start maintainer-mode-credentials.service")
+    machine.succeed("journalctl -u maintainer-mode-credentials -o cat > /tmp/cred.log && ! grep -q changed /tmp/cred.log")
+    pid = machine.succeed("systemctl show -p MainPID --value maintainer-mode.service").strip()
+    machine.succeed("mkdir -p /run/secrets.d/2 && echo new-token > /run/secrets.d/2/sync-token && ln -s /run/secrets.d/2 /run/secrets.tmp && mv -T /run/secrets.tmp /run/secrets && rm -r /run/secrets.d/1")
+    # LoadCredential copied the file at start; the copy does not follow
+    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/sync_token > /tmp/cred && grep -qx old-token /tmp/cred")
+    machine.succeed("systemctl start maintainer-mode-credentials.service")
+    machine.succeed("journalctl -u maintainer-mode-credentials -o cat > /tmp/cred.log && grep -q 'credential sync_token changed' /tmp/cred.log")
+    machine.succeed(f"nsenter -t {pid} -m cat /run/credentials/maintainer-mode.service/sync_token > /tmp/cred && grep -qx new-token /tmp/cred")
+    machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'sync_token changed; the new secret is in use' /tmp/log")
+    machine.succeed(f"systemctl show -p MainPID --value maintainer-mode.service > /tmp/pid && grep -qx {pid} /tmp/pid")
+    machine.fail("journalctl -o cat > /tmp/all.log && grep -q -e new-token -e old-token /tmp/all.log")
   '';
 }

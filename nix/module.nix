@@ -7,6 +7,45 @@
 let
   cfg = config.services.maintainer-mode;
   state = "/var/lib/maintainer-mode";
+  credentials = lib.filter (c: c.path != null) [
+    {
+      id = "client_secret";
+      path = cfg.githubClientSecretFile;
+    }
+    {
+      id = "sync_token";
+      path = cfg.syncTokenFile;
+    }
+    {
+      id = "nvd_api_key";
+      path = cfg.nvdApiKeyFile;
+    }
+    {
+      id = "github_app_key";
+      path = cfg.githubAppKeyFile;
+    }
+    {
+      id = "s3_credentials";
+      path = if cfg.eventCopy.enable then cfg.eventCopy.credentialsFile else null;
+    }
+    {
+      id = "smtp_password";
+      path = if cfg.smtp.enable then cfg.smtp.passwordFile else null;
+    }
+  ];
+  # LoadCredential copies each file once, when the service starts, and
+  # NixOS does not restart a unit whose secret alone changed. This compares
+  # the copies with their sources and refreshes the copies on a reload.
+  checkCredentials = pkgs.writeShellScript "maintainer-mode-credentials" ''
+    dir=/run/credentials/maintainer-mode.service
+    [ -d "$dir" ] || exit 0
+    ${lib.concatMapStrings (c: ''
+      if [ -e ${lib.escapeShellArg "${c.path}"} ] && ! cmp -s ${lib.escapeShellArg "${c.path}"} "$dir/${c.id}"; then
+        echo "<5>credential ${c.id} changed; reloading maintainer-mode.service"
+        exec systemctl try-reload-or-restart maintainer-mode.service
+      fi
+    '') credentials}
+  '';
 in
 {
   imports = [
@@ -321,15 +360,10 @@ in
         DynamicUser = true;
         StateDirectory = "maintainer-mode";
         WorkingDirectory = state;
-        LoadCredential =
-          lib.optional (cfg.githubClientSecretFile != null) "client_secret:${cfg.githubClientSecretFile}"
-          ++ lib.optional (cfg.syncTokenFile != null) "sync_token:${cfg.syncTokenFile}"
-          ++ lib.optional (cfg.nvdApiKeyFile != null) "nvd_api_key:${cfg.nvdApiKeyFile}"
-          ++ lib.optional (cfg.githubAppKeyFile != null) "github_app_key:${cfg.githubAppKeyFile}"
-          ++ lib.optional cfg.eventCopy.enable "s3_credentials:${cfg.eventCopy.credentialsFile}"
-          ++ lib.optional (
-            cfg.smtp.enable && cfg.smtp.passwordFile != null
-          ) "smtp_password:${cfg.smtp.passwordFile}";
+        LoadCredential = map (c: "${c.id}:${c.path}") credentials;
+        # a reload copies the credentials again without a restart; the
+        # service reads the new copies within a minute (systemd >= 260)
+        RefreshOnReload = "credentials";
         Restart = "on-failure";
         # the daily sweep of nixpkgs peaks near 2 GB
         MemoryMax = if cfg.rescan.enable then "${toString (4096 + cfg.rescan.memoryMB)}M" else "4G";
@@ -350,6 +384,27 @@ in
         ]
         ++ lib.optional cfg.rescan.enable "AF_NETLINK";
         LockPersonality = true;
+      };
+    };
+
+    systemd.services.maintainer-mode-credentials = lib.mkIf (credentials != [ ]) {
+      description = "Reload Maintainer Mode when a secret changes";
+      path = [
+        pkgs.diffutils
+        config.systemd.package
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = checkCredentials;
+        LogLevelMax = "notice";
+      };
+    };
+
+    systemd.timers.maintainer-mode-credentials = lib.mkIf (credentials != [ ]) {
+      wantedBy = [ "timers.target" ];
+      timerConfig = {
+        OnCalendar = "minutely";
+        AccuracySec = "5s";
       };
     };
 
