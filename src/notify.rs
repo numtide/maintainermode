@@ -40,6 +40,9 @@ const TEST_AT: &str = "test_mail_at";
 /// equal to it.
 const CONFIRMED: &str = "digest_confirmed";
 const CONFIRM_HOURS: i64 = 24;
+const MINE_OFF: &str = "notify_mine_off";
+const MINE_NOW: &str = "notify_mine_now";
+const NOW_PER_DAY: usize = 20;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -57,6 +60,7 @@ pub fn routes() -> Router<Shared> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    Mine,
     PullRequest,
     Issue,
     Advisory,
@@ -64,16 +68,19 @@ pub enum Kind {
 }
 
 impl Kind {
-    pub const ALL: [Kind; 4] = [
+    pub const ALL: [Kind; 5] = [
+        Kind::Mine,
         Kind::PullRequest,
         Kind::Issue,
         Kind::Advisory,
         Kind::Release,
     ];
 
-    /// From the id that `catalog::events` and `catalog::set_events` give.
+    /// From the id that `catalog::events`, `catalog::set_events` and
+    /// `followup::events` give.
     pub fn of(id: &str) -> Kind {
         match id.split_once('-').map_or(id, |(k, _)| k) {
+            "mine" => Kind::Mine,
             "issue" => Kind::Issue,
             "advisory" => Kind::Advisory,
             "upstream" => Kind::Release,
@@ -83,6 +90,7 @@ impl Kind {
 
     pub fn key(self) -> &'static str {
         match self {
+            Kind::Mine => "mine",
             Kind::PullRequest => "pr",
             Kind::Issue => "issue",
             Kind::Advisory => "advisory",
@@ -96,6 +104,7 @@ impl Kind {
 
     fn label(self) -> &'static str {
         match self {
+            Kind::Mine => "Your pull requests",
             Kind::PullRequest => "Pull requests",
             Kind::Issue => "Issues",
             Kind::Advisory => "Advisories",
@@ -105,6 +114,7 @@ impl Kind {
 
     fn icon(self) -> String {
         match self {
+            Kind::Mine => icon(octicon!("person")),
             Kind::PullRequest => icon(octicon!("git-pull-request")),
             Kind::Issue => icon(octicon!("issue-opened")),
             Kind::Advisory => icon(octicon!("shield")),
@@ -114,12 +124,34 @@ impl Kind {
 }
 
 /// The kinds a person counts in the header and gets by email. All of them
-/// until the person chooses.
+/// until the person chooses. Your own pull requests have their own switch,
+/// so a choice saved before they existed keeps them on.
 pub fn kinds(app: &App, login: &str) -> Vec<Kind> {
-    match app.store.setting(login, KINDS).ok().flatten() {
+    let mut out: Vec<Kind> = match app.store.setting(login, KINDS).ok().flatten() {
         None => Kind::ALL.to_vec(),
-        Some(v) => v.split(',').filter_map(Kind::parse).collect(),
+        Some(v) => v
+            .split(',')
+            .filter_map(Kind::parse)
+            .filter(|k| *k != Kind::Mine)
+            .collect(),
+    };
+    let off = app.store.setting(login, MINE_OFF).ok().flatten();
+    out.retain(|k| *k != Kind::Mine);
+    if off.as_deref() != Some("1") {
+        out.insert(0, Kind::Mine);
     }
+    out
+}
+
+/// When the person turned on one email per event of their own pull
+/// requests, or nothing.
+fn mine_now(app: &App, login: &str) -> Option<DateTime<Utc>> {
+    app.store
+        .setting(login, MINE_NOW)
+        .ok()
+        .flatten()
+        .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
+        .map(|t| t.with_timezone(&Utc))
 }
 
 pub(crate) fn read_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
@@ -169,6 +201,7 @@ pub fn recount_one(app: &App, login: &str) {
 /// Everyone who signed in once; a login with nothing watched costs a few
 /// small reads.
 pub fn recount(app: &App) {
+    crate::followup::purge(app);
     for m in app.store.members().unwrap_or_default() {
         recount_one(app, &m.login);
     }
@@ -291,7 +324,7 @@ async fn inbox_page(
     Page::new(Section::Personal(Personal::Inbox), "Inbox")
         .icon(octicon!("inbox"))
         .sub(
-            "What happened in the last 30 days to what you watch and to your machines, newest first. \
+            "What happened in the last 30 days to your pull requests, to what you watch and to your machines, newest first. \
              Your Atom feed has the same events. Only you see this page.",
         )
         .subnav(tabs)
@@ -378,8 +411,16 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
              <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
              <p class=\"note\">At most one email a day, with the unread events of these kinds since the last daily email. \
              A new address gets a confirmation email first; the daily email starts when you open its link. \
-             Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>",
-            esc(&address)
+             Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>\
+             <div class=\"form-checkbox my-1\"><label><input type=\"checkbox\" name=\"mine_now\" value=\"1\"{}> Send the events of your own pull requests at once</label>\
+             <p class=\"note\">One email for each review, merge, close or reminder, a few minutes after the server sees it. \
+             At most {NOW_PER_DAY} in 24 hours, and only to a confirmed address. The daily email still includes them.</p></div>",
+            esc(&address),
+            if mine_now(app, login).is_some() {
+                " checked"
+            } else {
+                ""
+            }
         )
     } else {
         "<p class=\"note mt-3\">Email is off on this server: its operator did not set up SMTP.</p>"
@@ -435,6 +476,10 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
 #[derive(Deserialize)]
 struct NotifyForm {
     #[serde(default)]
+    k_mine: Option<String>,
+    #[serde(default)]
+    mine_now: Option<String>,
+    #[serde(default)]
     k_pr: Option<String>,
     #[serde(default)]
     k_issue: Option<String>,
@@ -449,6 +494,7 @@ struct NotifyForm {
 impl NotifyForm {
     fn chosen(&self) -> Vec<Kind> {
         [
+            (Kind::Mine, &self.k_mine),
             (Kind::PullRequest, &self.k_pr),
             (Kind::Issue, &self.k_issue),
             (Kind::Advisory, &self.k_advisory),
@@ -473,8 +519,29 @@ async fn save_notify(
     if app.smtp.is_some() && address.is_some_and(|a| !a.is_empty() && !valid_address(a)) {
         return Redirect::to("/me/settings?mail=invalid#email").into_response();
     }
-    let keys: Vec<&str> = f.chosen().into_iter().map(Kind::key).collect();
-    if let Err(e) = app.store.set_setting(&login, KINDS, &keys.join(",")) {
+    let keys: Vec<&str> = f
+        .chosen()
+        .into_iter()
+        .filter(|k| *k != Kind::Mine)
+        .map(Kind::key)
+        .collect();
+    let mine_off = if f.chosen().contains(&Kind::Mine) {
+        ""
+    } else {
+        "1"
+    };
+    let now_on = f.mine_now.as_deref() == Some("1");
+    let now_value = match mine_now(&app, &login) {
+        Some(t) if now_on => t.to_rfc3339(),
+        _ if now_on => Utc::now().to_rfc3339(),
+        _ => String::new(),
+    };
+    let saved = app
+        .store
+        .set_setting(&login, KINDS, &keys.join(","))
+        .and_then(|_| app.store.set_setting(&login, MINE_OFF, mine_off))
+        .and_then(|_| app.store.set_setting(&login, MINE_NOW, &now_value));
+    if let Err(e) = saved {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     recount_one(&app, &login);
@@ -768,6 +835,7 @@ enum Mail {
     Confirm,
     Test,
     Digest,
+    Now,
 }
 impl Mail {
     fn key(self) -> &'static str {
@@ -775,6 +843,7 @@ impl Mail {
             Mail::Confirm => "confirm",
             Mail::Test => "test",
             Mail::Digest => "digest",
+            Mail::Now => "now",
         }
     }
     fn own_max(self) -> usize {
@@ -782,6 +851,7 @@ impl Mail {
             Mail::Confirm => CONFIRMS_PER_DAY,
             Mail::Test => TESTS_PER_DAY,
             Mail::Digest => usize::MAX,
+            Mail::Now => NOW_PER_DAY,
         }
     }
 }
@@ -977,7 +1047,7 @@ fn one_line(s: &str) -> String {
 
 fn digest_body(list: &[&Event]) -> String {
     let mut out = format!(
-        "{} new events on what you watch and on your machines:\n\n",
+        "{} new events on your pull requests, on what you watch and on your machines:\n\n",
         list.len()
     );
     for e in list.iter().take(DIGEST_LINES) {
@@ -1035,13 +1105,75 @@ async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
     Ok(sent)
 }
 
-/// The digest loop. It does nothing while email is off.
+/// The events of one's own pull requests that are due an email of their
+/// own: unread, newer than the switch, and not mailed before.
+pub fn now_selection(
+    events: &[Event],
+    on: DateTime<Utc>,
+    read_at: Option<DateTime<Utc>>,
+) -> Vec<&Event> {
+    events
+        .iter()
+        .filter(|e| Kind::of(&e.id) == Kind::Mine && e.at >= on && unread(e, read_at))
+        .collect()
+}
+
+fn now_body(e: &Event) -> String {
+    format!(
+        "{}\n{}\n\nYou get this email because you asked for the events of your own pull requests at once.\n",
+        one_line(&e.title),
+        one_line(&e.url)
+    )
+}
+
+/// One email per event of a person's own pull requests. An event over the
+/// limit is marked too, so it is not tried again: the daily email has it.
+async fn now_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
+    let mut sent = 0;
+    for (login, _) in app.store.settings_with(MINE_NOW)? {
+        let (Some(on), Some(address)) = (mine_now(app, &login), confirmed_address(app, &login))
+        else {
+            continue;
+        };
+        if !kinds(app, &login).contains(&Kind::Mine) {
+            continue;
+        }
+        let events = crate::followup::own_events(app, &login, crate::catalog::FEED_DAYS);
+        for e in now_selection(&events, on, read_at(app, &login)) {
+            if !app.store.mail_once(&login, &e.id, Utc::now())? {
+                continue;
+            }
+            if !take_slot(app, smtp, &login, Mail::Now) {
+                continue;
+            }
+            let subject = format!("Maintainer Mode: {}", one_line(&e.title));
+            match send(app, smtp, &login, &address, &subject, now_body(e)).await {
+                Ok(()) => sent += 1,
+                Err(err) => tracing::warn!("event email of {login}: {err:#}"),
+            }
+        }
+    }
+    Ok(sent)
+}
+
+/// The email loop: the events of one's own pull requests each minute, the
+/// digest each 15 minutes. It does nothing while email is off.
 pub async fn run(app: Shared) {
     let Some(smtp) = &app.smtp else {
         return;
     };
+    let mut tick: u64 = 0;
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        tick += 1;
+        match now_pass(&app, smtp).await {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("{n} event emails sent"),
+            Err(e) => tracing::warn!("event emails: {e:#}"),
+        }
+        if !tick.is_multiple_of(15) {
+            continue;
+        }
         match digest_pass(&app, smtp).await {
             Ok(0) => {}
             Ok(n) => tracing::info!("{n} email digests sent"),
@@ -1131,6 +1263,7 @@ pub(crate) mod tests {
     #[test]
     fn the_kind_comes_from_the_event_id() {
         assert_eq!(Kind::of("pr-1-merged"), Kind::PullRequest);
+        assert_eq!(Kind::of("mine-1-review-7"), Kind::Mine);
         assert_eq!(Kind::of("issue-2-issue opened"), Kind::Issue);
         assert_eq!(Kind::of("advisory-NIXPKGS-1-hello"), Kind::Advisory);
         assert_eq!(Kind::of("upstream-hello-2.13"), Kind::Release);
@@ -1373,6 +1506,8 @@ pub(crate) mod tests {
         let app = crate::sets::tests::app(&[]);
         let h = signed_in(&app, "alice");
         let form = NotifyForm {
+            k_mine: None,
+            mine_now: None,
             k_pr: None,
             k_issue: Some("1".into()),
             k_advisory: None,
@@ -1406,6 +1541,8 @@ pub(crate) mod tests {
         let h = signed_in(&app, "alice");
         let save = |email: &str| {
             let form = NotifyForm {
+                k_mine: None,
+                mine_now: None,
                 k_pr: Some("1".into()),
                 k_issue: None,
                 k_advisory: None,
@@ -1555,6 +1692,8 @@ pub(crate) mod tests {
         .unwrap();
         let h = signed_in(&app, "alice");
         let form = NotifyForm {
+            k_mine: None,
+            mine_now: None,
             k_pr: None,
             k_issue: None,
             k_advisory: None,
@@ -1582,6 +1721,75 @@ pub(crate) mod tests {
         assert!(!sync.to_string().contains("alice"));
     }
 
+    #[tokio::test]
+    async fn your_pull_requests_stay_on_after_an_old_choice_and_have_their_own_switch() {
+        let app = crate::sets::tests::app(&[]);
+        assert_eq!(kinds(&app, "alice"), Kind::ALL);
+        app.store.set_setting("alice", KINDS, "pr,issue").unwrap();
+        assert_eq!(
+            kinds(&app, "alice"),
+            [Kind::Mine, Kind::PullRequest, Kind::Issue]
+        );
+        let h = signed_in(&app, "alice");
+        let form = |mine: bool, now: bool| NotifyForm {
+            k_mine: mine.then(|| "1".into()),
+            mine_now: now.then(|| "1".into()),
+            k_pr: None,
+            k_issue: None,
+            k_advisory: Some("1".into()),
+            k_release: None,
+            email: None,
+        };
+        save_notify(State(app.clone()), h.clone(), Form(form(false, false))).await;
+        assert_eq!(kinds(&app, "alice"), [Kind::Advisory]);
+        assert!(mine_now(&app, "alice").is_none());
+        save_notify(State(app.clone()), h.clone(), Form(form(true, true))).await;
+        assert_eq!(kinds(&app, "alice"), [Kind::Mine, Kind::Advisory]);
+        let on = mine_now(&app, "alice").unwrap();
+        save_notify(State(app.clone()), h.clone(), Form(form(true, true))).await;
+        assert_eq!(
+            mine_now(&app, "alice"),
+            Some(on),
+            "saving again keeps the start"
+        );
+        save_notify(State(app.clone()), h, Form(form(true, false))).await;
+        assert!(mine_now(&app, "alice").is_none());
+    }
+
+    #[test]
+    fn an_event_email_goes_for_new_unread_events_of_your_own_pull_requests_only() {
+        let now = Utc::now();
+        let list = [
+            event("mine-1-review-7", now - Duration::minutes(5)),
+            event("mine-2-merged", now - Duration::hours(3)),
+            event("pr-3-merged", now - Duration::minutes(1)),
+            event("mine-4-closed", now - Duration::days(2)),
+        ];
+        let ids = |v: Vec<&Event>| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        let on = now - Duration::days(1);
+        assert_eq!(
+            ids(now_selection(&list, on, None)),
+            ["mine-1-review-7", "mine-2-merged"]
+        );
+        assert_eq!(
+            ids(now_selection(&list, on, Some(now - Duration::hours(1)))),
+            ["mine-1-review-7"]
+        );
+        let mut e = event("mine-1-review-7", now);
+        e.title = "bob approved: #1 a\r\nBcc: x".into();
+        assert!(now_body(&e).starts_with("bob approved: #1 a  Bcc: x\n"));
+        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        for _ in 0..NOW_PER_DAY {
+            assert!(
+                s.take_mail_slot("alice", Mail::Now.key(), 500, Mail::Now.own_max(), now)
+                    .unwrap()
+            );
+        }
+        assert!(
+            !s.take_mail_slot("alice", Mail::Now.key(), 500, Mail::Now.own_max(), now)
+                .unwrap()
+        );
+    }
     #[test]
     fn a_filter_link_keeps_the_other_filter() {
         assert_eq!(inbox_href(None, None), "/inbox");

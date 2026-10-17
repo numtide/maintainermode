@@ -30,7 +30,7 @@ use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, random_id};
 const LIST: usize = 100;
 const META_GUIDE: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#meta-attributes";
-const FEED_DAYS: i64 = 30;
+pub(crate) const FEED_DAYS: i64 = 30;
 /// At most this many set events reach a feed, so the watched packages keep
 /// their place in it.
 const SET_EVENTS: usize = 50;
@@ -2146,7 +2146,8 @@ pub(crate) struct Event {
 }
 
 /// What a login's feed and inbox show: the events of their subscriptions,
-/// then those of their package set, newest first.
+/// then those of their package set and of their own pull requests, newest
+/// first.
 pub(crate) fn person_events(app: &crate::web::App, login: &str) -> Vec<Event> {
     let subs = subscriptions(app, login);
     let s = app.snap();
@@ -2165,6 +2166,14 @@ pub(crate) fn person_events(app: &crate::web::App, login: &str) -> Vec<Event> {
             list.push(e);
         }
     }
+    let plans = crate::followup::Plans::of(app, login, s.committers.is(login));
+    list.extend(crate::followup::events(
+        &s.pr_data,
+        login,
+        &plans,
+        Utc::now(),
+        since,
+    ));
     list.sort_by_key(|e| std::cmp::Reverse(e.at));
     list.truncate(200);
     list
