@@ -148,7 +148,7 @@ Your area is derived, never self-assessed. It is the union of:
 3. **What you changed**: the directories of files in your merged pull requests
    over the last year, read with your own token when you log in.
 
-On top of that you can add **tags**, path prefixes such as
+On top of that you can add **tags** in `/me/settings`, path prefixes such as
 `pkgs/development/python-modules`, for what you just started caring about.
 
 A pull request is **unowned** when no `meta.maintainers`, `meta.teams` or
