@@ -8,14 +8,15 @@ use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::post;
+use axum::routing::{get, post};
 use chrono::{Duration, Utc};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fmt::Write;
+use std::sync::{Arc, Mutex};
 
 use crate::catalog::{Flags, Subject, subject_row};
-use crate::report::{MAX_PACKAGES, Report};
+use crate::report::{MAX_PACKAGES, PublicList, Upload};
 use crate::store::PackageSet;
 use crate::ui::{Page, Section, empty, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
@@ -33,6 +34,87 @@ pub fn routes() -> Router<Shared> {
             "/api/v1/reports",
             post(upload).layer(DefaultBodyLimit::max(MAX_REPORT_BYTES)),
         )
+        .route("/api/v1/packages/index", get(public_index))
+}
+
+/// The public package list of one index revision, as JSON and as gzip.
+pub struct Listing {
+    pub list: PublicList,
+    json: Bytes,
+    gz: Bytes,
+}
+
+static LISTING: Mutex<Option<Arc<Listing>>> = Mutex::new(None);
+
+/// The public package list of the current index, built once per revision.
+/// `None` before the first index.
+pub fn listing(app: &App) -> Option<Arc<Listing>> {
+    let index = app.index.read().unwrap();
+    if index.rev.is_empty() {
+        return None;
+    }
+    let mut cache = LISTING.lock().unwrap();
+    if let Some(l) = cache.as_ref().filter(|l| l.list.rev == index.rev) {
+        return Some(l.clone());
+    }
+    let list = PublicList::of(&index);
+    drop(index);
+    let json = serde_json::to_vec(&list).ok()?;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    std::io::Write::write_all(&mut gz, &json).ok()?;
+    let l = Arc::new(Listing {
+        list,
+        json: Bytes::from(json),
+        gz: Bytes::from(gz.finish().ok()?),
+    });
+    *cache = Some(l.clone());
+    Some(l)
+}
+
+async fn public_index(State(app): State<Shared>, headers: HeaderMap) -> Response {
+    let Some(l) = tokio::task::spawn_blocking(move || listing(&app))
+        .await
+        .ok()
+        .flatten()
+    else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the nixpkgs index is not built yet; try again later",
+        );
+    };
+    let etag = format!("\"{}\"", l.list.rev);
+    let fresh = headers
+        .get_all(header::IF_NONE_MATCH)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|t| t.trim().trim_start_matches("W/") == etag);
+    let common = [
+        (header::ETAG, etag.clone()),
+        (header::CACHE_CONTROL, "public, max-age=3600".to_string()),
+        (header::VARY, "Accept-Encoding".to_string()),
+    ];
+    if fresh {
+        return (StatusCode::NOT_MODIFIED, common).into_response();
+    }
+    let gzip = headers
+        .get_all(header::ACCEPT_ENCODING)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|e| e.split(';').next().is_some_and(|e| e.trim() == "gzip"));
+    let json = [(header::CONTENT_TYPE, "application/json")];
+    if gzip {
+        (
+            common,
+            json,
+            [(header::CONTENT_ENCODING, "gzip")],
+            l.gz.clone(),
+        )
+            .into_response()
+    } else {
+        (common, json, l.json.clone()).into_response()
+    }
 }
 
 pub fn token_hash(token: &str) -> String {
@@ -89,29 +171,37 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
     else {
         return refuse(StatusCode::UNAUTHORIZED, "missing or unknown upload token");
     };
-    let report: Report = match serde_json::from_slice(&body) {
+    let report: Upload = match serde_json::from_slice(&body) {
         Ok(r) => r,
-        Err(e) => return refuse(StatusCode::BAD_REQUEST, &format!("unreadable report: {e}")),
+        Err(e) => {
+            return refuse(
+                StatusCode::BAD_REQUEST,
+                &format!("not a strict report: {e}"),
+            );
+        }
     };
-    if let Err(e) = report.check() {
-        return refuse(StatusCode::BAD_REQUEST, &e.to_string());
-    }
     if report.packages.len() > MAX_PACKAGES {
         return refuse(
             StatusCode::PAYLOAD_TOO_LARGE,
             &format!("more than {MAX_PACKAGES} packages"),
         );
     }
-    let (attrs, dropped) = {
-        let index = app.index.read().unwrap();
-        if index.rev.is_empty() {
-            return refuse(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "the nixpkgs index is not built yet; try again later",
-            );
-        }
-        report.accepted(|a| index.pkgs.contains_key(a))
+    let app2 = app.clone();
+    let Some(listing) = tokio::task::spawn_blocking(move || listing(&app2))
+        .await
+        .ok()
+        .flatten()
+    else {
+        return refuse(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the nixpkgs index is not built yet; try again later",
+        );
     };
+    let (attrs, stale) = match report.accepted(&listing.list) {
+        Ok(r) => r,
+        Err(e) => return refuse(StatusCode::BAD_REQUEST, &e),
+    };
+    let dropped = stale + report.omitted.unknown;
     let set = PackageSet {
         attrs: attrs.into_iter().collect(),
         dropped,
@@ -391,19 +481,18 @@ pub(crate) mod tests {
     }
 
     pub(crate) fn app(attrs: &[&str]) -> Shared {
+        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut index = crate::area::Index::default();
         if !attrs.is_empty() {
-            index.rev = "0".repeat(40);
+            // unique, so the shared `LISTING` cache never mixes two test apps
+            index.rev = format!("{n:040}");
         }
         for a in attrs {
             index.pkgs.insert(a.to_string(), Default::default());
         }
-        static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let events = std::env::temp_dir().join(format!(
-            "mm-sets-events-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
+        let events =
+            std::env::temp_dir().join(format!("mm-sets-events-{}-{n}", std::process::id(),));
         std::sync::Arc::new(App {
             store: crate::store::Store::open(std::path::Path::new(":memory:")).unwrap(),
             oauth: None,
@@ -442,20 +531,28 @@ pub(crate) mod tests {
             .status()
     }
 
+    fn known(app: &Shared, attr: &str, pname: &str, version: &str) {
+        let mut index = app.index.write().unwrap();
+        let p = index.pkgs.entry(attr.into()).or_default();
+        p.pname = pname.into();
+        p.version = version.into();
+    }
+
     fn report() -> serde_json::Value {
         json!({
             "schema": crate::report::SCHEMA,
             "packages": [
-                { "pname": "hello", "attr": "hello", "resolution": "attr" },
-                { "pname": "secret", "attr": "our-private-daemon", "resolution": "attr" },
-                { "pname": "nameless", "resolution": "flake" },
+                { "attr": "hello", "pname": "hello", "version": "2.12.1" },
+                { "attr": "our-private-daemon", "pname": "x", "version": null, "modified": true },
             ],
+            "omitted": { "unknown": 3 },
         })
     }
 
     #[tokio::test]
     async fn an_upload_keeps_only_attributes_the_index_knows() {
         let app = app(&["hello"]);
+        known(&app, "hello", "hello", "2.12.1");
         app.store
             .set_upload_token("alice", &token_hash("t"))
             .unwrap();
@@ -466,11 +563,37 @@ pub(crate) mod tests {
         assert_eq!(post(&app, "t", report()).await, StatusCode::ACCEPTED);
         let set = app.store.package_set("alice").unwrap().unwrap();
         assert_eq!(set.attrs, vec!["hello"]);
-        assert_eq!(set.dropped, 2);
+        assert_eq!(set.dropped, 4);
         assert_eq!(
             post(&app, "t", json!({ "schema": 99, "packages": [] })).await,
             StatusCode::BAD_REQUEST
         );
+    }
+
+    #[tokio::test]
+    async fn an_upload_that_is_not_strict_is_refused() {
+        let app = app(&["hello"]);
+        known(&app, "hello", "hello", "2.12.1");
+        app.store
+            .set_upload_token("alice", &token_hash("t"))
+            .unwrap();
+        let entry =
+            |v: serde_json::Value| json!({ "schema": crate::report::SCHEMA, "packages": [v] });
+        for body in [
+            entry(json!({ "attr": "hello", "pname": "hello", "version": "1.2.3-acme-fix" })),
+            entry(json!({ "attr": "hello", "pname": "hello", "version": null })),
+            entry(
+                json!({ "attr": "hello", "pname": "hello", "version": "2.12.1", "resolution": "attr" }),
+            ),
+            json!({ "schema": 1, "source": { "name": "/home/me/tree" }, "packages": [] }),
+            json!({ "schema": 1, "packages": [{ "pname": "hello", "version": "2.12.1" }] }),
+        ] {
+            assert_eq!(post(&app, "t", body).await, StatusCode::BAD_REQUEST);
+        }
+        assert!(app.store.package_set("alice").unwrap().is_none());
+        let ok =
+            entry(json!({ "attr": "hello", "pname": "hello", "version": null, "modified": true }));
+        assert_eq!(post(&app, "t", ok).await, StatusCode::ACCEPTED);
     }
 
     #[tokio::test]
@@ -493,10 +616,51 @@ pub(crate) mod tests {
             .set_upload_token("alice", &token_hash("t"))
             .unwrap();
         let packages: Vec<_> = (0..=MAX_PACKAGES)
-            .map(|_| json!({ "pname": "hello", "attr": "hello", "resolution": "attr" }))
+            .map(|_| json!({ "attr": "hello", "pname": "", "version": "" }))
             .collect();
         let body = json!({ "schema": crate::report::SCHEMA, "packages": packages });
         assert_eq!(post(&app, "t", body).await, StatusCode::PAYLOAD_TOO_LARGE);
+    }
+
+    #[tokio::test]
+    async fn the_public_list_follows_the_index_revision() {
+        let empty = app(&[]);
+        let r = public_index(State(empty), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        let app = app(&["hello", "python3Packages.requests"]);
+        known(&app, "hello", "hello", "2.12.1");
+        known(&app, "python3Packages.requests", "requests", "2.32.3");
+        let rev = app.index.read().unwrap().rev.clone();
+        let r = public_index(State(app.clone()), HeaderMap::new()).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(r.headers()[header::ETAG], format!("\"{rev}\""));
+        assert!(
+            r.headers()[header::CACHE_CONTROL]
+                .to_str()
+                .unwrap()
+                .starts_with("public")
+        );
+        let body = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let list = PublicList::parse(&body).unwrap();
+        assert_eq!(list.attrs["hello"], ("hello".into(), "2.12.1".into()));
+        assert_eq!(list.pnames["requests"], vec!["python3Packages.requests"]);
+
+        let mut h = HeaderMap::new();
+        h.insert(header::ACCEPT_ENCODING, "br, gzip".parse().unwrap());
+        let r = public_index(State(app.clone()), h).await;
+        assert_eq!(r.headers()[header::CONTENT_ENCODING], "gzip");
+        let gz = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(PublicList::parse(&gz).unwrap().rev, rev);
+
+        let mut h = HeaderMap::new();
+        h.insert(header::IF_NONE_MATCH, format!("\"{rev}\"").parse().unwrap());
+        let r = public_index(State(app.clone()), h).await;
+        assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
     }
 
     #[test]
