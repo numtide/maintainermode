@@ -1,7 +1,7 @@
 use anyhow::Result;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
@@ -295,18 +295,6 @@ async fn css(body: &'static str) -> impl IntoResponse {
         ],
         body,
     )
-}
-
-pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Html<String> {
-    use crate::ui::{Page, Section};
-    let section = match tab {
-        "merge" | "review" | "record" | "committer" => Section::Review,
-        "packages" | "watch" => Section::Packages,
-        "state" => Section::Nixpkgs,
-        _ => Section::Home,
-    };
-    let p = Page::new(section, "").body(body).no_header();
-    Html(crate::ui::document(app, viewer, &p))
 }
 
 pub(crate) const CONTRIBUTING: &str =

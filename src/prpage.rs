@@ -21,11 +21,12 @@ use tokio::sync::OnceCell;
 use crate::actions::Act;
 use crate::archive::RESERVE;
 use crate::area::Index;
-use crate::catalog::{Flags, Subject, head};
+use crate::catalog::{Flags, Subject};
 use crate::ledger::{self, Credit, Dropped};
 use crate::model::Pr;
 use crate::queue::{self, Entry};
-use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon, page};
+use crate::ui::{Page, Section, kv};
+use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon};
 
 const PULL: &str = "https://github.com/NixOS/nixpkgs/pull/";
 const API: &str = "https://api.github.com";
@@ -882,12 +883,6 @@ fn mergeable_text(m: &str) -> &'static str {
     }
 }
 
-fn kv(k: &str, v: &str) -> String {
-    format!(
-        "<div class=\"Box-row d-flex\"><div class=\"text-bold\" style=\"min-width:140px\">{k}</div><div class=\"flex-auto\">{v}</div></div>"
-    )
-}
-
 fn people(logins: &[String]) -> String {
     if logins.is_empty() {
         return "<span class=\"color-fg-muted\">none</span>".into();
@@ -925,8 +920,9 @@ fn about(pr: &Pr) -> String {
             ago(pr.updated_at)
         ),
     };
-    let mut out =
-        String::from("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">About</div>");
+    let mut out = String::from(
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">About</h2></div>",
+    );
     out.push_str(&kv("State", &state_label(pr)));
     out.push_str(&kv(
         "Author",
@@ -970,7 +966,7 @@ fn about(pr: &Pr) -> String {
 
 fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
     let mut out = String::from(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">In Maintainer Mode</div>",
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">In Maintainer Mode</h2></div>",
     );
     let queue = match p.queue {
         "merge" => "<a href=\"/merge\">Ready to merge</a>".to_string(),
@@ -1038,7 +1034,7 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
 
 fn touched_html(list: &[Touched]) -> String {
     let mut out = String::from(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">What it touches</div>",
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">What it touches</h2></div>",
     );
     if list.is_empty() {
         out.push_str(
@@ -1069,7 +1065,7 @@ fn touched_html(list: &[Touched]) -> String {
         };
         let _ = write!(
             out,
-            "<div class=\"Box-row\"><div class=\"d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
+            "<div class=\"Box-row\"><div class=\"d-flex flex-items-center flex-wrap gap-2\">\
              <a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a> {}</div>\
              <div class=\"f6 color-fg-muted mt-1\">maintainers {}{teams}{approved}</div></div>",
             t.subject.href(),
@@ -1115,7 +1111,7 @@ fn checklist(pr: &Pr, act: Act) -> String {
         ),
     ];
     let mut out = format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} Review checklist \
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title d-inline\">{} Review checklist</h2> \
          <span class=\"f6 text-normal color-fg-muted\">from <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">CONTRIBUTING.md</a> \
          and <a href=\"{NIXPKGS}/pkgs/README.md#reviewing-contributions\">pkgs/README.md</a></span></div><div class=\"Box-row\"><ul class=\"ml-3\">",
         icon(octicon!("checklist"))
@@ -1142,7 +1138,7 @@ fn checklist(pr: &Pr, act: Act) -> String {
     };
     let _ = write!(
         out,
-        "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">{}{buttons}</div>\
+        "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">{}{buttons}</div>\
          <div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode posts nothing on nixpkgs. You leave your review on GitHub.</div></div>",
         exits(pr.number),
     );
@@ -1210,7 +1206,7 @@ fn file_html(n: u64, f: &File) -> String {
         Some(p) => patch_html(p),
     };
     format!(
-        "<details class=\"Box mb-3\"{open}><summary class=\"Box-header d-flex flex-items-center\" style=\"gap:8px\">\
+        "<details class=\"Box mb-3\"{open}><summary class=\"Box-header d-flex flex-items-center gap-2\">\
          <span class=\"Label\">{status}</span><span class=\"text-mono f6 flex-auto\">{name}</span>\
          <span class=\"color-fg-success f6\">+{a}</span><span class=\"color-fg-danger f6\">−{d}</span>\
          <a class=\"f6\" href=\"{link}\">GitHub</a></summary>{body}</details>",
@@ -1278,7 +1274,7 @@ fn description_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
         ),
     };
     format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Description</div>\
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Description</h2></div>\
          <div class=\"Box-row markdown-body\">{body}</div></div>"
     )
 }
@@ -1386,13 +1382,15 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
 
 fn not_synced(app: &App, viewer: Option<&str>, n: u64) -> Response {
     let body = format!(
-        "{}<div class=\"blankslate\"><p>Pull request #{n} is not in the synced data: \
+        "<div class=\"blankslate\"><p>Pull request #{n} is not in the synced data: \
          the sync keeps open pull requests and those updated in its window.</p>\
-         <p class=\"d-flex flex-justify-center\" style=\"gap:8px\">{}</p></div>",
-        head(&format!("Pull request #{n}"), "NixOS/nixpkgs", ""),
+         <p class=\"d-flex flex-justify-center gap-2\">{}</p></div>",
         exits(n)
     );
-    page(app, viewer, "", &body).into_response()
+    Page::new(Section::Review, format!("Pull request #{n}"))
+        .sub("NixOS/nixpkgs")
+        .body(body)
+        .render(app, viewer)
 }
 
 async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u64>) -> Response {
@@ -1415,29 +1413,28 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         });
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
     let act = Act::of(&app, viewer.as_deref());
-    let mut out = head(
-        &format!(
+    let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
+        .heading(format!(
             "{} <span class=\"color-fg-muted\">#{n}</span>{}",
             esc(&pr.title),
             github_icon(n)
-        ),
-        &format!(
+        ))
+        .sub(format!(
             "{} <a href=\"/u/{a}\">{a}</a> wants to merge into <span class=\"branch-name\">{}</span> · opened {} ago",
             state_label(pr),
             esc(&pr.base),
             ago(pr.created_at),
             a = esc(&pr.author)
-        ),
-        &format!("<div class=\"d-flex\" style=\"gap:8px\">{}</div>", exits(n)),
-    );
-    out.push_str(&about(pr));
+        ))
+        .actions(exits(n));
+    let mut out = about(pr);
     out.push_str(&place_html(&place, &credits, for_you));
     out.push_str(&touched_html(&list));
     out.push_str(&description_html(pr, &talk));
     out.push_str(&checklist(pr, act));
     out.push_str(&files_html(pr, &files));
     out.push_str(&talk_html(pr, &talk));
-    page(&app, viewer.as_deref(), "", &out).into_response()
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 /// The same data as the page, with nothing that depends on who asks.

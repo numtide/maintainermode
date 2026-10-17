@@ -3,6 +3,18 @@
 What Maintainer Mode shows for you: what you maintain, what you watch, and
 the packages of your own system.
 
+## The menu
+
+Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are in a menu at the top right. Sign in, and the menu shows your login and the number of unread events. It has these items:
+
+- **My packages** (`/me`): links to your inbox, what you maintain, what you watch and your machines.
+- **Progress** (`/me/progress`).
+- **Runs** (`/me/runs`): links to your workflow runs on `/actions`.
+- **Settings** (`/me/settings`).
+- **Sign out**.
+
+Only you see the pages under `/me`. The server sends them with `Cache-Control: private, no-store`. `/u/<login>` is public.
+
 ## Get started
 
 The home page shows a short introduction to visitors who are not signed in. It names the three ways to use Maintainer Mode. It links to the nixpkgs contributor guide (CONTRIBUTING.md). Press "Hide" to remove it. A cookie keeps it hidden for one year.
@@ -20,7 +32,7 @@ After your first sign-in, Maintainer Mode sends you to `/welcome`. This page is 
 
 If you maintain nothing, the first step changes. It sends you to the unowned pull requests on `/review`, with a checklist for a first review. It also links maintainers/README.md.
 
-The header shows "Get started" until you press "I am done". You can open `/welcome` again at any time. Only you see it.
+Your menu shows "Get started" until you press "I am done". You can open `/welcome` again at any time. Only you see it.
 
 ## What I maintain
 
@@ -64,7 +76,7 @@ The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The M
 - **Badges**: first review; first review that earned credit on an unowned pull request; first review merged unchanged; 10, 50 and 100 reviews; reviews in 5 areas of the state of nixpkgs.
 - **Being listed**: how many more authors you need. You need credit from 3 different authors in 60 days.
 
-The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. The header and your own `/u/<login>` page link to the page.
+The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. Your menu and your own `/u/<login>` page link to the page.
 
 ## Notifications
 
@@ -202,7 +214,7 @@ limits, and why the feature is off by default.
 
 ## For committers
 
-`/committer` shows what waits for a person with merge rights. The Committer tab shows only to a committer. Other people see a short page that explains the view.
+`/committer` shows what waits for a person with merge rights. The home page of a committer links to it. Other people see a short page that explains the view.
 
 **Who is a committer.** Maintainer Mode counts a login as a committer when one of these is true:
 

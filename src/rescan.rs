@@ -842,7 +842,7 @@ pub fn panel(app: &App, login: &str) -> String {
     let refs = app.store.flake_refs(login).unwrap_or_default();
     let index_at = app.store.get_time("index_at").ok().flatten();
     let mut out = format!(
-        "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header text-bold\">{} Public flakes that the server scans</div>",
+        "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Public flakes that the server scans</h2></div>",
         icon(octicon!("shield"))
     );
     for r in &refs {
