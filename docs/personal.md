@@ -7,54 +7,83 @@ the packages of your own system.
 
 Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are in a menu at the top right. Sign in, and the menu shows your login and the number of unread events. It has these items:
 
-- **My packages** (`/me`): links to your inbox, what you maintain, what you watch and your machines.
+- **My packages** (`/me`), with four tabs: Inbox, Maintain, Watch and My machines.
 - **Progress** (`/me/progress`).
-- **Runs** (`/me/runs`): links to your workflow runs on `/actions`.
+- **Runs** (`/me/runs`): your workflow runs.
 - **Settings** (`/me/settings`).
 - **Sign out**.
 
-Only you see the pages under `/me`. The server sends them with `Cache-Control: private, no-store`. `/u/<login>` is public.
+Only you see the pages under `/me`. The server sends every answer under `/me` with `Cache-Control: private, no-store`. `/u/<login>` is public, and it is the same for every viewer.
+
+| Tab or page        | What it shows                                                       |
+| ------------------ | ------------------------------------------------------------------- |
+| `/me?tab=inbox`    | the events of what you watch and of your machines (the default tab) |
+| `/me?tab=maintain` | what nixpkgs names you as a maintainer of, and "Watch all of them"  |
+| `/me?tab=watch`    | what you watch, and a form to watch more                            |
+| `/me?tab=machines` | the packages of your machines                                       |
+| `/me/runs`         | your nixpkgs-review and nix-update runs                             |
+| `/me/settings`     | every choice and token, in one page                                 |
+
+The old addresses `/watch`, `/me/inbox` and `/me/sets` redirect to their tab.
+
+## Settings
+
+`/me/settings` is one page with these sections. The links at the top go to each section.
+
+| Section      | What you set                                                                                |
+| ------------ | ------------------------------------------------------------------------------------------- |
+| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address |
+| `#feed`      | the private link of your Atom feed                                                          |
+| `#upload`    | the upload token for `maintainer-mode submit`                                               |
+| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                         |
+| `#mcp`       | the MCP token                                                                               |
+| `#workflows` | the repositories where "Review in CI" and "Update with nix-update" run                      |
+| `#tags`      | the path prefixes that the For you tab of `/review` adds                                    |
+| `#goal`      | your weekly goal                                                                            |
+| `#start`     | show or hide the Get started card                                                           |
 
 ## Get started
 
 The home page shows a short introduction to visitors who are not signed in. It names the three ways to use Maintainer Mode. It links to the nixpkgs contributor guide (CONTRIBUTING.md). Press "Hide" to remove it. A cookie keeps it hidden for one year.
 
-After your first sign-in, Maintainer Mode sends you to `/welcome`. This page is a checklist. Each step shows your real state: done, to do, or optional.
+After you sign in, the home page shows the Get started card. It is a checklist. Each step shows your real state: done, to do, or optional.
 
-1. What you maintain. Subscribe to all of it in one step.
-2. What you watch. Subscribe to a package, a module or a directory.
+1. What you maintain. Watch all of it in one step.
+2. What you watch. Watch a package, a module or a directory.
 3. The review queue for you, on `/review`.
-4. Notifications. Make your private Atom feed on `/watch`.
-5. Your system. Upload your closure on `/me/sets`.
-6. Actions. Save your workflow repositories on `/actions`.
-7. LLMs. They are off by default. Turn them on in `/me/settings`.
+4. Notifications. Make your private Atom feed in `/me/settings#feed`.
+5. Your system. Upload your closure, and see it in the My machines tab.
+6. Actions. Save your workflow repositories in `/me/settings#workflows`.
+7. LLMs. They are off by default. Turn them on in `/me/settings#llm`.
 8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
 
 If you maintain nothing, the first step changes. It sends you to the pull requests with no maintainer on `/review`, with a checklist for a first review. It also links maintainers/README.md.
 
-Your menu shows "Get started" until you press "I am done". You can open `/welcome` again at any time. Only you see it.
+Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card.
 
 ## What I maintain
 
-`/u/<login>/maintains` lists the packages and NixOS modules whose
-`meta.maintainers` names the login, or whose `meta.teams` names a team the
-login is in. Each row carries the same health flags as a page. The highest
-[risk score](health.md#the-risk-score) comes first. The list comes from nixpkgs;
-change it there.
+The Maintain tab of `/me` lists the packages and NixOS modules whose
+`meta.maintainers` names you, or whose `meta.teams` names a team you are
+in. Each row carries the same health flags as a page. The highest
+[risk score](health.md#the-risk-score) comes first. "Watch all of them" adds
+every row to what you watch. The list comes from nixpkgs; change it there.
+
+`/u/<login>/maintains` shows the same list for any login. It is public.
 
 ## What I watch
 
-Subscribe to any package, module or area from its page, by name on `/watch`,
-or to everything you maintain in one step. `/watch` shows each subscription
-with its flags, the ones that need attention first.
+Watch any package, module or area from its page, by name on the Watch tab of
+`/me`, or everything you maintain in one step on the Maintain tab. The Watch
+tab shows each item with its flags, the ones that need attention first.
 
-- **The Atom feed** is the delivery. `/watch` makes a private link,
-  `/feed/<token>`, with the last 30 days of what happened to your
-  subscriptions: pull requests opened, merged or closed, issues opened or
-  closed, and advisories, when the tracker opens their nixpkgs issue. An
-  advisory with no nixpkgs issue shows on the page, not in the feed.
-  Replacing the link cuts the old one.
-- Subscriptions are private: they show only to you and in your feed. The
+- **The Atom feed** is the delivery. `/me/settings#feed` makes a private link,
+  `/feed/<token>`, with the last 30 days of what happened to what you watch:
+  pull requests opened, merged or closed, issues opened or closed, and
+  advisories, when the tracker opens their nixpkgs issue. An advisory with no
+  nixpkgs issue shows on the page, not in the feed. Replacing the link cuts
+  the old one.
+- What you watch is private: it shows only to you and in your feed. The
   package pages are public.
 - **Why here.** Accounts, stored preferences and outbound messages are a write
   path. Maintainer Mode already logs people in and keeps state, so a
@@ -92,7 +121,7 @@ The page counts the synced data only: the last 60 days and every open pull reque
 
 ## Notifications
 
-**The inbox.** `/me/inbox` shows the events of your Atom feed: what
+**The inbox.** The Inbox tab of `/me` shows the events of your Atom feed: what
 happened in the last 30 days to what you watch and to your package set.
 The newest event comes first. Filter the list by kind (pull request,
 issue, advisory, release) or by subscription. "Mark all read" marks
@@ -100,30 +129,30 @@ every event as read. Only you see your inbox.
 
 **The unread count.** The header shows the number of unread events. The
 server counts them after each sync pass, and when you open the inbox.
-On `/me/settings`, choose the kinds that the count includes.
+In `/me/settings#email`, choose the kinds that the count includes.
 
 **The email digest.** This is off by default. It works only when the
 operator sets up SMTP (see [operations.md](operations.md#email)). Enter
-an address on `/me/settings` to get the digest. The server sends at most
+an address in `/me/settings#email` to get the digest. The server sends at most
 one email a day. The email lists the unread events of your chosen kinds
 since the last digest. "Send me a test email" sends one email, at most
 once in 10 minutes.
 
-- The address is private. It shows only to you, on `/me/settings`.
+- The address is private. It shows only to you, in `/me/settings#email`.
 - The server accepts only a plain address, like `name@example.org`. It
   refuses spaces, names and quotes.
 - Each email has an unsubscribe link with a new random token. The server
   keeps only the hash of the token, for 60 days. The link opens a page
   with one button. Mail clients that know RFC 8058 unsubscribe in one
   click. Unsubscribing deletes the address.
-- To stop the digest, you can also empty the address on `/me/settings`.
+- To stop the digest, you can also empty the address in `/me/settings#email`.
 
 ### Confirm your address
 
 ### Confirm your address
 
 The server sends no digest to an address that you did not confirm.
-When you enter or change the address on /me/settings, the server stores it as pending.
+When you enter or change the address in `/me/settings#email`, the server stores it as pending.
 The server then sends one confirmation email to the address.
 Open the link in that email in the next 24 hours.
 Push the Confirm button on the page that opens.
@@ -168,7 +197,7 @@ maintainer-mode submit --to https://<host> --token-file ~/.config/maintainer-mod
 
 The report format is the nixfresh report format, schema 1.
 
-**The upload token.** Make it on `/me/sets`. The server shows it once and
+**The upload token.** Make it in `/me/settings#upload`. The server shows it once and
 keeps only its SHA-256 hash. A new token replaces the old one. One button
 revokes it.
 
@@ -188,11 +217,11 @@ revokes it.
 - It keeps the attributes, the time of the upload, the time of the scan and
   the nixpkgs revision. It keeps nothing else from the report.
 - **Lifetime.** A set expires 90 days after its last upload. The background
-  loop deletes it. "Delete my set" on `/me/sets` deletes it at once.
-- **Access.** Only the owner sees `/me/sets`. There is no admin view. No
+  loop deletes it. "Delete my set" on the My machines tab deletes it at once.
+- **Access.** Only the owner sees the My machines tab. There is no admin view. No
   public page, count or API uses an uploaded set.
 
-**The panel.** `/me/sets` shows the attributes of your latest report and the
+**The panel.** The My machines tab of `/me` shows the attributes of your latest report and the
 packages you watch. Each row has the health flags of a package page:
 advisories, a newer upstream release, open pull requests and open issues.
 The rows that need attention come first. The package page has the last Hydra
@@ -203,12 +232,12 @@ your set, a new advisory and a new upstream release. It does not get the pull
 requests and issues of the set, because a closure has thousands of packages.
 
 **A public flake, scanned by the server.** This is off by default. When the
-operator turns it on, `/me/sets` has a form for a public flake reference
+operator turns it on, the My machines tab has a form for a public flake reference
 (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
 and an output. After each nixpkgs index, the server scans the output again.
 It keeps the result with the rules of an upload: the same redaction, the
 same index filter and the same 90-day rule. The server stops the scans of a
-person who has not opened `/me/sets` for 90 days. The rows of the panel then
+person who has not opened the My machines tab for 90 days. The rows of the panel then
 show "in a scanned flake".
 
 - The scan evaluates third-party code. Each nix step runs in a bubblewrap

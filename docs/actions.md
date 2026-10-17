@@ -4,10 +4,10 @@ The buttons that start work on your behalf, in your own repositories.
 
 ## Actions
 
-`/actions` starts work in GitHub Actions of a repository you own, with your
-token, when you press a button. Nothing runs on the Maintainer Mode host.
+Two buttons start work in GitHub Actions of a repository you own, with your
+token, when you press one. Nothing runs on the Maintainer Mode host. Signed out, `/actions` says what the buttons do. Signed in, it opens `/me/runs`.
 
-- **Review in CI**, on any pull request row or by number, starts `review.yml`
+- **Review in CI**, on any pull request row or by number on `/me/runs`, starts `review.yml`
   of your fork of
   [nixpkgs-review-gha](https://github.com/Defelo/nixpkgs-review-gha) with the
   pull request number. Its own defaults decide the rest, like posting the
@@ -20,9 +20,9 @@ token, when you press a button. Nothing runs on the Maintainer Mode host.
   given), build the package, and push `update/<attr>` to your nixpkgs fork.
   When nix-update changes something, the workflow pushes the branch. **It pushes the branch whether the build passes or not**, so a failed update is a branch to keep working on. When nix-update changes nothing, the package is already up to date. The run then passes, its summary says "already up to date", and the workflow pushes no branch.
   It never opens a pull request: the run and
-  `/actions` link the page where you open one. A second job pushes the branch.
+  `/me/runs` link the page where you open one. A second job pushes the branch.
   Only that job gets `GH_TOKEN`, and it runs no code from nixpkgs or upstream.
-- `/actions` lists your recent runs of both workflows. For the last run of each attribute, it reads the jobs of the run and shows one of these results:
+- `/me/runs` lists your recent runs of both workflows. For the last run of each attribute, it reads the jobs of the run and shows one of these results:
   - **Open a pull request**: the update and the build passed, and the branch is on your fork.
   - **See the branch, keep working**: the branch is on your fork, but the update or the build failed.
   - **already up to date**: nix-update changed nothing, so the workflow pushed no branch.
@@ -37,7 +37,7 @@ To set it up:
 3. Install the Maintainer Mode GitHub App on that repository. The App needs
    the "Actions: read and write" permission, so that your login token can
    start a workflow.
-4. Check the repository names on `/actions`. They default to
+4. Check the repository names in `/me/settings#workflows`. They default to
    `<login>/nixpkgs-review-gha` and `<login>/nixpkgs`.
 
 ### Move the pin of the reusable workflow
@@ -54,7 +54,7 @@ To set it up:
 
 ## LLMs, if you want them
 
-`/me/settings` has one choice: **"I am OK with LLMs using my data on this
+`/me/settings#llm` has one choice: **"I am OK with LLMs using my data on this
 site"**. It is off by default. Each person sets it for themselves. When it is
 off, nothing below is available to that person.
 
@@ -64,7 +64,7 @@ off, nothing below is available to that person.
 JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
 2025-06-18.
 
-- **The token.** Make it on `/me/settings`. The server shows it once and keeps
+- **The token.** Make it in `/me/settings#mcp`. The server shows it once and keeps
   only its SHA-256 hash. A new token replaces the old one. One button revokes
   it. Turning the choice off also revokes it.
 - **A request** is a POST with one JSON-RPC message and
