@@ -189,6 +189,7 @@ a:hover {
   border: 1px solid var(--borderColor-attention-emphasis);
   border-radius: 6px;
   background: var(--bgColor-attention-muted);
+  overflow-wrap: anywhere;
 }
 .blankslate {
   padding: 32px;
@@ -490,4 +491,42 @@ section.Box > .Box-header {
   .needs-keys {
     display: none;
   }
+}
+
+.decide-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr));
+  border-top: 1px solid var(--borderColor-muted);
+}
+.decide-block {
+  min-width: 0;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--borderColor-muted);
+  overflow-wrap: anywhere;
+}
+.decide-wide {
+  grid-column: 1 / -1;
+  border-bottom: 0;
+}
+.decide-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fgColor-muted);
+}
+.decide-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.decide-list li + li {
+  margin-top: 2px;
+}
+.decide-label {
+  font-weight: 600;
+  margin-right: 4px;
+}
+.decide-list summary {
+  padding: 4px 0;
+  cursor: pointer;
 }

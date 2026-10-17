@@ -50,6 +50,12 @@ const CACHE_BYTES: usize = 32 << 20;
 const CACHE_ENTRIES: usize = 256;
 /// Live reads from GitHub per minute, for the whole server.
 const LIVE_PER_MINUTE: usize = 20;
+const NOTES_SECS: u64 = 1800;
+const RUNS_SECS: u64 = 120;
+/// The panel waits this long for a release list or a run list.
+const SIDE_SECS: u64 = 5;
+const RELEASES: usize = 30;
+const TIMED_CAP: usize = 1024;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -146,14 +152,36 @@ impl<V> Lru<V> {
 type Flights<V> = Mutex<HashMap<String, Arc<OnceCell<Result<Arc<V>, String>>>>>;
 
 /// What the pages read from GitHub on demand, in memory only: the files per
-/// head commit, the discussion per update.
+/// head commit, the discussion per update, the releases of an upstream
+/// repository and the review runs of a person for a short time.
 #[derive(Default)]
 pub struct Cache {
     files: Mutex<Lru<Files>>,
     talk: Mutex<Lru<Talk>>,
     files_flights: Flights<Files>,
     talk_flights: Flights<Talk>,
+    releases: Timed<Vec<Release>>,
+    runs: Timed<Vec<crate::workflows::Run>>,
     budget: Budget,
+}
+
+type Timed<V> = Mutex<HashMap<String, (Instant, Arc<Result<V, String>>)>>;
+
+fn timed_get<V>(m: &Timed<V>, key: &str, ttl: Duration) -> Option<Arc<Result<V, String>>> {
+    let map = m.lock().unwrap();
+    let (at, v) = map.get(key)?;
+    (at.elapsed() < ttl).then(|| v.clone())
+}
+
+fn timed_put<V>(m: &Timed<V>, key: &str, ttl: Duration, v: Arc<Result<V, String>>) {
+    let mut map = m.lock().unwrap();
+    if map.len() >= TIMED_CAP {
+        map.retain(|_, (at, _)| at.elapsed() < ttl);
+        if map.len() >= TIMED_CAP {
+            map.clear();
+        }
+    }
+    map.insert(key.to_string(), (Instant::now(), v));
 }
 
 /// Keeps live reads off the budget that the sync needs.
@@ -581,6 +609,123 @@ async fn talk(app: &App, pr: &Pr, live: bool) -> Result<Arc<Talk>, String> {
     read.or_else(|e| stored.ok_or(e))
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct Release {
+    pub tag: String,
+    pub url: String,
+    pub breaking: bool,
+}
+
+fn release_of(v: &Value) -> Option<Release> {
+    if v["draft"].as_bool() == Some(true) {
+        return None;
+    }
+    Some(Release {
+        tag: v["tag_name"].as_str()?.to_string(),
+        url: v["html_url"].as_str()?.to_string(),
+        breaking: v["body"]
+            .as_str()
+            .is_some_and(|b| cut(b, BODY_CAP).to_lowercase().contains("breaking")),
+    })
+}
+
+/// One read of the latest releases of a GitHub repository per
+/// `NOTES_SECS`, for people who sign in; a failure is kept as long.
+async fn releases(app: &App, repo: &str) -> Arc<Result<Vec<Release>, String>> {
+    let cache = &app.pr_cache;
+    let ttl = Duration::from_secs(NOTES_SECS);
+    if let Some(r) = timed_get(&cache.releases, repo, ttl) {
+        return r;
+    }
+    if !cache.budget.admit(Instant::now()) {
+        return Arc::new(Err(BUSY.into()));
+    }
+    let tokens = crate::archive::tokens(app).await;
+    let url = format!("{API}/repos/{repo}/releases?per_page={RELEASES}");
+    let read = tokio::time::timeout(
+        Duration::from_secs(SIDE_SECS),
+        rest_get(&crate::github::http(), &cache.budget, &tokens, &url),
+    )
+    .await;
+    let out = match read {
+        Ok(Ok(v)) => Ok(v
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(release_of)
+            .collect()),
+        Ok(Err(e)) => Err(format!("{e:#}")),
+        Err(_) => Err(format!("GitHub did not answer in {SIDE_SECS} s")),
+    };
+    let out = Arc::new(out);
+    timed_put(&cache.releases, repo, ttl, out.clone());
+    out
+}
+
+fn tag_names(tag: &str, pname: &str, version: &str) -> bool {
+    tag == version
+        || crate::upstream::version_of(tag, pname)
+            .is_some_and(|v| v == version || v.replace('_', ".") == version)
+}
+
+/// The release page and the compare view of a bump, from a release list.
+pub(crate) fn notes_of(
+    list: &[Release],
+    repo: &str,
+    pname: &str,
+    b: &crate::prpanel::Bump,
+) -> crate::prpanel::Notes {
+    let to = list.iter().find(|r| tag_names(&r.tag, pname, &b.to));
+    let from = list.iter().find(|r| tag_names(&r.tag, pname, &b.from));
+    crate::prpanel::Notes {
+        release_url: to.map(|r| r.url.clone()),
+        compare_url: to
+            .zip(from)
+            .map(|(t, f)| format!("https://github.com/{repo}/compare/{}...{}", f.tag, t.tag)),
+        breaking: to.is_some_and(|r| r.breaking),
+    }
+}
+
+fn mentions(name: &str, n: u64) -> bool {
+    let n = n.to_string();
+    name.split(|c: char| !c.is_ascii_digit()).any(|w| w == n)
+}
+
+/// The latest run of the viewer's review workflow that names this pull
+/// request, from their last runs, read with their own token.
+async fn review_run(app: &App, login: &str, n: u64) -> crate::prpanel::Run {
+    use crate::prpanel::Run;
+    let ttl = Duration::from_secs(RUNS_SECS);
+    let list = match timed_get(&app.pr_cache.runs, login, ttl) {
+        Some(l) => l,
+        None => {
+            let Some(token) = app.store.token_for(login).ok().flatten() else {
+                return Run::Unknown("no GitHub token in your session".into());
+            };
+            let repo = crate::actions::repos(app, login).review;
+            let read = tokio::time::timeout(
+                Duration::from_secs(SIDE_SECS),
+                crate::workflows::runs(&token, &repo, crate::workflows::REVIEW),
+            )
+            .await;
+            let out = Arc::new(match read {
+                Ok(Ok(runs)) => Ok(runs),
+                Ok(Err(e)) => Err(format!("{e:#}")),
+                Err(_) => Err(format!("GitHub did not answer in {SIDE_SECS} s")),
+            });
+            timed_put(&app.pr_cache.runs, login, ttl, out.clone());
+            out
+        }
+    };
+    match &*list {
+        Ok(runs) => runs
+            .iter()
+            .find(|r| mentions(&r.name, n))
+            .map_or(Run::None, |r| Run::Found(r.clone())),
+        Err(e) => Run::Unknown(e.clone()),
+    }
+}
+
 fn cut(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;
@@ -943,7 +1088,7 @@ fn state_label(pr: &Pr) -> String {
     format!("<span class=\"Label {class}\">{ic} {word}</span>{draft}")
 }
 
-fn ci_text(ci: Option<&str>) -> String {
+pub(crate) fn ci_text(ci: Option<&str>) -> String {
     match ci {
         Some("SUCCESS") => format!(
             "<span class=\"color-fg-success\">{} checks pass</span>",
@@ -1165,7 +1310,7 @@ fn touched_html(list: &[Touched]) -> String {
     out
 }
 
-fn checklist(pr: &Pr, act: Act) -> String {
+fn checklist(pr: &Pr) -> String {
     let items: [(&str, String); 7] = [
         (
             "The commit messages follow the nixpkgs format, like <code>hello: 2.12 -&gt; 2.13</code> or <code>nixos/nginx: fix the test</code>.",
@@ -1217,17 +1362,6 @@ fn checklist(pr: &Pr, act: Act) -> String {
         },
         ai_text(pr.ai.as_deref())
     );
-    let buttons = if pr.is_open() {
-        act.buttons(pr.number)
-    } else {
-        String::new()
-    };
-    if !buttons.is_empty() {
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">{buttons}</div>"
-        );
-    }
     out.push_str(
         "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You write your review on GitHub.</div></div>",
     );
@@ -1483,6 +1617,32 @@ fn not_synced(app: &App, viewer: Option<&str>, n: u64) -> Response {
         .render(app, viewer)
 }
 
+/// The GitHub repository and package name whose releases tell about a bump.
+fn bump_source(
+    index: &Index,
+    list: &[Touched],
+    b: &crate::prpanel::Bump,
+) -> Option<(String, String)> {
+    let attr = crate::prpanel::bumped(index, list, b)?;
+    let p = index.pkgs.get(attr)?;
+    let repo = crate::prpanel::github_repo(p.facts.as_ref()?.src_url.as_deref()?)?;
+    Some((repo, p.pname.clone()))
+}
+
+async fn notes(
+    app: &App,
+    live: bool,
+    source: Option<(String, String)>,
+    b: Option<crate::prpanel::Bump>,
+) -> Option<crate::prpanel::Notes> {
+    let ((repo, pname), b) = source.zip(b).filter(|_| live)?;
+    let list = releases(app, &repo).await;
+    list.as_ref()
+        .as_ref()
+        .ok()
+        .map(|l| notes_of(l, &repo, &pname, &b))
+}
+
 async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u64>) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
@@ -1490,9 +1650,26 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         return not_synced(&app, viewer.as_deref(), n);
     };
     let live = viewer.is_some();
-    let (files, talk) = tokio::join!(files(&app, pr, live), talk(&app, pr, live));
     let h = app.health.read().unwrap().clone();
-    let list = touched(&s, &app.index.read().unwrap(), &h, pr);
+    let bump = crate::prpanel::bump(&pr.title);
+    let (list, source) = {
+        let index = app.index.read().unwrap();
+        let list = touched(&s, &index, &h, pr);
+        let source = bump.as_ref().and_then(|b| bump_source(&index, &list, b));
+        (list, source)
+    };
+    let run = async {
+        match viewer.as_deref() {
+            Some(v) => Some(review_run(&app, v, n).await),
+            None => None,
+        }
+    };
+    let (files, talk, notes, run) = tokio::join!(
+        files(&app, pr, live),
+        talk(&app, pr, live),
+        notes(&app, live, source, bump),
+        run
+    );
     let place = place(&s, pr);
     let for_you = place.queue == "review"
         && viewer.as_deref().is_some_and(|v| {
@@ -1503,6 +1680,48 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         });
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
     let act = Act::of(&app, viewer.as_deref());
+    let author = crate::profile::facts(&app, &s, &pr.author);
+    let hydra: Vec<(String, Option<crate::health::Last>)> = list
+        .iter()
+        .filter_map(|t| match &t.subject {
+            Subject::Pkg(a) => Some(a.clone()),
+            _ => None,
+        })
+        .take(3)
+        .map(|a| {
+            let last = app.hydra.known(&crate::health::Hydra::package_job(&a));
+            (a, last)
+        })
+        .collect();
+    let mine: Option<std::collections::BTreeSet<String>> = viewer
+        .as_deref()
+        .map(|v| crate::sets::set_attrs(&app, v).into_iter().collect());
+    let panel = {
+        let index = app.index.read().unwrap();
+        crate::prpanel::render(&crate::prpanel::Ctx {
+            pr,
+            body: talk.as_ref().ok().map(|t| t.body.as_str()),
+            files: match &files {
+                Ok(f) => Ok(&f.files),
+                Err(e) => Err(e.as_str()),
+            },
+            touched: &list,
+            index: &index,
+            health: &h,
+            committers: &s.committers,
+            author: &author,
+            hydra: &hydra,
+            run: run.as_ref(),
+            notes: notes.as_ref(),
+            mine: mine.as_ref(),
+            buttons: if pr.is_open() {
+                act.buttons(n)
+            } else {
+                String::new()
+            },
+            extra_actions: String::new(),
+        })
+    };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
         .heading(format!(
             "{} <span class=\"text-nowrap\"><span class=\"color-fg-muted\">#{n}</span>{}</span>",
@@ -1517,11 +1736,12 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             a = esc(&pr.author)
         ))
         .actions(exits(n) + &crate::needs::here(&app, &headers, &format!("pr:{n}")));
-    let mut out = about(pr);
+    let mut out = panel;
+    out.push_str(&description_html(pr, &talk));
+    out.push_str(&about(pr));
     out.push_str(&place_html(&place, &credits, for_you));
     out.push_str(&touched_html(&list));
-    out.push_str(&description_html(pr, &talk));
-    out.push_str(&checklist(pr, act));
+    out.push_str(&checklist(pr));
     out.push_str(&files_html(pr, &files));
     out.push_str(&talk_html(pr, &talk));
     page.body(out).render(&app, viewer.as_deref())
@@ -1544,6 +1764,11 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
     let h = app.health.read().unwrap().clone();
     let list = touched(&s, &app.index.read().unwrap(), &h, pr);
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
+    let decision = crate::prpanel::summary(
+        pr,
+        talk.as_ref().ok().map(|t| t.body.as_str()),
+        files.as_ref().ok().map(|f| f.files.as_slice()),
+    );
     let (files, files_error) = match files {
         Ok(f) => (json!(*f), Value::Null),
         Err(e) => (Value::Null, json!(e)),
@@ -1580,6 +1805,7 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
         "files_error": files_error,
         "discussion": talk,
         "discussion_error": talk_error,
+        "decision": decision,
         "review_on_github": format!("{}/files", github_url(n)),
     }))
     .into_response()
@@ -1793,12 +2019,19 @@ mod tests {
         assert!(html.contains("<span class=\"diff-add\">+2</span>"));
         assert!(html.contains("https://github.com/NixOS/nixpkgs/pull/42/files\""));
         assert!(html.contains("its author is not in the queues"));
+        assert!(
+            html.find("id=\"decide\"").unwrap() < html.find(">Description</h2>").unwrap(),
+            "the panel comes before the description"
+        );
+        assert!(html.contains("<code>1</code> → <code>&lt;2&gt;</code>"));
         let (status, api) = body(api_pr(State(app.clone()), Path(42)).await).await;
         assert_eq!(status, StatusCode::OK);
         let v: Value = serde_json::from_str(&api).unwrap();
         assert_eq!(v["files"]["files"][0]["additions"], 1);
         assert_eq!(v["discussion"]["body"], "**bold** <b>raw</b> <i>no</i>");
         assert_eq!(v["queue"]["queue"], "none");
+        assert_eq!(v["decision"]["kind"], "update");
+        assert_eq!(v["decision"]["bump"]["to"], "<2>");
 
         let (status, html) =
             body(pr_page(State(app.clone()), HeaderMap::new(), Path(1)).await).await;
@@ -1904,6 +2137,62 @@ mod tests {
         assert_eq!(v["files_error"], NOT_LIVE);
         assert_eq!(v["discussion_error"], NOT_LIVE);
         assert_eq!(app.pr_cache.budget.window.lock().unwrap().1, 0);
+    }
+
+    #[test]
+    fn a_release_list_gives_the_release_and_the_compare_view() {
+        let rel = |tag: &str, breaking: bool| Release {
+            tag: tag.into(),
+            url: format!("https://github.com/curl/curl/releases/tag/{tag}"),
+            breaking,
+        };
+        let list = [rel("curl-8_10_0", true), rel("curl-8_9_1", false)];
+        let b = crate::prpanel::bump("curl: 8.9.1 -> 8.10.0").unwrap();
+        let n = notes_of(&list, "curl/curl", "curl", &b);
+        assert_eq!(
+            n.release_url.as_deref(),
+            Some("https://github.com/curl/curl/releases/tag/curl-8_10_0")
+        );
+        assert_eq!(
+            n.compare_url.as_deref(),
+            Some("https://github.com/curl/curl/compare/curl-8_9_1...curl-8_10_0")
+        );
+        assert!(n.breaking);
+        let n = notes_of(&list[..1], "curl/curl", "curl", &b);
+        assert!(n.compare_url.is_none());
+        let none = notes_of(&[], "curl/curl", "curl", &b);
+        assert!(none.release_url.is_none() && !none.breaking);
+        assert!(mentions("nixpkgs-review #123 on x86_64-linux", 123));
+        assert!(!mentions("nixpkgs-review #1234", 123));
+    }
+
+    #[tokio::test]
+    async fn a_visitor_sees_no_machines_of_anyone() {
+        let app = crate::sets::tests::app(&["hello"]);
+        app.store
+            .put_package_set(
+                "alice",
+                &crate::store::PackageSet {
+                    attrs: vec!["hello".into()],
+                    dropped: 0,
+                    uploaded_at: Utc::now(),
+                    scanned_at: None,
+                    nixpkgs_rev: None,
+                },
+            )
+            .unwrap();
+        let mut p = pr(44, "alice", 0);
+        p.title = "hello: 1.0 -> 2.0".into();
+        p.files = vec!["pkgs/by-name/he/hello/package.nix".into()];
+        app.store.put_prs(std::slice::from_ref(&p)).unwrap();
+        app.recompute().unwrap();
+        let (status, html) =
+            body(pr_page(State(app.clone()), HeaderMap::new(), Path(44)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("id=\"decide-change\""));
+        assert!(!html.contains("on your machines"));
+        assert!(!html.contains("Your nixpkgs-review"));
+        assert!(!html.contains("decide-security"));
     }
 
     #[test]
