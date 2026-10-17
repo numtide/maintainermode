@@ -165,7 +165,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/a/pkgs/by-name -o /tmp/area && grep -q 'pkgs/by-name/' /tmp/area")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/review?tab=bumps' -o /tmp/bumps && grep -q 'No open version bump' /tmp/bumps && grep -q 'package-updates' /tmp/bumps")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/api/v1/prs?queue=bumps' -o /tmp/bumps.json && grep -q '\"queue\":\"bumps\"' /tmp/bumps.json && grep -q '\"total\":0' /tmp/bumps.json")
-    machine.succeed("curl -sf http://127.0.0.1:8790/u/nobody/maintains -o /tmp/page && grep -q 'What nobody maintains' /tmp/page")
+    machine.succeed("curl -sf http://127.0.0.1:8790/u/nobody/maintains -o /tmp/page && grep -q 'What nobody maintains' /tmp/page && ! grep -q 'href=\"/packages\" aria-current' /tmp/page")
     machine.succeed("grep -q 'selected\" href=\"/u/nobody/maintains\" aria-current=\"page\">Maintains</a>' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/u/nobody -o /tmp/person && grep -q 'selected\" href=\"/u/nobody\" aria-current=\"page\">Record</a>' /tmp/person && grep -q 'href=\"/u/nobody/maintains\"' /tmp/person")
     machine.succeed("curl -s -o /dev/null -w '%{redirect_url}' 'http://127.0.0.1:8790/record?login=nobody' > /tmp/record.loc && grep -q '/u/nobody$' /tmp/record.loc")
