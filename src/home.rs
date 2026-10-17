@@ -224,8 +224,8 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
             let mut line = String::new();
             let _ = write!(
                 line,
-                "<div class=\"Box-row d-flex\"><span class=\"flex-auto\">{}</span>\
-                 <span class=\"Label\">{state}</span></div>",
+                "<div class=\"Box-row d-flex flex-items-start gap-2\"><span class=\"flex-auto min-width-0\">{}</span>\
+                 <span class=\"Label flex-shrink-0\">{state}</span></div>",
                 crate::prpage::title_link(
                     p.number,
                     &format!("#{} {}", p.number, esc(&p.title)),
