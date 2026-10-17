@@ -244,6 +244,13 @@ pub(crate) fn tab(
     if let (true, Some(v)) = (only_mine, viewer) {
         rows = mine(app, index, v, true, rows);
     }
+    let json = match (only_mine, viewer.as_deref()) {
+        (true, Some(v)) => format!(
+            "/api/v1/prs?queue=bumps&amp;login={}",
+            crate::github::urlencode(v)
+        ),
+        _ => "/api/v1/prs?queue=bumps".to_string(),
+    };
     let mut out = format!(
         "<p>Open pull requests with a title like <code>name: old -&gt; new</code>. Most come from r-ryantm. Oldest first. \
          Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>.</p>"
@@ -274,7 +281,7 @@ pub(crate) fn tab(
     }
     let _ = write!(
         out,
-        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/prs?queue=bumps\">JSON</a></p>",
+        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"{json}\">JSON</a></p>",
         rows.len(),
         median_age_days(&rows, Utc::now())
             .map(|d| format!(", median age {d} days"))
