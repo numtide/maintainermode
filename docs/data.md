@@ -194,7 +194,7 @@ An empty list turns the archive off.
 - **Cache.** The server keeps the files per head commit and the conversation per update. It keeps them in memory only, up to 32 MB. A restart clears them.
 - **Crawlers.** `/robots.txt` tells crawlers to stay off `/pr/` and `/api/v1/prs/`.
 - **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
-- **To act**, use "Review on GitHub" or "Open on GitHub". Maintainer Mode posts nothing on nixpkgs.
+- **To act**, use "Review the diff on GitHub" or "Open on GitHub" in the page header. Maintainer Mode writes nothing to nixpkgs.
 - A pull request that is not in the synced data gets a short page with a link to GitHub.
 - `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request that is not synced gets 404 and `{"error": …, "url": …}`.
 
