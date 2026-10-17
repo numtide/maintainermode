@@ -7,7 +7,7 @@
   evaluator ? null,
 }:
 let
-  primer = callPackage ./nix/primer.nix { };
+  primer = callPackage ./nix/primer.nix { classes = ./src; };
 in
 rustPlatform.buildRustPackage {
   pname = "maintainer-mode";

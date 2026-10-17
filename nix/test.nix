@@ -74,7 +74,6 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -D /tmp/w1.h -o /dev/null http://127.0.0.1:8790/welcome && grep -q '^HTTP/1.1 308' /tmp/w1.h && grep -qi '^location: /#start' /tmp/w1.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d done=1 http://127.0.0.1:8790/me/start > /tmp/w2 && grep -q 303 /tmp/w2")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/page && grep -q move_days /tmp/page")
-    machine.succeed("curl -sf http://127.0.0.1:8790/static/primer.css >/dev/null")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=rules' -o /tmp/rules && grep -q 'id=\"the-rules\"' /tmp/rules")
     machine.succeed("grep -q 'id=\"contributor-guide\"' /tmp/rules && grep -q 'nixpkgs/blob/master/pkgs/README.md' /tmp/rules")
     machine.succeed("grep -q 'selected\" href=\"/state?tab=rules\" aria-current=\"page\">Rules</a>' /tmp/rules")
@@ -86,6 +85,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'selected\" href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">0</span>' /tmp/review")
     machine.succeed("grep -q 'href=\"/review?tab=bumps\">Bumps' /tmp/review && grep -q 'href=\"/review?tab=ready\">Ready to merge' /tmp/review")
     machine.succeed("grep -q '<title>Review · Maintainer Mode</title>' /tmp/review")
+    # style sheets carry a hash in their name and stay cached for a year
+    machine.succeed("grep -o 'href=\"/static/primer\\.[0-9a-f]*\\.css\"' /tmp/review | cut -d'\"' -f2 > /tmp/css.path")
+    machine.succeed("curl -sf -D /tmp/css.h -o /tmp/css http://127.0.0.1:8790$(cat /tmp/css.path) && grep -qi '^cache-control: public, max-age=31536000, immutable' /tmp/css.h")
+    machine.succeed("grep -q 'data-dark-theme=dark' /tmp/css && ! grep -q dark_dimmed /tmp/css")
+    machine.fail("curl -sf http://127.0.0.1:8790/static/primer.css")
     # icons point into one hidden sprite on the page
     machine.succeed("grep -q '<use href=\"#i-eye\">' /tmp/review && grep -q '<symbol id=\"i-eye\"' /tmp/review")
     machine.succeed("grep -q 'href=\"/review\" aria-current=\"page\"' /tmp/review")

@@ -1,6 +1,16 @@
 # Primer CSS and the Octicons the pages use, from the npm registry tarballs.
 # Both MIT; the licence files are kept next to the assets.
-{ fetchurl, runCommand }:
+#
+# With `classes`, a directory of sources, primer.css keeps only the rules
+# whose classes appear in it, and only the light and dark themes. Without
+# it, primer.css is the full file.
+{
+  lib,
+  fetchurl,
+  runCommand,
+  lightningcss,
+  classes ? null,
+}:
 let
   css = fetchurl {
     url = "https://registry.npmjs.org/@primer/css/-/css-22.3.2.tgz";
@@ -48,12 +58,18 @@ let
     "comment"
     "checklist"
   ];
+  trim = ''
+    find ${classes} -type f -exec cat {} + | tr -cs 'A-Za-z0-9_-' '\n' | sort -u > words
+    lightningcss --targets 'chrome >= 90, firefox >= 90, safari >= 14' css/package/dist/primer.css -o pretty.css
+    awk -f ${./purge-css.awk} words pretty.css > purged.css
+    lightningcss --minify --targets 'chrome >= 90, firefox >= 90, safari >= 14' purged.css -o $out/primer.css
+  '';
 in
-runCommand "primer-assets" { } ''
+runCommand "primer-assets" { nativeBuildInputs = lib.optional (classes != null) lightningcss; } ''
   mkdir -p css oct $out/octicons
   tar xzf ${css} -C css
   tar xzf ${octicons} -C oct
-  cp css/package/dist/primer.css $out/primer.css
+  ${if classes == null then "cp css/package/dist/primer.css $out/primer.css" else trim}
   cp css/package/LICENSE $out/LICENSE.primer-css
   cp oct/package/LICENSE $out/LICENSE.octicons
   for i in ${toString icons}; do
