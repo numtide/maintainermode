@@ -9,7 +9,6 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use std::collections::HashSet;
 
-use crate::ui::{Page, Section};
 use crate::web::{App, Shared, icon, octicon};
 
 const DONE: &str = "welcome_done";
@@ -49,7 +48,8 @@ const GUIDES: [(&str, &str, &str); 5] = [
 
 pub fn routes() -> Router<Shared> {
     Router::new()
-        .route("/welcome", get(welcome_page).post(save_done))
+        .route("/welcome", get(|| async { Redirect::permanent("/#start") }))
+        .route("/me/start", post(save_done))
         .route("/intro/dismiss", post(dismiss_intro))
 }
 
@@ -203,7 +203,7 @@ fn mark(done: bool) -> Mark {
 }
 
 fn checklist(f: &Facts) -> String {
-    let mut out = String::from("<div class=\"Box mb-4\">");
+    let mut out = String::new();
     if !f.index_ready {
         out.push_str(&step(
             Mark::Todo,
@@ -304,30 +304,55 @@ fn checklist(f: &Facts) -> String {
             "Maintainer Mode helps you find work. nixpkgs decides how the work is done.<ul class=\"ml-3 mt-1\">{guides}</ul>"
         ),
     ));
-    out.push_str("</div>");
     out
 }
 
-async fn welcome_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
+fn done_form(done: bool, label: &str) -> String {
+    format!(
+        "<form method=\"post\" action=\"/me/start\"><input type=\"hidden\" name=\"done\" value=\"{}\">\
+         <button class=\"btn btn-sm\" type=\"submit\">{label}</button></form>",
+        if done { "1" } else { "" },
+    )
+}
+
+/// The Get started card of the home page, until the person hides it.
+pub fn card(app: &App, login: &str) -> String {
+    if !pending(app, login) {
+        return String::new();
+    }
+    format!(
+        "<section class=\"Box mb-4\" id=\"start\"><div class=\"Box-header d-flex flex-items-center\">\
+         <h2 class=\"Box-title flex-auto\">Get started</h2>{}</div>\
+         <div class=\"Box-row f6 color-fg-muted\">Your first steps, from your real state. Only you see this card.</div>{}</section>",
+        done_form(true, "Hide"),
+        checklist(&Facts::of(app, login))
+    )
+}
+
+/// The `#start` section of `/me/settings`.
+pub fn settings_box(app: &App, login: &str) -> String {
+    let (text, form) = if pending(app, login) {
+        (
+            "The home page shows the Get started card.",
+            done_form(true, "Hide the card"),
+        )
+    } else {
+        (
+            "You hid the Get started card.",
+            done_form(false, "Show the card again"),
+        )
     };
-    let done = !pending(&app, &login);
-    let button = format!(
-        "<form method=\"post\" action=\"/welcome\"><input type=\"hidden\" name=\"done\" value=\"{}\">\
-         <button class=\"btn btn-sm\" type=\"submit\">{}</button></form>",
-        if done { "" } else { "1" },
-        if done {
-            "Show \"Get started\" again"
-        } else {
-            "I am done, hide \"Get started\""
-        }
-    );
-    Page::new(Section::Home, "Get started")
-        .sub("Your first steps, from your real state. Come back to this page at any time. Only you see it.")
-        .actions(button)
-        .body(checklist(&Facts::of(&app, &login)))
-        .render(&app, Some(&login))
+    format!(
+        "<div id=\"start\">{}</div>",
+        crate::ui::section(
+            &format!("{} Get started", icon(octicon!("checklist"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row d-flex flex-wrap flex-items-center gap-2\"><span class=\"flex-auto\">{text}</span>{form}</div>"
+            )
+        )
+    )
 }
 
 #[derive(Deserialize)]
@@ -348,7 +373,7 @@ async fn save_done(
     if let Err(e) = app.store.set_setting(&login, DONE, v) {
         return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to(if v == "1" { "/" } else { "/welcome" }).into_response()
+    Redirect::to(if v == "1" { "/" } else { "/#start" }).into_response()
 }
 
 #[cfg(test)]
@@ -427,5 +452,17 @@ mod tests {
         assert!(!first_visit(&app, "alice"));
         app.store.set_setting("alice", DONE, "1").unwrap();
         assert!(!pending(&app, "alice"));
+    }
+
+    #[test]
+    fn the_card_shows_until_it_is_hidden() {
+        let app = crate::sets::tests::app(&[]);
+        let card = card(&app, "alice");
+        assert!(card.contains("id=\"start\""));
+        assert!(card.contains("action=\"/me/start\""));
+        assert!(settings_box(&app, "alice").contains("Hide the card"));
+        app.store.set_setting("alice", DONE, "1").unwrap();
+        assert!(super::card(&app, "alice").is_empty());
+        assert!(settings_box(&app, "alice").contains("Show the card again"));
     }
 }

@@ -183,7 +183,7 @@ fn menu(app: &App, viewer: Option<&str>) -> String {
         n => format!(" <span class=\"Counter\" title=\"unread in your inbox\">{n}</span>"),
     };
     let start = if crate::welcome::pending(app, v) {
-        "<a href=\"/welcome\">Get started</a>"
+        "<a href=\"/#start\">Get started</a>"
     } else {
         ""
     };

@@ -44,7 +44,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-const SETTINGS: [(&str, &str); 8] = [
+const SETTINGS: [(&str, &str); 9] = [
     ("email", "Email"),
     ("feed", "Feed"),
     ("upload", "Upload"),
@@ -53,6 +53,7 @@ const SETTINGS: [(&str, &str); 8] = [
     ("workflows", "Workflows"),
     ("tags", "Tags"),
     ("goal", "Goal"),
+    ("start", "Get started"),
 ];
 
 #[derive(Deserialize)]
@@ -77,6 +78,7 @@ async fn settings_page(
         crate::actions::repos_box(&app, &login),
         crate::web::tags_box(&app, &login),
         crate::progress::goal_box(&app, &login),
+        crate::welcome::settings_box(&app, &login),
     ]
     .concat();
     let jump = SETTINGS
@@ -261,6 +263,7 @@ mod tests {
             "/me/settings/workflows",
             "/me/tags",
             "/me/progress",
+            "/me/start",
         ] {
             assert!(html.contains(&format!("action=\"{action}\"")), "{action}");
         }

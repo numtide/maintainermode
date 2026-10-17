@@ -739,7 +739,7 @@ async fn callback(
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     let next = if crate::welcome::first_visit(&app, &login) {
-        "/welcome"
+        "/"
     } else {
         "/review"
     };
