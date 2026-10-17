@@ -115,6 +115,7 @@ impl Store {
                address TEXT NOT NULL,
                created_at TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS mail_log (login TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL);
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -946,6 +947,54 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM mail_confirm WHERE login = ?1", [login])?;
         Ok(())
+    }
+
+    /// Logs an email of `kind` when it fits under both limits of the 24
+    /// hours before `now`: `total_max` for the server, `own_max` for this
+    /// login and kind. A refused email is logged as skipped, with no login.
+    pub fn take_mail_slot(
+        &self,
+        login: &str,
+        kind: &str,
+        total_max: usize,
+        own_max: usize,
+        now: DateTime<Utc>,
+    ) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let since = (now - chrono::Duration::days(1)).to_rfc3339();
+        conn.execute(
+            "DELETE FROM mail_log WHERE at < ?1",
+            [(now - chrono::Duration::days(2)).to_rfc3339()],
+        )?;
+        let total: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mail_log WHERE kind != 'skipped' AND at >= ?1",
+            [&since],
+            |r| r.get(0),
+        )?;
+        let own: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM mail_log WHERE login = ?1 AND kind = ?2 AND at >= ?3",
+            [login, kind, &since],
+            |r| r.get(0),
+        )?;
+        let fits = (total as usize) < total_max && (own as usize) < own_max;
+        let (who, what) = if fits { (login, kind) } else { ("", "skipped") };
+        conn.execute(
+            "INSERT INTO mail_log (login, kind, at) VALUES (?1, ?2, ?3)",
+            [who, what, &now.to_rfc3339()],
+        )?;
+        Ok(fits)
+    }
+
+    /// Emails sent and skipped since `since`, for /sync.
+    pub fn mail_counts(&self, since: DateTime<Utc>) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap();
+        let (sent, skipped): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*) FILTER (WHERE kind != 'skipped'), COUNT(*) FILTER (WHERE kind = 'skipped')
+             FROM mail_log WHERE at >= ?1",
+            [since.to_rfc3339()],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((sent as usize, skipped as usize))
     }
 
     pub fn purge_confirmations(&self, before: DateTime<Utc>) -> Result<usize> {

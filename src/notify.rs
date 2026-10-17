@@ -329,6 +329,9 @@ fn mail_note(mail: Option<&str>) -> &'static str {
         Some("unconfirmed") => {
             "Confirm your address first: open the link in the confirmation email."
         }
+        Some("limit") => {
+            "The server reached its daily email limit, or you got 3 confirmation emails today. Try again tomorrow."
+        }
         _ => "",
     }
 }
@@ -515,6 +518,9 @@ fn new_confirmation(
 
 /// Sends one confirmation email and gives the note for the settings page.
 async fn request_confirmation(app: &App, smtp: &Smtp, login: &str, address: &str) -> &'static str {
+    if !take_slot(app, smtp, login, Mail::Confirm) {
+        return "limit";
+    }
     let token = match new_confirmation(app, login, address, Utc::now()) {
         Ok(t) => t,
         Err(e) => {
@@ -645,6 +651,9 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
+    if !take_slot(&app, smtp, &login, Mail::Test) {
+        return back("limit");
+    }
     let body = format!(
         "This is a test email from Maintainer Mode, sent because {login} asked for it on the settings page.\n\
          The daily digest comes from the same address.\n"
@@ -717,11 +726,61 @@ pub struct SmtpArgs {
     /// The sender, like `Maintainer Mode <noreply@example.org>`.
     #[arg(long = "smtp-from", env = "MAINTAINER_MODE_SMTP_FROM")]
     from: Option<String>,
+    /// Emails in 24 hours for the whole server, of every kind.
+    #[arg(
+        long = "mail-per-day",
+        env = "MAINTAINER_MODE_MAIL_PER_DAY",
+        default_value_t = 500
+    )]
+    mail_per_day: usize,
 }
 
 pub struct Smtp {
     transport: AsyncSmtpTransport<Tokio1Executor>,
     from: Mailbox,
+    pub per_day: usize,
+}
+
+const CONFIRMS_PER_DAY: usize = 3;
+
+#[derive(Clone, Copy)]
+enum Mail {
+    Confirm,
+    Test,
+    Digest,
+}
+
+impl Mail {
+    fn key(self) -> &'static str {
+        match self {
+            Mail::Confirm => "confirm",
+            Mail::Test => "test",
+            Mail::Digest => "digest",
+        }
+    }
+}
+
+/// False when the email would go over the server limit, or over the
+/// confirmations a person gets in a day.
+fn take_slot(app: &App, smtp: &Smtp, login: &str, kind: Mail) -> bool {
+    let own_max = match kind {
+        Mail::Confirm => CONFIRMS_PER_DAY,
+        Mail::Test | Mail::Digest => usize::MAX,
+    };
+    match app
+        .store
+        .take_mail_slot(login, kind.key(), smtp.per_day, own_max, Utc::now())
+    {
+        Ok(true) => true,
+        Ok(false) => {
+            tracing::warn!("{} email skipped: over a daily email limit", kind.key());
+            false
+        }
+        Err(e) => {
+            tracing::warn!("email limit: {e:#}");
+            false
+        }
+    }
 }
 
 impl SmtpArgs {
@@ -752,6 +811,7 @@ impl SmtpArgs {
         tracing::info!("email digest through {host}:{}", self.port);
         Ok(Some(Smtp {
             transport: b.build(),
+            per_day: self.mail_per_day,
             from,
         }))
     }
@@ -902,6 +962,9 @@ async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
         let list = digest_selection(&events, read_at(app, &login), last, &kinds(app, &login));
         if list.is_empty() {
             continue;
+        }
+        if !take_slot(app, smtp, &login, Mail::Digest) {
+            break;
         }
         let subject = format!("Maintainer Mode: {} new", list.len());
         match send(app, smtp, &login, &address, &subject, digest_body(&list)).await {
@@ -1194,6 +1257,7 @@ mod tests {
             user: user.map(Into::into),
             password_file: None,
             from: from.map(Into::into),
+            mail_per_day: 500,
         };
         assert!(args(None, None, None).config("").unwrap().is_none());
         assert!(
@@ -1274,6 +1338,7 @@ mod tests {
             user: None,
             password_file: None,
             from: Some("Maintainer Mode <mm@example.org>".into()),
+            mail_per_day: 0,
         }
         .config("https://mm.example")
         .unwrap();
@@ -1368,6 +1433,76 @@ mod tests {
         assert!(confirmed_address(&app, "alice").is_none());
         app.store.purge_confirmations(now).unwrap();
         assert!(app.store.confirmation(&token_hash(&old)).unwrap().is_none());
+    }
+
+    #[test]
+    fn the_email_limits_count_a_rolling_day_and_skip_without_a_login() {
+        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = Utc::now();
+        let take = |login: &str, kind: Mail, at: DateTime<Utc>| {
+            let own = if matches!(kind, Mail::Confirm) {
+                CONFIRMS_PER_DAY
+            } else {
+                usize::MAX
+            };
+            s.take_mail_slot(login, kind.key(), 5, own, at).unwrap()
+        };
+        let old = now - Duration::hours(25);
+        for _ in 0..CONFIRMS_PER_DAY {
+            assert!(take("alice", Mail::Confirm, old));
+        }
+        for _ in 0..CONFIRMS_PER_DAY {
+            assert!(take("alice", Mail::Confirm, now));
+        }
+        assert!(!take("alice", Mail::Confirm, now));
+        assert!(take("bob", Mail::Confirm, now));
+        assert!(take("alice", Mail::Test, now));
+        assert!(!take("carol", Mail::Digest, now));
+        assert!(!take("carol", Mail::Confirm, now));
+        assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 3));
+        assert!(take("alice", Mail::Confirm, now + Duration::hours(25)));
+    }
+
+    #[tokio::test]
+    async fn over_the_server_limit_no_confirmation_goes_out() {
+        let mut app = crate::sets::tests::app(&[]);
+        std::sync::Arc::get_mut(&mut app).unwrap().smtp = SmtpArgs {
+            host: Some("smtp.example.org".into()),
+            port: 587,
+            user: None,
+            password_file: None,
+            from: Some("mm@example.org".into()),
+            mail_per_day: 0,
+        }
+        .config("https://mm.example")
+        .unwrap();
+        let h = signed_in(&app, "alice");
+        let form = NotifyForm {
+            k_pr: None,
+            k_issue: None,
+            k_advisory: None,
+            k_release: None,
+            email: Some("alice@example.org".into()),
+        };
+        let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
+        assert_eq!(
+            r.headers()[header::LOCATION],
+            "/me/settings?mail=limit#notify"
+        );
+        let r = resend_confirmation(State(app.clone()), h).await;
+        assert_eq!(
+            r.headers()[header::LOCATION],
+            "/me/settings?mail=limit#notify"
+        );
+        assert_eq!(
+            app.store
+                .mail_counts(Utc::now() - Duration::days(1))
+                .unwrap(),
+            (0, 2)
+        );
+        let sync = crate::status::state(&app);
+        assert_eq!(sync["email"]["skipped_24h"], 2);
+        assert!(!sync.to_string().contains("alice"));
     }
 
     #[test]

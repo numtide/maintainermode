@@ -169,6 +169,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'does not scan flakes' /tmp/r5.body")
     machine.succeed("curl -sf http://127.0.0.1:8790/sync -o /tmp/sync && grep -q 'Flake rescans' /tmp/sync && grep -q 'off on this server' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q '\"rescans\":{\"enabled\":false' /tmp/sync.json")
+    machine.succeed("grep -q 'Notification emails' /tmp/sync && grep -q 'did not set up SMTP' /tmp/sync")
+    machine.succeed("grep -q '\"email\":{\"enabled\":false,\"per_day\":null,\"sent_24h\":0,\"skipped_24h\":0}' /tmp/sync.json")
     machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_RESCAN /tmp/env")
     machine.succeed("cp -rL /etc/scan /tmp/scan")
     machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top --nixpkgs ./nixpkgs")

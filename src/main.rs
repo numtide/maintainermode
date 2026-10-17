@@ -1107,6 +1107,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_command_line_has_unique_arguments() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
     fn retry_backs_off_and_caps() {
         let waits: Vec<u64> = (0..9).map(|f| retry_wait(f, 600)).collect();
         assert_eq!(waits, [5, 10, 20, 40, 80, 160, 300, 300, 300]);

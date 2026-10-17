@@ -201,6 +201,12 @@ in
         example = "Maintainer Mode <noreply@example.org>";
         description = "The sender of the digest.";
       };
+
+      perDay = lib.mkOption {
+        type = lib.types.ints.unsigned;
+        default = 500;
+        description = "Emails in 24 hours for the whole server: digests, test emails and confirmations. Over it, the server skips the email and logs it.";
+      };
     };
 
     eventCopy = {
@@ -291,6 +297,7 @@ in
         MAINTAINER_MODE_SMTP_HOST = cfg.smtp.host;
         MAINTAINER_MODE_SMTP_PORT = toString cfg.smtp.port;
         MAINTAINER_MODE_SMTP_FROM = cfg.smtp.from;
+        MAINTAINER_MODE_MAIL_PER_DAY = toString cfg.smtp.perDay;
       }
       // lib.optionalAttrs (cfg.smtp.enable && cfg.smtp.user != null) {
         MAINTAINER_MODE_SMTP_USER = cfg.smtp.user;
