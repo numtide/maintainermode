@@ -255,10 +255,6 @@ enum Command {
         /// A flake output or a file attribute; repeat for several
         #[arg(long = "output", alias = "attr")]
         outputs: Vec<String>,
-        /// nixpkgs to match names against: a path or a flake reference.
-        /// By default the revision the tree pins.
-        #[arg(long)]
-        nixpkgs: Option<String>,
         /// The lock entry or npins pin of nixpkgs, when it is not `nixpkgs`
         #[arg(long)]
         nixpkgs_input: Option<String>,
@@ -270,15 +266,19 @@ enum Command {
         #[arg(long, default_value = SCAN_FILE)]
         out: PathBuf,
     },
-    /// Write the redacted report: only packages with a nixpkgs attribute
+    /// Write the strict report: only names in the public package list of
+    /// --server
     Export {
         #[arg(long, default_value = SCAN_FILE)]
         report: PathBuf,
         /// Write here instead of stdout
         #[arg(long, short)]
         out: Option<PathBuf>,
+        /// A saved copy of /api/v1/packages/index, instead of a download
+        #[arg(long)]
+        index_file: Option<PathBuf>,
     },
-    /// Send the redacted report to your package set on a server
+    /// Send the strict report to your package set on a server
     Submit {
         /// The server; --server when absent
         #[arg(long)]
@@ -288,6 +288,9 @@ enum Command {
         /// File holding the upload token; MAINTAINER_MODE_UPLOAD_TOKEN wins over it
         #[arg(long)]
         token_file: Option<PathBuf>,
+        /// A saved copy of /api/v1/packages/index, instead of a download
+        #[arg(long)]
+        index_file: Option<PathBuf>,
     },
 }
 
@@ -311,23 +314,59 @@ enum ArchiveCommand {
 
 const SCAN_FILE: &str = "maintainer-mode-scan.json";
 
-fn print_omitted(r: &report::Report) {
-    let o = &r.omitted;
+fn print_omitted(r: &report::Upload) {
     eprintln!(
-        "{} packages with a nixpkgs attribute; {} names kept back",
+        "{} public packages, {} of them with a version that the list does not have; {} names kept back",
         r.packages.len(),
-        o.flake + o.vendored + o.absent + o.unknown
+        r.modified(),
+        r.omitted.unknown
     );
 }
 
-async fn submit(server: &str, path: &std::path::Path, token_file: Option<PathBuf>) -> Result<()> {
-    let report = report::Report::load(path)?.redacted();
+/// The public package list of the server the report goes to, or a saved copy.
+async fn public_list(server: &str, file: Option<&std::path::Path>) -> Result<report::PublicList> {
+    let bytes = match file {
+        Some(f) => std::fs::read(f).with_context(|| format!("read {}", f.display()))?,
+        None => {
+            let url = format!("{}/api/v1/packages/index", server.trim_end_matches('/'));
+            let resp = github::http().get(&url).send().await?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body: Value = resp.json().await.unwrap_or(Value::Null);
+                bail!(
+                    "{url}: {status}: {}",
+                    body["error"].as_str().unwrap_or("no reason given")
+                );
+            }
+            resp.bytes().await?.to_vec()
+        }
+    };
+    report::PublicList::parse(&bytes)
+}
+
+async fn strict(
+    server: &str,
+    path: &std::path::Path,
+    index_file: Option<&std::path::Path>,
+) -> Result<report::Upload> {
+    let report = report::Report::load(path)?;
+    let list = public_list(server, index_file).await?;
+    Ok(report.strict(&list))
+}
+
+async fn submit(
+    server: &str,
+    path: &std::path::Path,
+    token_file: Option<PathBuf>,
+    index_file: Option<&std::path::Path>,
+) -> Result<()> {
     let token = match std::env::var("MAINTAINER_MODE_UPLOAD_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => read_secret(&token_file)?.context(
             "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/settings#upload",
         )?,
     };
+    let report = strict(server, path, index_file).await?;
     let url = format!("{}/api/v1/reports", server.trim_end_matches('/'));
     let resp = github::http()
         .post(&url)
@@ -1053,7 +1092,6 @@ async fn run(cli: Cli) -> Result<i32> {
             flake,
             file,
             outputs,
-            nixpkgs,
             nixpkgs_input,
             system,
             runtime,
@@ -1063,29 +1101,21 @@ async fn run(cli: Cli) -> Result<i32> {
                 flake,
                 file,
                 outputs,
-                nixpkgs,
                 nixpkgs_input,
                 system,
                 runtime,
             };
             let r = scan::scan(&target)?;
             r.write(&out)?;
-            let matched = r.packages.iter().filter(|p| p.attr.is_some()).count();
-            eprintln!(
-                "{} packages, {matched} with a nixpkgs attribute -> {}",
-                r.packages.len(),
-                out.display()
-            );
-            if r.source.nixpkgs_rev.is_none() && target.nixpkgs.is_none() {
-                eprintln!(
-                    "no pinned nixpkgs found; names were matched against flake:nixpkgs. \
-                     Name it with --nixpkgs-input or --nixpkgs."
-                );
-            }
+            eprintln!("{} packages -> {}", r.packages.len(), out.display());
             Ok(0)
         }
-        Command::Export { report: path, out } => {
-            let r = report::Report::load(&path)?.redacted();
+        Command::Export {
+            report: path,
+            out,
+            index_file,
+        } => {
+            let r = strict(&cli.server, &path, index_file.as_deref()).await?;
             let text = serde_json::to_string_pretty(&r)?;
             match out {
                 Some(o) => {
@@ -1100,8 +1130,15 @@ async fn run(cli: Cli) -> Result<i32> {
             to,
             report: path,
             token_file,
+            index_file,
         } => {
-            submit(to.as_deref().unwrap_or(&cli.server), &path, token_file).await?;
+            submit(
+                to.as_deref().unwrap_or(&cli.server),
+                &path,
+                token_file,
+                index_file.as_deref(),
+            )
+            .await?;
             Ok(0)
         }
         Command::Archive {

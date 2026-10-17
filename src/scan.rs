@@ -1,6 +1,7 @@
-//! The client: evaluates the closure of a flake output or of a file's
-//! attributes on the owner's machine and matches each package to a nixpkgs
-//! attribute. Taken from nixfresh `nix.rs` (MIT) and trimmed. It always runs
+//! The client: reads the closure of a flake output or of a file's attributes
+//! on the owner's machine. `export` and `submit` match the names against the
+//! server's public list (see `report.rs`). Taken from nixfresh `nix.rs` (MIT)
+//! and trimmed. It always runs
 //! plain `nix`: `derivation show` and `getFlake` are not part of the
 //! `nix eval --file` contract that a swept evaluator has to answer.
 
@@ -11,8 +12,8 @@ use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqA
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::eval::{eval_with_input_using, run_with};
-use crate::report::{Found, Omitted, Report, SCHEMA, Source};
+use crate::eval::run_with;
+use crate::report::{Found, Report, SCHEMA, Source};
 
 const NIX: &str = "nix";
 
@@ -20,8 +21,6 @@ pub struct Target {
     pub flake: Option<String>,
     pub file: Option<PathBuf>,
     pub outputs: Vec<String>,
-    /// A nixpkgs path or flake reference; by default the one the tree pins.
-    pub nixpkgs: Option<String>,
     pub nixpkgs_input: Option<String>,
     pub system: Option<String>,
     pub runtime: bool,
@@ -406,76 +405,6 @@ fn runtime_closure(target: &Target) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-const PROBE_EXPR: &str = r#"
-let
-  input = builtins.fromJSON (builtins.readFile ./input.json);
-  src = if input.flake then (builtins.getFlake input.nixpkgs).outPath else input.nixpkgs;
-  pkgs = import src {
-    system = if input.system == "" then builtins.currentSystem else input.system;
-    overlays = [ ];
-    config = {
-      allowUnfree = true;
-      allowBroken = true;
-      allowInsecurePredicate = _: true;
-    };
-  };
-  at =
-    path: value:
-    if path == [ ] then
-      value
-    else if builtins.isAttrs value && builtins.hasAttr (builtins.head path) value then
-      at (builtins.tail path) (builtins.getAttr (builtins.head path) value)
-    else
-      null;
-  isDrv =
-    name:
-    let
-      v = builtins.tryEval (
-        let
-          p = at (builtins.filter builtins.isString (builtins.split "\\." name)) pkgs;
-        in
-        builtins.isAttrs p && (p.type or "") == "derivation"
-      );
-    in
-    v.success && v.value;
-in
-builtins.filter isDrv input.names
-"#;
-
-/// Attribute paths to try for a package name, best first.
-pub(crate) fn candidates(pname: &str) -> Vec<String> {
-    let mut out = vec![pname.to_string(), pname.to_ascii_lowercase()];
-    out.push(format!("python3Packages.{pname}"));
-    out.dedup();
-    out
-}
-
-fn probe(nixpkgs: &str, system: &str, names: &[String]) -> Result<BTreeSet<String>> {
-    if names.is_empty() {
-        return Ok(BTreeSet::new());
-    }
-    let is_flake = nixpkgs.contains(':');
-    let path = if is_flake {
-        nixpkgs.to_string()
-    } else {
-        std::fs::canonicalize(nixpkgs)
-            .with_context(|| format!("nixpkgs at {nixpkgs}"))?
-            .to_string_lossy()
-            .into_owned()
-    };
-    let input = serde_json::json!({
-        "nixpkgs": path,
-        "flake": is_flake,
-        "system": system,
-        "names": names,
-    });
-    let text = eval_with_input_using(NIX, "probe", PROBE_EXPR, &input)?;
-    Ok(serde_json::from_str::<Vec<String>>(&text)
-        .context("parse probe output")?
-        .into_iter()
-        .collect())
-}
-
 pub fn scan(target: &Target) -> Result<Report> {
     if target.flake.is_none() && target.file.is_none() {
         bail!("name a flake with --flake or a file with --file");
@@ -485,12 +414,6 @@ pub fn scan(target: &Target) -> Result<Report> {
             "name at least one flake output, like nixosConfigurations.<host>.config.system.build.toplevel"
         );
     }
-    let rev = target.nixpkgs_rev();
-    let nixpkgs = match (&target.nixpkgs, &rev) {
-        (Some(n), _) => n.clone(),
-        (None, Some(r)) => format!("github:NixOS/nixpkgs/{r}"),
-        (None, None) => "flake:nixpkgs".to_string(),
-    };
     let mut pairs = if target.runtime {
         runtime_closure(target)?
     } else {
@@ -499,23 +422,15 @@ pub fn scan(target: &Target) -> Result<Report> {
     pairs.retain(|(p, _)| !p.is_empty());
     pairs.sort();
     pairs.dedup();
-    let mut names: Vec<String> = pairs.iter().flat_map(|(p, _)| candidates(p)).collect();
-    names.sort();
-    names.dedup();
     let system = target.system.clone().unwrap_or_else(|| {
         format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).replace("macos", "darwin")
     });
-    let known = probe(&nixpkgs, &system, &names)?;
     let packages = pairs
         .into_iter()
-        .map(|(pname, version)| {
-            let attr = candidates(&pname).into_iter().find(|c| known.contains(c));
-            Found {
-                resolution: if attr.is_some() { "attr" } else { "unknown" }.into(),
-                pname,
-                version,
-                attr,
-            }
+        .map(|(pname, version)| Found {
+            pname,
+            version,
+            attr: None,
         })
         .collect();
     let now = Utc::now().to_rfc3339();
@@ -526,11 +441,10 @@ pub fn scan(target: &Target) -> Result<Report> {
         source: Source {
             name: target.name(),
             system,
-            nixpkgs_rev: rev,
+            nixpkgs_rev: target.nixpkgs_rev(),
             scanned_at: Some(now),
         },
         packages,
-        omitted: Omitted::default(),
     })
 }
 
@@ -643,7 +557,6 @@ mod tests {
             flake: Some(flake.into()),
             file: None,
             outputs: vec!["x".into()],
-            nixpkgs: None,
             nixpkgs_input: None,
             system: None,
             runtime: false,

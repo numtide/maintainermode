@@ -34,6 +34,10 @@ const ENDPOINTS: &[(&str, &str)] = &[
         "the public review record of a login, and what it maintains",
     ),
     (
+        "/api/v1/packages/index",
+        "the public package list of the current index: pname and version of each attribute, gzip",
+    ),
+    (
         "/api/v1/packages/<attr>",
         "one package: health, issues and pull requests",
     ),
@@ -59,7 +63,7 @@ const ENDPOINTS: &[(&str, &str)] = &[
     ),
     (
         "POST /api/v1/reports",
-        "upload a redacted package report, with an upload token",
+        "upload a strict package report, with an upload token",
     ),
 ];
 

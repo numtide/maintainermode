@@ -19,7 +19,7 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::time::Instant;
 
-use crate::report::{Found, MAX_PACKAGES, Omitted, Report, SCHEMA, Source};
+use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
 use crate::store::{FlakeRef, PackageSet};
 use crate::web::{App, Shared, ago, esc, icon, octicon};
 
@@ -541,32 +541,17 @@ async fn sandboxed(
     Ok(out)
 }
 
-/// The server side of the upload rule, for a closure the sandbox read: match
-/// each name against the server's own index, redact, filter again.
+/// The server side of the upload rule, for a closure the sandbox read: the
+/// same strict filter as the client, then the same check as an upload.
 fn accept(
     app: &App,
     pairs: Vec<(String, String)>,
     nixpkgs_rev: Option<String>,
 ) -> Result<PackageSet> {
-    let index = app.index.read().unwrap();
-    if index.rev.is_empty() {
+    let Some(listing) = crate::sets::listing(app) else {
         bail!("the nixpkgs index is not built yet");
-    }
+    };
     let now = Utc::now();
-    let packages = pairs
-        .into_iter()
-        .map(|(pname, version)| {
-            let attr = crate::scan::candidates(&pname)
-                .into_iter()
-                .find(|c| index.pkgs.contains_key(c));
-            Found {
-                resolution: if attr.is_some() { "attr" } else { "unknown" }.into(),
-                pname,
-                version,
-                attr,
-            }
-        })
-        .collect();
     let report = Report {
         schema: SCHEMA,
         client: format!("maintainer-mode/{}", env!("CARGO_PKG_VERSION")),
@@ -577,15 +562,20 @@ fn accept(
             nixpkgs_rev,
             scanned_at: Some(now.to_rfc3339()),
         },
-        packages,
-        omitted: Omitted::default(),
+        packages: pairs
+            .into_iter()
+            .map(|(pname, version)| Found {
+                pname,
+                version,
+                attr: None,
+            })
+            .collect(),
     }
-    .redacted();
-    let o = &report.omitted;
-    let (attrs, dropped) = report.accepted(|a| index.pkgs.contains_key(a));
+    .strict(&listing.list);
+    let (attrs, stale) = report.accepted(&listing.list).map_err(|e| anyhow!(e))?;
     Ok(PackageSet {
         attrs: attrs.into_iter().collect(),
-        dropped: dropped + o.flake + o.vendored + o.absent + o.unknown,
+        dropped: stale + report.omitted.unknown,
         uploaded_at: now,
         scanned_at: Some(now.to_rfc3339()),
         nixpkgs_rev: report.source.nixpkgs_rev,
