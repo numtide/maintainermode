@@ -226,13 +226,14 @@ impl Serious {
 /// verdict on master and the channels does. A fix only in master still
 /// counts, because a machine with no reported version can run a channel.
 fn on_machine(
+    attr: &str,
     a: &crate::health::Advisory,
     v: &crate::affected::Verdict,
     mine: Option<&String>,
 ) -> Option<String> {
     use crate::affected::{Check, Verdict};
     if let Some(ver) = mine {
-        match crate::affected::check(&a.ranges, &a.title, ver) {
+        match crate::affected::check(&a.ranges, &a.title, attr, ver) {
             Check::Affected => return Some(format!(" Your version {ver} is affected.")),
             Check::NotAffected => return None,
             Check::Unknown => {}
@@ -261,7 +262,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
     let mut list: Vec<Serious> = crate::catalog::judged(i.h, i.s, attr)
         .into_iter()
         .filter_map(|(a, v)| {
-            let note = on_machine(a, v, mine)?;
+            let note = on_machine(attr, a, v, mine)?;
             let mut s = Serious::of(&a.code, a.url(), &crate::severity::worst(i.h, &a.cves))?;
             s.note = note;
             Some(s)
