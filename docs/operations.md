@@ -44,6 +44,38 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 
 CI is the flake's `checks`: `nix flake check`.
 
+## UX audit
+
+`ux-audit` opens each page of the site in a headless Chromium. It takes full-page screenshots and checks each page for common faults. The page list is `nix/ux-pages.txt`. A unit test fails when a GET route is not in this list.
+
+To audit a fresh local server, run:
+
+```sh
+nix run .#ux-audit -- --local
+```
+
+`--local` starts `maintainer-mode` on a temporary database and a free port. It blocks the outbound network of the server. It adds a test session, so it audits the pages signed out and signed in. The database is empty, so package and module pages answer 404.
+
+To audit a running server, run:
+
+```sh
+nix run .#ux-audit -- --url https://maintainermode.org --only-public
+```
+
+To audit the signed-in pages of a running server, set `MAINTAINER_MODE_AUDIT_SESSION` to the value of your `session` cookie. The tool does not write or print this value.
+
+The tool writes to `./ux-audit`. Use `--out` to change the folder. Open `index.html` in it. The page shows a table of issues, most severe first, and four screenshots per page: 390x844 and 1280x900, light and dark. `report.json` holds the same data.
+
+| Option             | Meaning                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| `--pages <regex>`  | audit only the pages whose path matches                                   |
+| `--only-public`    | skip the signed-in pages                                                  |
+| `--set NAME=VALUE` | change a sample value of the page list, for example `--set pr=123`        |
+| `--link-cap <n>`   | check at most n same-origin links, default 300                            |
+| `--bin <path>`     | the binary for `--local`; in the dev shell, the default is `target/debug` |
+
+The checks are: the HTTP status, the HTML size, the load time, console errors, failed requests, horizontal overflow, images without `alt`, form controls without a label, controls without a name, the order of the headings, duplicate ids, low text contrast, small tap targets on a phone, and same-origin links that answer 404. The link check does not open `/pr/`, `/claude/`, `/auth/` and `/feed/` links.
+
 ## Email
 
 Set `MAINTAINER_MODE_SMTP_HOST` and `MAINTAINER_MODE_SMTP_FROM` to turn
