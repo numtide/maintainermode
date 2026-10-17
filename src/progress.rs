@@ -14,7 +14,8 @@ use std::fmt::Write;
 
 use crate::dossier::{self, Outcome, Row};
 use crate::ledger::{Credit, MIN_COUNTERPARTIES, WINDOW_DAYS};
-use crate::web::{App, Shared, esc, icon, octicon, page};
+use crate::ui::{Page, Section, Tone, badge, section};
+use crate::web::{App, Shared, esc, icon, octicon};
 
 const GOAL: &str = "weekly_goal";
 pub const MAX_GOAL: u32 = 50;
@@ -221,7 +222,7 @@ fn listing_line(p: &Progress) -> String {
 pub fn widget(app: &App, login: &str) -> String {
     let p = of(app, login, false);
     format!(
-        "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center\" style=\"gap:16px\">\
+        "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center gap-3\">\
          <span class=\"text-bold\">{} Your progress</span>\
          <span>{} reviews this week</span><span>{} weeks in a row</span><span class=\"f6\">{}</span>\
          <a class=\"ml-auto f6\" href=\"/me/progress\">Details</a></div></div>",
@@ -244,12 +245,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     };
     let p = of(&app, &login, true);
     let mut out = format!(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">{} Your progress</h1>\
-         <div class=\"Subhead-description\">Only you see this page. It compares you with nobody: there is no leaderboard. \
-         It counts the synced data: the last {WINDOW_DAYS} days and every open pull request. \
-         Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.</div></div>\
-         <div class=\"d-flex flex-wrap mb-4\" style=\"gap:16px\">{}{}{}{}{}</div>",
-        icon(octicon!("flame")),
+        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}{}{}{}</div>",
         stat(p.reviews_week, "pull requests reviewed this week"),
         stat(p.reviews_month, "pull requests reviewed this month"),
         stat(p.credited_week, "reviews that earned credit this week"),
@@ -258,47 +254,68 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
             p.streak_weeks,
             "weeks in a row with a review that earned credit"
         ),
-        l = esc(&login),
     );
     let _ = write!(
         out,
-        "<div class=\"Box mb-4\" id=\"goal\"><div class=\"Box-header text-bold\">Your weekly goal</div>\
-         <div class=\"Box-row\">{}</div>\
-         <div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-items-center\" style=\"gap:8px\">\
-         <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
-         <input class=\"form-control\" style=\"width:80px\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{}\">\
-         <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-         <p class=\"note f6 color-fg-muted\">Set a number you can keep. A careful review counts for more than many quick ones.</p></div></div>",
-        goal_line(&p),
-        p.goal.unwrap_or(0),
+        "<div id=\"goal\">{}</div>",
+        section(
+            "Your weekly goal",
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">{}</div>\
+                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
+                 <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
+                 <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{}\">\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
+                 <p class=\"note f6 color-fg-muted\">Set a number you can keep. A careful review counts for more than many quick ones.</p></div>",
+                goal_line(&p),
+                p.goal.unwrap_or(0),
+            )
+        )
     );
     let _ = write!(
         out,
-        "<div class=\"Box mb-4\" id=\"listing\"><div class=\"Box-header text-bold\">Being listed</div>\
-         <div class=\"Box-row\">{} <a href=\"/rules#2-whose-pull-requests-appear\">Why</a></div></div>",
-        listing_line(&p)
+        "<div id=\"listing\">{}</div>",
+        section(
+            "Being listed",
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">{} <a href=\"/rules#2-whose-pull-requests-appear\">Why</a></div>",
+                listing_line(&p)
+            )
+        )
     );
-    out.push_str(
-        "<div class=\"Box mb-4\" id=\"badges\"><div class=\"Box-header text-bold\">Badges</div>",
-    );
+    let mut badges = String::new();
     for b in &p.badges {
         let state = match b.earned {
-            Some(t) => format!(
-                "<span class=\"Label Label--success\">earned {}</span>",
-                t.format("%Y-%m-%d")
-            ),
-            None => "<span class=\"Label\">not yet</span>".to_string(),
+            Some(t) => badge(Tone::Success, &format!("earned {}", t.format("%Y-%m-%d"))),
+            None => badge(Tone::Neutral, "not yet"),
         };
         let _ = write!(
-            out,
+            badges,
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto\"><span class=\"text-bold\">{}</span>\
              <div class=\"f6 color-fg-muted\">{}</div></div><div>{state}</div></div>",
             b.name, b.how
         );
     }
-    out.push_str("</div>");
+    let _ = write!(
+        out,
+        "<div id=\"badges\">{}</div>",
+        section("Badges", None, None, &badges)
+    );
     out.push_str(&crate::web::nixpkgs_guides());
-    page(&app, Some(&login), "", &out).into_response()
+    Page::new(Section::Home, "Your progress")
+        .icon(octicon!("flame"))
+        .sub(format!(
+            "Only you see this page. It compares you with nobody: there is no leaderboard. \
+             It counts the synced data: the last {WINDOW_DAYS} days and every open pull request. \
+             Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
+            l = esc(&login)
+        ))
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 #[derive(Deserialize)]

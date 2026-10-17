@@ -137,7 +137,7 @@ fn dashboard(app: &App, login: &str) -> String {
     let mut out = String::new();
     if crate::welcome::pending(app, login) {
         out.push_str(
-            "<div class=\"note mb-3\">New here? <a href=\"/welcome\">Get started</a>: \
+            "<div class=\"callout mb-3\">New here? <a href=\"/welcome\">Get started</a>: \
              subscribe to what you maintain, and set up your inbox.</div>",
         );
     }

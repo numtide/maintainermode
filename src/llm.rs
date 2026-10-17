@@ -4,18 +4,18 @@
 
 use axum::Router;
 use axum::extract::{Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::Utc;
 use serde::Deserialize;
 use std::fmt::Write;
 
-use crate::catalog::head;
 use crate::github::urlencode;
 use crate::model::Pr;
 use crate::sets::token_hash;
-use crate::web::{App, Shared, esc, icon, octicon, page, random_id};
+use crate::ui::{Page, Section, section};
+use crate::web::{App, Shared, esc, icon, octicon, random_id};
 
 const OPT_IN: &str = "llm_ok";
 const MCP_HASH: &str = "mcp_token_hash";
@@ -80,11 +80,18 @@ fn mcp_box(app: &App, login: &str) -> String {
         None => "<form method=\"post\" action=\"/me/mcp-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an MCP token</button></form>".into(),
     };
     format!(
-        "<div class=\"Box mb-4\" id=\"mcp\"><div class=\"Box-header text-bold\">{} MCP server</div><div class=\"Box-row\">\
-         <p>An agent reads this site at <code>{}</code>, with the Streamable HTTP transport. \
-         It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{state}</div></div>",
-        icon(octicon!("key")),
-        esc(&mcp_url(app)),
+        "<div id=\"mcp\">{}</div>",
+        section(
+            &format!("{} MCP server", icon(octicon!("key"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">\
+                 <p>An agent reads this site at <code>{}</code>, with the Streamable HTTP transport. \
+                 It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{state}</div>",
+                esc(&mcp_url(app)),
+            )
+        )
     )
 }
 
@@ -102,22 +109,24 @@ async fn settings_page(
         return Redirect::to("/auth/login").into_response();
     };
     let on = opted_in(&app, &login);
-    let mut out = head(
-        &format!("{} Settings", icon(octicon!("gear"))),
-        "Choices that apply to you only.",
-        "",
-    );
-    let _ = write!(
-        out,
-        "<div class=\"Box mb-4\" id=\"llm\"><div class=\"Box-header text-bold\">LLMs</div><div class=\"Box-row\">\
-         <form method=\"post\" action=\"/me/settings\">\
-         <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \
-         I am OK with LLMs using my data on this site</label>\
-         <p class=\"note\">Off by default. When it is on, an agent that holds your MCP token can read what you watch and the public data \
-         of this site through <code>/mcp</code>, and each open pull request offers a Claude Code session. \
-         Nothing here writes to GitHub. Turning it off revokes your MCP token.</p></div>\
-         <button class=\"btn btn-sm\" type=\"submit\">Save</button></form></div></div>",
-        checked = if on { " checked" } else { "" },
+    let mut out = format!(
+        "<div id=\"llm\">{}</div>",
+        section(
+            "LLMs",
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">\
+                 <form method=\"post\" action=\"/me/settings\">\
+                 <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \
+                 I am OK with LLMs using my data on this site</label>\
+                 <p class=\"note\">Off by default. When it is on, an agent that holds your MCP token can read what you watch and the public data \
+                 of this site through <code>/mcp</code>, and each open pull request offers a Claude Code session. \
+                 Nothing here writes to GitHub. Turning it off revokes your MCP token.</p></div>\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form></div>",
+                checked = if on { " checked" } else { "" },
+            )
+        )
     );
     if on {
         out.push_str(&mcp_box(&app, &login));
@@ -127,7 +136,11 @@ async fn settings_page(
         &login,
         q.mail.as_deref(),
     ));
-    page(&app, Some(&login), "", &out).into_response()
+    Page::new(Section::Home, "Settings")
+        .icon(octicon!("gear"))
+        .sub("Choices that apply to you only.")
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 #[derive(Deserialize)]
@@ -173,29 +186,26 @@ async fn new_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Respons
     if let Err(e) = saved {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    let mut out = head(
-        &format!("{} Your MCP token", icon(octicon!("key"))),
-        "Copy it now. The server keeps only its hash, so this page cannot show it again.",
-        "",
-    );
     let add = format!(
         "claude mcp add --transport http maintainer-mode {} --header \"Authorization: Bearer {}\"",
         mcp_url(&app),
         token
     );
-    let _ = write!(
-        out,
+    let out = format!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <input class=\"form-control width-full mb-2 text-mono\" readonly value=\"{t}\" aria-label=\"MCP token\">\
          <p>To add the server to Claude Code on your machine:</p>\
-         <pre class=\"p-2 color-bg-subtle\" style=\"white-space:pre-wrap\">{a}</pre>\
+         <pre class=\"p-2 color-bg-subtle pre-wrap\">{a}</pre>\
          <p>Any token you made before no longer works.</p>\
          <a class=\"btn btn-sm\" href=\"/me/settings#mcp\">Back to your settings</a></div></div>",
         t = esc(&token),
         a = esc(&add),
     );
-    let Html(body) = page(&app, Some(&login), "", &out);
-    ([(header::CACHE_CONTROL, "no-store")], Html(body)).into_response()
+    Page::new(Section::Home, "Your MCP token")
+        .icon(octicon!("key"))
+        .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 async fn delete_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -312,20 +322,21 @@ async fn claude_page(
         let body = format!(
             "<div class=\"blankslate\"><p>Pull request #{number} is not in the synced data.</p></div>"
         );
-        return (StatusCode::NOT_FOUND, page(&app, Some(&login), "", &body)).into_response();
+        return (
+            StatusCode::NOT_FOUND,
+            Page::new(Section::Review, format!("Claude Code on #{number}"))
+                .body(body)
+                .render(&app, Some(&login)),
+        )
+            .into_response();
     };
     let mcp = has_mcp_token(&app, &login).then(|| mcp_url(&app));
     let text = prompt(pr, mcp.as_deref());
-    let mut out = head(
-        &format!("Claude Code on #{number}"),
-        &format!(
-            "{} · a session on the web, in your own Claude account",
-            crate::prpage::link(&pr.url, &esc(&pr.title), "")
-        ),
-        "",
-    );
-    let _ = write!(
-        out,
+    let page = Page::new(Section::Review, format!("Claude Code on #{number}")).sub(format!(
+        "{} · a session on the web, in your own Claude account",
+        crate::prpage::link(&pr.url, &esc(&pr.title), "")
+    ));
+    let out = format!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <p>The button opens <a href=\"https://claude.ai/code\">claude.ai/code</a> with NixOS/nixpkgs selected and the prompt below filled in. \
          Nothing runs until you send it. Read it first.</p>\
@@ -337,7 +348,7 @@ async fn claude_page(
         p = icon(octicon!("play")),
         t = esc(&text),
     );
-    page(&app, Some(&login), "", &out).into_response()
+    page.body(out).render(&app, Some(&login))
 }
 
 #[cfg(test)]

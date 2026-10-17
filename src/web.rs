@@ -473,7 +473,7 @@ pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
-const HYGIENE: &str = "<div class=\"note mb-3\"><strong>The newcomer path.</strong> No maintainer, team or ci/OWNERS line covers these files, so they rot. \
+const HYGIENE: &str = "<div class=\"callout mb-3\"><strong>The newcomer path.</strong> No maintainer, team or ci/OWNERS line covers these files, so they rot. \
 A first review needs no domain knowledge: is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
 Are hashes fixed-output and pinned? Are <code>platforms</code> right? Does a CLI have <code>versionCheckHook</code>? \
 Leave the finding as an inline comment on the changed line. A review here earns full credit at any age.</div>";
