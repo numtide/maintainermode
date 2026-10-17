@@ -151,9 +151,10 @@ pub struct RepoAnswers {
     pub branch: Option<String>,
     /// `.github/workflows/<file>` on the default branch.
     pub file: Reply,
-    /// The Actions API answers a person's token only when the App is
-    /// installed on the repository.
-    pub actions: Reply,
+    /// 200 when an installation of the App, as the person sees it, includes
+    /// the repository, and 404 when none does. The Actions API of a public
+    /// repository answers any token, so it cannot tell.
+    pub app: Reply,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -306,24 +307,22 @@ fn file_line(repo: &str, file: &str, a: &RepoAnswers, needed: Needed) -> Line {
     }
 }
 
-fn actions_line(repo: &str, a: &RepoAnswers, needed: Needed) -> Line {
+fn app_line(repo: &str, a: &RepoAnswers, needed: Needed) -> Line {
     if !ok(a.repo) {
         return not_checked(4, needed, repo);
     }
-    match a.actions {
+    match a.app {
         r if ok(r) => line(
             4,
             Mark::Ok,
             needed,
-            format!("The App can reach the Actions of {repo}."),
+            format!("The App is installed on {repo}."),
         ),
-        Some(403 | 404) => line(
+        Some(404) => line(
             4,
             Mark::Missing,
             needed,
-            format!(
-                "The App cannot reach the Actions of {repo}. Install the App on {repo} (step 4)."
-            ),
+            format!("The App is not installed on {repo}. Install the App on {repo} (step 4)."),
         ),
         r => other(4, needed, repo, r),
     }
@@ -370,7 +369,7 @@ pub fn verdict(n: &Names, a: &Answers) -> Vec<Line> {
     lines.extend(
         repos
             .iter()
-            .map(|(repo, ra, needed)| actions_line(repo, ra, *needed)),
+            .map(|(repo, ra, needed)| app_line(repo, ra, *needed)),
     );
     lines.push(if n.saved {
         line(
@@ -426,13 +425,11 @@ async fn probe_repo(token: &str, repo: &str, file: &str) -> RepoAnswers {
             ..RepoAnswers::default()
         };
     }
-    let actions_path = format!("/repos/{repo}/actions/workflows?per_page=1");
-    let (file, actions) = tokio::join!(probe_file(token, repo, file), status(token, &actions_path));
     RepoAnswers {
         repo: r,
         branch: v["default_branch"].as_str().map(String::from),
-        file,
-        actions: actions.0,
+        file: probe_file(token, repo, file).await,
+        app: None,
     }
 }
 
@@ -443,11 +440,64 @@ async fn probe_fork(token: &str, fork: &str) -> Reply {
     status(token, &format!("/repos/{fork}")).await.0
 }
 
+const PER_PAGE: usize = 100;
+const MAX_PAGES: usize = 10;
+
+/// Every item of `key` on the pages of a GitHub listing. `Err` holds the
+/// answer that stopped it.
+async fn listing(token: &str, path: &str, key: &str) -> Result<Vec<Value>, Reply> {
+    let mut out = Vec::new();
+    for page in 1..=MAX_PAGES {
+        let (r, v) = status(token, &format!("{path}?per_page={PER_PAGE}&page={page}")).await;
+        if !ok(r) {
+            return Err(r);
+        }
+        let items = v[key].as_array().cloned().unwrap_or_default();
+        let last = items.len() < PER_PAGE;
+        out.extend(items);
+        if last {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The repositories that the installations of the App include, as the
+/// person sees them. A user token of the App lists only that App's
+/// installations.
+async fn app_repos(token: &str) -> Result<Vec<String>, Reply> {
+    let installations = listing(token, "/user/installations", "installations").await?;
+    let mut repos = Vec::new();
+    for id in installations.iter().filter_map(|i| i["id"].as_u64()) {
+        let path = format!("/user/installations/{id}/repositories");
+        repos.extend(full_names(&listing(token, &path, "repositories").await?));
+    }
+    Ok(repos)
+}
+
+fn full_names(repos: &[Value]) -> Vec<String> {
+    repos
+        .iter()
+        .filter_map(|r| r["full_name"].as_str().map(String::from))
+        .collect()
+}
+
+fn installed(app_repos: &Result<Vec<String>, Reply>, repo: &str) -> Reply {
+    match app_repos {
+        Ok(list) if list.iter().any(|r| r.eq_ignore_ascii_case(repo)) => Some(200),
+        Ok(_) => Some(404),
+        Err(r) => *r,
+    }
+}
+
 /// Reads, with the person's token, what [`verdict`] needs. It only reads.
 pub async fn probe(token: &str, review: &str, update: &str, fork: &str) -> Answers {
-    let (review_a, fork_a) =
-        tokio::join!(probe_repo(token, review, REVIEW), probe_fork(token, fork));
-    let update_a = if review == update {
+    let (mut review_a, fork_a, app) = tokio::join!(
+        probe_repo(token, review, REVIEW),
+        probe_fork(token, fork),
+        app_repos(token)
+    );
+    let mut update_a = if review == update {
         let file = if ok(review_a.repo) {
             probe_file(token, update, UPDATE).await
         } else {
@@ -460,6 +510,8 @@ pub async fn probe(token: &str, review: &str, update: &str, fork: &str) -> Answe
     } else {
         probe_repo(token, update, UPDATE).await
     };
+    review_a.app = installed(&app, review);
+    update_a.app = installed(&app, update);
     Answers {
         review: review_a,
         update: update_a,
@@ -562,7 +614,7 @@ mod tests {
             repo: Some(200),
             branch: Some("main".into()),
             file: Some(200),
-            actions: Some(200),
+            app: Some(200),
         }
     }
 
@@ -628,8 +680,8 @@ mod tests {
     #[test]
     fn an_app_without_access_blocks_the_buttons() {
         let mut a = all_ok();
-        a.review.actions = Some(404);
-        a.update.actions = Some(404);
+        a.review.app = Some(404);
+        a.update.app = Some(404);
         let c = check(&SAME, &a);
         assert_eq!(c.step(4), Mark::Missing);
         assert!(!c.blocker(Needed::Review).is_none());
@@ -638,6 +690,40 @@ mod tests {
                 .unwrap()
                 .text
                 .contains("Install the App")
+        );
+    }
+
+    #[test]
+    fn only_a_listed_installation_counts_as_installed() {
+        let page = json!({ "repositories": [
+            { "full_name": "Alice/nixpkgs-review-gha" },
+            { "full_name": "alice/dotfiles" },
+        ]});
+        let repos = Ok(full_names(page["repositories"].as_array().unwrap()));
+        assert_eq!(installed(&repos, "alice/nixpkgs-review-gha"), Some(200));
+        assert_eq!(installed(&repos, "alice/updates"), Some(404));
+        assert_eq!(
+            installed(&Ok(vec![]), "alice/nixpkgs-review-gha"),
+            Some(404)
+        );
+        assert_eq!(installed(&Err(Some(401)), "alice/x"), Some(401));
+        assert_eq!(installed(&Err(None), "alice/x"), None);
+    }
+
+    #[test]
+    fn a_public_repository_without_the_app_blocks_the_buttons() {
+        let mut a = all_ok();
+        let none = Ok(vec!["alice/dotfiles".to_string()]);
+        a.review.app = installed(&none, SAME.review);
+        a.update.app = installed(&none, SAME.update);
+        let c = check(&SAME, &a);
+        assert_eq!(c.step(1), Mark::Ok);
+        assert_eq!(c.step(4), Mark::Missing);
+        assert!(
+            c.blocker(Needed::Review)
+                .unwrap()
+                .text
+                .contains("The App is not installed on alice/nixpkgs-review-gha")
         );
     }
 
@@ -673,7 +759,7 @@ mod tests {
             ..SAME
         };
         let mut a = all_ok();
-        a.update.actions = Some(403);
+        a.update.app = Some(404);
         let c = check(&n, &a);
         assert_eq!(c.lines.iter().filter(|l| l.step == 1).count(), 2);
         assert!(c.blocker(Needed::Review).is_none());

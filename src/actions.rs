@@ -711,7 +711,7 @@ mod tests {
             repo: Some(200),
             branch: Some("main".into()),
             file: Some(200),
-            actions: Some(404),
+            app: Some(404),
         };
         a.update = a.review.clone();
         let r = repos(app, login);
@@ -744,7 +744,7 @@ mod tests {
         assert!(
             html.contains("https://github.com/alice/nixpkgs-review-gha/settings/secrets/actions")
         );
-        assert!(html.contains("The App cannot reach the Actions of alice/nixpkgs-review-gha."));
+        assert!(html.contains("The App is not installed on alice/nixpkgs-review-gha."));
         assert!(html.contains("action=\"/me/settings/workflows/check\""));
         assert!(!html.contains("token\":"));
     }
