@@ -22,6 +22,7 @@ use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
+pub(crate) const MACHINES: &str = "/me/sets";
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -185,7 +186,6 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
     out.push_str(&summary(set.as_ref()));
     out.push_str(&crate::rescan::panel(&app, &login));
     out.push_str(&rows(&app, &from));
-    out.push_str(&token_box(&app, &login));
     Page::new(Section::Home, "Your package set")
         .icon(octicon!("package"))
         .sub(
@@ -199,7 +199,7 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
 fn summary(set: Option<&PackageSet>) -> String {
     let Some(s) = set else {
         return "<div class=\"Box mb-4\"><div class=\"Box-row color-fg-muted\">No report yet. \
-                Make an upload token below, then run <code>maintainer-mode scan</code> and \
+                Make an <a href=\"/me/settings#upload\">upload token</a>, then run <code>maintainer-mode scan</code> and \
                 <code>maintainer-mode submit</code> on your machine.</div></div>"
             .into();
     };
@@ -288,7 +288,8 @@ fn rows(app: &App, from: &BTreeMap<String, Origin>) -> String {
     out
 }
 
-fn token_box(app: &App, login: &str) -> String {
+/// The `#upload` section of `/me/settings`.
+pub(crate) fn token_box(app: &App, login: &str) -> String {
     let state = match app.store.upload_token_at(login).ok().flatten() {
         Some(at) => format!(
             "<p>You made an upload token on {}. The server shows a token once and keeps only its hash.</p>\
@@ -299,12 +300,15 @@ fn token_box(app: &App, login: &str) -> String {
         None => "<form method=\"post\" action=\"/me/upload-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an upload token</button></form>".into(),
     };
     format!(
-        "<div id=\"token\">{}</div>",
+        "<div id=\"upload\">{}</div>",
         section(
             &format!("{} Upload token", icon(octicon!("key"))),
             None,
             None,
-            &format!("<div class=\"Box-row\">{state}</div>")
+            &format!(
+                "<div class=\"Box-row\"><p><code>maintainer-mode submit</code> sends the packages of your machines with this token. \
+                 They show in <a href=\"{MACHINES}\">My machines</a>.</p>{state}</div>"
+            )
         )
     )
 }
@@ -332,7 +336,7 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
          <p>Put it in a file that only you can read, or in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code>. Then, on your machine:</p>\
          <pre class=\"p-2 color-bg-subtle\">{u}</pre>\
          <p>Any token you made before no longer works.</p>\
-         <a class=\"btn btn-sm\" href=\"/me/sets\">Back to your package set</a></div></div>",
+         <a class=\"btn btn-sm\" href=\"/me/settings#upload\">Back to your settings</a></div></div>",
         t = esc(&token),
         u = esc(&usage(base)),
     );
@@ -350,7 +354,7 @@ async fn delete_token(State(app): State<Shared>, headers: HeaderMap) -> Response
     if let Err(e) = app.store.delete_upload_token(&login) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/me/sets#token").into_response()
+    Redirect::to("/me/settings#upload").into_response()
 }
 
 async fn delete_set(State(app): State<Shared>, headers: HeaderMap) -> Response {

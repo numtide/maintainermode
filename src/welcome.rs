@@ -269,7 +269,7 @@ fn checklist(f: &Facts, login: &str) -> String {
         mark(f.feed),
         "Notifications",
         &format!(
-            "Make a private Atom feed on <a href=\"/watch#feed\">/watch</a>. It tells you about new pull requests, merges, \
+            "Make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>. It tells you about new pull requests, merges, \
              issues, advisories and releases of what you watch.{inbox}"
         ),
     ));
@@ -283,14 +283,14 @@ fn checklist(f: &Facts, login: &str) -> String {
         mark(f.actions),
         "Actions",
         "Fork <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, install the GitHub App on it, \
-         and save your repositories on <a href=\"/actions\">/actions</a>. \
+         and save your repositories in <a href=\"/me/settings#workflows\">your settings</a>. \
          Then \"Review in CI\" and \"Update with nix-update\" run in your own GitHub Actions.",
     ));
     out.push_str(&step(
         if f.llm { Mark::Done } else { Mark::Optional },
         "LLMs",
         &format!(
-            "Off by default. Turn them on in <a href=\"/me/settings\">your settings</a> to get a Claude Code button on \
+            "Off by default. Turn them on in <a href=\"/me/settings#llm\">your settings</a> to get a Claude Code button on \
              pull requests and an MCP server. Follow the <a href=\"{CONTRIBUTING}#automationai-policy\">nixpkgs policy on AI</a>."
         ),
     ));

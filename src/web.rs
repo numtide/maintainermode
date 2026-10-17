@@ -233,6 +233,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::welcome::routes())
         .merge(crate::notify::routes())
         .merge(crate::me::routes())
+        .layer(axum::middleware::from_fn(crate::me::no_store))
         .layer(axum::middleware::from_fn(same_origin))
         .with_state(app)
 }
@@ -534,30 +535,6 @@ async fn person_page(
             "the author changed the pull request after their review asked for it"
         ),
     );
-    if viewer.as_deref() == Some(login.as_str()) {
-        let area = s.areas.get(&login).cloned().unwrap_or_default();
-        out.push_str(&crate::ui::note(&format!(
-            "{} <a href=\"/me/progress\">Your progress</a>: your reviews, your streak, your goal and your badges. \
-             Only you see it.",
-            icon(octicon!("flame"))
-        )));
-        out.push_str(&section(
-            &format!("{} Your area", icon(octicon!("tag"))),
-            None,
-            None,
-            &format!(
-                "<div class=\"Box-row f6\">{} paths you maintain · {} you own in ci/OWNERS · {} you changed this year</div>\
-                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
-                 <label class=\"f6\" for=\"tags\">Tags: path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
-                 <textarea class=\"form-control width-full my-2\" id=\"tags\" name=\"tags\" rows=\"3\">{}</textarea>\
-                 <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div>",
-                area.maintains.len(),
-                area.owns.len(),
-                area.committed.len(),
-                esc(&area.tags.join("\n"))
-            ),
-        ));
-    }
     let mut recent = String::new();
     for r in &d.recent {
         let found = if r.problem_found {
@@ -666,6 +643,31 @@ async fn person_page(
         .render(&app, viewer.as_deref())
 }
 
+/// The `#tags` section of `/me/settings`.
+pub(crate) fn tags_box(app: &App, login: &str) -> String {
+    let area = app.snap().areas.get(login).cloned().unwrap_or_default();
+    format!(
+        "<div id=\"tags\">{}</div>",
+        crate::ui::section(
+            &format!("{} Tags", icon(octicon!("tag"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row f6\">For you on <a href=\"/review\">/review</a> holds {} paths you maintain, \
+                 {} you own in ci/OWNERS, {} you changed this year, and your tags.</div>\
+                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
+                 <label class=\"f6\" for=\"tags-list\">Path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
+                 <textarea class=\"form-control width-full my-2\" id=\"tags-list\" name=\"tags\" rows=\"3\">{}</textarea>\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div>",
+                area.maintains.len(),
+                area.owns.len(),
+                area.committed.len(),
+                esc(&area.tags.join("\n"))
+            ),
+        )
+    )
+}
+
 #[derive(Deserialize)]
 struct TagsForm {
     tags: String,
@@ -693,7 +695,7 @@ async fn set_tags(
     {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to(&format!("/u/{login}")).into_response()
+    Redirect::to("/me/settings#tags").into_response()
 }
 
 async fn login(State(app): State<Shared>) -> Response {

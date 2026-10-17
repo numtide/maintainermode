@@ -18,7 +18,7 @@ use crate::workflows::{self, REVIEW, UPDATE, valid_repo};
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/actions", get(actions_page))
-        .route("/actions/settings", post(save_settings))
+        .route("/me/settings/workflows", post(save_settings))
         .route("/actions/review", post(start_review))
         .route("/actions/update", post(start_update))
 }
@@ -202,24 +202,11 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
         let _ = write!(out, "<div class=\"flash mb-3\">{}</div>", esc(&m));
     }
     let r = repos(&app, login);
-    let _ = write!(
-        out,
-        "<details class=\"Box mb-4\"><summary class=\"Box-header text-bold\">{} Repositories</summary><div class=\"Box-row\">\
-         <form method=\"post\" action=\"/actions/settings\">\
-         <label class=\"f6\" for=\"review_repo\">Your fork of <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, with <code>review.yml</code></label>\
-         <input class=\"form-control width-full mb-2\" id=\"review_repo\" name=\"review_repo\" value=\"{}\">\
-         <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/actions.md\">docs/actions.md</a>); the same one works</label>\
-         <input class=\"form-control width-full mb-2\" id=\"update_repo\" name=\"update_repo\" value=\"{}\">\
-         <label class=\"f6\" for=\"nixpkgs_fork\">Your fork of nixpkgs, where updates push their branch</label>\
-         <input class=\"form-control width-full mb-2\" id=\"nixpkgs_fork\" name=\"nixpkgs_fork\" value=\"{}\">\
-         <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-         <p class=\"f6 color-fg-muted mt-2\">The Maintainer Mode GitHub App must be installed on the workflow repositories, \
-         and the workflows need a <code>GH_TOKEN</code> secret that can push to your nixpkgs fork.</p></div></details>",
-        icon(octicon!("gear")),
+    out.push_str(&crate::ui::note(&format!(
+        "Runs start in {} and {}. <a href=\"/me/settings#workflows\">Change the repositories</a>.",
         esc(&r.review),
-        esc(&r.update),
-        esc(&r.fork)
-    );
+        esc(&r.update)
+    )));
     out.push_str(
         "<form method=\"post\" action=\"/actions/review\" class=\"inline-form mb-4\">\
          <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
@@ -259,6 +246,35 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
     page.body(out).render(&app, viewer.as_deref())
 }
 
+/// The `#workflows` section of `/me/settings`.
+pub fn repos_box(app: &App, login: &str) -> String {
+    let r = repos(app, login);
+    format!(
+        "<div id=\"workflows\">{}</div>",
+        crate::ui::section(
+            &format!("{} Workflow repositories", icon(octicon!("play"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">\
+                 <form method=\"post\" action=\"/me/settings/workflows\">\
+                 <label class=\"f6\" for=\"review_repo\">Your fork of <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, with <code>review.yml</code></label>\
+                 <input class=\"form-control width-full mb-2\" id=\"review_repo\" name=\"review_repo\" value=\"{}\">\
+                 <label class=\"f6\" for=\"update_repo\">The repository with <code>update.yml</code> (see <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/actions.md\">docs/actions.md</a>); the same one works</label>\
+                 <input class=\"form-control width-full mb-2\" id=\"update_repo\" name=\"update_repo\" value=\"{}\">\
+                 <label class=\"f6\" for=\"nixpkgs_fork\">Your fork of nixpkgs, where updates push their branch</label>\
+                 <input class=\"form-control width-full mb-2\" id=\"nixpkgs_fork\" name=\"nixpkgs_fork\" value=\"{}\">\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
+                 <p class=\"f6 color-fg-muted mt-2 mb-0\">The Maintainer Mode GitHub App must be installed on the workflow repositories, \
+                 and the workflows need a <code>GH_TOKEN</code> secret that can push to your nixpkgs fork.</p></div>",
+                esc(&r.review),
+                esc(&r.update),
+                esc(&r.fork)
+            )
+        )
+    )
+}
+
 #[derive(Deserialize)]
 struct SettingsForm {
     review_repo: String,
@@ -286,7 +302,7 @@ async fn save_settings(
             return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
     }
-    Redirect::to("/actions").into_response()
+    Redirect::to("/me/settings#workflows").into_response()
 }
 
 #[derive(Deserialize)]
