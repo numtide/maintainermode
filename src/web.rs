@@ -211,15 +211,11 @@ pub fn router(app: Shared) -> Router {
         .route("/robots.txt", get(|| async { ROBOTS }))
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/v1/status", get(api_status))
-        .route("/api/v1/queue/merge", get(api_merge))
-        .route("/api/v1/queue/review", get(api_review))
-        .route("/api/v1/people/:login", get(api_person))
         .route("/api/v1/metrics", get(api_metrics))
         .route("/api/v1/events", get(api_events))
         .merge(crate::nixpkgs::routes())
+        .merge(crate::api::routes())
         .merge(crate::catalog::routes())
-        .merge(crate::bumps::routes())
-        .merge(crate::committer::routes())
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
@@ -808,58 +804,6 @@ async fn api_status(State(app): State<Shared>) -> Json<Status> {
             "pair_factor": ledger::PAIR_FACTOR,
         }),
     })
-}
-
-async fn api_merge(State(app): State<Shared>) -> Json<Vec<Entry>> {
-    Json(app.snap().queues.merge.clone())
-}
-
-#[derive(Deserialize)]
-struct ApiReview {
-    bucket: Option<String>,
-    login: Option<String>,
-}
-
-/// `bucket=foryou` takes `login`, so an agent can ask for anyone's routed
-/// queue; areas are derived from public data and are not secret.
-/// Subscriptions are, so they count only when the session is that login.
-async fn api_review(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<ApiReview>,
-) -> Json<Vec<Entry>> {
-    let s = app.snap();
-    let viewer = app.viewer(&headers);
-    let login = q.login.or_else(|| viewer.clone());
-    let watched = if login.is_some() && login == viewer {
-        watched_of(&app, viewer.as_deref())
-    } else {
-        Vec::new()
-    };
-    let bucket = q.bucket.as_deref().unwrap_or("all");
-    Json(
-        review_bucket(&s, login.as_deref(), &watched, bucket)
-            .into_iter()
-            .cloned()
-            .collect(),
-    )
-}
-
-async fn api_person(State(app): State<Shared>, Path(login): Path<String>) -> Response {
-    let s = app.snap();
-    let person = s
-        .ledger
-        .people
-        .get(&login)
-        .cloned()
-        .unwrap_or(ledger::Person {
-            login: login.clone(),
-            ..Default::default()
-        });
-    let credits: Vec<_> = s.ledger.credits_of(&login).cloned().collect();
-    let dossier = dossier::build(&s.pr_data, &login);
-    Json(json!({ "person": person, "dossier": dossier, "credits": credits, "area": s.areas.get(&login) }))
-        .into_response()
 }
 
 pub fn load_index(store: &Store) -> Index {

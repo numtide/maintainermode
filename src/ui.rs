@@ -249,7 +249,7 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 <nav class="UnderlineNav px-3" aria-label="Main"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{head}{subnav}{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
-  Data from the last {window} days · {updated} · <a href="/state?tab=status">Data status</a> · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/state?tab=rules#the-rules">the rules</a> · <a href="/api/v1/status">API</a><br>
+  Data from the last {window} days · {updated} · <a href="/state?tab=status">Data status</a> · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/state?tab=rules#the-rules">the rules</a> · <a href="/api/v1">API</a><br>
   A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>
 </body>
