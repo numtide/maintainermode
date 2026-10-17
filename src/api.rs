@@ -181,13 +181,10 @@ pub(crate) fn prs_value(app: &App, q: &PrQuery, caller: Option<&str>) -> Result<
             if queue == "foryou" && login.is_none() {
                 return Err("queue=foryou needs login, or a session".into());
             }
-            let watched = if own {
-                private = true;
-                crate::web::watched_of(app, login)
-            } else {
-                Vec::new()
-            };
-            let entries = crate::web::review_bucket(&s, login, &watched, queue);
+            private = own;
+            let watched = crate::web::watched_of(app, login.filter(|_| own));
+            let entries =
+                crate::web::review_bucket(&s, login, own.then_some(watched.as_slice()), queue);
             out = page(&entries, q.limit, q.cursor.as_deref())?;
             out["login"] = json!(login);
         }
@@ -328,7 +325,9 @@ mod tests {
     #[test]
     fn the_public_record_has_no_tags() {
         let app = crate::sets::tests::app(&[]);
-        app.store.set_tags("alice", &["pkgs/secret".into()]).unwrap();
+        app.store
+            .set_tags("alice", &["pkgs/secret".into()])
+            .unwrap();
         app.recompute().unwrap();
         let v = person_value(&app, "alice");
         assert!(v["area"].is_object());

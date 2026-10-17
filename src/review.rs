@@ -131,7 +131,7 @@ async fn review_page(
                 .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
                 .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
             _ => {
-                let entries = review_bucket(&s, v, &watched, tab);
+                let entries = review_bucket(&s, v, v.map(|_| watched.as_slice()), tab);
                 let (page, next) = paged(&entries, q.after, |e| e.number);
                 let (title, intro) = match tab {
                     "foryou" => (
@@ -165,7 +165,7 @@ async fn review_page(
             "foryou" if v.is_none() => continue,
             "bumps" => bumps,
             "ready" => s.queues.merge.len(),
-            _ => review_bucket(&s, v, &watched, id).len(),
+            _ => review_bucket(&s, v, v.map(|_| watched.as_slice()), id).len(),
         };
         tabs.push(Tab::new(format!("/review?tab={id}"), label, id == tab).count(count));
     }

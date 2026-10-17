@@ -203,7 +203,7 @@ fn dashboard(app: &App, login: &str) -> String {
     ));
 
     let watched = app.store.watched(login).unwrap_or_default();
-    let review = crate::web::review_bucket(&s, Some(login), &watched, "foryou");
+    let review = crate::web::review_bucket(&s, Some(login), Some(&watched), "foryou");
     out.push_str(&section(
         &format!("{} Pull requests for you to review", icon(octicon!("eye"))),
         Some(("/review?tab=foryou", "the whole queue")),
