@@ -272,7 +272,7 @@ fn note(h: &mut Health, source: &str, r: Run) {
 
 /// Reads only the sources that are due, so a source that is down is asked
 /// again on the next pass while the others keep their day.
-pub async fn run(app: Arc<App>, nvd_key: Option<String>) {
+pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
     let mut h: Health = (**app.health.read().unwrap()).clone();
     loop {
         if stale(h.repology_at) {
@@ -297,7 +297,8 @@ pub async fn run(app: Arc<App>, nvd_key: Option<String>) {
         let r = crate::severity::records(&mut h).await;
         note(&mut h, "cve", r);
         publish(&app, &h);
-        let r = crate::severity::nvd(&mut h, nvd_key.as_deref()).await;
+        let key = nvd_key.as_ref().map(|k| k.get());
+        let r = crate::severity::nvd(&mut h, key.as_deref()).await;
         note(&mut h, "nvd", r);
         if h.tracker_at.is_some() && stale(h.epss_at) {
             let r = crate::severity::epss(&mut h).await;

@@ -775,7 +775,7 @@ pub async fn committed_paths(token: &str, login: &str) -> Result<Vec<String>> {
 
 pub struct OAuth {
     pub client_id: String,
-    pub client_secret: String,
+    pub client_secret: crate::secret::Secret,
     pub public_url: String,
 }
 
@@ -801,7 +801,7 @@ impl OAuth {
             .header("Accept", "application/json")
             .form(&[
                 ("client_id", self.client_id.as_str()),
-                ("client_secret", self.client_secret.as_str()),
+                ("client_secret", self.client_secret.get().as_str()),
                 ("code", code),
                 ("redirect_uri", &self.callback()),
             ])

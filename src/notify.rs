@@ -12,6 +12,7 @@ use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
 use lettre::message::header::{ContentType, HeaderName, HeaderValue};
 use lettre::message::{Mailbox, Message};
+use lettre::transport::smtp::AsyncSmtpTransportBuilder;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
@@ -23,6 +24,7 @@ use std::sync::RwLock;
 
 use crate::catalog::{Event, head, person_events};
 use crate::github::urlencode;
+use crate::secret::Secret;
 use crate::sets::token_hash;
 use crate::store::Confirmation;
 use crate::web::{App, Shared, ago, esc, icon, octicon, page, random_id};
@@ -735,22 +737,24 @@ pub struct SmtpArgs {
     mail_per_day: usize,
 }
 
+type Transport = AsyncSmtpTransport<Tokio1Executor>;
+
 pub struct Smtp {
-    transport: AsyncSmtpTransport<Tokio1Executor>,
+    builder: AsyncSmtpTransportBuilder,
+    login: Option<(String, Secret)>,
+    transport: std::sync::Mutex<(String, Transport)>,
     from: Mailbox,
     pub per_day: usize,
 }
 
 const CONFIRMS_PER_DAY: usize = 3;
 const TESTS_PER_DAY: usize = 3;
-
 #[derive(Clone, Copy)]
 enum Mail {
     Confirm,
     Test,
     Digest,
 }
-
 impl Mail {
     fn key(self) -> &'static str {
         match self {
@@ -767,7 +771,6 @@ impl Mail {
         }
     }
 }
-
 /// False when the email would go over the server limit, or over the
 /// confirmations or test emails a person gets in a day.
 fn take_slot(app: &App, smtp: &Smtp, login: &str, kind: Mail) -> bool {
@@ -784,6 +787,37 @@ fn take_slot(app: &App, smtp: &Smtp, login: &str, kind: Mail) -> bool {
             tracing::warn!("email limit: {e:#}");
             false
         }
+    }
+}
+fn build(
+    b: &AsyncSmtpTransportBuilder,
+    login: &Option<(String, Secret)>,
+    password: &str,
+) -> Transport {
+    match login {
+        Some((user, _)) => b
+            .clone()
+            .credentials(Credentials::new(user.clone(), password.to_string()))
+            .build(),
+        None => b.clone().build(),
+    }
+}
+impl Smtp {
+    /// The pooled transport, built again when the password changes.
+    fn transport(&self) -> Transport {
+        let password = self
+            .login
+            .as_ref()
+            .map(|(_, p)| p.get())
+            .unwrap_or_default();
+        let mut t = self.transport.lock().unwrap();
+        if t.0 != password {
+            *t = (
+                password.clone(),
+                build(&self.builder, &self.login, &password),
+            );
+        }
+        t.1.clone()
     }
 }
 
@@ -804,17 +838,21 @@ impl SmtpArgs {
         }
         .port(self.port)
         .timeout(Some(std::time::Duration::from_secs(30)));
-        match (&self.user, crate::read_secret(&self.password_file)?) {
-            (Some(u), Some(p)) => b = b.credentials(Credentials::new(u.clone(), p)),
-            (None, None) => {}
+        let login = match (&self.user, Secret::open(self.password_file.clone())?) {
+            (Some(u), Some(p)) => Some((u.clone(), p)),
+            (None, None) => None,
             _ => bail!("set both MAINTAINER_MODE_SMTP_USER and _PASSWORD_FILE, or neither"),
-        }
+        };
         if let Some(name) = hello_name(public_url) {
             b = b.hello_name(ClientId::Domain(name));
         }
         tracing::info!("email digest through {host}:{}", self.port);
+        let password = login.as_ref().map(|(_, p)| p.get()).unwrap_or_default();
+        let transport = build(&b, &login, &password);
         Ok(Some(Smtp {
-            transport: b.build(),
+            builder: b,
+            login,
+            transport: std::sync::Mutex::new((password, transport)),
             per_day: self.mail_per_day,
             from,
         }))
@@ -883,7 +921,7 @@ async fn deliver(
     let message = message
         .raw_header(raw("Auto-Submitted", "auto-generated".into()))
         .body(body)?;
-    smtp.transport.send(message).await?;
+    smtp.transport().send(message).await?;
     Ok(())
 }
 

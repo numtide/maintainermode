@@ -68,7 +68,7 @@ pub struct Snapshot {
 pub struct App {
     pub store: Store,
     pub oauth: Option<OAuth>,
-    pub sync_token: Option<String>,
+    pub sync_token: Option<Arc<crate::secret::Secret>>,
     pub github_app: Option<crate::github_app::GithubApp>,
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,

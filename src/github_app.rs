@@ -9,6 +9,8 @@ use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::Mutex;
 
+use crate::secret::Secret;
+
 const API: &str = "https://api.github.com";
 /// A sync pass holds its token for the whole pass, so a token is renewed
 /// while a pass can still finish inside its lifetime.
@@ -16,7 +18,7 @@ const RENEW_BEFORE: i64 = 30;
 
 pub struct GithubApp {
     id: String,
-    key: EncodingKey,
+    key: Secret,
     installation: Option<u64>,
     http: reqwest::Client,
     cached: Mutex<Option<(String, DateTime<Utc>)>>,
@@ -39,6 +41,10 @@ fn claims(id: &str, now: DateTime<Utc>) -> Claims {
     }
 }
 
+fn encoding_key(key: &Secret) -> Result<EncodingKey> {
+    EncodingKey::from_rsa_pem(key.get().as_bytes()).context("GitHub App private key")
+}
+
 fn fresh(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
     expires_at - now > Duration::minutes(RENEW_BEFORE)
 }
@@ -57,8 +63,8 @@ fn owned(installations: &[Value], owner: &str) -> Option<u64> {
 }
 
 impl GithubApp {
-    pub fn new(id: String, pem: &str, installation: Option<u64>) -> Result<Self> {
-        let key = EncodingKey::from_rsa_pem(pem.as_bytes()).context("GitHub App private key")?;
+    pub fn new(id: String, key: Secret, installation: Option<u64>) -> Result<Self> {
+        encoding_key(&key)?;
         Ok(Self {
             id,
             key,
@@ -77,7 +83,7 @@ impl GithubApp {
         Ok(jsonwebtoken::encode(
             &header,
             &claims(&self.id, Utc::now()),
-            &self.key,
+            &encoding_key(&self.key)?,
         )?)
     }
 

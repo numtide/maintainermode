@@ -11,6 +11,7 @@ use std::time::Duration as StdDuration;
 use tokio::sync::watch;
 
 use crate::github;
+use crate::secret::Secret;
 use crate::store::Store;
 use crate::web::App;
 
@@ -443,11 +444,11 @@ async fn poll_once(
 
 /// Polls the Events API with the deployment's own token, at the interval
 /// GitHub asks for.
-pub async fn poll(log: Arc<Log>, token: String) {
+pub async fn poll(log: Arc<Log>, token: Arc<Secret>) {
     let http = github::http();
     let mut etag = None;
     loop {
-        let wait = match poll_once(&log, &http, &token, &mut etag).await {
+        let wait = match poll_once(&log, &http, &token.get(), &mut etag).await {
             Ok((n, wait)) => {
                 if n > 0 {
                     tracing::debug!("events: {n} new");
@@ -562,30 +563,32 @@ pub struct Bucket {
     pub endpoint: String,
     pub bucket: String,
     pub region: String,
-    access_key: String,
-    secret_key: String,
+    credentials: Secret,
     http: reqwest::Client,
 }
 
+/// The credentials file holds `AWS_ACCESS_KEY_ID=…` and
+/// `AWS_SECRET_ACCESS_KEY=…` lines.
+fn keys(text: &str, file: &Path) -> Result<(String, String)> {
+    let get = |key: &str| {
+        text.lines()
+            .filter_map(|l| l.trim().split_once('='))
+            .find(|(k, _)| k.trim() == key)
+            .map(|(_, v)| v.trim().to_string())
+            .with_context(|| format!("{key} in {}", file.display()))
+    };
+    Ok((get("AWS_ACCESS_KEY_ID")?, get("AWS_SECRET_ACCESS_KEY")?))
+}
+
 impl Bucket {
-    /// The credentials file holds `AWS_ACCESS_KEY_ID=…` and
-    /// `AWS_SECRET_ACCESS_KEY=…` lines.
     pub fn new(endpoint: &str, bucket: &str, region: &str, credentials: &Path) -> Result<Self> {
-        let text = std::fs::read_to_string(credentials)
-            .with_context(|| format!("read {}", credentials.display()))?;
-        let get = |key: &str| {
-            text.lines()
-                .filter_map(|l| l.trim().split_once('='))
-                .find(|(k, _)| k.trim() == key)
-                .map(|(_, v)| v.trim().to_string())
-                .with_context(|| format!("{key} in {}", credentials.display()))
-        };
+        let credentials = Secret::load(credentials.to_path_buf())?;
+        keys(&credentials.get(), credentials.path())?;
         Ok(Self {
             endpoint: endpoint.trim_end_matches('/').to_string(),
             bucket: bucket.to_string(),
             region: region.to_string(),
-            access_key: get("AWS_ACCESS_KEY_ID")?,
-            secret_key: get("AWS_SECRET_ACCESS_KEY")?,
+            credentials,
             http: github::http(),
         })
     }
@@ -597,6 +600,7 @@ impl Bucket {
             (Some(h), None) => h.to_string(),
             _ => bail!("no host in {}", self.endpoint),
         };
+        let (access_key, secret_key) = keys(&self.credentials.get(), self.credentials.path())?;
         let now = Utc::now();
         let hash = hex(&sha256(&body));
         let date = now.format("%Y%m%dT%H%M%SZ").to_string();
@@ -608,8 +612,8 @@ impl Bucket {
                 headers: &[("x-amz-content-sha256", &hash), ("x-amz-date", &date)],
                 payload_hash: &hash,
             },
-            &self.access_key,
-            &self.secret_key,
+            &access_key,
+            &secret_key,
             &self.region,
             now,
         );
