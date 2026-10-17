@@ -188,7 +188,7 @@ impl Facts {
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
             credited: s.ledger.credits_of(login).count(),
             feed: app.store.feed_token(login).ok().flatten().is_some(),
-            inbox: app.store.has_table("inbox"),
+            inbox: true,
             system: app.store.package_set(login).ok().flatten().is_some()
                 || !app.store.flake_refs(login).unwrap_or_default().is_empty(),
             actions: ["review_repo", "update_repo", "nixpkgs_fork"]
@@ -411,7 +411,7 @@ mod tests {
     fn the_checklist_reads_the_state_of_the_login() {
         let app = crate::sets::tests::app(&["hello"]);
         let f = Facts::of(&app, "alice");
-        assert!(f.index_ready && !f.feed && !f.llm && !f.actions && !f.inbox);
+        assert!(f.index_ready && !f.feed && !f.llm && !f.actions && f.inbox);
         app.store.set_feed_token("alice", "t").unwrap();
         app.store.watch("alice", "pkg:hello").unwrap();
         app.store
