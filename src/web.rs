@@ -455,7 +455,7 @@ fn overlap(title: &str, list: &[(String, usize)]) -> String {
         })
         .collect();
     format!(
-        "<div class=\"flex-1\">{}</div>",
+        "<div class=\"col-grow\">{}</div>",
         crate::ui::section(title, None, None, &rows)
     )
 }
@@ -505,10 +505,10 @@ async fn person_page(
         };
         let _ = write!(
             recent,
-            "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
+            "<div class=\"Box-row d-flex\"><div class=\"flex-auto min-width-0 wb-break-word\">\
              {t}\
              <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
-             <div class=\"text-right\">{}{found}</div></div>",
+             <div class=\"text-right ml-2 flex-shrink-0\">{}{found}</div></div>",
             r.at.format("%Y-%m-%d"),
             esc(&r.state.to_lowercase().replace('_', " ")),
             outcome_label(r.outcome),

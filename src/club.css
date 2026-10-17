@@ -151,6 +151,10 @@ a:hover {
 
 .Label {
   display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 0 7px;
   font-size: 12px;
   font-weight: 500;
@@ -447,4 +451,14 @@ section.Box > .Box-header {
     flex: 1 1 auto;
     text-align: center;
   }
+}
+.col-grow {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+/* Primer's clearfix on .subnav becomes a flex item and shifts the first
+   row by one gap. */
+.subnav::before,
+.subnav::after {
+  display: none;
 }
