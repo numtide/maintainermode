@@ -269,19 +269,64 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
             None,
             None,
             &format!(
-                "<div class=\"Box-row\"><p><code>maintainer-mode submit</code> sends the packages of your machines with this token. \
-                 They show in <a href=\"{MACHINES}\">On my machines</a> on the packages page.</p>{state}</div>"
+                "<div class=\"Box-row\"><p>Send the packages of your machines, and they show first in \
+                 <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p>\
+                 <ol class=\"ml-3\">{}</ol>{state}</div>",
+                steps(app.public_url.trim_end_matches('/'), None)
             )
         )
     )
 }
 
-fn usage(base: &str) -> String {
-    format!(
-        "maintainer-mode scan --flake . --output nixosConfigurations.HOST.config.system.build.toplevel\n\
-         maintainer-mode --server {base} export --out report.json\n\
-         maintainer-mode submit --to {base} --token-file ~/.config/maintainer-mode/upload-token"
-    )
+const TOKEN_FILE: &str = "~/.config/maintainer-mode/upload-token";
+
+/// The whole way from nothing to a report on the server. `token` is the
+/// new token, shown once; without it, step 2 points to the button.
+fn steps(base: &str, token: Option<&str>) -> String {
+    let step = |title: &str, body: &str, cmd: &str| {
+        let pre = if cmd.is_empty() {
+            String::new()
+        } else {
+            format!("<pre class=\"p-2 mt-1 color-bg-subtle\">{}</pre>", esc(cmd))
+        };
+        format!("<li class=\"mb-3\"><strong>{title}</strong> {body}{pre}</li>")
+    };
+    let save = format!("mkdir -p ~/.config/maintainer-mode\n(umask 077; cat > {TOKEN_FILE})");
+    let token_step = match token {
+        Some(_) => step(
+            "Save the token.",
+            "Run this, paste the token from the box above, then press Enter and Ctrl-D. Only you can read the file.",
+            &save,
+        ),
+        None => step(
+            "Make an upload token",
+            "with the button below. The server shows it once, with the command that saves it.",
+            "",
+        ),
+    };
+    [
+        step(
+            "Get the command line tool.",
+            "It needs Nix with flakes. The first run builds it from source, which takes a few minutes.",
+            "nix shell github:numtide/maintainermode",
+        ),
+        token_step,
+        step(
+            "Read the packages of your machine.",
+            "Run it in the repository of your NixOS configuration, and replace HOST. Repeat <code>--output</code> for more machines. \
+             It reads the closure on your machine and writes <code>maintainer-mode-scan.json</code>, which stays there.",
+            "maintainer-mode scan --flake . --output nixosConfigurations.HOST.config.system.build.toplevel",
+        ),
+        step(
+            "Send them.",
+            "The tool downloads the public package list of the server, keeps only those names, and sends a version only when nixpkgs has it. \
+             To read the report before you send it, run <code>export</code> first.",
+            &format!(
+                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE}"
+            ),
+        ),
+    ]
+    .concat()
 }
 
 async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -295,13 +340,13 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let base = app.public_url.trim_end_matches('/');
     let out = format!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
-         <input class=\"form-control width-full mb-2 text-mono\" readonly value=\"{t}\" aria-label=\"upload token\">\
-         <p>Put it in a file that only you can read, or in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code>. Then, on your machine:</p>\
-         <pre class=\"p-2 color-bg-subtle\">{u}</pre>\
-         <p>Any token you made before no longer works.</p>\
+         <p>Your new upload token. The server shows it only now. Any token you made before no longer works.</p>\
+         <input class=\"form-control width-full mb-3 text-mono\" readonly value=\"{t}\" aria-label=\"upload token\">\
+         <ol class=\"ml-3\">{s}</ol>\
+         <p class=\"color-fg-muted\">You can also put the token in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code> instead of a file.</p>\
          <a class=\"btn btn-sm\" href=\"/me/settings#upload\">Back to your settings</a></div></div>",
         t = esc(&token),
-        u = esc(&usage(base)),
+        s = steps(base, Some(&token)),
     );
     Page::new(
         Section::Personal(crate::ui::Personal::Settings),
@@ -342,10 +387,16 @@ pub(crate) mod tests {
     use super::*;
 
     #[test]
-    fn the_usage_names_the_server_for_export_and_submit() {
-        let u = usage("https://example.org");
-        assert!(u.contains("--server https://example.org export"));
-        assert!(u.contains("submit --to https://example.org"));
+    fn the_steps_start_with_the_tool_and_name_the_server() {
+        let s = steps("https://example.org", None);
+        let tool = s.find("nix shell github:numtide/maintainermode").unwrap();
+        assert!(tool < s.find("maintainer-mode scan").unwrap());
+        assert!(s.contains("--server https://example.org export"));
+        assert!(s.contains(
+            "submit --to https://example.org --token-file ~/.config/maintainer-mode/upload-token"
+        ));
+        assert!(!s.contains("umask"));
+        assert!(steps("https://example.org", Some("t")).contains("umask 077"));
     }
 
     #[test]

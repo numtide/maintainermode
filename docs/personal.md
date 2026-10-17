@@ -292,13 +292,42 @@ when one of them gets an advisory or a new upstream release. The set is
 private. Facts about nixpkgs are public; facts about your machines are not.
 
 You evaluate your own tree on your own machine. By default, the server never
-evaluates it. Three client commands do the work:
+evaluates it. `/me/settings#upload` shows these steps with your server's
+address:
 
-```sh
-maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
-maintainer-mode --server https://<host> export --out report.json
-maintainer-mode submit --to https://<host> --token-file ~/.config/maintainer-mode/upload-token
-```
+1. Get the command line tool. It needs Nix with flakes. The first run builds
+   it from source, which takes a few minutes.
+
+   ```sh
+   nix shell github:numtide/maintainermode
+   ```
+
+2. Make an upload token on `/me/settings#upload`. The server shows it once.
+   Save it in a file that only you can read:
+
+   ```sh
+   mkdir -p ~/.config/maintainer-mode
+   (umask 077; cat > ~/.config/maintainer-mode/upload-token)
+   ```
+
+   Paste the token, then push Enter and Ctrl-D. You can also put the token in
+   `MAINTAINER_MODE_UPLOAD_TOKEN`.
+
+3. In the repository of your NixOS configuration, read the packages of a
+   machine. Repeat `--output` for more machines:
+
+   ```sh
+   maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
+   ```
+
+4. Send them. `export` is optional: it shows the report before you send it.
+
+   ```sh
+   maintainer-mode --server https://<server> export
+   maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token
+   ```
+
+What each command does:
 
 - **`scan`** reads the closure of one or more flake outputs (`--flake`,
   `--output`), or of the attributes of a file (`--file`, `--attr`), with
