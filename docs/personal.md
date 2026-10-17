@@ -30,7 +30,7 @@ After your first sign-in, Maintainer Mode sends you to `/welcome`. This page is 
 7. LLMs. They are off by default. Turn them on in `/me/settings`.
 8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
 
-If you maintain nothing, the first step changes. It sends you to the unowned pull requests on `/review`, with a checklist for a first review. It also links maintainers/README.md.
+If you maintain nothing, the first step changes. It sends you to the pull requests with no maintainer on `/review`, with a checklist for a first review. It also links maintainers/README.md.
 
 Your menu shows "Get started" until you press "I am done". You can open `/welcome` again at any time. Only you see it.
 
@@ -60,9 +60,21 @@ with its flags, the ones that need attention first.
   path. Maintainer Mode already logs people in and keeps state, so a
   subscription is one more row in its database.
 
-## Needs review, for you
+## Review, for you
 
-Sign in, and `/review` opens on **For you**. It lists the open pull requests that touch what you maintain (`meta.maintainers`, `meta.teams`), what you own in `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or area you watch. The tabs **Unowned** and **All** stay. Each tab shows its count. Signed out, `/review` opens on **Unowned**.
+`/review` is the one place to review. It has five tabs, and each tab shows its count:
+
+| Tab            | Address               | What it lists                                                             |
+| -------------- | --------------------- | ------------------------------------------------------------------------- |
+| For you        | `/review?tab=foryou`  | pull requests that touch what you maintain, own, changed, tagged or watch |
+| No maintainer  | `/review?tab=unowned` | pull requests with no maintainer, team or `ci/OWNERS` line on their files |
+| Bumps          | `/review?tab=bumps`   | open version bumps (see [health.md](health.md))                           |
+| All            | `/review?tab=all`     | every pull request in the queues that is not ready to merge               |
+| Ready to merge | `/review?tab=ready`   | the ready-to-merge queue, and the lists for committers (see below)        |
+
+Sign in, and `/review` opens on **For you**. For you looks at `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
+
+Each tab shows 50 rows. "Next page" adds `?after=<number>`, the number of the last pull request on the page. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
 The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The MCP tool `queue_review` and the CLI (`maintainer-mode review --bucket foryou --login <login>`) take the same name. `mine` is an alias of `foryou`. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts.
 
@@ -214,7 +226,7 @@ limits, and why the feature is off by default.
 
 ## For committers
 
-`/committer` shows what waits for a person with merge rights. The home page of a committer links to it. Other people see a short page that explains the view.
+The tab **Ready to merge** of `/review` shows what waits for a person with merge rights. Everyone can see it. A committer who signs in also sees the section **In your areas** at the top. The home page of a committer links to the tab.
 
 **Who is a committer.** Maintainer Mode counts a login as a committer when one of these is true:
 
@@ -227,14 +239,15 @@ limits, and why the feature is off by default.
 
 | Section                  | What it shows                                                                                                                             |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Ready to merge           | the ready-to-merge queue: your areas and subscriptions first, then the rest                                                               |
+| In your areas            | only for a committer who signed in: the ready-to-merge queue in your areas and in what you watch. Only you see it.                        |
+| Ready to merge           | the ready-to-merge queue, 50 rows on each page. Authors with more review credit come first.                                               |
 | Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes |
 | Security fixes           | the label `1.severity: security`, and ready                                                                                               |
 | Backports                | a `release-*` base branch, and ready                                                                                                      |
 | Waiting longest          | ready, oldest approval first                                                                                                              |
 
-Here "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The sections other than the ready queue put the longest wait first and show 50 rows at most.
+In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first and show 50 rows at most. They show on the first page only.
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
-**The API.** `/api/v1/committer` gives the same lists without the personal order. It is the same for all callers, because your subscriptions are private.
+**The API.** `/api/v1/committer` gives the same lists without **In your areas**. It is the same for all callers, because your subscriptions are private.

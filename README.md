@@ -45,7 +45,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
   pull requests, merges, issues, advisories and releases.
 - **Your progress**: your reviews, your streak and your goals. There is no
   leaderboard.
-- **For committers**: a view of what is ready to merge in your areas.
+- **For committers**: what is ready to merge in your areas, on the Ready to merge tab of the review page.
 - **Onboarding**: a first visit walks you through all of this.
 
 ## 3. Act on it
