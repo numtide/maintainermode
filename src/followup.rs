@@ -127,6 +127,15 @@ impl Plans {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn none(committer: bool) -> Plans {
+        Plans {
+            by_pr: HashMap::new(),
+            default: Plans::built_in(committer),
+            committer,
+        }
+    }
+
     pub(crate) fn of(app: &App, login: &str, committer: bool) -> Plans {
         let mut default = Plans::built_in(committer);
         let days = app.store.setting(login, DAYS_KEY).ok().flatten();
@@ -394,6 +403,48 @@ pub(crate) fn own_events(app: &App, login: &str, days: i64) -> Vec<Event> {
     let plans = Plans::of(app, login, s.committers.is(login));
     let now = Utc::now();
     events(&s.pr_data, login, &plans, now, now - Duration::days(days))
+}
+
+/// The plan of each open pull request of a person, for the API.
+pub(crate) fn plans_value(app: &App, login: &str) -> serde_json::Value {
+    let s = app.snap();
+    let committer = s.committers.is(login);
+    let plans = Plans::of(app, login, committer);
+    let now = Utc::now();
+    let list: Vec<serde_json::Value> = s
+        .pr_data
+        .iter()
+        .filter(|p| p.is_open() && p.author.eq_ignore_ascii_case(login))
+        .map(|p| {
+            let plan = plans.get(p.number);
+            let st = status(p, &plan, committer, now);
+            let (state, blocked): (&str, &[&str]) = match &st {
+                Status::Merged => ("merged", &[]),
+                Status::Closed => ("closed", &[]),
+                Status::Reviewed { .. } => ("reviewed", &[]),
+                Status::Draft => ("draft", &[]),
+                Status::Off => ("off", &[]),
+                Status::Waiting(_) => ("waiting", &[]),
+                Status::Due { blocked, .. } => ("due", blocked),
+            };
+            serde_json::json!({
+                "number": p.number,
+                "title": p.title,
+                "days": plan.days,
+                "action": plan.action.key(),
+                "source": plan.source,
+                "deadline": plan.deadline(p),
+                "state": state,
+                "blocked": blocked,
+                "text": sentence(p, &plan, &st, now),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "committer": committer,
+        "default": { "days": plans.default.days, "action": plans.default.action.key(), "source": plans.default.source },
+        "pull_requests": list,
+    })
 }
 
 /// Removes the plans of pull requests that left the synced data. With no
@@ -920,6 +971,14 @@ pub(crate) mod tests {
         );
         assert!(html.contains("name=\"days\" value=\"3\""));
         assert!(html.contains("Use my default"));
+        let v = crate::needs::value(&app, "alice", crate::needs::Mood::Mine);
+        let p0 = &v["plans"]["pull_requests"][0];
+        assert_eq!(p0["number"], 42);
+        assert_eq!(p0["days"], 3);
+        assert_eq!(p0["action"], "merge");
+        assert_eq!(p0["source"], "pull_request");
+        assert_eq!(p0["state"], "waiting");
+        assert!(v["events"].as_array().unwrap().is_empty());
         assert!(!pr_box(&app, Some("alice"), p, false).contains("merge box"));
         assert!(pr_box(&app, Some("alice"), p, false).contains("It can be wrong."));
         let r = save_plan(State(app.clone()), alice.clone(), form(42, "", "", true)).await;

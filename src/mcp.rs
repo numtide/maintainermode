@@ -226,6 +226,13 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool(
+            "needs",
+            "What needs me",
+            "The caller's Needs you list, the most urgent first, as GET /api/v1/needs gives it: advisories on their machines, reviews and reminders on their own pull requests, pull requests to review, packages to update. It also gives the follow-up plan of each of their open pull requests, and the events of their own pull requests in the last 30 days.",
+            json!({ "mood": { "type": "string", "enum": ["all", "mine", "machines", "review", "maintain"] } }),
+            &[],
+        ),
+        tool(
             "watching",
             "What I watch",
             "The caller's subscriptions on Maintainer Mode, with their health flags.",
@@ -294,6 +301,10 @@ async fn call(
             }
         }
         "watching" => Ok(crate::catalog::watching_value(app, login)),
+        "needs" => {
+            let mood = crate::needs::Mood::parse(args["mood"].as_str()).unwrap_or_default();
+            Ok(crate::needs::value(app, login, mood))
+        }
         "sync_status" => Ok(crate::status::state(app)),
         _ => return Err((-32602, format!("no tool {name}"))),
     })
@@ -382,7 +393,7 @@ mod tests {
         opt_in(&app, "alice", "t");
         let (code, v) = post(&app, Some("t"), list).await;
         assert_eq!(code, StatusCode::OK);
-        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 8);
+        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
     }
 
     #[tokio::test]
@@ -422,6 +433,23 @@ mod tests {
         )
         .await;
         assert_eq!(v["result"]["isError"], true);
+        let (_, v) = post(
+            &app,
+            Some("t"),
+            json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": { "name": "needs", "arguments": { "mood": "mine" } } }),
+        )
+        .await;
+        let text: Value =
+            serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text["login"], "alice");
+        assert_eq!(text["mood"], "mine");
+        assert!(
+            text["plans"]["pull_requests"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(text["plans"]["default"]["source"], "built_in");
         let (_, v) = post(
             &app,
             Some("t"),

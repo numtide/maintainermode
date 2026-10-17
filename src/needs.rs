@@ -15,6 +15,7 @@ use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::Subject;
+use crate::followup::{Plans, others, verb};
 use crate::health::{Health, Hydra, Last};
 use crate::mine::{Interests, Why};
 use crate::model::Pr;
@@ -25,7 +26,6 @@ use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon};
 const SHOWN: usize = 20;
 const MOOD_COOKIE: &str = "mood";
 const APPROVED_WAIT: i64 = 3;
-const REVIEW_WAIT: i64 = 7;
 const EPSS_HIGH: f64 = 0.1;
 const PINGS: usize = 5;
 
@@ -93,6 +93,9 @@ impl Mood {
 pub(crate) enum Cause {
     /// A critical or high advisory on a package of the person's machines.
     Advisory,
+    /// The deadline of a follow-up plan the person chose passed with no
+    /// review.
+    FollowUp,
     /// Someone reviewed the person's pull request after their last action.
     Reviewed,
     /// The person's pull request cannot go on: checks, conflict, or no merge.
@@ -121,8 +124,8 @@ pub(crate) struct Item {
     pub(crate) moods: Vec<Mood>,
     pub(crate) labels: Vec<(Tone, String)>,
     pub(crate) at: Option<DateTime<Utc>>,
-    /// A second link: the advisory, for example.
-    pub(crate) more: Option<(String, String)>,
+    /// More links: the advisory, or the merge box and the contributor guide.
+    pub(crate) more: Vec<(String, String)>,
     rank: (u8, i64, String),
 }
 
@@ -158,6 +161,7 @@ pub(crate) struct Inputs<'a> {
     pub(crate) interests: &'a Interests,
     /// Attributes whose last Hydra build failed, as far as the cache knows.
     pub(crate) failed: &'a HashSet<String>,
+    pub(crate) plans: &'a Plans,
     pub(crate) now: DateTime<Utc>,
 }
 
@@ -307,7 +311,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
     if why.maintain {
         detail.push_str(" You maintain it.");
     }
-    let more = Some((top.url.clone(), top.id.clone()));
+    let more = vec![(top.url.clone(), top.id.clone())];
     ids.sort_unstable();
     let mut moods = vec![Mood::Machines];
     if why.maintain {
@@ -391,7 +395,7 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         moods: vec![Mood::Maintain],
         labels,
         at: None,
-        more: None,
+        more: vec![],
         rank: (
             crate::mine::order(why, true).0,
             i64::from(!failed),
@@ -411,18 +415,87 @@ fn last_act(pr: &Pr) -> DateTime<Utc> {
         .unwrap_or(pr.created_at)
 }
 
-fn others(pr: &Pr) -> impl Iterator<Item = &crate::model::Review> {
-    pr.reviews.iter().filter(move |r| {
-        !r.author_is_bot && !r.author.eq_ignore_ascii_case(&pr.author) && r.state != "DISMISSED"
-    })
-}
-
-fn verb(state: &str) -> &'static str {
-    match state {
-        "APPROVED" => "approved",
-        "CHANGES_REQUESTED" => "requested changes",
-        _ => "commented",
+/// The item of a plan whose deadline passed with no review. A plan the
+/// person chose goes to the top of their pull requests; the built-in
+/// default keeps the place of "no review for a week".
+fn due(i: &Inputs, pr: &Pr) -> Option<Item> {
+    let plan = i.plans.get(pr.number);
+    let st = crate::followup::status(pr, &plan, i.plans.committer, i.now);
+    let crate::followup::Status::Due { deadline, blocked } = &st else {
+        return None;
+    };
+    let n = pr.number;
+    let quiet = format!("no review for {}", ago(pr.created_at));
+    let (label, detail, more) = match plan.action {
+        crate::followup::Action::Merge if blocked.is_empty() => (
+            (Tone::Success, "you can merge it".to_string()),
+            crate::followup::sentence(pr, &plan, &st, i.now),
+            vec![
+                (
+                    format!("{}#partial-pull-merging", crate::prpage::github_url(n)),
+                    "the merge box on GitHub".to_string(),
+                ),
+                (
+                    crate::followup::GUIDE.to_string(),
+                    format!("CONTRIBUTING.md: “{}”", crate::followup::GUIDE_QUOTE),
+                ),
+            ],
+        ),
+        crate::followup::Action::Merge => (
+            (Tone::Attention, blocked[0].to_string()),
+            crate::followup::sentence(pr, &plan, &st, i.now),
+            vec![],
+        ),
+        _ => {
+            let days = (i.now - pr.created_at).num_days();
+            let ping = maintainers(i.s, i.index, pr);
+            let detail = if ping.is_empty() {
+                format!(
+                    "No review in {days} days. No maintainer is named for its files: ask for a review on Discourse or Matrix."
+                )
+            } else {
+                format!(
+                    "No review in {days} days. Ask its maintainers for a review: {}.",
+                    ping.iter()
+                        .map(|l| format!("@{l}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            ((Tone::Attention, quiet.clone()), detail, vec![])
+        }
+    };
+    let at = *deadline;
+    let cause = if plan.chosen() {
+        Cause::FollowUp
+    } else {
+        Cause::Waiting
+    };
+    let mut labels = vec![label];
+    if plan.action == crate::followup::Action::Merge {
+        labels.push((Tone::Neutral, quiet));
     }
+    let deadline = at.to_rfc3339();
+    Some(Item {
+        key: format!("pr:{n}"),
+        cause,
+        title: format!("#{n} {}", pr.title),
+        detail,
+        href: format!("/pr/{n}"),
+        action: "Open the pull request".into(),
+        fingerprint: fingerprint(&[
+            "due",
+            &deadline,
+            plan.action.key(),
+            &blocked.join(","),
+            &pr.head_oid,
+        ]),
+        moods: vec![Mood::Mine],
+        labels,
+        at: Some(at),
+        more,
+        rank: (0, at.timestamp(), format!("{n:012}")),
+    })
 }
 
 fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
@@ -438,7 +511,7 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
         moods: vec![Mood::Mine],
         labels,
         at: Some(at),
-        more: None,
+        more: vec![],
         rank: (0, at.timestamp(), format!("{n:012}")),
     };
     let acted = last_act(pr);
@@ -491,6 +564,9 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
             return Some(it);
         }
     }
+    if let Some(it) = due(i, pr).filter(|it| it.cause == Cause::FollowUp) {
+        return Some(it);
+    }
     if matches!(pr.ci.as_deref(), Some("FAILURE" | "ERROR")) {
         return Some(mk(
             Cause::Blocked,
@@ -526,38 +602,7 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
             t,
         ));
     }
-    if !pr.is_draft
-        && others(pr).next().is_none()
-        && i.now - pr.created_at >= Duration::days(REVIEW_WAIT)
-    {
-        let ping = maintainers(i.s, i.index, pr);
-        let detail = if ping.is_empty() {
-            format!(
-                "Opened {} ago, and no review yet. No maintainer is named for its files: ask for a review on Discourse or Matrix.",
-                ago(pr.created_at)
-            )
-        } else {
-            format!(
-                "Opened {} ago, and no review yet. Ask its maintainers: {}.",
-                ago(pr.created_at),
-                ping.iter()
-                    .map(|l| format!("@{l}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        };
-        return Some(mk(
-            Cause::Waiting,
-            vec![(
-                Tone::Attention,
-                format!("no review for {}", ago(pr.created_at)),
-            )],
-            detail,
-            &["waiting", &pr.head_oid],
-            pr.created_at,
-        ));
-    }
-    None
+    due(i, pr)
 }
 
 /// The maintainers of what a pull request touches, less its author.
@@ -671,7 +716,7 @@ fn review(i: &Inputs) -> Vec<Item> {
                 moods,
                 labels,
                 at: Some(e.created_at),
-                more: None,
+                more: vec![],
                 rank: (0, pos as i64, String::new()),
             })
         })
@@ -714,6 +759,7 @@ pub(crate) fn next_after<'a>(
 fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T {
     let interests = Interests::of(app, login);
     let s = app.snap();
+    let plans = Plans::of(app, login, s.committers.is(login));
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let failed: HashSet<String> = interests
@@ -736,6 +782,7 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
         h: &h,
         interests: &interests,
         failed: &failed,
+        plans: &plans,
         now: Utc::now(),
     })
 }
@@ -767,6 +814,7 @@ const HINT: &str = "<span class=\"needs-keys f6 color-fg-muted\">Keys: <kbd>j</k
 fn cause_icon(c: Cause) -> (&'static str, &'static str, &'static str) {
     match c {
         Cause::Advisory => (octicon!("shield"), "color-fg-danger", "advisory"),
+        Cause::FollowUp => (octicon!("bell"), "color-fg-attention", "follow-up"),
         Cause::Reviewed => (octicon!("comment"), "color-fg-accent", "new review"),
         Cause::Blocked => (octicon!("skip"), "color-fg-danger", "blocked"),
         Cause::Waiting => (
@@ -800,9 +848,9 @@ fn row(it: &Item, mood: Mood) -> String {
         .collect();
     let more = it
         .more
-        .as_ref()
+        .iter()
         .map(|(href, text)| format!(" · <a href=\"{}\">{}</a>", esc(href), esc(text)))
-        .unwrap_or_default();
+        .collect::<String>();
     format!(
         "<div class=\"Box-row d-flex flex-items-start needs-item\" tabindex=\"-1\" data-key=\"{key}\">\
          <span class=\"mr-2 {class}\" role=\"img\" aria-label=\"{label}\">{ic}</span>\
@@ -1028,7 +1076,12 @@ async fn api(State(app): State<Shared>, headers: HeaderMap, Query(q): Query<ApiQ
             .into_response();
     };
     let mood = Mood::parse(q.mood.as_deref()).unwrap_or_default();
-    let (_, shown) = of(&app, &login);
+    (private, Json(value(&app, &login, mood))).into_response()
+}
+
+/// The answer of `/api/v1/needs` and of the MCP tool `needs`.
+pub(crate) fn value(app: &App, login: &str, mood: Mood) -> serde_json::Value {
+    let (_, shown) = of(app, login);
     let counts: serde_json::Map<String, serde_json::Value> = counts(&shown)
         .into_iter()
         .map(|(m, n)| (m.key().to_string(), json!(n)))
@@ -1048,20 +1101,22 @@ async fn api(State(app): State<Shared>, headers: HeaderMap, Query(q): Query<ApiQ
                 "moods": it.moods.iter().map(|m| m.key()).collect::<Vec<_>>(),
                 "labels": it.labels.iter().map(|(_, l)| l).collect::<Vec<_>>(),
                 "at": it.at,
-                "link": it.more.as_ref().map(|(href, _)| href),
+                "link": it.more.first().map(|(href, _)| href),
+                "links": it.more.iter().map(|(href, text)| json!({ "href": href, "text": text })).collect::<Vec<_>>(),
             })
         })
         .collect();
-    (
-        private,
-        Json(json!({
-            "login": login,
-            "mood": mood.key(),
-            "counts": counts,
-            "items": items,
-        })),
-    )
-        .into_response()
+    json!({
+        "login": login,
+        "mood": mood.key(),
+        "counts": counts,
+        "items": items,
+        "plans": crate::followup::plans_value(app, login),
+        "events": crate::followup::own_events(app, login, crate::catalog::FEED_DAYS)
+            .iter()
+            .map(|e| json!({ "id": e.id, "at": e.at, "title": e.title, "url": e.url }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 #[cfg(test)]
@@ -1152,6 +1207,7 @@ mod tests {
         machines: Vec<String>,
         versions: HashMap<String, String>,
         failed: HashSet<String>,
+        plans: Plans,
     }
 
     impl World {
@@ -1181,6 +1237,7 @@ mod tests {
                 machines: vec!["curl".into(), "hello".into()],
                 failed: HashSet::new(),
                 versions: HashMap::new(),
+                plans: Plans::none(false),
             }
         }
 
@@ -1225,6 +1282,7 @@ mod tests {
                 h: &self.h,
                 interests: &interests,
                 failed: &self.failed,
+                plans: &self.plans,
                 now: now(),
             })
         }
@@ -1269,7 +1327,7 @@ mod tests {
         assert!(it.labels.iter().any(|(_, l)| l == "critical 9.8"));
         assert_eq!(it.moods, [Mood::Machines]);
         assert_eq!(
-            it.more.as_ref().map(|(_, t)| t.as_str()),
+            it.more.first().map(|(_, t)| t.as_str()),
             Some("NIXPKGS-2026-1")
         );
 
@@ -1394,6 +1452,95 @@ mod tests {
         assert!(find(&items, "pr:4").detail.contains("No maintainer"));
     }
 
+    fn set(w: &mut World, n: u64, days: u32, action: crate::followup::Action, since: i64) {
+        w.plans.by_pr.insert(
+            n,
+            crate::followup::Plan {
+                days,
+                action,
+                source: crate::followup::Source::PullRequest,
+                since: Some(ago_days(since)),
+            },
+        );
+    }
+
+    #[test]
+    fn a_due_plan_goes_to_the_top_of_your_pull_requests() {
+        use crate::followup::Action;
+        let mut w = World::new();
+        let mut reviewed = pr(1, "alice", 2);
+        let r = rev(&reviewed, "bob", "COMMENTED", ago_days(1));
+        reviewed.reviews.push(r);
+        w.add(reviewed, &[]);
+        w.add(pr(2, "alice", 10), &["hello"]);
+        set(&mut w, 2, 7, Action::Ask, 8);
+        let items = w.items();
+        assert_eq!(keys(&items), ["pr:2", "pr:1"]);
+        let it = &items[0];
+        assert_eq!(it.cause, Cause::FollowUp);
+        assert_eq!(
+            it.detail,
+            "No review in 10 days. Ask its maintainers for a review: @carol."
+        );
+        set(&mut w, 2, 7, Action::Ask, 3);
+        assert_eq!(
+            keys(&w.items()),
+            ["pr:1"],
+            "a plan that is not due hides the week-old item"
+        );
+        set(&mut w, 2, 7, Action::Nothing, 30);
+        assert_eq!(keys(&w.items()), ["pr:1"], "do nothing means no item");
+        w.plans.by_pr.clear();
+        assert_eq!(find(&w.items(), "pr:2").cause, Cause::Waiting);
+    }
+
+    #[test]
+    fn a_due_plan_to_merge_says_you_can_merge_or_what_stops_it() {
+        use crate::followup::Action;
+        let mut w = World::new();
+        w.add(pr(3, "alice", 9), &[]);
+        set(&mut w, 3, 7, Action::Merge, 8);
+        let it = find(&w.items(), "pr:3").clone();
+        assert_eq!(it.cause, Cause::FollowUp);
+        assert_eq!(
+            it.detail,
+            "No review in 9 days. Do not merge it yet: this site does not know you as a committer."
+        );
+        assert!(it.more.is_empty());
+        w.plans.committer = true;
+        let it = find(&w.items(), "pr:3").clone();
+        assert_eq!(it.detail, "No review in 9 days. You can merge it yourself.");
+        assert_eq!(it.labels[0].1, "you can merge it");
+        assert_eq!(
+            it.more[0].0,
+            "https://github.com/NixOS/nixpkgs/pull/3#partial-pull-merging"
+        );
+        assert_eq!(it.more[1].0, crate::followup::GUIDE);
+        assert!(row(&it, Mood::All).contains("the merge box on GitHub</a> · <a href="));
+        let i = w.s.pr_at[&3];
+        w.s.pr_data[i].ci = Some("FAILURE".into());
+        let it = find(&w.items(), "pr:3").clone();
+        assert_eq!(it.cause, Cause::FollowUp);
+        assert_eq!(
+            it.detail,
+            "No review in 9 days. Do not merge it yet: checks fail."
+        );
+        assert_eq!(it.labels[0].1, "checks fail");
+        w.s.pr_data[i].ci = Some("SUCCESS".into());
+        w.s.pr_data[i].mergeable = "CONFLICTING".into();
+        assert!(
+            find(&w.items(), "pr:3")
+                .detail
+                .ends_with("it has a merge conflict.")
+        );
+        let r = rev(&w.s.pr_data[i], "bob", "APPROVED", ago_days(2));
+        w.s.pr_data[i].reviews.push(r);
+        assert_eq!(
+            find(&w.items(), "pr:3").cause,
+            Cause::Reviewed,
+            "a review cancels the reminder"
+        );
+    }
     #[test]
     fn pull_requests_to_review_come_machines_first() {
         let mut w = World::new();
