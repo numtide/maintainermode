@@ -98,6 +98,48 @@ its known limits.
   No source needs an account. `/state?tab=status` shows what each source did on its last
   pass.
 
+## The notifications poller
+
+The poller makes a change on GitHub show here in about a minute. The full
+walk stays as the safety net.
+
+- **The bot account.** `maintainermode-bot` is a GitHub account for the
+  machine, not for a person. It watches NixOS/nixpkgs with "All activity".
+  Thus GitHub opens a notification thread for each issue and pull request
+  that changes.
+- **The token.** The bot token is a classic token of this account with one
+  scope: `notifications`. Give it in `MAINTAINER_MODE_BOT_TOKEN_FILE` (the
+  NixOS option `services.maintainer-mode.botTokenFile`). The server reads the
+  file again when it changes, so a new token needs no restart. Without the
+  token, the poller is off.
+- **What it reads.** The poller reads the unread notifications of the bot
+  account. It sends `If-Modified-Since` with the last `Last-Modified`, so an
+  answer of `304` costs no rate limit. It waits the interval that GitHub
+  gives in `X-Poll-Interval`, usually 60 seconds. It keeps only the threads
+  of NixOS/nixpkgs whose subject is a pull request or an issue. The number
+  comes from the subject URL.
+- **What it does with a thread.** The server reads that pull request or
+  issue again, with the same GraphQL fields as the walk. It uses the tokens
+  of the sync in their order: the GitHub App token, the bot token, then the
+  tokens that people lend. It stores the item and recomputes the pages and
+  inboxes. It recomputes at most once every 30 seconds.
+- **Read marks.** Then the poller marks the threads read, so the list stays
+  short. If a read fails, the threads from that read and newer stay unread,
+  and the next poll tries again.
+- **It never writes to nixpkgs.** The bot account makes no review, comment,
+  label or merge. A read mark changes only the notifications of the bot
+  account. It is not a write to nixpkgs.
+- **The rule for the full walk.** The poller is healthy when its last good
+  poll is at most three intervals old (at least 5 minutes). While it is
+  healthy, the walk of pull requests and issues runs every 30 minutes, not
+  on each pass. Before the first walk is complete, and when the poller is off
+  or fails, each pass walks as before. The other work of a pass keeps its
+  interval.
+- **Status.** `/state?tab=status` shows whether the poller is on, its last
+  poll, the threads of the last hour, the average time from a change on
+  GitHub to its read here, and the errors. `/api/v1/sync` gives the same data
+  under `notifications`. The counts start again when the server restarts.
+
 ## The nixpkgs event log
 
 Maintainer Mode keeps every public event on NixOS/nixpkgs that it can see.
