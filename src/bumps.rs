@@ -5,7 +5,7 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use axum::response::Html;
+use axum::response::Response;
 use axum::routing::get;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -15,11 +15,12 @@ use std::fmt::Write;
 
 use crate::actions::Act;
 use crate::area::{Index, under};
-use crate::catalog::{Subject, head, pr_row, subscriptions, upstream};
+use crate::catalog::{Subject, pr_row, subscriptions, upstream};
 use crate::health::Health;
 use crate::links::pkg_key;
 use crate::model::Pr;
-use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon, page};
+use crate::ui::{Kind, Page, Section, Tab, Tone, badge, empty, item_row, section};
+use crate::web::{App, Shared, Snapshot, ago, esc, octicon};
 
 const LIST: usize = 200;
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
@@ -188,7 +189,7 @@ fn upstream_html(r: &Row) -> String {
         ("", "the newest release Maintainer Mode knows")
     };
     format!(
-        " <span class=\"Label {class}\" title=\"{hint}\">upstream {}</span>",
+        "<span class=\"Label {class}\" title=\"{hint}\">upstream {}</span>",
         esc(u)
     )
 }
@@ -210,23 +211,24 @@ fn row_html(r: &Row, act: Act) -> String {
         1 => "1 approval".to_string(),
         n => format!("{n} approvals"),
     };
-    format!(
-        "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-open\">{ic}</span>\
-         <div class=\"flex-auto\">{t}{draft}{up}\
-         <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}</div></div>{buttons}</div>",
-        ic = icon(octicon!("git-pull-request")),
-        t = crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
-        draft = if p.is_draft {
-            " <span class=\"Label ml-1\">draft</span>"
-        } else {
-            ""
-        },
-        up = upstream_html(r),
-        n = p.number,
-        a = esc(&p.author),
-        age = ago(p.created_at),
-        checks = checks(p),
-        buttons = act.buttons(p.number),
+    let mut badges = Vec::new();
+    if p.is_draft {
+        badges.push(badge(Tone::Neutral, "draft"));
+    }
+    badges.push(upstream_html(r));
+    item_row(
+        Some(Kind::PR_OPEN),
+        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        "",
+        &format!(
+            "#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}",
+            n = p.number,
+            a = esc(&p.author),
+            age = ago(p.created_at),
+            checks = checks(p),
+        ),
+        &badges,
+        &act.buttons(p.number),
     )
 }
 
@@ -239,40 +241,33 @@ async fn bumps_page(
     State(app): State<Shared>,
     headers: HeaderMap,
     Query(q): Query<Filter>,
-) -> Html<String> {
+) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let only_mine = viewer.is_some() && q.filter.as_deref() == Some("mine");
-    let mut out = head(
-        &format!("{} Version bumps", icon(octicon!("versions"))),
-        &format!(
+    let mut page = Page::new(Section::Review, "Version bumps")
+        .icon(octicon!("versions"))
+        .sub(format!(
             "Open pull requests titled <code>name: old -&gt; new</code>, most of them from r-ryantm, the oldest first. \
              Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>."
-        ),
-        "",
-    );
+        ));
     let index = app.index.read().unwrap();
     let mut rows = open(&s, &index, &h);
     if let (true, Some(v)) = (only_mine, viewer.as_deref()) {
         rows = mine(&app, &index, v, rows);
     }
     if viewer.is_some() {
-        let mut tabs = String::new();
-        for (id, label, on) in [
-            ("all", "All", !only_mine),
-            ("mine", "What you maintain or watch", only_mine),
-        ] {
-            let _ = write!(
-                tabs,
-                "<a class=\"btn btn-sm{}\" href=\"/bumps?filter={id}\">{label}</a> ",
-                if on { " selected" } else { "" }
-            );
-        }
-        let _ = write!(out, "<div class=\"mb-3\">{tabs}</div>");
+        page = page.subnav(vec![
+            Tab::new("/bumps?filter=all", "All", !only_mine),
+            Tab::new(
+                "/bumps?filter=mine",
+                "What you maintain or watch",
+                only_mine,
+            ),
+        ]);
     }
-    let _ = write!(
-        out,
+    let mut out = format!(
         "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/bumps\">JSON</a></p>",
         rows.len(),
         median_age_days(&rows, Utc::now())
@@ -281,7 +276,7 @@ async fn bumps_page(
     );
     if rows.is_empty() {
         out.push_str("<div class=\"blankslate\"><p>No open version bump.</p></div>");
-        return page(&app, viewer.as_deref(), "packages", &out);
+        return page.body(out).render(&app, viewer.as_deref());
     }
     let act = Act::of(&app, viewer.as_deref());
     out.push_str("<div class=\"Box\">");
@@ -296,7 +291,7 @@ async fn bumps_page(
         );
     }
     out.push_str("</div>");
-    page(&app, viewer.as_deref(), "packages", &out)
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 fn row_json(r: &Row) -> Value {
@@ -352,11 +347,7 @@ pub(crate) fn package_section(
 ) -> String {
     let pname = index.pkgs.get(attr).map_or("", |p| p.pname.as_str());
     let list = of_package(attr, pname, prs);
-    let mut out = format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header d-flex\"><span class=\"text-bold flex-auto\">Version bumps <span class=\"Counter\">{}</span></span>\
-         <a class=\"f6\" href=\"/bumps\">all open bumps</a></div>",
-        list.len()
-    );
+    let mut body: String = list.iter().map(|p| pr_row(p, act)).collect();
     if list.is_empty() {
         let hint = match upstream(s, index, h, attr) {
             Some(u) => format!(
@@ -365,16 +356,14 @@ pub(crate) fn package_section(
             ),
             None => String::new(),
         };
-        let _ = write!(
-            out,
-            "<div class=\"Box-row color-fg-muted\">None open.{hint}</div>"
-        );
+        body = empty(&format!("None open.{hint}"));
     }
-    for p in list {
-        out.push_str(&pr_row(p, act));
-    }
-    out.push_str("</div>");
-    out
+    section(
+        "Version bumps",
+        Some(list.len()),
+        Some(("/bumps", "all open bumps")),
+        &body,
+    )
 }
 
 #[cfg(test)]

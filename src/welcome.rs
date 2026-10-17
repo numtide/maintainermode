@@ -8,10 +8,9 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 use std::collections::HashSet;
-use std::fmt::Write;
 
-use crate::catalog::head;
-use crate::web::{App, Shared, esc, icon, octicon, page};
+use crate::ui::{Page, Section};
+use crate::web::{App, Shared, esc, icon, octicon};
 
 const DONE: &str = "welcome_done";
 const SEEN: &str = "welcome_at";
@@ -246,7 +245,7 @@ fn checklist(f: &Facts, login: &str) -> String {
         "What you watch",
         &format!(
             "You watch {}. Subscribe to any package, module or nixpkgs directory.\
-             <form method=\"post\" action=\"/watch\" class=\"d-flex mt-2\" style=\"gap:8px;max-width:480px\">\
+             <form method=\"post\" action=\"/watch\" class=\"inline-form mt-2\">\
              <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to subscribe to\">\
              <button class=\"btn btn-sm\" type=\"submit\">Subscribe</button></form>",
             f.watched
@@ -325,13 +324,11 @@ async fn welcome_page(State(app): State<Shared>, headers: HeaderMap) -> Response
             "I am done, hide \"Get started\""
         }
     );
-    let mut out = head(
-        "Get started",
-        "Your first steps, from your real state. Come back to this page at any time. Only you see it.",
-        &button,
-    );
-    let _ = write!(out, "{}", checklist(&Facts::of(&app, &login), &login));
-    page(&app, Some(&login), "", &out).into_response()
+    Page::new(Section::Home, "Get started")
+        .sub("Your first steps, from your real state. Come back to this page at any time. Only you see it.")
+        .actions(button)
+        .body(checklist(&Facts::of(&app, &login), &login))
+        .render(&app, Some(&login))
 }
 
 #[derive(Deserialize)]

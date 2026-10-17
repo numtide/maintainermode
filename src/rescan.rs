@@ -812,7 +812,7 @@ fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
     let mut s = match (&r.error, r.last_at, r.scanned_at) {
         (Some(e), Some(at), _) => format!(
             "<span class=\"color-fg-danger\">failed {} ago</span> \
-             <details class=\"d-inline\"><summary class=\"f6\">why</summary><pre class=\"p-2 color-bg-subtle f6\" style=\"white-space:pre-wrap\">{}</pre></details>",
+             <details class=\"d-inline\"><summary class=\"f6\">why</summary><pre class=\"p-2 color-bg-subtle f6 pre-wrap\">{}</pre></details>",
             ago(at),
             esc(e)
         ),
@@ -848,7 +848,7 @@ pub fn panel(app: &App, login: &str) -> String {
     for r in &refs {
         let _ = write!(
             out,
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
+            "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">\
              <div class=\"flex-auto\"><code>{}#{}</code><div class=\"f6 color-fg-muted\">{}</div></div>\
              <form method=\"post\" action=\"/me/sets/flakes/delete\"><input type=\"hidden\" name=\"id\" value=\"{}\">\
              <button class=\"btn btn-sm\" type=\"submit\">Remove</button></form></div>",
@@ -873,7 +873,7 @@ pub fn panel(app: &App, login: &str) -> String {
         Some(cfg) => {
             let _ = write!(
                 out,
-                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap\" style=\"gap:8px\">\
+                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2\">\
                  <input class=\"form-control flex-auto\" name=\"reference\" required maxlength=\"{MAX_REFERENCE}\" \
                  placeholder=\"github:OWNER/REPO\" aria-label=\"flake reference\">\
                  <input class=\"form-control flex-auto\" name=\"output\" required maxlength=\"{MAX_OUTPUT_NAME}\" \
