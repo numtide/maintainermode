@@ -2,7 +2,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::collections::HashSet;
 
-use crate::area::Area;
 use crate::ledger::Ledger;
 use crate::model::Pr;
 
@@ -95,7 +94,9 @@ pub(crate) fn credited(ledger: &Ledger) -> HashSet<(u64, &str)> {
         .collect()
 }
 
-pub fn build(prs: &[Pr], ledger: &Ledger, members: &[Area]) -> Queues {
+/// `unowned`: no `meta.maintainers`, `meta.teams` or `ci/OWNERS` line covers a
+/// file the pull request changes, by public nixpkgs data.
+pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queues {
     let credited = credited(ledger);
     let mut q = Queues::default();
     for pr in prs
@@ -103,7 +104,7 @@ pub fn build(prs: &[Pr], ledger: &Ledger, members: &[Area]) -> Queues {
         .filter(|p| p.is_open() && !p.is_draft && ledger.is_listed(&p.author))
     {
         let mut e = entry(pr, ledger, &credited);
-        e.unowned = !members.iter().any(|a| a.covers(&pr.files));
+        e.unowned = unowned(pr);
         if e.ready() {
             q.merge.push(e);
         } else {

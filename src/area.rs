@@ -95,6 +95,7 @@ pub fn under(path: &str, prefix: &str) -> bool {
         && (path.len() == prefix.len() || path.as_bytes()[prefix.len()] == b'/')
 }
 
+/// A line that names only teams stays, with no logins: the path is owned.
 fn parse_owners(src: &str) -> Vec<(String, Vec<String>)> {
     src.lines()
         .map(str::trim)
@@ -108,12 +109,13 @@ fn parse_owners(src: &str) -> Vec<(String, Vec<String>)> {
                 .next()?
                 .trim_end_matches('/')
                 .to_string();
-            let logins: Vec<String> = parts
-                .filter_map(|p| p.strip_prefix('@'))
+            let handles: Vec<&str> = parts.filter_map(|p| p.strip_prefix('@')).collect();
+            let logins: Vec<String> = handles
+                .iter()
                 .filter(|p| !p.contains('/'))
-                .map(str::to_lowercase)
+                .map(|p| p.to_lowercase())
                 .collect();
-            (!prefix.is_empty() && !logins.is_empty()).then_some((prefix, logins))
+            (!prefix.is_empty() && !handles.is_empty()).then_some((prefix, logins))
         })
         .collect()
 }
@@ -436,7 +438,8 @@ mod tests {
             o,
             vec![
                 ("pkgs/stdenv".into(), vec!["alice".into()]),
-                ("lib".into(), vec!["bob".into()])
+                ("lib".into(), vec!["bob".into()]),
+                ("doc".into(), vec![])
             ]
         );
     }
