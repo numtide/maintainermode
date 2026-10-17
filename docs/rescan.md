@@ -155,7 +155,7 @@ attributes of the last good scan. The panel shows the reason to the owner
 only. The next try comes after the next nixpkgs index.
 
 The scans run in their own task. A slow scan does not delay the sync of pull
-requests and issues. `/sync` shows the number of flakes, the queue, the time
+requests and issues. `/state?tab=status` shows the number of flakes, the queue, the time
 of the last scan and the number of failing flakes. It shows no reference,
 login or package.
 

@@ -1026,7 +1026,7 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
     }
     out.push_str(&kv(
         "Credit earned",
-        &format!("{rows}<div class=\"f6 color-fg-muted\"><a href=\"/rules#the-rules\">How credit works</a></div>"),
+        &format!("{rows}<div class=\"f6 color-fg-muted\"><a href=\"/state?tab=rules#the-rules\">How credit works</a></div>"),
     ));
     out.push_str("</div>");
     out

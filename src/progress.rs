@@ -269,7 +269,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
             None,
             None,
             &format!(
-                "<div class=\"Box-row\">{} <a href=\"/rules#2-whose-pull-requests-appear\">Why</a></div>",
+                "<div class=\"Box-row\">{} <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Why</a></div>",
                 listing_line(&p)
             )
         )

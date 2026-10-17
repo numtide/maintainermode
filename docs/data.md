@@ -94,7 +94,7 @@ its known limits.
     goes on with the others, and that record waits 1 day, then 2, 4 and up
     to 32 days. The CVEs of the matches get a score and EPSS too.
 
-  No source needs an account. `/sync` shows what each source did on its last
+  No source needs an account. `/state?tab=status` shows what each source did on its last
   pass.
 
 ## The nixpkgs event log
@@ -155,7 +155,7 @@ cost.
   token of the server, never the tokens that people lend. It stops for the
   pass when the token has less than 1000 points left.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
-  JSON, or 404. `/sync` shows the progress. The endpoint has no
+  JSON, or 404. `/state?tab=status` shows the progress. The endpoint has no
   authentication, so the archive keeps public repositories only: it refuses
   a repository that GitHub reports as private.
 

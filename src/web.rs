@@ -22,7 +22,6 @@ use crate::ui::{Page, Section};
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
-const RULES: &str = include_str!("../docs/rules.md");
 /// Pull request pages read GitHub on a miss of the cache; crawlers must
 /// not walk them.
 const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /api/v1/prs/\n";
@@ -198,44 +197,42 @@ pub(crate) type Shared = Arc<App>;
 
 pub fn router(app: Shared) -> Router {
     Router::new()
-        .merge(crate::home::routes())
-        .merge(crate::review::routes())
-        .route("/record", get(record_page))
-        .route("/rules", get(rules_page))
-        .route("/u/:login", get(person_page))
-        .route("/me/tags", post(set_tags))
-        .route("/auth/login", get(login))
-        .route("/auth/callback", get(callback))
-        .route("/auth/logout", post(logout))
-        .route("/static/primer.css", get(|| css(PRIMER_CSS)))
-        .route("/static/club.css", get(|| css(CLUB_CSS)))
-        .route("/robots.txt", get(|| async { ROBOTS }))
-        .route("/healthz", get(|| async { "ok" }))
-        .route("/api/v1/status", get(api_status))
-        .route("/api/v1/queue/merge", get(api_merge))
-        .route("/api/v1/queue/review", get(api_review))
-        .route("/api/v1/people/:login", get(api_person))
-        .route("/api/v1/metrics", get(api_metrics))
-        .route("/api/v1/events", get(api_events))
-        .route("/state", get(state_page))
-        .merge(crate::catalog::routes())
-        .merge(crate::bumps::routes())
-        .merge(crate::committer::routes())
-        .merge(crate::actions::routes())
-        .merge(crate::status::routes())
-        .merge(crate::sets::routes())
-        .merge(crate::archive::routes())
-        .merge(crate::llm::routes())
-        .merge(crate::progress::routes())
-        .merge(crate::prpage::routes())
-        .merge(crate::mcp::routes())
-        .merge(crate::rescan::routes())
-        .merge(crate::welcome::routes())
-        .merge(crate::notify::routes())
-        .merge(crate::me::routes())
-        .layer(axum::middleware::from_fn(crate::me::no_store))
-        .layer(axum::middleware::from_fn(same_origin))
-        .with_state(app)
+    .merge(crate::home::routes())
+    .merge(crate::review::routes())
+    .route("/record", get(record_page))
+    .route("/u/:login", get(person_page))
+    .route("/me/tags", post(set_tags))
+    .route("/auth/login", get(login))
+    .route("/auth/callback", get(callback))
+    .route("/auth/logout", post(logout))
+    .route("/static/primer.css", get(|| css(PRIMER_CSS)))
+    .route("/static/club.css", get(|| css(CLUB_CSS)))
+    .route("/robots.txt", get(|| async { ROBOTS }))
+    .route("/healthz", get(|| async { "ok" }))
+    .route("/api/v1/status", get(api_status))
+    .route("/api/v1/queue/merge", get(api_merge))
+    .route("/api/v1/queue/review", get(api_review))
+    .route("/api/v1/people/:login", get(api_person))
+    .route("/api/v1/metrics", get(api_metrics))
+    .route("/api/v1/events", get(api_events))
+    .merge(crate::nixpkgs::routes())
+    .merge(crate::catalog::routes())
+    .merge(crate::bumps::routes())
+    .merge(crate::committer::routes())
+    .merge(crate::actions::routes())
+    .merge(crate::status::routes())
+    .merge(crate::sets::routes())
+    .merge(crate::archive::routes())
+    .merge(crate::llm::routes())
+    .merge(crate::progress::routes())
+    .merge(crate::prpage::routes())
+    .merge(crate::mcp::routes())
+    .merge(crate::rescan::routes())
+    .merge(crate::welcome::routes())
+    .merge(crate::notify::routes())
+    .merge(crate::me::routes())
+    .layer(axum::middleware::from_fn(crate::me::no_store))
+    .layer(axum::middleware::from_fn(same_origin))    .with_state(app)
 }
 
 pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -897,40 +894,6 @@ pub fn load_health(store: &Store) -> crate::health::Health {
         .unwrap_or_default()
 }
 
-/// Gives each heading the id GitHub would, so `#the-rules` links still land.
-fn anchor_headings(html: &str) -> String {
-    let mut out = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(i) = rest.find("<h") {
-        let level = rest.as_bytes().get(i + 2).copied();
-        let close = rest[i..].find('>').map(|j| i + j);
-        match (level, close) {
-            (Some(l @ b'1'..=b'6'), Some(c)) if c == i + 3 => {
-                let tag_end = format!("</h{}>", l as char);
-                let text_end = rest[c..].find(&tag_end).map_or(rest.len(), |j| c + j);
-                let slug: String = rest[c + 1..text_end]
-                    .to_lowercase()
-                    .chars()
-                    .filter_map(|ch| match ch {
-                        'a'..='z' | '0'..='9' | '-' => Some(ch),
-                        ' ' => Some('-'),
-                        _ => None,
-                    })
-                    .collect();
-                out.push_str(&rest[..i]);
-                let _ = write!(out, "<h{} id=\"{slug}\">", l as char);
-                rest = &rest[c + 1..];
-            }
-            _ => {
-                out.push_str(&rest[..i + 2]);
-                rest = &rest[i + 2..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
 const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
 /// The rules below say what this site shows and credits; how to work on
@@ -965,24 +928,6 @@ fn guide_box() -> String {
     )
 }
 
-async fn rules_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
-    let mut html = String::new();
-    pulldown_cmark::html::push_html(
-        &mut html,
-        pulldown_cmark::Parser::new_ext(RULES, pulldown_cmark::Options::ENABLE_TABLES),
-    );
-    let body = format!(
-        "{}<article class=\"markdown-body\">{}</article>",
-        guide_box(),
-        anchor_headings(&html)
-    );
-    Page::new(Section::Nixpkgs, "Rules and numbers")
-        .no_header()
-        .body(body)
-        .render(&app, viewer.as_deref())
-}
-
 fn package_stats(app: &App) -> Arc<crate::catalog::PackageStats> {
     app.packages.read().unwrap().clone()
 }
@@ -1007,7 +952,7 @@ fn packages_section(app: &App) -> String {
     let _ = write!(
         out,
         "<p class=\"f6 color-fg-muted\">One package per package name, at nixpkgs {}. \
-         <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a></p>\
+         <a href=\"/state?tab=rules#the-state-of-nixpkgs\">How each number is made</a></p>\
          <div class=\"d-flex flex-wrap gap-2 mb-2\">{}{}{}{}</div>\
          <div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}</div>",
         esc(&p.rev[..p.rev.len().min(12)]),
@@ -1110,22 +1055,14 @@ fn table(head: &[&str], rows: &[Vec<String>]) -> String {
     out
 }
 
-async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
+/// The Numbers tab of `/state`.
+pub(crate) fn numbers(app: &App) -> String {
     let r = app.metrics.read().unwrap().clone();
-    let page = Page::new(Section::Nixpkgs, "State of nixpkgs")
-        .icon(octicon!("graph"))
-        .sub(
-            "Pull request flow and package health from public data. \
-             Aggregates only: no figure names a person. \
-             <a href=\"/rules#the-state-of-nixpkgs\">How each number is made</a> · \
-             <a href=\"/api/v1/metrics\">JSON</a>",
-        );
     let mut body = String::new();
     let Some(at) = r.generated_at else {
         body.push_str("<div class=\"flash\">The first sync has not finished yet.</div>");
-        body.push_str(&packages_section(&app));
-        return page.body(body).render(&app, viewer.as_deref());
+        body.push_str(&packages_section(app));
+        return body;
     };
     let n = &r.now;
     let _ = write!(
@@ -1297,8 +1234,8 @@ async fn state_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
         ),
         table(&["tool", "pull requests"], &tools),
     );
-    body.push_str(&packages_section(&app));
-    page.body(body).render(&app, viewer.as_deref())
+    body.push_str(&packages_section(app));
+    body
 }
 
 /// SameSite=Lax still sends the session cookie on a POST from a sibling

@@ -59,7 +59,7 @@ The server sends at most 500 emails in 24 hours: digests, test emails and confir
 To change the limit, set `MAINTAINER_MODE_MAIL_PER_DAY` or the module option `services.maintainer-mode.smtp.perDay`.
 Each person gets at most 3 confirmation emails and 3 test emails in 24 hours.
 Over a limit, the server does not send the email and writes a warning to the log.
-The /sync page shows the emails sent and skipped in the last 24 hours. It shows no address and no login.
+The Data status page (`/state?tab=status`) shows the emails sent and skipped in the last 24 hours. It shows no address and no login.
 
 ## New secrets without a restart
 

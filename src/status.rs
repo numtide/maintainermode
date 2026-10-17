@@ -3,21 +3,17 @@
 //! page asks no remote service.
 
 use axum::extract::State;
-use axum::http::HeaderMap;
-use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::fmt::Write;
 
-use crate::ui::{Page, Section, kv};
+use crate::ui::kv;
 use crate::web::{App, Shared, ago, esc};
 
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/sync", get(sync_page))
-        .route("/api/v1/sync", get(api_sync))
+    Router::new().route("/api/v1/sync", get(api_sync))
 }
 
 fn time(app: &App, key: &str) -> Option<DateTime<Utc>> {
@@ -293,9 +289,9 @@ fn minutes(s: i64) -> String {
     }
 }
 
-async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
-    let v = state(&app);
+/// The Data status tab of `/state`.
+pub(crate) fn body(app: &App) -> String {
+    let v = state(app);
     let mut out = String::new();
     let p = &v["pull_requests"];
     let i = &v["issues"];
@@ -529,11 +525,5 @@ async fn sync_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
             ""
         },
     );
-    Page::new(Section::Nixpkgs, "Data status")
-        .sub(
-            "What this server has read from GitHub and the other sources, and how fresh it is. \
-             The same data is at <a href=\"/api/v1/sync\">/api/v1/sync</a>.",
-        )
-        .body(out)
-        .render(&app, viewer.as_deref())
+    out
 }

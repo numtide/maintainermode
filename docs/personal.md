@@ -247,7 +247,7 @@ show "in a scanned flake".
   of the host, and fetch only the inputs that a checked `flake.lock` names.
 - Nix runs with `allow-import-from-derivation = false`: nothing is built.
 - A person has at most 3 flakes and 4 scans a day, by default.
-- `/sync` shows the flakes, the queue, the last scan and the failures, as
+- `/state?tab=status` shows the flakes, the queue, the last scan and the failures, as
   counts only.
 
 [`docs/rescan.md`](rescan.md) has the threat model, the sandbox, the

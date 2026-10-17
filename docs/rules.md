@@ -1,7 +1,7 @@
 # Rules and numbers
 
 How Maintainer Mode decides what to show, what earns credit, and how the
-numbers on /state are made. The site serves this page at `/rules`.
+numbers on /state are made. The site serves this page at `/state?tab=rules`.
 These rules decide what Maintainer Mode shows and credits. nixpkgs has its own rules for every contribution: read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md).
 
 ## Maintainer Mode grants nothing

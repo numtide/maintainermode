@@ -46,7 +46,7 @@ merged in the synced window.
 
 ### Hydra
 
-Maintainer Mode asks Hydra for the last build when someone opens a package or module page. To protect hydra.nixos.org, it sends at most 4 requests at a time and at most 30 requests a minute. Over that limit, the page shows "not asked yet" and sends no request. An answer stays one hour. A job with no finished build also stays one hour. A request that fails stays five minutes. `/sync` shows the limits and how many page views were not asked. The JSON API gives `hydra_state` (`test_state` for a module): `build`, `no finished build`, `no answer` or `not asked yet`.
+Maintainer Mode asks Hydra for the last build when someone opens a package or module page. To protect hydra.nixos.org, it sends at most 4 requests at a time and at most 30 requests a minute. Over that limit, the page shows "not asked yet" and sends no request. An answer stays one hour. A job with no finished build also stays one hour. A request that fails stays five minutes. `/state?tab=status` shows the limits and how many page views were not asked. The JSON API gives `hydra_state` (`test_state` for a module): `build`, `no finished build`, `no answer` or `not asked yet`.
 
 ## The risk score
 
@@ -136,5 +136,5 @@ comma-separated) or with the NixOS option
   `needs_backport`.
 - **What I maintain** marks each package that a channel has at an older
   version: "behind in …". The API gives `channels_behind`.
-- **`/sync`** has one line per channel, with its revision and when it was
+- **`/state?tab=status`** has one line per channel, with its revision and when it was
   first seen.
