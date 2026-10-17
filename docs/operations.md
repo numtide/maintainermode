@@ -56,6 +56,8 @@ nix run .#ux-audit -- --local
 
 `--local` starts `maintainer-mode` on a temporary database and a free port. It blocks the outbound network of the server. It adds a test session, so it audits the pages signed out and signed in. The database is empty, so package and module pages answer 404.
 
+Add `--seed` to fill the temporary database before the audit. The tool writes a small nixpkgs index, some upstream releases, a machine report and some watches for the test session. The signed-in lists of `/packages` and the home page then show rows.
+
 To audit a running server, run:
 
 ```sh

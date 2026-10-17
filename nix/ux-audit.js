@@ -20,6 +20,8 @@ Target (one of):
 Options:
   --bin <path>         the maintainer-mode binary for --local
                        (default $MAINTAINER_MODE_BIN, else target/debug/maintainer-mode)
+  --seed               with --local: fill the database with a small index and
+                       the packages, machines and watches of the signed-in person
   --out <dir>          output folder (default ./ux-audit)
   --pages <regex>      audit only the pages whose path matches
   --only-public        skip the signed-in pages
@@ -53,6 +55,7 @@ function parseArgs(argv) {
   const o = {
     url: null,
     local: false,
+    seed: false,
     bin: process.env.MAINTAINER_MODE_BIN || null,
     out: "ux-audit",
     pages: null,
@@ -70,6 +73,9 @@ function parseArgs(argv) {
     switch (a) {
       case "--url":
         o.url = val().replace(/\/+$/, "");
+        break;
+      case "--seed":
+        o.seed = true;
         break;
       case "--local":
         o.local = true;
@@ -109,6 +115,7 @@ function parseArgs(argv) {
     }
   }
   if (o.local && o.url) die("use --url or --local, not both");
+  if (o.seed && !o.local) die("--seed needs --local");
   if (!o.local && !o.url) o.url = "http://127.0.0.1:8790";
   return o;
 }
@@ -200,6 +207,63 @@ function cleanEnv() {
   return env;
 }
 
+const SEED_LOGIN = "ux-audit";
+
+// A small index, health and personal data, so the lists of a person who
+// signed in are not empty. Only for the temporary database of --local.
+function seedSql() {
+  const pkg = (pname, version, maintainers) => ({
+    pname,
+    version,
+    file: `pkgs/by-name/${pname.slice(0, 2)}/${pname}/package.nix`,
+    maintainers,
+    teams: [],
+  });
+  const pkgs = {
+    hello: pkg("hello", "2.12.1", [SEED_LOGIN]),
+    curl: pkg("curl", "8.9.1", []),
+    openssl: pkg("openssl", "3.0.14", []),
+    jq: pkg("jq", "1.7.1", [SEED_LOGIN]),
+    ripgrep: pkg("ripgrep", "14.1.0", ["someone"]),
+    "a-package-with-a-very-long-name-for-the-phone-layout": pkg(
+      "a-package-with-a-very-long-name-for-the-phone-layout",
+      "0.1.0-unstable-2026-01-01",
+      [SEED_LOGIN],
+    ),
+  };
+  const index = {
+    rev: "2222222222222222222222222222222222222222",
+    maintainers: {},
+    owners: [["pkgs/by-name", [SEED_LOGIN]]],
+    by_pname: Object.fromEntries(Object.keys(pkgs).map((a) => [a, a])),
+    pkgs,
+    modules: {
+      "nixos/modules/services/web-servers/nginx/default.nix": {
+        maintainers: [SEED_LOGIN],
+        teams: [],
+      },
+    },
+    teams: {},
+  };
+  const health = { upstream: { curl: "8.10.0", jq: "1.8.0" }, advisories: {} };
+  const set = ["curl", "openssl", "hello", "ripgrep"];
+  const q = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
+  const now = new Date().toISOString();
+  return [
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
+    `INSERT OR REPLACE INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
+    ...[
+      "pkg:ripgrep",
+      "pkg:openssl",
+      "area:pkgs/development/python-modules",
+    ].map(
+      (k) =>
+        `INSERT OR IGNORE INTO watch (login, package, created_at) VALUES ('${SEED_LOGIN}', '${k}', '${now}');`,
+    ),
+  ].join("\n");
+}
+
 async function startLocal(o) {
   let bin = o.bin;
   if (!bin && fs.existsSync("target/debug/maintainer-mode"))
@@ -215,43 +279,57 @@ async function startLocal(o) {
   const logFile = path.join(dir, "server.log");
   const out = fs.openSync(logFile, "w");
   const blackhole = "http://127.0.0.1:9";
-  const child = spawn(
-    bin,
-    [
-      "serve",
-      "--db",
-      db,
-      "--listen",
-      `127.0.0.1:${port}`,
-      "--public-url",
-      base,
-    ],
-    {
-      stdio: ["ignore", out, out],
-      env: {
-        ...cleanEnv(),
-        HTTP_PROXY: blackhole,
-        HTTPS_PROXY: blackhole,
-        ALL_PROXY: blackhole,
-        http_proxy: blackhole,
-        https_proxy: blackhole,
-        all_proxy: blackhole,
-        NO_PROXY: "127.0.0.1,localhost",
-        no_proxy: "127.0.0.1,localhost",
+  const spawnServer = () =>
+    spawn(
+      bin,
+      [
+        "serve",
+        "--db",
+        db,
+        "--listen",
+        `127.0.0.1:${port}`,
+        "--public-url",
+        base,
+      ],
+      {
+        stdio: ["ignore", out, out],
+        env: {
+          ...cleanEnv(),
+          HTTP_PROXY: blackhole,
+          HTTPS_PROXY: blackhole,
+          ALL_PROXY: blackhole,
+          http_proxy: blackhole,
+          https_proxy: blackhole,
+          all_proxy: blackhole,
+          NO_PROXY: "127.0.0.1,localhost",
+          no_proxy: "127.0.0.1,localhost",
+        },
       },
-    },
-  );
+    );
+  let child = spawnServer();
   const stop = () => {
     if (child.exitCode === null) child.kill("SIGTERM");
     fs.rmSync(dir, { recursive: true, force: true });
   };
-  if (!(await waitFor(`${base}/healthz`, 60000, child))) {
-    const tail = fs.readFileSync(logFile, "utf8").split("\n").slice(-20);
-    stop();
-    die(`the server did not start:\n${tail.join("\n")}`);
+  const started = async () => {
+    if (!(await waitFor(`${base}/healthz`, 60000, child))) {
+      const tail = fs.readFileSync(logFile, "utf8").split("\n").slice(-20);
+      stop();
+      die(`the server did not start:\n${tail.join("\n")}`);
+    }
+  };
+  await started();
+  if (o.seed) {
+    const exited = new Promise((r) => child.once("exit", r));
+    child.kill("SIGTERM");
+    await exited;
+    sqlite(db, seedSql());
+    child = spawnServer();
+    await started();
+    log(`seeded the local database for ${SEED_LOGIN}`);
   }
   const session = crypto.randomBytes(32).toString("hex");
-  const login = "ux-audit";
+  const login = SEED_LOGIN;
   const ensureSession = () => {
     const now = new Date().toISOString();
     sqlite(
