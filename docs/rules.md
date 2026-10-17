@@ -136,6 +136,44 @@ that got it.
 
 `GET /api/v1/status` gives the current values.
 
+## The pull request page
+
+`/pr/<n>` starts with the panel **At a glance**. The panel helps you decide
+quickly. It shows only facts that the server has. When a source is missing,
+the panel says "unknown". It never guesses a value.
+
+- **Blockers.** A draft, a conflict, failed checks, a reviewer who asked for
+  changes and did not approve later, and an unusual base branch. A rebuild
+  of 1000 or more packages on master or a release branch blocks. From 500
+  rebuilds, the panel tells you to consider staging. These numbers come from
+  [the nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#changes-causing-mass-rebuilds).
+- **What changes.** The kind (new package, update, fix, removal, refactor,
+  module change), the version from the title (`hello: 2.12 -> 2.13`), the
+  version on master, and the packages and modules that the files touch.
+- **Risk.** The `10.rebuild-*` labels for each platform, and the base branch.
+- **Upstream.** Only for an update. The `meta.changelog` link, the GitHub
+  releases of the source, and a flag when the first number of the version
+  changes. For a person who signed in, the server reads the release list of
+  the GitHub source once each 30 minutes. It then links the release and the
+  compare view, and flags notes that say "breaking".
+- **Builds.** The checks of the head commit, your latest nixpkgs-review run
+  for this pull request (only for you), and the last Hydra build that a page
+  read in the last hour.
+- **People.** The author, the maintainers, and the approvals on the current
+  head. A label shows when an approval is by a maintainer or a committer.
+- **Security.** The CVE ids in the title and the description, with their
+  severity and the advisory of the security tracker. Only for you: a label
+  when a package is on your machines.
+- **What is missing.** The checks on the lines that the diff adds (hash
+  form, `lib.fakeHash`, tests, `versionCheckHook`, the `meta` of a new
+  package) and the packaging gaps of the package on master. Failed checks
+  come first. Passed checks fold.
+- **Actions.** Approve and Request changes open the diff on GitHub. You
+  write the review there. Maintainer Mode writes nothing to nixpkgs.
+
+`GET /api/v1/prs/<n>` gives the facts of the panel that are the same for all
+people under `decision`.
+
 ## Routing: what you see, and what gets credit
 
 The site shows each person the pull requests in their part of nixpkgs. Credit
