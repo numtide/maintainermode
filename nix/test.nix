@@ -138,6 +138,16 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -D /tmp/r9.h -o /dev/null -X POST -H 'Authorization: Bearer nope' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8790/mcp && grep -q '^HTTP/1.1 401' /tmp/r9.h && grep -qi '^www-authenticate: Bearer' /tmp/r9.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/mcp > /tmp/r10 && grep -q 405 /tmp/r10")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/claude/pr/1 > /tmp/r11 && grep -q 303 /tmp/r11")
+    # notifications: the inbox and its settings need a session; email is off
+    # without SMTP, and an unknown unsubscribe link is not found
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/inbox > /tmp/n1 && grep -q 303 /tmp/n1")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/inbox/read > /tmp/n2 && grep -q 303 /tmp/n2")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d k_pr=1 -d email=a@example.org http://127.0.0.1:8790/me/notify > /tmp/n3 && grep -q 303 /tmp/n3")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/notify/test > /tmp/n4 && grep -q 303 /tmp/n4")
+    machine.succeed("curl -s -o /tmp/n5.body -w '%{http_code}' http://127.0.0.1:8790/unsubscribe/nope > /tmp/n5 && grep -q 404 /tmp/n5 && grep -q 'unsubscribe link is unknown' /tmp/n5.body")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/unsubscribe/0000000000000000000000000000000000000000000000000000000000000000 > /tmp/n6 && grep -q 404 /tmp/n6")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/unsubscribe/nope > /tmp/n7 && grep -q 404 /tmp/n7")
+    machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_SMTP /tmp/env")
     # server rescans are off by default: registering a flake is refused
     machine.succeed("curl -s -o /tmp/r5.body -w '%{http_code}' -X POST -d reference=github:o/r -d output=packages.x86_64-linux.default http://127.0.0.1:8790/me/sets/flakes > /tmp/r5 && grep -q 403 /tmp/r5")
     machine.succeed("grep -q 'does not scan flakes' /tmp/r5.body")
