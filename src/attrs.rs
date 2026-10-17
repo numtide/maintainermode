@@ -211,12 +211,15 @@ let
     in
     if r.success then r.value else default;
   hook = d: builtins.isAttrs d && (d.name or null) == "version-check-hook";
+  # substring counts bytes: a cut inside a UTF-8 character fails the JSON
+  # output of the whole set, past tryEval, so Rust cuts on characters
+  bounded = s: if builtins.stringLength s <= 65536 then s else null;
   facts = p: meta: {
     description = safe null (
       let
         d = meta.description or null;
       in
-      if builtins.isString d && d != "" then builtins.substring 0 500 d else null
+      if builtins.isString d && d != "" then bounded d else null
     );
     homepage = safe false (meta ? homepage);
     license = safe false (meta ? license);
@@ -275,7 +278,7 @@ let
       let
         d = text (meta.longDescription or null);
       in
-      if d == null then null else builtins.substring 0 2000 d
+      if d == null then null else bounded d
     );
     homepage = safe [ ] (urls (meta.homepage or [ ]));
     download_page = safe null (text (meta.downloadPage or null));
@@ -355,7 +358,28 @@ pub fn sweep(nixpkgs: &Path, system: &str, set: &str) -> Result<Vec<Entry>> {
         "set": set,
     });
     let text = eval_with_input("index", INDEX_EXPR, &input)?;
-    Ok(serde_json::from_str(&text)?)
+    let mut entries: Vec<Entry> = serde_json::from_str(&text)?;
+    for e in &mut entries {
+        e.shorten();
+    }
+    Ok(entries)
+}
+
+impl Entry {
+    fn shorten(&mut self) {
+        if let Some(d) = self.facts.as_mut().and_then(|f| f.description.as_mut()) {
+            cut(d, 500);
+        }
+        if let Some(d) = self.meta.as_mut().and_then(|m| m.long_description.as_mut()) {
+            cut(d, 2000);
+        }
+    }
+}
+
+fn cut(s: &mut String, chars: usize) {
+    if let Some((i, _)) = s.char_indices().nth(chars) {
+        s.truncate(i);
+    }
 }
 
 #[cfg(test)]
@@ -377,6 +401,19 @@ mod tests {
         let entries = [e("utillinux"), e("util-linux"), e("pkgsStatic.util-linux")];
         let i = Index::build(entries.iter());
         assert_eq!(i.resolve("util-linux"), Some("util-linux"));
+    }
+
+    #[test]
+    fn long_texts_are_cut_on_characters() {
+        let mut e: Entry =
+            serde_json::from_str(r#"{"attr":"x","facts":{"description":"short é"},"meta":{}}"#)
+                .unwrap();
+        e.meta.as_mut().unwrap().long_description = Some("é".repeat(2001));
+        e.shorten();
+        let long = e.meta.unwrap().long_description.unwrap();
+        assert_eq!(long.chars().count(), 2000);
+        assert_eq!(long.len(), 4000);
+        assert_eq!(e.facts.unwrap().description.as_deref(), Some("short é"));
     }
 
     #[test]
