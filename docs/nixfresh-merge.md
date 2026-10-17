@@ -78,7 +78,7 @@ Of step 3, the collectors are done: tracker, repology, cve, nvd (with a key
 only), epss, osv and the direct read of tags and registries, and the score.
 Packaging hygiene reads the sweep, not the git log of `practice`.
 
-Steps 5 and 6 are done: the My machines tab of `/me`, the upload token, the alerts in the Atom
+Steps 5 and 6 are done: the "On my machines" filter of `/packages`, the upload token, the alerts in the Atom
 feed, and the three client commands. The public flake reference is done and off by
 default; see `docs/rescan.md`.
 

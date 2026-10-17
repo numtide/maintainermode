@@ -5,27 +5,53 @@ the packages of your own system.
 
 ## The menu
 
-Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are in a menu at the top right. Sign in, and the menu shows your login and the number of unread events. It has these items:
+Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are in a menu at the top right. Sign in, and the menu shows your login. When you have unread events, the header also shows their number. Push the number to open your inbox. The menu has these items:
 
-- **My packages** (`/me`), with four tabs: Inbox, Maintain, Watch and My machines.
+- **Get started**, until you hide the card (see below).
+- **Inbox** (`/inbox`), with the number of unread events.
 - **Progress** (`/me/progress`).
 - **Runs** (`/me/runs`): your workflow runs.
 - **Settings** (`/me/settings`).
 - **Sign out**.
 
-Only you see the pages under `/me`. The server sends every answer under `/me` with `Cache-Control: private, no-store`. `/u/<login>` is public, and it is the same for every viewer.
+On these pages, no tab is current. The menu marks the current page.
 
-| Tab or page        | What it shows                                                       |
-| ------------------ | ------------------------------------------------------------------- |
-| `/me?tab=inbox`    | the events of what you watch and of your machines (the default tab) |
-| `/me?tab=maintain` | what nixpkgs names you as a maintainer of, and "Watch all of them"  |
-| `/me?tab=watch`    | what you watch, and a form to watch more                            |
-| `/me?tab=machines` | the packages of your machines                                       |
-| `/me/runs`         | your nixpkgs-review and nix-update runs                             |
-| `/me/settings`     | every choice and token, in one page                                 |
+Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has two tabs: **Record** and **Maintains**. Search for `@login` on `/packages` to open it.
 
-The old addresses `/watch`, `/me/inbox` and `/me/sets` redirect to their tab.
-Only you see the pages under `/me`. The server sends them with `Cache-Control: private, no-store`. `/u/<login>` is public and never shows private data. It has two tabs: **Record** and **Maintains**. Search for `@login` on `/packages` to open it.
+## Your packages
+
+Signed out, `/packages` shows the catalog of nixpkgs: a search box and the directories. Signed in, it shows a filter bar on top. Each filter shows its count. The search box filters the list of the current filter.
+
+| Filter         | Address                     | What it shows                                                                |
+| -------------- | --------------------------- | ---------------------------------------------------------------------------- |
+| Mine           | `/packages?filter=mine`     | all of the rows below, in one order (the default)                            |
+| On my machines | `/packages?filter=machines` | the packages of your latest machine report and of your scanned flakes        |
+| I maintain     | `/packages?filter=maintain` | what nixpkgs names you as a maintainer of, and "Watch everything I maintain" |
+| I watch        | `/packages?filter=watch`    | what you watch, a form to watch more, and a "Stop watching" button on each   |
+| All of nixpkgs | `/packages?filter=all`      | the catalog, as a visitor sees it                                            |
+
+A search with no filter, such as the search box of the home page, goes to All of nixpkgs.
+
+**The order.** Mine puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". It also shows its health flags. Each filter shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
+
+The Hydra flag shows only a build that a package page read in the last hour. The list itself never asks Hydra.
+
+**No machine report yet.** Then the bar shows the step "Upload the packages of your machines" in place of the machines filter. It links to `/me/settings#upload`. When you have a report, the machines filter shows the time of the latest report, the button "Delete my report", the list and the panel of public flakes (see below).
+
+The home page uses the same order. Its section "Your packages that need you" shows the rows of Mine that need attention. It links to `/packages?filter=mine`.
+
+**Old addresses.** These addresses redirect:
+
+| Old address        | New address                 |
+| ------------------ | --------------------------- |
+| `/me`              | `/packages?filter=mine`     |
+| `/me?tab=inbox`    | `/inbox`                    |
+| `/me/inbox`        | `/inbox`                    |
+| `/me?tab=maintain` | `/packages?filter=maintain` |
+| `/me?tab=watch`    | `/packages?filter=watch`    |
+| `/watch`           | `/packages?filter=watch`    |
+| `/me?tab=machines` | `/packages?filter=machines` |
+| `/me/sets`         | `/packages?filter=machines` |
 
 ## Settings
 
@@ -49,11 +75,11 @@ The home page shows a short introduction to visitors who are not signed in. It n
 
 After you sign in, the home page shows the Get started card. It is a checklist. Each step shows your real state: done, to do, or optional.
 
-1. What you maintain. Watch all of it in one step.
+1. What you maintain, in the "I maintain" filter of `/packages`. Watch all of it in one step.
 2. What you watch. Watch a package, a module or a directory.
 3. The review queue for you, on `/review`.
 4. Notifications. Make your private Atom feed in `/me/settings#feed`.
-5. Your system. Upload your closure, and see it in the My machines tab.
+5. Your system. Upload the packages of your machines in `/me/settings#upload`. They then come first in `/packages`.
 6. Actions. Follow the setup checklist in `/me/settings#workflows`.
 7. LLMs. They are off by default. Turn them on in `/me/settings#llm`.
 8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
@@ -64,24 +90,24 @@ Press "Hide" on the card to remove it. Your menu shows "Get started" until you d
 
 ## What I maintain
 
-The Maintain tab of `/me` lists the packages and NixOS modules whose
-`meta.maintainers` names you, or whose `meta.teams` names a team you are
-in. Each row carries the same health flags as a page. The highest
-[risk score](health.md#the-risk-score) comes first. "Watch all of them" adds
-every row to what you watch. The list comes from nixpkgs; change it there.
+The "I maintain" filter of `/packages` lists the packages and NixOS modules
+whose `meta.maintainers` names you, or whose `meta.teams` names a team you
+are in. Each row carries the same health flags as a page. "Watch everything
+I maintain" adds every row to what you watch. The list comes from nixpkgs;
+change it there.
+
 The **Maintains** tab of `/u/<login>` lists the packages and NixOS modules whose
 `meta.maintainers` names the login, or whose `meta.teams` names a team the
 login is in. Each row carries the same health flags as a page. The highest
 [risk score](health.md#the-risk-score) comes first. The list comes from nixpkgs;
-change it there.
-
-`/u/<login>/maintains` shows the same list for any login. It is public.
+change it there. `/u/<login>/maintains` is public.
 
 ## What I watch
 
-Watch any package, module or area from its page, by name on the Watch tab of
-`/me`, or everything you maintain in one step on the Maintain tab. The Watch
-tab shows each item with its flags, the ones that need attention first.
+Watch any package, module or area from its page, or by name in the "I watch"
+filter of `/packages`. Watch everything you maintain in one step in the "I
+maintain" filter. The "I watch" filter shows each item with its flags, and a
+"Stop watching" button.
 
 - **The Atom feed** is the delivery. `/me/settings#feed` makes a private link,
   `/feed/<token>`, with the last 30 days of what happened to what you watch:
@@ -99,19 +125,19 @@ tab shows each item with its flags, the ones that need attention first.
 
 `/review` is the one place to review. It has five tabs, and each tab shows its count:
 
-| Tab            | Address               | What it lists                                                             |
-| -------------- | --------------------- | ------------------------------------------------------------------------- |
-| For you        | `/review?tab=foryou`  | pull requests that touch what you maintain, own, changed, tagged or watch |
-| No maintainer  | `/review?tab=unowned` | pull requests with no maintainer, team or `ci/OWNERS` line on their files |
-| Bumps          | `/review?tab=bumps`   | open version bumps (see [health.md](health.md))                           |
-| All            | `/review?tab=all`     | every pull request in the queues that is not ready to merge               |
-| Ready to merge | `/review?tab=ready`   | the ready-to-merge queue, and the lists for committers (see below)        |
+| Tab            | Address               | What it lists                                                                            |
+| -------------- | --------------------- | ---------------------------------------------------------------------------------------- |
+| For you        | `/review?tab=foryou`  | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
+| No maintainer  | `/review?tab=unowned` | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
+| Bumps          | `/review?tab=bumps`   | open version bumps (see [health.md](health.md))                                          |
+| All            | `/review?tab=all`     | every pull request in the queues that is not ready to merge                              |
+| Ready to merge | `/review?tab=ready`   | the ready-to-merge queue, and the lists for committers (see below)                       |
 
-Sign in, and `/review` opens on **For you**. For you looks at `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
+Sign in, and `/review` opens on **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
 
-Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On Ready to merge, it is the count of rows on the previous pages, because that tab is not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
+Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these tabs are not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
-The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts. See [api.md](api.md).
+The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts. The API never reads your machine report, and it keeps the number order. See [api.md](api.md).
 
 ## Your progress
 
@@ -127,7 +153,7 @@ The page counts the synced data only: the last 60 days and every open pull reque
 
 ## Notifications
 
-**The inbox.** The Inbox tab of `/me` shows the events of your Atom feed: what
+**The inbox.** `/inbox` shows the events of your Atom feed: what
 happened in the last 30 days to what you watch and to your package set.
 The newest event comes first. Filter the list by kind (pull request,
 issue, advisory, release) or by subscription. "Mark all read" marks
@@ -258,28 +284,28 @@ revokes it.
 - It keeps the attributes, the time of the upload, the time of the scan and
   the nixpkgs revision. It keeps nothing else from the report.
 - **Lifetime.** A set expires 90 days after its last upload. The background
-  loop deletes it. "Delete my set" on the My machines tab deletes it at once.
-- **Access.** Only the owner sees the My machines tab. There is no admin view. No
-  public page, count or API uses an uploaded set.
+  loop deletes it. "Delete my report" in the "On my machines" filter deletes it at once.
+- **Access.** Only the owner sees the "On my machines" filter and the
+  "on your machines" marks. There is no admin view. No public page, count or
+  API uses an uploaded set.
 
-**The panel.** The My machines tab of `/me` shows the attributes of your latest report and the
-packages you watch. Each row has the health flags of a package page:
-advisories, a newer upstream release, open pull requests and open issues.
-The rows that need attention come first. The package page has the last Hydra
-build.
+**The list.** The "On my machines" filter of `/packages` shows the packages of your latest report and of your
+scanned flakes. Each row has the health flags of a package page:
+advisories, a newer upstream release, a failed Hydra build, open pull requests and open issues.
+The rows that need attention come first. These packages also come first in Mine,
+on the home page and in For you on `/review`.
 
 **Alerts.** Your private Atom feed (see above) also gets, for each package in
 your set, a new advisory and a new upstream release. It does not get the pull
 requests and issues of the set, because a closure has thousands of packages.
 
 **A public flake, scanned by the server.** This is off by default. When the
-operator turns it on, the My machines tab has a form for a public flake reference
+operator turns it on, the "On my machines" filter has a form for a public flake reference
 (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
 and an output. After each nixpkgs index, the server scans the output again.
 It keeps the result with the rules of an upload: the same public-list filter, the
 same index filter and the same 90-day rule. The server stops the scans of a
-person who has not opened the My machines tab for 90 days. The rows of the panel then
-show "in a scanned flake".
+person who has not opened `/packages` signed in for 90 days.
 
 - The scan evaluates third-party code. Each nix step runs in a bubblewrap
   sandbox, as a separate process, with a read-only store, its own temporary
