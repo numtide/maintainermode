@@ -3,7 +3,7 @@
 use anyhow::{Result, bail};
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::Html;
+use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -19,7 +19,8 @@ use crate::links::Links;
 use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
-use crate::web::{Shared, Snapshot, ago, ci_label, esc, icon, octicon, page};
+use crate::ui::{Kind, Page, Section, empty, item_row, section};
+use crate::web::{Shared, Snapshot, ago, ci_label, esc, octicon};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
@@ -313,15 +314,16 @@ struct Line<'a> {
     since: Option<DateTime<Utc>>,
 }
 
-fn lines(list: &[Line], empty: &str, act: crate::actions::Act) -> String {
+fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> String {
     if list.is_empty() {
-        return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
+        return empty(empty_text);
     }
-    let mut out = String::from("<div class=\"Box mb-4\">");
+    let mut out = String::new();
     for l in list {
         let e = l.entry;
         let mut meta = format!(
-            "#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
+            "{}<br>#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
+            esc(&l.why),
             e.number,
             ago(e.created_at),
             esc(&e.base),
@@ -330,25 +332,19 @@ fn lines(list: &[Line], empty: &str, act: crate::actions::Act) -> String {
         if let Some(t) = l.since {
             let _ = write!(meta, " · waiting {} since the approval", ago(t));
         }
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-start\">\
-               <span class=\"mr-2 color-fg-open\">{pr}</span>\
-               <div class=\"flex-auto\">\
-                 {title}\
-                 <div class=\"f6 mt-1\">{why}</div>\
-                 <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
-               </div>\
-               <span class=\"ml-2\">{ci}</span>{act}\
-             </div>",
-            pr = icon(octicon!("git-pull-request")),
-            title = crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
-            why = esc(&l.why),
-            ci = ci_label(e),
-            act = act.buttons(e.number),
-        );
+        out.push_str(&item_row(
+            Some(Kind::PR_OPEN),
+            &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            "",
+            &meta,
+            &[],
+            &format!(
+                "<span class=\"ml-2\">{}</span>{}",
+                ci_label(e),
+                act.buttons(e.number)
+            ),
+        ));
     }
-    out.push_str("</div>");
     out
 }
 
@@ -370,19 +366,21 @@ fn guide() -> String {
     )
 }
 
-async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
-    let mut out = crate::catalog::head(
-        &format!("{} For committers", icon(octicon!("key"))),
-        "What waits for someone with merge rights: the ready queue in your areas first, \
-         pull requests a maintainer approved, security fixes, backports, and what waits longest.",
-        "<a class=\"btn btn-sm\" href=\"/api/v1/committer\">JSON</a>",
-    );
+    let page = Page::new(Section::Review, "For committers")
+        .icon(octicon!("key"))
+        .sub(
+            "What waits for someone with merge rights: the ready queue in your areas first, \
+             pull requests a maintainer approved, security fixes, backports, and what waits longest.",
+        )
+        .actions("<a class=\"btn btn-sm\" href=\"/api/v1/committer\">JSON</a>");
+    let mut out = String::new();
     let Some(login) = viewer.as_deref().filter(|v| s.committers.is(v)) else {
         let _ = write!(
             out,
-            "<div class=\"flash mb-3\">This view is for people with merge rights in nixpkgs. \
+            "<div class=\"note mb-3\">This view is for people with merge rights in nixpkgs. \
              Maintainer Mode counts a login as a committer when it merged a pull request in the last {MERGED_DAYS} days, \
              or when it is in the team {TEAM}. {}</div>{}\
              <p class=\"f6\">The lists without the personal part are in <a href=\"/api/v1/committer\">the JSON API</a>, \
@@ -394,7 +392,7 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Html<S
             },
             guide()
         );
-        return page(&app, viewer.as_deref(), "committer", &out);
+        return page.body(out).render(&app, viewer.as_deref());
     };
     out.push_str(&guide());
     let act = crate::actions::Act::of(&app, Some(login));
@@ -419,45 +417,50 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Html<S
     first.extend(rest);
     first.truncate(SECTION * 2);
     let b = &s.board;
-    for (title, sub, list, empty) in [
+    for ((title, count), sub, list, empty) in [
         (
-            format!("Ready to merge ({ready_n})"),
+            ("Ready to merge", Some(ready_n)),
             "The <a href=\"/merge\">ready-to-merge queue</a>: what touches your areas and subscriptions comes first, then the rest.",
             first,
             "Nothing is ready yet.",
         ),
         (
-            "Approved by a maintainer".to_string(),
+            ("Approved by a maintainer", None),
             "An approval on the current head by a login in the <code>meta.maintainers</code> or <code>meta.teams</code> of a package or module it changes. No known conflict. Longest wait first.",
             rows_of(&b.maintainer_approved),
             "No pull request waits with a maintainer's approval.",
         ),
         (
-            "Security fixes".to_string(),
+            ("Security fixes", None),
             "Labelled <code>1.severity: security</code>, checks pass, no known conflict, and the current head is approved.",
             rows_of(&b.security),
             "No security fix is ready.",
         ),
         (
-            "Backports".to_string(),
+            ("Backports", None),
             "To a <code>release-*</code> branch, checks pass, no known conflict, and the current head is approved.",
             rows_of(&b.backports),
             "No backport is ready.",
         ),
         (
-            "Waiting longest".to_string(),
+            ("Waiting longest", None),
             "Checks pass, no known conflict, and the current head is approved. Oldest approval first.",
             rows_of(&b.waiting),
             "Nothing waits.",
         ),
     ] {
-        let _ = write!(
-            out,
-            "<h2 class=\"f4 mt-4 mb-1\">{title}</h2><p class=\"f6 color-fg-muted mb-2\">{sub}</p>{}",
-            lines(&list, empty, act)
-        );
+        let count = count.unwrap_or(list.len());
+        out.push_str(&section(
+            title,
+            Some(count),
+            None,
+            &format!(
+                "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
+                lines(&list, empty, act)
+            ),
+        ));
     }
-    page(&app, viewer.as_deref(), "committer", &out)
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 /// Public data only, the same for every caller: the personal order reads

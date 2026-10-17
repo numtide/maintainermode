@@ -5,13 +5,14 @@
 use axum::Router;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::json;
 use std::fmt::Write;
 
-use crate::web::{App, Shared, ago, esc, icon, octicon, page};
+use crate::ui::{Page, Section};
+use crate::web::{App, Shared, ago, esc, icon, octicon};
 use crate::workflows::{self, REVIEW, UPDATE, valid_repo};
 
 pub fn routes() -> Router<Shared> {
@@ -83,9 +84,9 @@ pub fn review_button(number: u64) -> String {
 /// The update form for a package page, prefilled with the upstream release.
 pub fn update_form(attr: &str, version: Option<&str>) -> String {
     format!(
-        "<form method=\"post\" action=\"/actions/update\" class=\"d-flex flex-items-center\" style=\"gap:8px\">\
+        "<form method=\"post\" action=\"/actions/update\" class=\"d-flex flex-items-center gap-2\">\
          <input type=\"hidden\" name=\"attr\" value=\"{a}\">\
-         <input class=\"form-control input-sm\" name=\"version\" value=\"{v}\" placeholder=\"newest\" aria-label=\"version\" style=\"max-width:140px\">\
+         <input class=\"form-control input-sm input-narrow\" name=\"version\" value=\"{v}\" placeholder=\"newest\" aria-label=\"version\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"run nix-update in your GitHub Actions\">Update with nix-update</button></form>",
         a = esc(attr),
         v = esc(version.unwrap_or(""))
@@ -184,17 +185,18 @@ async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &s
         .collect()
 }
 
-async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
-    let mut out = String::from(
-        "<div class=\"Subhead\"><h1 class=\"Subhead-heading\">Actions</h1>\
-         <div class=\"Subhead-description\">Run nixpkgs-review on a pull request, or nix-update on a package, in GitHub Actions of a repository you own. \
+    let page = Page::new(Section::Home, "Actions").icon(octicon!("play")).sub(
+        "Run nixpkgs-review on a pull request, or nix-update on a package, in GitHub Actions of a repository you own. \
          Maintainer Mode starts the workflow with your token when you press a button; the workflow acts as you. \
-         It never writes to nixpkgs itself.</div></div>",
+         It never writes to nixpkgs itself.",
     );
+    let mut out = String::new();
     let Some(login) = viewer.as_deref() else {
-        out.push_str("<div class=\"blankslate\"><p>Sign in to run workflows.</p></div>");
-        return page(&app, None, "actions", &out);
+        return page
+            .body("<div class=\"blankslate\"><p>Sign in to run workflows.</p></div>")
+            .render(&app, None);
     };
     if let Some(m) = take_flash(&app, login) {
         let _ = write!(out, "<div class=\"flash mb-3\">{}</div>", esc(&m));
@@ -219,13 +221,13 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Str
         esc(&r.fork)
     );
     out.push_str(
-        "<form method=\"post\" action=\"/actions/review\" class=\"d-flex mb-4\" style=\"gap:8px;max-width:420px\">\
+        "<form method=\"post\" action=\"/actions/review\" class=\"inline-form mb-4\">\
          <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
          <button class=\"btn btn-primary\" type=\"submit\">Review in CI</button></form>",
     );
     let Some(t) = token(&app, login) else {
         out.push_str("<div class=\"blankslate\"><p>No GitHub token in your session; sign in again.</p></div>");
-        return page(&app, viewer.as_deref(), "actions", &out);
+        return page.body(out).render(&app, viewer.as_deref());
     };
     for (title, repo, file) in [
         ("nixpkgs-review runs", &r.review, REVIEW),
@@ -244,14 +246,17 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Str
                 esc(&format!("{e:#}"))
             ),
         };
-        let _ = write!(
-            out,
-            "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{title} <span class=\"color-fg-muted text-normal f6\">{} · {}</span></div>{body}</div>",
-            esc(repo),
-            file
-        );
+        out.push_str(&crate::ui::section(
+            &format!(
+                "{title} <span class=\"color-fg-muted text-normal f6\">{} · {file}</span>",
+                esc(repo)
+            ),
+            None,
+            None,
+            &body,
+        ));
     }
-    page(&app, viewer.as_deref(), "actions", &out)
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]

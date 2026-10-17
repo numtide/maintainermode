@@ -7,17 +7,18 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{Duration, Utc};
 use serde_json::json;
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::catalog::{Flags, Subject, head};
+use crate::catalog::{Flags, Subject, subject_row};
 use crate::report::{MAX_PACKAGES, Report};
 use crate::store::PackageSet;
-use crate::web::{App, Shared, ago, esc, icon, octicon, page, random_id};
+use crate::ui::{Page, Section, empty, section};
+use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
@@ -168,13 +169,7 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
             _ => None,
         })
         .collect();
-    let mut out = head(
-        &format!("{} Your package set", icon(octicon!("package"))),
-        "The packages you run, from your latest report, and the packages you watch. \
-         Only you see this page. New advisories and upstream releases for them reach your private Atom feed.",
-        "",
-    );
-    out.push_str(NOTICE);
+    let mut out = String::from(NOTICE);
     let mut from: BTreeMap<String, Origin> = BTreeMap::new();
     for a in set.iter().flat_map(|s| &s.attrs) {
         from.entry(a.clone()).or_default().uploaded = true;
@@ -191,7 +186,14 @@ async fn panel(State(app): State<Shared>, headers: HeaderMap) -> Response {
     out.push_str(&crate::rescan::panel(&app, &login));
     out.push_str(&rows(&app, &from));
     out.push_str(&token_box(&app, &login));
-    page(&app, Some(&login), "watch", &out).into_response()
+    Page::new(Section::Home, "Your package set")
+        .icon(octicon!("package"))
+        .sub(
+            "The packages you run, from your latest report, and the packages you watch. \
+             Only you see this page. New advisories and upstream releases for them reach your private Atom feed.",
+        )
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 fn summary(set: Option<&PackageSet>) -> String {
@@ -243,37 +245,37 @@ fn rows(app: &App, from: &BTreeMap<String, Origin>) -> String {
         .iter()
         .partition(|(_, f, _)| f.advisories > 0 || f.upstream.is_some() || f.risk() >= 15);
     let row = |(sub, f, o): &&(Subject, Flags, &Origin)| {
-        let mut tags = String::new();
+        let mut from = Vec::new();
         if o.watched {
-            tags.push_str(" <span class=\"Label\">watched</span>");
+            from.push("watched");
         }
         if o.uploaded {
-            tags.push_str(" <span class=\"Label\">in your report</span>");
+            from.push("in your report");
         }
         if o.flake {
-            tags.push_str(" <span class=\"Label\">in a scanned flake</span>");
+            from.push("in a scanned flake");
         }
-        format!(
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
-             <span class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>{tags}</span>{}</div>",
-            sub.href(),
-            sub.icon(),
-            esc(&sub.label()),
-            f.html()
+        subject_row(
+            sub,
+            f,
+            &format!(
+                " <span class=\"f6 color-fg-muted\">{}</span>",
+                from.join(" · ")
+            ),
+            "",
         )
     };
-    let mut out = format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Needs attention: an open advisory or a newer upstream release \
-         <span class=\"Counter\">{}</span></div>",
-        attention.len()
+    let attention_rows: String = attention.iter().map(row).collect();
+    let mut out = section(
+        "Needs attention: an open advisory or a newer upstream release",
+        Some(attention.len()),
+        None,
+        &if attention_rows.is_empty() {
+            empty("Nothing.")
+        } else {
+            attention_rows
+        },
     );
-    if attention.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">Nothing.</div>");
-    }
-    for r in &attention {
-        out.push_str(&row(r));
-    }
-    out.push_str("</div>");
     let _ = write!(
         out,
         "<details class=\"Box mb-4\"><summary class=\"Box-header\">The rest of the set <span class=\"Counter\">{}</span></summary>",
@@ -297,8 +299,13 @@ fn token_box(app: &App, login: &str) -> String {
         None => "<form method=\"post\" action=\"/me/upload-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an upload token</button></form>".into(),
     };
     format!(
-        "<div class=\"Box\" id=\"token\"><div class=\"Box-header text-bold\">{} Upload token</div><div class=\"Box-row\">{state}</div></div>",
-        icon(octicon!("key"))
+        "<div id=\"token\">{}</div>",
+        section(
+            &format!("{} Upload token", icon(octicon!("key"))),
+            None,
+            None,
+            &format!("<div class=\"Box-row\">{state}</div>")
+        )
     )
 }
 
@@ -319,13 +326,7 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     let base = app.public_url.trim_end_matches('/');
-    let mut out = head(
-        &format!("{} Your upload token", icon(octicon!("key"))),
-        "Copy it now. The server keeps only its hash, so this page cannot show it again.",
-        "",
-    );
-    let _ = write!(
-        out,
+    let out = format!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <input class=\"form-control width-full mb-2 text-mono\" readonly value=\"{t}\" aria-label=\"upload token\">\
          <p>Put it in a file that only you can read, or in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code>. Then, on your machine:</p>\
@@ -335,8 +336,11 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
         t = esc(&token),
         u = esc(&usage(base)),
     );
-    let Html(body) = page(&app, Some(&login), "watch", &out);
-    ([(header::CACHE_CONTROL, "no-store")], Html(body)).into_response()
+    Page::new(Section::Home, "Your upload token")
+        .icon(octicon!("key"))
+        .sub("Copy it now. The server keeps only its hash, so this page cannot show it again.")
+        .body(out)
+        .render(&app, Some(&login))
 }
 
 async fn delete_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
