@@ -9,6 +9,8 @@ mod catalog;
 mod channels;
 mod committer;
 mod dossier;
+#[cfg(test)]
+mod e2e;
 mod eval;
 mod events;
 mod github;
