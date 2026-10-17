@@ -137,7 +137,7 @@ async fn review_page(
                     "unowned" => ("No maintainer", NO_MAINTAINER),
                     _ => (
                         "All",
-                        "<p>Every pull request <a href=\"/rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>",
+                        "<p>Every pull request <a href=\"/state?tab=rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>",
                     ),
                 };
                 let rows = if page.is_empty() {

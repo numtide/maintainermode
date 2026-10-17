@@ -155,7 +155,7 @@ sum of:
    requests of the last year. The site reads them with your own token when
    you sign in.
 
-You can also add **tags**: path prefixes such as
+You can also add **tags** in `/me/settings`: path prefixes such as
 `pkgs/development/python-modules`, for new parts of nixpkgs that you want to
 follow.
 
