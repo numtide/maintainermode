@@ -100,6 +100,7 @@ JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
 | `area`        | one path of the tree, as `/api/v1/areas/<path>`                          |
 | `person`      | the record of a login and what it maintains, as `/api/v1/people/<login>` |
 | `prs`         | one queue, as `/api/v1/prs`; `queue` is `foryou` by default              |
+| `needs`       | your Needs you list, plans and own events, as `/api/v1/needs`            |
 | `watching`    | your subscriptions, with their health flags                              |
 | `sync_status` | the data of `/state?tab=status`                                          |
 

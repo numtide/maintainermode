@@ -29,13 +29,14 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 | Order | Cause                                                                                                                                                                                                                                        | It opens         |
 | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
 | 1     | An advisory on a package of your latest machine report that can affect your version (see [Affected versions](health.md#affected-versions)). The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it. | the package page |
-| 2     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                                                                                                               | the pull request |
-| 3     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                                  | the pull request |
-| 4     | Your open pull request has had no review for 7 days or more. The item names the maintainers of the files to ask, at most 5.                                                                                                                  | the pull request |
-| 5     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                            | the pull request |
-| 6     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                                         | the package page |
+| 2     | The deadline of a [follow-up plan](#your-pull-requests) that you chose passed, and nobody reviewed your open pull request.                                                                                                                   | the pull request |
+| 3     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                                                                                                               | the pull request |
+| 4     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                                  | the pull request |
+| 5     | Your open pull request has had no review for 7 days or more, and you chose no plan for it. The item uses the built-in default plan (see [Your pull requests](#your-pull-requests)).                                                          | the pull request |
+| 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                            | the pull request |
+| 7     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                                         | the package page |
 
-In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 2, the newest review comes first. In causes 3 and 4, the oldest comes first. In causes 5 and 6, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 2, and cause 3 for failing checks or a merge conflict.
+In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 
 The server uses only data that it already has. These signals are not in the list:
 
@@ -51,10 +52,10 @@ The chips above the list select a mood. Each chip shows its count.
 | Chip             | Address           | What it keeps                                          |
 | ---------------- | ----------------- | ------------------------------------------------------ |
 | All              | `/?mood=all`      | all items                                              |
-| My pull requests | `/?mood=mine`     | causes 2, 3 and 4                                      |
-| My machines      | `/?mood=machines` | cause 1, and cause 5 for the packages of your machines |
-| Review           | `/?mood=review`   | cause 5                                                |
-| Maintain         | `/?mood=maintain` | cause 6, and cause 1 for a package you maintain        |
+| My pull requests | `/?mood=mine`     | causes 2, 3, 4 and 5                                   |
+| My machines      | `/?mood=machines` | cause 1, and cause 6 for the packages of your machines |
+| Review           | `/?mood=review`   | cause 6                                                |
+| Maintain         | `/?mood=maintain` | cause 7, and cause 1 for a package you maintain        |
 
 A cookie (`mood`) keeps your last mood for one year.
 
@@ -83,6 +84,71 @@ On the list and on the pages that "Next" opens, you can use these keys:
 The keys do nothing while you type in a field. Everything also works without JavaScript.
 
 The JSON API gives the same list at `GET /api/v1/needs`. See [api.md](api.md#get-apiv1needs).
+
+## Your pull requests
+
+Maintainer Mode tells you what happens to the pull requests that you opened. It can also remind you when nobody reviews one. It never merges and never comments. It shows the facts and links to GitHub. You act on GitHub.
+
+### Events
+
+Your [inbox](#notifications), your Atom feed and your email digest show these events of your own pull requests, from the last 30 days. Their kind is "Your pull requests".
+
+| Event                  | When                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------- |
+| a review               | another person approves, requests changes or comments in a review. Bots do not count. |
+| merged                 | the pull request is merged. The event names the person who merged it.                 |
+| closed                 | the pull request is closed with no merge.                                             |
+| the deadline of a plan | the deadline of a plan that you chose passes with no review (see below).              |
+
+Your own reviews, the reviews of bots and dismissed reviews make no event. A comment outside a review makes no event: the synced data keeps only the comments of the author.
+
+The events come from the synced data. The server reads GitHub again at each sync pass, so an event can come some minutes after it happened on GitHub.
+
+**One email for each event.** In `/me/settings#email`, select "Send the events of your own pull requests at once". This is off by default. The server then sends one email for each new event, some minutes after it sees the event. It sends at most 20 of these emails in 24 hours, and only to a confirmed address. It sends no email for an event that you read in your inbox before. The daily digest still includes these events.
+
+### The follow-up plan
+
+The page of your open pull request (`/pr/<number>`) shows the box "Your follow-up plan" under the panel. Only you see it. Set one plan for each pull request:
+
+> If nobody reviews in [N] days: remind me to ask the maintainers / remind me to merge it myself / do nothing.
+
+N is a number from 1 to 90. Push "Save". The box then shows the plan and its deadline, for example "No review yet. On 2026-10-24 you get a reminder to merge it yourself." Push "Use my default" to remove the plan of the pull request.
+
+- A plan that you set on the page counts from the time that you saved it first. A change of the action or of N later does not move that start.
+- Your default plan is in `/me/settings#followup`. It counts from the time that the pull request was opened. Before you save a default, the built-in default applies: 7 days, and "remind me to ask the maintainers". For a committer, it is "remind me to merge it myself".
+- A review by another person before the deadline cancels the reminder. Its event says "so no reminder comes".
+- A draft gets no reminder.
+
+**At the deadline.** When the deadline of a plan that you chose passes, and the pull request is open with no review by another person:
+
+- Needs you shows an item at the top of your pull requests (cause 2).
+- Your inbox, your feed and your email get the event.
+
+The built-in default makes no event. It only gives cause 5 of Needs you.
+
+| Action                           | What the item says                                                                                                           |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| remind me to ask the maintainers | "No review in N days. Ask its maintainers for a review", with at most 5 maintainers of its files                             |
+| remind me to merge it myself     | "No review in N days. You can merge it yourself", with a link to the merge box on GitHub and a line of the contributor guide |
+| do nothing                       | no item and no event                                                                                                         |
+
+**When the item suggests a merge.** The item says "You can merge it yourself" only when all of these are true:
+
+- This site knows you as a committer (see [For committers](#for-committers)).
+- The checks pass.
+- GitHub says that it can merge the pull request: there is no merge conflict.
+- It is not a draft.
+- Nobody requests changes.
+
+When one of them is false, the item says which, for example "Do not merge it yet: checks fail."
+
+**How reliable the committer fact is.** The site counts you as a committer when you merged a pull request in the synced data in the last 365 days, or when you are in the GitHub team `NixOS/nixpkgs-committers`. The server reads the team once a day, and only if its token can see the team. So the fact can be wrong: a new committer with no merge yet is not known when the token cannot see the team, and a person who left the team still counts for a year after a merge. GitHub decides who can merge.
+
+**The contributor guide.** The nixpkgs [CONTRIBUTING.md](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) has no rule about merging your own pull request when nobody reviewed it. The item quotes the nearest line, from [The committer's perspective](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#the-committers-perspective): "To merge, at least one committer has to be confident about its quality." Read the guide before you merge.
+
+**Storage.** The server keeps the number of the pull request, N, the action and the start time for each plan. When the pull request leaves the synced data, the server deletes its plan. Your plans are private: no public page, count or API shows them.
+
+`GET /api/v1/needs` and the MCP tool `needs` give your plans and the events of your own pull requests. See [api.md](api.md#get-apiv1needs).
 
 ## Your packages
 
@@ -148,17 +214,18 @@ private pages under `/me`. The profile itself shows no private data.
 
 `/me/settings` is one page with these sections. The links at the top go to each section.
 
-| Section      | What you set                                                                                   |
-| ------------ | ---------------------------------------------------------------------------------------------- |
-| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address    |
-| `#feed`      | the private link of your Atom feed                                                             |
-| `#upload`    | the upload token for `maintainer-mode submit`                                                  |
-| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                            |
-| `#mcp`       | the MCP token                                                                                  |
-| `#workflows` | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run |
-| `#tags`      | the path prefixes that the For you tab of `/review` adds                                       |
-| `#goal`      | your weekly goal                                                                               |
-| `#start`     | show or hide the Get started card                                                              |
+| Section      | What you set                                                                                     |
+| ------------ | ------------------------------------------------------------------------------------------------ |
+| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address      |
+| `#followup`  | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
+| `#feed`      | the private link of your Atom feed                                                               |
+| `#upload`    | the upload token for `maintainer-mode submit`                                                    |
+| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                              |
+| `#mcp`       | the MCP token                                                                                    |
+| `#workflows` | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run   |
+| `#tags`      | the path prefixes that the For you tab of `/review` adds                                         |
+| `#goal`      | your weekly goal                                                                                 |
+| `#start`     | show or hide the Get started card                                                                |
 
 ## Get started
 
@@ -245,14 +312,16 @@ The page counts the synced data only: the last 60 days and every open pull reque
 ## Notifications
 
 **The inbox.** `/inbox` shows the events of your Atom feed: what
-happened in the last 30 days to what you watch and to your package set.
-The newest event comes first. Filter the list by kind (pull request,
-issue, advisory, release) or by subscription. "Mark all read" marks
-every event as read. Only you see your inbox.
+happened in the last 30 days to your own pull requests, to what you watch
+and to your package set. The newest event comes first. Filter the list by
+kind (your pull requests, pull request, issue, advisory, release) or by
+subscription. "Mark all read" marks every event as read. Only you see your
+inbox.
 
 **The unread count.** The header shows the number of unread events. The
 server counts them after each sync pass, and when you open the inbox.
 In `/me/settings#email`, choose the kinds that the count includes.
+The kind "Your pull requests" stays on until you turn it off.
 
 **The email digest.** This is off by default. It works only when the
 operator sets up SMTP (see [operations.md](operations.md#email)). Enter

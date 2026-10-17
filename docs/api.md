@@ -115,12 +115,16 @@ It never ranks people. Private data, like subscriptions and tags, is never in it
 ## `GET /api/v1/needs`
 
 It gives the items of [Needs you](personal.md#needs-you): what waits for you,
-the most urgent first. It reads your session cookie only. Without a session,
-the answer is 401. The answer always has `Cache-Control: private, no-store`.
-Snoozed items are not in it.
+the most urgent first. It also gives the follow-up plan of each of your open
+pull requests, and the events of your own pull requests (see
+[Your pull requests](personal.md#your-pull-requests)). It reads your session
+cookie only. Without a session, the answer is 401. The answer always has
+`Cache-Control: private, no-store`. Snoozed items are not in it. The MCP tool
+`needs` gives the same answer.
 
 `mood` keeps the items of one mood: `all` (the default), `mine`, `machines`,
-`review` or `maintain`. `counts` always gives the count of each mood.
+`review` or `maintain`. `counts` always gives the count of each mood. `mood`
+does not change `plans` and `events`.
 
 ```json
 {
@@ -139,18 +143,65 @@ Snoozed items are not in it.
       "moods": ["machines"],
       "labels": ["critical 9.8"],
       "at": null,
-      "link": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1"
+      "link": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
+      "links": [
+        {
+          "href": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
+          "text": "NIXPKGS-2026-1"
+        }
+      ]
+    }
+  ],
+  "plans": {
+    "committer": true,
+    "default": { "days": 7, "action": "merge", "source": "built_in" },
+    "pull_requests": [
+      {
+        "number": 575334,
+        "title": "hello: 2.12.1 -> 2.12.2",
+        "days": 7,
+        "action": "merge",
+        "source": "pull_request",
+        "deadline": "2026-10-24T09:12:00Z",
+        "state": "waiting",
+        "blocked": [],
+        "text": "No review yet. On 2026-10-24 you get a reminder to merge it yourself."
+      }
+    ]
+  },
+  "events": [
+    {
+      "id": "mine-575001-review-3301234567",
+      "at": "2026-10-16T08:00:00Z",
+      "title": "bob approved: #575001 jq: 1.7.1 -> 1.8.0",
+      "url": "https://github.com/NixOS/nixpkgs/pull/575001#pullrequestreview-3301234567"
     }
   ]
 }
 ```
 
-- `cause`: `advisory`, `reviewed`, `blocked`, `waiting`, `review` or
-  `package`. This is also the order of urgency.
+- `cause`: `advisory`, `follow_up`, `reviewed`, `blocked`, `waiting`,
+  `review` or `package`. This is also the order of urgency.
 - `href`: the page of the primary action, on this site.
 - `fingerprint`: it changes when the state behind the item changes.
-- `at`: the time of the event behind the item, or `null`.
-- `link`: a second link, such as the advisory, or `null`.
+- `at`: the time of the event behind the item, or `null`. For `follow_up`,
+  it is the deadline.
+- `link`: the first link of `links`, or `null`.
+- `links`: more links, such as the advisory, or the merge box on GitHub and
+  the line of the contributor guide.
+- `plans.default`: your default plan. `source` is `default` when you saved
+  it, and `built_in` when you did not.
+- `plans.pull_requests`: one entry for each of your open pull requests.
+  - `action`: `ask`, `merge` or `none`.
+  - `source`: `pull_request` (set on its page), `default` or `built_in`.
+  - `state`: `waiting` (before the deadline), `due`, `reviewed` (another
+    person reviewed it), `draft` or `off` (the action is `none`).
+  - `blocked`: when `state` is `due` and `action` is `merge`, the conditions
+    that stop the merge suggestion, such as `checks fail`.
+  - `text`: the sentence that the page of the pull request shows.
+- `events`: the events of your own pull requests in the last 30 days, newest
+  first. The `id` starts with `mine-<number>-` and ends with `review-<id>`,
+  `merged`, `closed` or `due-<date>`.
 
 ## `GET /api/v1/packages/index`
 
