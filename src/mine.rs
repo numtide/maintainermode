@@ -69,6 +69,27 @@ impl Filter {
         }
     }
 
+    fn title(self) -> &'static str {
+        match self {
+            Filter::Mine => "Your packages",
+            Filter::Machines => "Packages on your machines",
+            Filter::Maintain => "What you maintain",
+            Filter::Watch => "What you watch",
+            Filter::All => "All of nixpkgs",
+        }
+    }
+
+    /// The marks of a row, less the one that this filter already says.
+    fn marks(self, mut why: Why) -> Why {
+        match self {
+            Filter::Machines => why.machine = false,
+            Filter::Maintain => why.maintain = false,
+            Filter::Watch => why.watch = false,
+            Filter::Mine | Filter::All => {}
+        }
+        why
+    }
+
     fn keeps(self, why: Why) -> bool {
         match self {
             Filter::Mine | Filter::All => true,
@@ -317,7 +338,7 @@ pub(crate) fn rank_prs<'a>(
 
 /// A row with its version, the team that names the person, and why it is
 /// in the list. `status` sits on the right.
-pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, status: &str) -> String {
+pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, marks: Why, status: &str) -> String {
     let version = match &r.sub {
         Subject::Pkg(a) => index
             .pkgs
@@ -341,7 +362,7 @@ pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, status: &str) -> S
     subject_row(
         &r.sub,
         &r.flags,
-        &format!("{version}{via}{}", r.why.labels()),
+        &format!("{version}{via}{}", marks.labels()),
         status,
     )
 }
@@ -393,7 +414,7 @@ fn search_form(f: Filter, q: &str) -> String {
     )
 }
 
-const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold\">What the server keeps, and why</summary>\
+const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold py-1\">What the server keeps, and why</summary>\
 <p class=\"mt-2\">For your latest report, the server keeps the nixpkgs attributes that its index knows, the upload time, \
 the scan time and the nixpkgs revision. It drops all other names. It keeps the hash of your upload token, \
 not the token. Only you see this data, here, in your inbox and in your private feed. No public page, number or API reads it. \
@@ -445,12 +466,7 @@ pub(crate) fn view(
                 );
             }
         }
-        Filter::Watch => out.push_str(
-            "<form method=\"post\" action=\"/me/watch\" class=\"inline-form mb-3\">\
-             <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
-             <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>",
-        ),
-        Filter::Mine | Filter::All => {}
+        Filter::Watch | Filter::Mine | Filter::All => {}
     }
     out.push_str(&search_form(f, q));
     let (page, next) = crate::review::paged_by_offset(&rows, after);
@@ -466,7 +482,7 @@ pub(crate) fn view(
             } else {
                 String::new()
             };
-            row_html(&index, &ch, r, &status)
+            row_html(&index, &ch, r, f.marks(r.why), &status)
         })
         .collect();
     let blank = if !q.is_empty() {
@@ -487,16 +503,26 @@ pub(crate) fn view(
                 "nixpkgs does not name you in <code>meta.maintainers</code> yet. Read <a href=\"{}\">maintainers/README.md</a> to become a maintainer.",
                 crate::welcome::MAINTAINERS_README
             ),
-            Filter::Watch | Filter::All => "You watch nothing yet. Write a name above, or press Watch on the page of a package, a module or a directory.".into(),
+            Filter::Watch | Filter::All => "You watch nothing yet. Write a name below, or press Watch on the page of a package, a module or a directory.".into(),
         }
     };
     out.push_str(&section(
-        f.label(),
+        f.title(),
         Some(rows.len()),
         None,
         &if list.is_empty() { empty(&blank) } else { list },
     ));
     out.push_str(&pager(&href(f, q), next.as_deref()));
+    if f == Filter::Watch {
+        out.push_str(&section(
+            "Watch more",
+            None,
+            None,
+            "<div class=\"Box-row\"><form method=\"post\" action=\"/me/watch\" class=\"inline-form\">\
+             <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
+             <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form></div>",
+        ));
+    }
     if f == Filter::Machines {
         out.push_str(&crate::rescan::panel(app, login));
     }
@@ -657,7 +683,15 @@ mod tests {
         let s = Snapshot::default();
         let h = crate::health::Health::default();
         let rows = i.rows(&s, &index, &h, None, Filter::Mine, "");
-        let html = row_html(&index, &Channels::default(), &rows[0], "");
+        let html = row_html(&index, &Channels::default(), &rows[0], rows[0].why, "");
+        let less = row_html(
+            &index,
+            &Channels::default(),
+            &rows[0],
+            Filter::Machines.marks(rows[0].why),
+            "",
+        );
+        assert!(!less.contains("on your machines") && less.contains("you maintain"));
         assert!(html.contains("on your machines"));
         assert!(html.contains("you maintain"));
         assert!(!html.contains("you watch"));
