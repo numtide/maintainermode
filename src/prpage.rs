@@ -62,6 +62,31 @@ pub(crate) fn github_icon(n: u64) -> String {
     )
 }
 
+/// The number of a link to a nixpkgs pull request itself, not to a part of it.
+pub(crate) fn number_of(url: &str) -> Option<u64> {
+    let rest = url.strip_prefix(PULL)?;
+    (!rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| rest.parse().ok())
+        .flatten()
+}
+
+/// A pull request title that opens our page, and the GitHub mark after it.
+pub(crate) fn title_link(n: u64, text: &str, class: &str) -> String {
+    format!(
+        "<a class=\"{class}\" href=\"/pr/{n}\">{text}</a>{}",
+        github_icon(n)
+    )
+}
+
+/// As `title_link` for any link: a nixpkgs pull request opens our page.
+/// `text` is HTML.
+pub(crate) fn link(url: &str, text: &str, class: &str) -> String {
+    match number_of(url) {
+        Some(n) => title_link(n, text, class),
+        None => format!("<a class=\"{class}\" href=\"{}\">{text}</a>", esc(url)),
+    }
+}
+
 struct Lru<V> {
     map: HashMap<String, (u64, usize, Arc<V>)>,
     seq: u64,
@@ -1293,6 +1318,28 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
 mod tests {
     use super::*;
     use crate::ledger::tests::pr;
+
+    #[test]
+    fn only_a_plain_pull_request_link_maps_to_our_page() {
+        assert_eq!(
+            number_of("https://github.com/NixOS/nixpkgs/pull/123"),
+            Some(123)
+        );
+        assert_eq!(
+            number_of("https://github.com/NixOS/nixpkgs/pull/123#pullrequestreview-4"),
+            None
+        );
+        assert_eq!(number_of("https://github.com/NixOS/nix/pull/123"), None);
+        assert_eq!(number_of("https://github.com/NixOS/nixpkgs/pull/"), None);
+        assert!(
+            link("https://github.com/NixOS/nixpkgs/pull/7", "t", "x")
+                .starts_with("<a class=\"x\" href=\"/pr/7\">t</a> <a class=\"color-fg-muted ml-1\" href=\"https://github.com/NixOS/nixpkgs/pull/7\"")
+        );
+        assert_eq!(
+            link("https://example.org/?a=\"", "t", "x"),
+            "<a class=\"x\" href=\"https://example.org/?a=&quot;\">t</a>"
+        );
+    }
 
     #[test]
     fn markdown_escapes_html_and_drops_unsafe_links() {

@@ -212,11 +212,10 @@ fn row_html(r: &Row, act: Act) -> String {
     };
     format!(
         "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-open\">{ic}</span>\
-         <div class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{u}\">{t}</a>{draft}{up}\
+         <div class=\"flex-auto\">{t}{draft}{up}\
          <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}</div></div>{buttons}</div>",
         ic = icon(octicon!("git-pull-request")),
-        u = esc(&p.url),
-        t = esc(&p.title),
+        t = crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         draft = if p.is_draft {
             " <span class=\"Label ml-1\">draft</span>"
         } else {

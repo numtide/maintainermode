@@ -319,9 +319,8 @@ async fn claude_page(
     let mut out = head(
         &format!("Claude Code on #{number}"),
         &format!(
-            "<a href=\"{}\">{}</a> · a session on the web, in your own Claude account",
-            esc(&pr.url),
-            esc(&pr.title)
+            "{} · a session on the web, in your own Claude account",
+            crate::prpage::link(&pr.url, &esc(&pr.title), "")
         ),
         "",
     );

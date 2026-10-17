@@ -335,15 +335,14 @@ fn lines(list: &[Line], empty: &str, act: crate::actions::Act) -> String {
             "<div class=\"Box-row d-flex flex-items-start\">\
                <span class=\"mr-2 color-fg-open\">{pr}</span>\
                <div class=\"flex-auto\">\
-                 <a class=\"Link--primary text-bold\" href=\"{url}\">{title}</a>\
+                 {title}\
                  <div class=\"f6 mt-1\">{why}</div>\
                  <div class=\"f6 color-fg-muted mt-1\">{meta}</div>\
                </div>\
                <span class=\"ml-2\">{ci}</span>{act}\
              </div>",
             pr = icon(octicon!("git-pull-request")),
-            url = esc(&e.url),
-            title = esc(&e.title),
+            title = crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
             why = esc(&l.why),
             ci = ci_label(e),
             act = act.buttons(e.number),

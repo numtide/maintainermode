@@ -269,12 +269,18 @@ async fn inbox_page(
             let _ = write!(
                 out,
                 "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-muted\">{}</span>\
-                 <div class=\"flex-auto\"><a class=\"Link--primary{}\" href=\"{}\">{}</a>\
+                 <div class=\"flex-auto\">{}\
                  <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{}</div>",
                 Kind::of(&e.id).icon(),
-                if new { " text-bold" } else { "" },
-                esc(&e.url),
-                esc(&e.title),
+                crate::prpage::link(
+                    &e.url,
+                    &esc(&e.title),
+                    if new {
+                        "Link--primary text-bold"
+                    } else {
+                        "Link--primary"
+                    }
+                ),
                 esc(&e.subject),
                 ago(e.at),
                 if new {

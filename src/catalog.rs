@@ -511,10 +511,9 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
     };
     format!(
         "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 {class}\">{ic}</span>\
-         <div class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{u}\">{t}</a>{draft}\
+         <div class=\"flex-auto\">{t}{draft}\
          <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}</div></div>{button}</div>",
-        u = esc(&p.url),
-        t = esc(&p.title),
+        t = crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         n = p.number,
         a = esc(&p.author),
         button = if p.is_open() {
