@@ -38,11 +38,15 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
   `meta.teams` names you, worst first.
 - **What you watch**: subscribe to any package, module or directory.
 - **Needs you**: the top of the home page. It lists what waits for you, the most urgent first: a serious advisory on your machines, a new review on your pull request, a blocked pull request, a pull request to review. Snooze an item, or push Next to go through them.
+- **Your pull requests**: set a follow-up plan on each one. If nobody
+  reviews in some days, you get a reminder to ask the maintainers, or to
+  merge it yourself when you are a committer. Maintainer Mode never merges.
 - **Needs review, for you**: by default, the review queue shows the pull
   requests on what you maintain or watch.
 - **Your system**: upload the closure of your machines, and follow the
   packages you really run. It stays private.
-- **Notifications**: an inbox on the site and a private Atom feed for new
+- **Notifications**: an inbox on the site and a private Atom feed for the
+  reviews, merges and closes of your own pull requests, and for new
   pull requests, merges, issues, advisories and releases.
 - **Your progress**: your reviews, your streak and your goals. There is no
   leaderboard.
