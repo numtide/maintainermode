@@ -74,17 +74,16 @@ JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
 - **Tools.** Each tool only reads. Each returns its JSON as text content. No
   tool writes to GitHub.
 
-| Tool           | Returns                                                                       |
-| -------------- | ----------------------------------------------------------------------------- |
-| `search`       | packages, modules and areas that match a name, with their health flags        |
-| `package`      | one package, as `/api/v1/packages/<attr>`                                     |
-| `module`       | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works      |
-| `area`         | one path of the tree, as `/api/v1/areas/<path>`                               |
-| `maintains`    | what a login maintains, as `/api/v1/maintainers/<login>`                      |
-| `queue_merge`  | the ready-to-merge queue, the first 50 or `limit`                             |
-| `queue_review` | the review queue: `bucket` is `mine` (default, your area), `unowned` or `all` |
-| `watching`     | your subscriptions, with their health flags                                   |
-| `sync_status`  | the data of `/state?tab=status`                                               |
+| Tool          | Returns                                                                  |
+| ------------- | ------------------------------------------------------------------------ |
+| `search`      | packages, modules and areas that match a name, with their health flags   |
+| `package`     | one package, as `/api/v1/packages/<attr>`                                |
+| `module`      | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works |
+| `area`        | one path of the tree, as `/api/v1/areas/<path>`                          |
+| `person`      | the record of a login and what it maintains, as `/api/v1/people/<login>` |
+| `prs`         | one queue, as `/api/v1/prs`; `queue` is `foryou` by default              |
+| `watching`    | your subscriptions, with their health flags                              |
+| `sync_status` | the data of `/state?tab=status`                                               |
 
 | Code | Meaning                                                       |
 | ---- | ------------------------------------------------------------- |

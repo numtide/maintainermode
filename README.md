@@ -100,6 +100,7 @@ The site also shows these pages, in the Docs tab of
 | [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels                 |
 | [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set                     |
 | [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                           |
+| [docs/api.md](docs/api.md)               | the JSON API and the command line                                 |
 | [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive                  |
 | [docs/operations.md](docs/operations.md) | run it, its variables, what we took                               |
 | [docs/events.md](docs/events.md)         | the plan of the event log                                         |
