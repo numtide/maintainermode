@@ -24,7 +24,7 @@ pub const DEFAULT_REPO: &str = "NixOS/nixpkgs";
 pub const PASS_EVERY: u64 = 300;
 /// The walk stops for the pass when the token has less left, so the
 /// pull request and issue sync keeps its budget.
-const RESERVE: i64 = 1000;
+pub(crate) const RESERVE: i64 = 1000;
 /// On the first pass, "recent" reaches this far back.
 const RECENT_DAYS: i64 = 30;
 const LIST_PAGES: usize = 20;

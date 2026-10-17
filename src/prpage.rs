@@ -13,10 +13,13 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tokio::sync::OnceCell;
 
 use crate::actions::Act;
+use crate::archive::RESERVE;
 use crate::area::Index;
 use crate::catalog::{Flags, Subject, head};
 use crate::ledger::{self, Credit, Dropped};
@@ -44,6 +47,8 @@ const SUBJECTS: usize = 50;
 const FETCH_SECS: u64 = 15;
 const CACHE_BYTES: usize = 32 << 20;
 const CACHE_ENTRIES: usize = 256;
+/// Live reads from GitHub per minute, for the whole server.
+const LIVE_PER_MINUTE: usize = 20;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -137,12 +142,81 @@ impl<V> Lru<V> {
     }
 }
 
+type Flights<V> = Mutex<HashMap<String, Arc<OnceCell<Result<Arc<V>, String>>>>>;
+
 /// What the pages read from GitHub on demand, in memory only: the files per
 /// head commit, the discussion per update.
 #[derive(Default)]
 pub struct Cache {
     files: Mutex<Lru<Files>>,
     talk: Mutex<Lru<Talk>>,
+    files_flights: Flights<Files>,
+    talk_flights: Flights<Talk>,
+    budget: Budget,
+}
+
+/// Keeps live reads off the budget that the sync needs.
+#[derive(Default)]
+struct Budget {
+    /// A token, per API, with less than `RESERVE` left, until its reset.
+    low: Mutex<HashMap<u64, DateTime<Utc>>>,
+    /// Live reads started in the current minute.
+    window: Mutex<(Option<Instant>, usize)>,
+}
+
+impl Budget {
+    fn key(api: &str, token: &str) -> u64 {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (api, token).hash(&mut h);
+        h.finish()
+    }
+
+    fn usable(&self, api: &str, token: &str, now: DateTime<Utc>) -> bool {
+        let mut low = self.low.lock().unwrap();
+        low.retain(|_, until| *until > now);
+        !low.contains_key(&Self::key(api, token))
+    }
+
+    fn note(&self, api: &str, token: &str, remaining: i64, reset: DateTime<Utc>) {
+        if remaining < RESERVE {
+            self.low
+                .lock()
+                .unwrap()
+                .insert(Self::key(api, token), reset);
+        }
+    }
+
+    fn admit(&self, now: Instant) -> bool {
+        let mut w = self.window.lock().unwrap();
+        if w.0
+            .is_none_or(|start| now.duration_since(start) >= Duration::from_secs(60))
+        {
+            *w = (Some(now), 0);
+        }
+        w.1 += 1;
+        w.1 <= LIVE_PER_MINUTE
+    }
+}
+
+/// Runs `read` once for all the requests that miss the cache on one key
+/// at the same time.
+async fn joined<V>(
+    flights: &Flights<V>,
+    key: &str,
+    read: impl std::future::Future<Output = Result<Arc<V>, String>>,
+) -> Result<Arc<V>, String> {
+    let cell = flights
+        .lock()
+        .unwrap()
+        .entry(key.to_string())
+        .or_default()
+        .clone();
+    let out = cell.get_or_init(|| read).await.clone();
+    let mut map = flights.lock().unwrap();
+    if map.get(key).is_some_and(|c| Arc::ptr_eq(c, &cell)) {
+        map.remove(key);
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -289,11 +363,27 @@ fn files_size(f: &Files) -> usize {
         .sum()
 }
 
-/// Each token in turn, then no token: the REST API answers public data
-/// without one, at a lower rate.
-async fn rest_get(http: &reqwest::Client, tokens: &[String], url: &str) -> Result<Value> {
+const NOT_LIVE: &str = "this server reads GitHub only for people who sign in";
+const BUSY: &str = "this server reads GitHub for many pages now; try again in a minute";
+const LOW: &str = "this server keeps its GitHub budget for the sync now";
+
+fn header_i64(resp: &reqwest::Response, name: &str) -> Option<i64> {
+    resp.headers().get(name)?.to_str().ok()?.parse().ok()
+}
+
+/// Each token with budget left in turn, then no token: the REST API
+/// answers public data without one, at a lower rate.
+async fn rest_get(
+    http: &reqwest::Client,
+    budget: &Budget,
+    tokens: &[String],
+    url: &str,
+) -> Result<Value> {
     let mut last = String::new();
-    for token in tokens.iter().map(Some).chain([None]) {
+    let usable = tokens
+        .iter()
+        .filter(|t| budget.usable("rest", t, Utc::now()));
+    for token in usable.map(Some).chain([None]) {
         let mut req = http
             .get(url)
             .header("Accept", "application/vnd.github+json")
@@ -302,6 +392,13 @@ async fn rest_get(http: &reqwest::Client, tokens: &[String], url: &str) -> Resul
             req = req.bearer_auth(t);
         }
         let resp = req.send().await?;
+        if let (Some(t), Some(left), Some(reset)) = (
+            token,
+            header_i64(&resp, "x-ratelimit-remaining"),
+            header_i64(&resp, "x-ratelimit-reset").and_then(|s| DateTime::from_timestamp(s, 0)),
+        ) {
+            budget.note("rest", t, left, reset);
+        }
         let status = resp.status();
         if status.is_success() {
             return resp.json().await.context("GitHub REST answer");
@@ -314,13 +411,13 @@ async fn rest_get(http: &reqwest::Client, tokens: &[String], url: &str) -> Resul
     bail!("{last}")
 }
 
-async fn fetch_files(api: &str, tokens: &[String], n: u64) -> Result<Vec<File>> {
+async fn fetch_files(api: &str, budget: &Budget, tokens: &[String], n: u64) -> Result<Vec<File>> {
     let http = crate::github::http();
     let mut out = Vec::new();
     for page in 1.. {
         let url =
             format!("{api}/repos/NixOS/nixpkgs/pulls/{n}/files?per_page={PER_PAGE}&page={page}");
-        let v = rest_get(&http, tokens, &url).await?;
+        let v = rest_get(&http, budget, tokens, &url).await?;
         let list = v.as_array().context("a list of files")?;
         out.extend(list.iter().filter_map(file_of));
         if list.len() < PER_PAGE || out.len() >= FILE_CAP {
@@ -341,18 +438,35 @@ const TALK_QUERY: &str = "query($owner: String!, $name: String!, $number: Int!, 
   } }
 }";
 
-async fn fetch_talk(app: &App, tokens: Vec<String>, n: u64) -> Result<Talk> {
-    let mut client = crate::github::Client::new(tokens);
-    if !client.has_token() {
+async fn fetch_talk(budget: &Budget, tokens: Vec<String>, n: u64) -> Result<Talk> {
+    if tokens.is_empty() {
         bail!("this server has no GitHub token of its own to read it with");
     }
+    let http = crate::github::http();
     let vars = json!({ "owner": "NixOS", "name": "nixpkgs", "number": n, "first": FIRST });
-    let data = client.graphql(&app.store, TALK_QUERY, vars).await?;
-    let pr = &data["repository"]["pullRequest"];
-    if pr.is_null() {
-        bail!("GitHub has no pull request #{n}");
+    let mut last = LOW.to_string();
+    for token in tokens
+        .iter()
+        .filter(|t| budget.usable("graphql", t, Utc::now()))
+    {
+        let data = match crate::github::graphql_once(&http, token, TALK_QUERY, &vars).await? {
+            crate::github::Outcome::Data(v) => v,
+            crate::github::Outcome::BadToken(_) => {
+                last = "GitHub refused the token of this server".into();
+                continue;
+            }
+        };
+        let rate = &data["rateLimit"];
+        if let (Some(left), Some(reset)) = (rate["remaining"].as_i64(), time(&rate["resetAt"])) {
+            budget.note("graphql", token, left, reset);
+        }
+        let pr = &data["repository"]["pullRequest"];
+        if pr.is_null() {
+            bail!("GitHub has no pull request #{n}");
+        }
+        return Ok(talk_of(pr, "github"));
     }
-    Ok(talk_of(pr, "github"))
+    bail!("{last}")
 }
 
 async fn timed<T>(f: impl std::future::Future<Output = Result<T>>) -> Result<T> {
@@ -361,28 +475,43 @@ async fn timed<T>(f: impl std::future::Future<Output = Result<T>>) -> Result<T> 
         .unwrap_or_else(|_| Err(anyhow::anyhow!("GitHub did not answer in {FETCH_SECS} s")))
 }
 
-async fn files(app: &App, pr: &Pr) -> Result<Arc<Files>, String> {
+/// `live` lets a miss of the cache read GitHub; anonymous visitors and the
+/// API never spend the server's budget.
+async fn files(app: &App, pr: &Pr, live: bool) -> Result<Arc<Files>, String> {
     let key = format!("{}@{}", pr.number, pr.head_oid);
-    if let Some(f) = app.pr_cache.files.lock().unwrap().get(&key) {
+    let cache = &app.pr_cache;
+    if let Some(f) = cache.files.lock().unwrap().get(&key) {
         return Ok(f);
     }
-    let tokens = crate::archive::tokens(app).await;
-    let list = timed(fetch_files(API, &tokens, pr.number))
-        .await
-        .map_err(|e| format!("{e:#}"))?;
-    let files = Files {
-        head: pr.head_oid.clone(),
-        capped: (list.len() as u64) < pr.changed_files,
-        files: list,
-    };
-    let size = files_size(&files);
-    let files = Arc::new(files);
-    app.pr_cache
-        .files
-        .lock()
-        .unwrap()
-        .put(key, files.clone(), size);
-    Ok(files)
+    if !live {
+        return Err(NOT_LIVE.into());
+    }
+    joined(&cache.files_flights, &key, async {
+        if let Some(f) = cache.files.lock().unwrap().get(&key) {
+            return Ok(f);
+        }
+        if !cache.budget.admit(Instant::now()) {
+            return Err(BUSY.into());
+        }
+        let tokens = crate::archive::tokens(app).await;
+        let list = timed(fetch_files(API, &cache.budget, &tokens, pr.number))
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let files = Files {
+            head: pr.head_oid.clone(),
+            capped: (list.len() as u64) < pr.changed_files,
+            files: list,
+        };
+        let size = files_size(&files);
+        let files = Arc::new(files);
+        cache
+            .files
+            .lock()
+            .unwrap()
+            .put(key.clone(), files.clone(), size);
+        Ok(files)
+    })
+    .await
 }
 
 async fn archived(app: &App, n: u64) -> Option<Talk> {
@@ -416,27 +545,39 @@ async fn stored(app: &App, pr: &Pr, key: &str) -> Option<Arc<Talk>> {
 
 /// The archive when it is as new as the synced data, else a live read; a
 /// stale archive copy is still better than nothing when the read fails.
-async fn talk(app: &App, pr: &Pr) -> Result<Arc<Talk>, String> {
+async fn talk(app: &App, pr: &Pr, live: bool) -> Result<Arc<Talk>, String> {
     let key = format!("{}@{}", pr.number, pr.updated_at.to_rfc3339());
-    if let Some(t) = app.pr_cache.talk.lock().unwrap().get(&key) {
+    let cache = &app.pr_cache;
+    if let Some(t) = cache.talk.lock().unwrap().get(&key) {
         return Ok(t);
     }
     let stored = stored(app, pr, &key).await;
     if let Some(t) = &stored {
-        if t.updated_at.is_some_and(|u| u >= pr.updated_at) {
+        if !live || t.updated_at.is_some_and(|u| u >= pr.updated_at) {
             return Ok(t.clone());
         }
     }
-    let tokens = crate::archive::tokens(app).await;
-    match timed(fetch_talk(app, tokens, pr.number)).await {
-        Ok(t) => {
-            let size = talk_size(&t);
-            let t = Arc::new(t);
-            app.pr_cache.talk.lock().unwrap().put(key, t.clone(), size);
-            Ok(t)
-        }
-        Err(e) => stored.ok_or_else(|| format!("{e:#}")),
+    if !live {
+        return Err(NOT_LIVE.into());
     }
+    let read = joined(&cache.talk_flights, &key, async {
+        if let Some(t) = cache.talk.lock().unwrap().get(&key) {
+            return Ok(t);
+        }
+        if !cache.budget.admit(Instant::now()) {
+            return Err(BUSY.into());
+        }
+        let tokens = crate::archive::tokens(app).await;
+        let t = timed(fetch_talk(&cache.budget, tokens, pr.number))
+            .await
+            .map_err(|e| format!("{e:#}"))?;
+        let size = talk_size(&t);
+        let t = Arc::new(t);
+        cache.talk.lock().unwrap().put(key.clone(), t.clone(), size);
+        Ok(t)
+    })
+    .await;
+    read.or_else(|e| stored.ok_or(e))
 }
 
 fn cut(s: &str, max: usize) -> &str {
@@ -1080,6 +1221,15 @@ fn file_html(n: u64, f: &File) -> String {
     )
 }
 
+/// Why a read failed, with a way to sign in when that is the reason.
+fn why(e: &str) -> String {
+    if e == NOT_LIVE {
+        format!("{} (<a href=\"/auth/login\">sign in</a>)", esc(e))
+    } else {
+        esc(e)
+    }
+}
+
 fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> String {
     let mut out = format!(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"files\">{} Files changed <span class=\"Counter\">{}</span></h2>",
@@ -1091,7 +1241,7 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> String {
             let _ = write!(
                 out,
                 "<div class=\"flash mb-4\">The diff could not be read: {}. <a href=\"{}/files\">Read it on GitHub</a></div>",
-                esc(e),
+                why(e),
                 github_url(pr.number)
             );
         }
@@ -1123,7 +1273,7 @@ fn description_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
         Ok(t) => markdown(&t.body),
         Err(e) => format!(
             "<p class=\"color-fg-muted\">The description could not be read: {}. <a href=\"{}\">Read it on GitHub</a></p>",
-            esc(e),
+            why(e),
             github_url(pr.number)
         ),
     };
@@ -1211,7 +1361,7 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
             let _ = write!(
                 out,
                 "<div class=\"Box-row color-fg-muted\">The conversation could not be read: {}. The synced reviews, without their text:</div>",
-                esc(e)
+                why(e)
             );
             for r in &pr.reviews {
                 let _ = write!(
@@ -1251,7 +1401,8 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     let Some(pr) = s.pr_at.get(&n).map(|&i| &s.pr_data[i]) else {
         return not_synced(&app, viewer.as_deref(), n);
     };
-    let (files, talk) = tokio::join!(files(&app, pr), talk(&app, pr));
+    let live = viewer.is_some();
+    let (files, talk) = tokio::join!(files(&app, pr, live), talk(&app, pr, live));
     let h = app.health.read().unwrap().clone();
     let list = touched(&s, &app.index.read().unwrap(), &h, pr);
     let place = place(&s, pr);
@@ -1302,7 +1453,7 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
         )
             .into_response();
     };
-    let (files, talk) = tokio::join!(files(&app, pr), talk(&app, pr));
+    let (files, talk) = tokio::join!(files(&app, pr, false), talk(&app, pr, false));
     let h = app.health.read().unwrap().clone();
     let list = touched(&s, &app.index.read().unwrap(), &h, pr);
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
@@ -1577,6 +1728,63 @@ mod tests {
         assert_eq!(v["discussion"]["omitted"], 5);
         assert_eq!(v["discussion"]["notes"].as_array().unwrap().len(), NOTE_CAP);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_token_low_on_budget_rests_until_its_reset() {
+        let b = Budget::default();
+        let now = Utc::now();
+        b.note("graphql", "t", RESERVE, now + chrono::Duration::hours(1));
+        assert!(b.usable("graphql", "t", now));
+        b.note(
+            "graphql",
+            "t",
+            RESERVE - 1,
+            now + chrono::Duration::hours(1),
+        );
+        assert!(!b.usable("graphql", "t", now));
+        assert!(b.usable("rest", "t", now));
+        assert!(b.usable("graphql", "u", now));
+        assert!(b.usable("graphql", "t", now + chrono::Duration::hours(2)));
+
+        let start = Instant::now();
+        assert!((0..LIVE_PER_MINUTE).all(|_| b.admit(start)));
+        assert!(!b.admit(start + Duration::from_secs(59)));
+        assert!(b.admit(start + Duration::from_secs(60)));
+    }
+
+    #[tokio::test]
+    async fn reads_at_the_same_time_on_one_key_run_once() {
+        let flights: Flights<u32> = Default::default();
+        let runs = std::sync::atomic::AtomicUsize::new(0);
+        let read = || async {
+            runs.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok(Arc::new(7))
+        };
+        let (a, b) = tokio::join!(joined(&flights, "k", read()), joined(&flights, "k", read()));
+        assert_eq!((*a.unwrap(), *b.unwrap()), (7, 7));
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(flights.lock().unwrap().is_empty());
+        joined(&flights, "k", read()).await.unwrap();
+        assert_eq!(runs.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn an_anonymous_visitor_never_makes_the_server_read_github() {
+        let app = crate::sets::tests::app(&[]);
+        let p = pr(43, "alice", 0);
+        app.store.put_prs(std::slice::from_ref(&p)).unwrap();
+        app.recompute().unwrap();
+        let (status, html) =
+            body(pr_page(State(app.clone()), HeaderMap::new(), Path(43)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("The diff could not be read: this server reads GitHub only for people who sign in (<a href=\"/auth/login\">sign in</a>)"));
+        let (_, api) = body(api_pr(State(app.clone()), Path(43)).await).await;
+        let v: Value = serde_json::from_str(&api).unwrap();
+        assert_eq!(v["files_error"], NOT_LIVE);
+        assert_eq!(v["discussion_error"], NOT_LIVE);
+        assert_eq!(app.pr_cache.budget.window.lock().unwrap().1, 0);
     }
 
     #[test]

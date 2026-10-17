@@ -146,6 +146,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /tmp/pr1.json -w '%{http_code}' http://127.0.0.1:8790/api/v1/prs/1 > /tmp/pr1.json.code && grep -q 404 /tmp/pr1.json.code")
     machine.succeed("grep -q '\"url\":\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1.json")
     machine.fail("curl -sf http://127.0.0.1:8790/pr/nope")
+    # crawlers stay off the pull request pages
+    machine.succeed("curl -sf -o /tmp/robots http://127.0.0.1:8790/robots.txt && grep -q '^Disallow: /pr/' /tmp/robots && grep -q '^Disallow: /api/v1/prs/' /tmp/robots")
     # notifications: the inbox and its settings need a session; email is off
     # without SMTP, and an unknown unsubscribe link is not found
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/inbox > /tmp/n1 && grep -q 303 /tmp/n1")
