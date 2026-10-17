@@ -278,10 +278,14 @@ impl Store {
         Ok(())
     }
 
+    /// A person whose first area refresh failed has no member row yet. The
+    /// new row is stale at once, so the next sync pass refreshes it.
     pub fn set_tags(&self, login: &str, tags: &[String]) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE member SET tags = ?2 WHERE login = ?1",
+            "INSERT INTO member (login, committed, tags, refreshed_at)
+             VALUES (?1, '[]', ?2, '1970-01-01T00:00:00+00:00')
+             ON CONFLICT(login) DO UPDATE SET tags = excluded.tags",
             params![login, serde_json::to_string(tags)?],
         )?;
         Ok(())
@@ -1049,5 +1053,19 @@ mod tests {
             s.mail_counts(now - chrono::Duration::days(1)).unwrap(),
             (1, 50)
         );
+    }
+
+    #[test]
+    fn tags_stick_before_the_first_area_refresh() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        s.set_tags("alice", &["pkgs/a".into()]).unwrap();
+        let m = s.members().unwrap();
+        assert_eq!(m[0].tags, vec!["pkgs/a"]);
+        assert!(Utc::now() - m[0].refreshed_at > chrono::Duration::days(1));
+        s.put_member("alice", &["pkgs/b".into()]).unwrap();
+        s.set_tags("alice", &["pkgs/c".into()]).unwrap();
+        let m = s.members().unwrap();
+        assert_eq!(m[0].committed, vec!["pkgs/b"]);
+        assert_eq!(m[0].tags, vec!["pkgs/c"]);
     }
 }
