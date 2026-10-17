@@ -593,8 +593,8 @@ async fn person_page(
         .icon(octicon!("person"))
         .subnav(person_tabs(&login, false))
         .sub(format!(
-            "Evidence, not a verdict. Maintainer Mode grants nothing; nixpkgs committers do. \
-             Reviews in the synced data: the last {} days and every open pull request.",
+            "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
+             It counts the reviews of the last {} days and on every open pull request.",
             ledger::WINDOW_DAYS
         ))
         .actions(listed)
@@ -1063,7 +1063,7 @@ pub(crate) fn numbers(app: &App) -> String {
     let _ = write!(
         body,
         "<div class=\"d-flex flex-wrap gap-3 mb-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
-         <div class=\"flex-1\"><h2 class=\"f4 mb-2\">Who carries the load, last 365 days</h2>{}</div></div>",
+         <div class=\"flex-1\"><h2 class=\"f4 mb-2\">How many people do the work, last 365 days</h2>{}</div></div>",
         table(&["", "open"], &ages),
         table(
             &["", "total", "people", "people for half", "people for 80%"],
