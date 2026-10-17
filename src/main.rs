@@ -387,9 +387,17 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
     loop {
         let pass_started = Utc::now();
         let index_at = app.store.get_time("index_at").ok().flatten();
-        // an index from before packages and modules were kept has neither
-        let old_format = app.index.read().unwrap().pkgs.is_empty();
-        if old_format || index_at.is_none_or(|t| Utc::now() - t > Duration::hours(24)) {
+        // an index from an older version lacks packages, or their meta; the
+        // hour stops a sweep that keeps finding no meta from running each pass
+        let (empty, no_meta) = {
+            let i = app.index.read().unwrap();
+            (
+                i.pkgs.is_empty(),
+                !i.pkgs.values().any(|p| p.meta.is_some()),
+            )
+        };
+        let due = |h: i64| index_at.is_none_or(|t| Utc::now() - t > Duration::hours(h));
+        if empty || (no_meta && due(1)) || due(24) {
             match web::refresh_index(&app).await {
                 Ok(()) => {
                     tracing::info!("nixpkgs index refreshed");
