@@ -318,7 +318,7 @@ The tab **Ready to merge** of `/review` shows what waits for a person with merge
 | Backports                | a `release-*` base branch, and ready                                                                                                      |
 | Waiting longest          | ready, oldest approval first                                                                                                              |
 
-In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first and show 50 rows at most. They show on the first page only.
+In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first. They show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
