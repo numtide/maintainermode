@@ -199,6 +199,7 @@ pub fn router(app: Shared) -> Router {
     Router::new()
         .merge(crate::home::routes())
         .merge(crate::review::routes())
+        .route("/record", get(record_redirect))
         .route("/u/:login", get(person_page))
         .route("/me/tags", post(set_tags))
         .route("/auth/login", get(login))
@@ -647,6 +648,23 @@ pub(crate) fn tags_box(app: &App, login: &str) -> String {
             ),
         )
     )
+}
+
+#[derive(Deserialize)]
+struct RecordQuery {
+    login: Option<String>,
+}
+
+async fn record_redirect(Query(q): Query<RecordQuery>) -> Redirect {
+    match q
+        .login
+        .as_deref()
+        .map(str::trim)
+        .filter(|l| crate::catalog::valid_login(l))
+    {
+        Some(l) => Redirect::permanent(&format!("/u/{}", crate::github::urlencode(l))),
+        None => Redirect::permanent("/packages"),
+    }
 }
 
 #[derive(Deserialize)]
