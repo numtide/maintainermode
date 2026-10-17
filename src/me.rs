@@ -69,13 +69,14 @@ async fn settings_page(
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
+    let workflows = crate::actions::repos_box(&app, &login).await;
     let body = [
         crate::notify::settings_box(&app, &login, q.mail.as_deref()),
         crate::catalog::feed_box(&app, &login),
         crate::sets::token_box(&app, &login),
         crate::llm::llm_box(&app, &login),
         crate::llm::mcp_box(&app, &login),
-        crate::actions::repos_box(&app, &login),
+        workflows,
         crate::web::tags_box(&app, &login),
         crate::progress::goal_box(&app, &login),
         crate::welcome::settings_box(&app, &login),
@@ -244,6 +245,14 @@ mod tests {
         .await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
         let h = signed_in(&app, "alice");
+        crate::actions::store_check(
+            &app,
+            "alice",
+            &crate::workflows::Check {
+                at: chrono::Utc::now(),
+                lines: vec![],
+            },
+        );
         let r = settings_page(State(app), h, Query(SettingsQuery { mail: None })).await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(
@@ -261,6 +270,7 @@ mod tests {
             "/me/upload-token",
             "/me/settings/llm",
             "/me/settings/workflows",
+            "/me/settings/workflows/check",
             "/me/tags",
             "/me/progress",
             "/me/start",

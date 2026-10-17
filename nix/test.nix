@@ -197,6 +197,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/settings > /tmp/r5 && grep -q 303 /tmp/r5")
     machine.succeed("curl -s -D /tmp/r5.h -o /dev/null http://127.0.0.1:8790/me/settings && grep -qi '^cache-control: private, no-store' /tmp/r5.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d review_repo=a/b -d update_repo=a/b -d nixpkgs_fork=a/c http://127.0.0.1:8790/me/settings/workflows > /tmp/r12 && grep -q 303 /tmp/r12")
+    machine.succeed("curl -s -D /tmp/check.h -o /dev/null -X POST http://127.0.0.1:8790/me/settings/workflows/check && grep -q '^HTTP/1.1 303' /tmp/check.h && grep -qi '^cache-control: private, no-store' /tmp/check.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d tags=pkgs http://127.0.0.1:8790/me/tags > /tmp/r13 && grep -q 303 /tmp/r13")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/feed > /tmp/r14 && grep -q 303 /tmp/r14")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d llm_ok=1 http://127.0.0.1:8790/me/settings/llm > /tmp/r6 && grep -q 303 /tmp/r6")
