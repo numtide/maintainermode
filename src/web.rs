@@ -93,6 +93,8 @@ pub struct App {
     pub smtp: Option<crate::notify::Smtp>,
     /// What pull request pages read from GitHub on demand.
     pub pr_cache: crate::prpage::Cache,
+    /// The poller of the bot account's notifications; off by default.
+    pub notifications: crate::notifications::Status,
 }
 
 impl App {
