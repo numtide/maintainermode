@@ -1,204 +1,221 @@
 # Rules and numbers
 
-How Maintainer Mode decides what to show, what earns credit, and how the
-numbers on /state are made. The site serves this page at `/state?tab=rules`.
-These rules decide what Maintainer Mode shows and credits. nixpkgs has its own rules for every contribution: read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md).
+This page tells how Maintainer Mode decides what to show and what gets credit.
+It also tells how the numbers on /state are made. The site serves this page at `/rules`.
+These rules are the rules of Maintainer Mode only. nixpkgs has its own rules for every contribution: read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md).
 
-## Maintainer Mode grants nothing
+## Maintainer Mode gives no rights
 
-nixpkgs committers grant commit access. Maintainer Mode hands them evidence
-they do not have today, and a human still decides.
+nixpkgs committers give commit access. Maintainer Mode gives them facts that
+they do not have today. A person still decides.
 
-Getting a pull request listed is a cheap prize, which is why additive-only
-credit and no dispute process are enough. Commit access is an expensive
-prize: the moment a number buys it, the incentive to game it outgrows what
-this design can hold. So nothing here computes a recommendation, and no
-number unlocks anything beyond a place in the queues.
+A place in the queues is a small prize. Thus credit that only adds, with no
+dispute process, is sufficient. Commit access is a large prize. If a number
+can buy it, people will try to cheat the number, and this design cannot stop
+that. Thus nothing here makes a recommendation. No number gives more than a
+place in the queues.
 
-The record answers: here are this person's last fifty reviews, what came of
-each, and whose work they overlap with. Its headline is **pull requests a
-committer later merged without further changes after their review**. Nothing
-else shows as directly that someone's judgement already matches the people who
-hold the merge button, and it cannot be farmed, because a committer has to act
-for it to count. The second number is **problems found**: the author changed
-the pull request after a review that requested changes or commented on a
-changed line.
+The record shows the last fifty reviews of a person, the result of each
+review, and whose work they share. Its first number is **pull requests that
+a committer merged later, with no more changes after the review**. This
+number shows most directly that the judgement of a person agrees with the
+people who merge. Nobody can cheat it, because a committer must act for it
+to count. The second number is **problems found**: the author changed the
+pull request after a review that asked for changes or commented on a changed
+line.
 
-There is **no leaderboard**. A leaderboard drives volume, and volume is the
-enemy of review quality. A global ranking lets five people dominate while the
-rest disengage. The visible unit is the outcome on one person's own page, not
-a count of reviews and not a rank.
+There is **no leaderboard**. A leaderboard makes people review more, not
+better. A global ranking lets five people win, and the others stop. Each
+person has a page with the results of their own reviews. It shows no count
+of reviews and no rank.
 
-## Within the nixpkgs rules
+## Inside the nixpkgs rules
 
 Maintainer Mode works inside the nixpkgs
-[automation/AI policy](https://github.com/NixOS/nixpkgs/blob/cb05a63e8584e596c5747f368669e7c7ff3615aa/CONTRIBUTING.md#automationai-policy)
-and does not add rules of its own on top of it.
+[automation/AI policy](https://github.com/NixOS/nixpkgs/blob/cb05a63e8584e596c5747f368669e7c7ff3615aa/CONTRIBUTING.md#automationai-policy).
+It adds no rules of its own to that policy.
 
-- **A person merges.** The policy says automation without manual review "must
-  not be used as the sole arbiter of whether to merge a change". The
-  ready-to-merge queue is a reading list for a committer. It merges nothing.
-- **A credited review is a contribution.** The policy covers reviews: a review
-  made with an AI tool must be reviewed by its author and disclosed. Maintainer
-  Mode credits reviews by their outcome, and the policy applies to them as it
-  applies to any other review.
-- **The AI numbers are aggregates.** The [state of nixpkgs](#the-state-of-nixpkgs)
-  counts disclosures. It never lists a person or a pull request. The policy
-  leaves enforcement to people, who are asked to "assume good faith and remain
+- **A person merges.** The policy says that automation without manual review
+  "must not be used as the sole arbiter of whether to merge a change". The
+  Ready to merge queue is a reading list for a committer. It merges nothing.
+- **A credited review is a contribution.** The policy covers reviews. The
+  author of a review made with an AI tool must check it and disclose the AI
+  use. Maintainer Mode gives credit to reviews for their result. The policy
+  applies to them as to all other reviews.
+- **The AI numbers are totals.** The [state of nixpkgs](#the-state-of-nixpkgs)
+  counts disclosures. It never shows a person or a pull request. The policy
+  gives enforcement to people. It asks them to "assume good faith and remain
   civil".
 
 ## The rules
 
-### 1. Credit is earned by moving a pull request, not by having an opinion
+### 1. A review gets credit when it moves a pull request
 
-A review earns credit when it is on someone else's pull request and at least
-one of these follows within **14 days**:
+A review gets credit when it is on the pull request of another person, and
+one or more of these events occur in the next **14 days**:
 
-| Trigger                  | The GitHub fact                                                                  |
-| ------------------------ | -------------------------------------------------------------------------------- |
-| The author pushed        | a commit on the head, or a force push, after the review                          |
-| The author replied       | a comment by the author, or a reply in a review thread, after the review         |
-| Inline on a changed line | the review carries an inline comment whose line is a `+` or `-` line of the diff |
-| It merged                | the pull request merged after the review                                         |
+| Trigger                  | The GitHub fact                                                          |
+| ------------------------ | ------------------------------------------------------------------------ |
+| The author pushed        | a commit on the head, or a force push, after the review                  |
+| The author replied       | a comment by the author, or a reply in a review thread, after the review |
+| Inline on a changed line | the review has an inline comment on a `+` or `-` line of the diff        |
+| It merged                | the pull request merged after the review                                 |
 
-Every trigger is a fact a program reads; nothing needs a judge. Three of the
-four need the other party to act, so one person cannot farm them alone.
+A program reads each trigger. No person must judge. Three of the four
+triggers need an action by the other person. Thus one person cannot get them
+alone.
 
-**What this rejects.** A bare "LGTM", an approval with no comment, an
-approval on a pull request that then sits unmerged, a comment on an unchanged
-context line, a review by a bot, and any review of your own pull request.
+**What gets no credit.** A plain "LGTM". An approval with no comment. An
+approval on a pull request that does not merge. A comment on a line that did
+not change. A review by a bot. A review of your own pull request.
 
-**Reviewing your own pull request never counts.**
+**A review of your own pull request never counts.**
 
 ### 2. Whose pull requests appear
 
-A pull request appears in either queue when its author is **listed**: their
-reviews earned credit on pull requests of at least **three different authors**
-in the last **60 days**. A pair trading reviews cannot reach three. A ring big
-enough to reach it looks like a healthy review community, and it is one.
+A pull request appears in the queues when its author is **in the queues**.
+This means: in the last **60 days**, their reviews got credit on the pull
+requests of **three or more different authors**. Two people who review each
+other cannot get to three. A group that is large enough to get to three is a
+healthy review community.
 
-The age limit is the window: a review older than 60 days no longer counts
-towards being listed. Its credit also decays (below), so old help fades
-rather than vanishes.
+The window sets the age limit. After 60 days, a review does not count for a
+place in the queues. Its credit also decays (see below). Thus old help
+becomes smaller slowly. It does not stop at once.
 
-### 3. How the ledger is computed
+### 3. How the ledger is calculated
 
-The ledger is a pure function of public GitHub data and the clock
-(`src/ledger.rs`). Nothing in it is entered by hand. Delete the database,
-sync again, and you get the same ledger. Every credit links to the review that
-earned it.
+The ledger is a function of public GitHub data and the clock only
+(`src/ledger.rs`). Nobody types data into it. If you delete the database and
+sync again, you get the same ledger. Each credit has a link to the review
+that got it.
 
-- **Additive only.** Credit is never taken away. Nobody is banned or
-  demoted, so there is nothing to appeal and no dispute queue to staff. A
-  drive-by reviewer does not accrue, and their pull request does not appear.
-  That is the whole sanction.
-- **Decay, not deletion.** Each credit halves every 30 days. The list shows
-  who helps now. Decay is the same for everyone.
-- **Caps.** One credit per reviewer per pull request. At most five credits
-  per reviewer per UTC day; the excess shows on the ledger as "over the daily
-  cap".
-- **Per-pair diminishing returns.** Inside the window, your first credit on a
-  given author counts 1, the second 1/2, the third 1/4. Two people cannot pump
-  each other, and nobody has to decide whether they colluded.
-- **Queue-head weight.** A review of a pull request that had waited 14 days
-  or more earns full weight. A fresh one you picked yourself earns 1/2. A
-  review of an **unowned** pull request (no `meta.maintainers` and no
-  `ci/OWNERS` entry for any file it touches) earns full weight at any age.
-  The hygiene review a newcomer can do there pays at least as much as a deep
-  review in a busy area.
-- **Reciprocity ratio.** Each profile shows the share of credit that came
-  from authors who also earned credit on that person's pull requests. It is
-  shown and never acted on.
-- **The one manual lever.** A nixpkgs committer can void a review. They post
-  a comment on the same pull request with a line
-  `maintainer-mode: void <link to the review>`. The comment is public, so the act
-  is logged. The ledger shows the voided credit with a link to that comment.
-  "Committer" means the comment's `authorAssociation` is `OWNER`, `MEMBER` or
-  `COLLABORATOR`.
+- **Credit only adds.** Nobody loses credit. Nobody is banned or demoted.
+  Thus there is nothing to appeal, and no dispute queue. A person who reviews
+  once and goes away gets no place, and their pull request does not appear.
+  That is the only penalty.
+- **Decay, not deletion.** Each credit becomes half as large every 30 days.
+  The ledger shows who helps now. Decay is the same for all persons.
+- **Limits.** One credit for each reviewer on each pull request. Five
+  credits or fewer for each reviewer on each UTC day. The ledger shows the
+  credits above this limit as "over the daily cap".
+- **Less credit for each repeat on one author.** In the window, your first
+  credit on one author counts 1. The second counts 1/2. The third counts
+  1/4. Thus two people cannot increase the credit of each other. Nobody must
+  decide whether they worked together to cheat.
+- **Weight of old pull requests.** A review of a pull request that waited 14
+  days or more gets full weight. A review of a new pull request that you
+  chose gets 1/2. A review of a pull request with **no maintainer** gets full
+  weight at all ages. "No maintainer" means that no `meta.maintainers` and no
+  `ci/OWNERS` line covers a file that it changes. A new reviewer can check
+  the packaging there. That review gets as much credit as an expert review
+  of a busy directory.
+- **Reciprocity ratio.** Each person page shows the part of the credit that
+  came from authors who also got credit on the pull requests of that person.
+  The site shows this number. It does nothing with it.
+- **The one manual action.** A nixpkgs committer can void a review. To do
+  this, they write a comment on the same pull request with the line
+  `maintainer-mode: void <link to the review>`. The comment is public, so
+  everyone can see the action. The ledger shows the voided credit with a link
+  to that comment. "Committer" means that the `authorAssociation` of the
+  comment is `OWNER`, `MEMBER` or `COLLABORATOR`.
 
 ### The constants, and why
 
-| Constant                 | Value | Why                                                                                                                                                  |
-| ------------------------ | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Move window (N)          | 14 d  | Long enough for a volunteer author to answer over two weekends. Longer, and an unrelated push or merge starts to buy credit.                         |
-| Decay half-life          | 30 d  | One month: a person who stops reviewing drops to a quarter in two months. Shorter punishes a holiday; longer lets the list lag behind who helps now. |
-| Window                   | 60 d  | Two half-lives: credit older than that is at 25% and no longer says much. It also bounds the first sync of nixpkgs to a size one token can pull.     |
-| Distinct authors to list | 3     | The smallest number a pair cannot reach. Higher shuts out people who know a small corner of nixpkgs well.                                            |
-| Daily cap                | 5     | A careful nixpkgs review takes 15 to 60 minutes. Five is a heavy but honest day; twenty in an hour is spraying.                                      |
-| Per pull request         | 1     | More rounds on one change are the same piece of work. Without this, ten "nit" reviews on one pull request beat one useful review.                    |
-| Pair factor              | 1/2   | Halving lets a real working pair still count for something, while the sum over any number of repeats stays below 2.                                  |
-| Queue head age           | 14 d  | Most nixpkgs pull requests get their first attention, if ever, in the first two weeks. Past that they are the backlog the club exists to drain.      |
-| Fresh-pick factor        | 1/2   | People keep the freedom to review what they understand, and it still pays; the backlog pays double.                                                  |
+| Constant          | Value | Why                                                                                                                                     |
+| ----------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Move window (N)   | 14 d  | A volunteer author has two weekends to answer. A longer window gives credit for a push or merge that has no relation to the review.     |
+| Decay half-life   | 30 d  | One month. Two months after a person stops, their credit is one quarter. Shorter punishes a holiday. Longer shows who helped long ago.  |
+| Window            | 60 d  | Two half-lives. Older credit is at 25% and tells little. It also limits the first sync of nixpkgs to a size that one token can read.    |
+| Distinct authors  | 3     | The smallest number that two people cannot get to. A higher number stops people who know a small part of nixpkgs well.                  |
+| Daily cap         | 5     | A careful nixpkgs review takes 15 to 60 minutes. Five is a full but honest day. Twenty in one hour is not careful.                      |
+| Per pull request  | 1     | More rounds on one change are the same work. Without this limit, ten small reviews on one pull request get more than one useful review. |
+| Pair factor       | 1/2   | A real working pair still gets some credit. The total of all repeats stays below 2.                                                     |
+| Queue head age    | 14 d  | Most nixpkgs pull requests get their first review in the first two weeks, or never. After that, they are the backlog that needs help.   |
+| Fresh-pick factor | 1/2   | People can still review what they know, and it still counts. The backlog counts twice as much.                                          |
 
-`GET /api/v1/status` returns the live values.
+`GET /api/v1/status` gives the current values.
 
-## Routing: shown by competence, paid by outcome
+## Routing: what you see, and what gets credit
 
-What a person is shown is filtered to their area. What earns credit is still
-only whether the review moved the pull request, so a review outside your area
-counts when it moves something; you are simply not asked for it.
+The site shows each person the pull requests in their part of nixpkgs. Credit
+depends only on whether the review moved the pull request. Thus a review
+outside your part of nixpkgs counts when it moves something. The site only
+does not ask you for it.
 
-Your area is derived, never self-assessed. It is the union of:
+The site calculates your part of nixpkgs. You do not choose it. It is the
+sum of:
 
-1. **`meta.maintainers`**: every package whose evaluated `meta.maintainers`
-   names your GitHub login, at the directory of its `meta.position`. Teams and
-   computed lists count, because the evaluator resolves them.
-2. **`ci/OWNERS`**: the file the "Check / owners" job reads. Team entries are
-   skipped, because team membership is not public.
-3. **What you changed**: the directories of files in your merged pull requests
-   over the last year, read with your own token when you log in.
+1. **`meta.maintainers`**: each package whose evaluated `meta.maintainers`
+   has your GitHub login, at the directory of its `meta.position`. Teams and
+   calculated lists count, because the evaluator reads them.
+2. **`ci/OWNERS`**: the file that the "Check / owners" job reads. The site
+   ignores team lines, because team membership is not public.
+3. **What you changed**: the directories of the files in your merged pull
+   requests of the last year. The site reads them with your own token when
+   you sign in.
 
-On top of that you can add **tags** in `/me/settings`, path prefixes such as
-`pkgs/development/python-modules`, for what you just started caring about.
+You can also add **tags**: path prefixes such as
+`pkgs/development/python-modules`, for new parts of nixpkgs that you want to
+follow.
 
-A pull request is **unowned** when no `meta.maintainers`, `meta.teams` or
-`ci/OWNERS` line covers a file it changes. The same test decides the credit
-of a review on it, so the label and the credit agree. It gets its own
-bucket, which is the newcomer path: packaging hygiene (complete `meta`,
-pinned hashes, `platforms`, a missing `versionCheckHook`) needs no domain
-knowledge and is most of what a first review finds.
+A pull request has **no maintainer** when no `meta.maintainers`,
+`meta.teams` or `ci/OWNERS` line covers a file that it changes. The same test
+sets the credit of a review on it, so the label and the credit agree. These
+pull requests have their own tab. A new reviewer can start there: a check of
+the packaging (complete `meta`, pinned hashes, `platforms`, a missing
+`versionCheckHook`) needs no expert knowledge. Most first reviews find these
+problems.
 
 ## The state of nixpkgs
 
-`/state` and `GET /api/v1/metrics` show how pull requests flow through
-nixpkgs, month by month. Every figure is an aggregate. No figure names a person,
-in line with "no leaderboard".
+`/state` and `GET /api/v1/metrics` show how pull requests move through
+nixpkgs, month by month. Each number is a total. No number names a person,
+because there is no leaderboard.
 
-- **Inflow.** Pull requests opened, and how many came from bots, first-time
-  contributors, security fixes, new packages, backports and mass rebuilds.
-  "First-time" is GitHub's `authorAssociation` or the nixpkgs label
-  `12.first-time contribution`. The other kinds come from the nixpkgs labels
-  (`1.severity: security`, `8.has: package (new)`, `10.rebuild-linux: 501+`)
-  and from a `release-*` base branch.
-- **Packages.** One package per package name, from the nixpkgs index, the health sources and the open pull requests. The numbers are: packages; behind upstream; with an open advisory, by the worst band of their advisories (critical, high, medium, low, no score); unmaintained (no `meta.maintainers` and no `meta.teams`); broken (`meta.broken`); insecure (`meta.knownVulnerabilities`); with packaging gaps; and open version bumps with their median age in days. The server computes them after each sync pass and after each health update, not on each request. `GET /api/v1/metrics` gives them under `packages`. No personal data goes into them.
+- **Inflow.** The pull requests opened. Also how many came from bots,
+  first-time contributors, security fixes, new packages, backports and mass
+  rebuilds. "First-time" is the GitHub `authorAssociation` or the nixpkgs
+  label `12.first-time contribution`. The other kinds come from the nixpkgs
+  labels (`1.severity: security`, `8.has: package (new)`,
+  `10.rebuild-linux: 501+`) and from a `release-*` base branch.
+- **Packages.** One package for each package name, from the nixpkgs index,
+  the health sources and the open pull requests. The numbers are: packages;
+  behind upstream; with an open advisory, by the worst band of their
+  advisories (critical, high, medium, low, no score); with no maintainer (no
+  `meta.maintainers` and no `meta.teams`); broken (`meta.broken`); insecure
+  (`meta.knownVulnerabilities`); with packaging gaps; and open version bumps
+  with their median age in days. The server calculates them after each sync
+  and after each health update, not on each request. `GET /api/v1/metrics`
+  gives them under `packages`. They contain no personal data.
 - **Disclosed AI use.** A pull request counts when its last commit or its
   description has an `Assisted-by:` trailer, or when it has the
-  `llm-assisted` label. AI attribution in another form, such as a
-  `Co-authored-by:` trailer, is counted apart, because the policy says it does
-  not satisfy the disclosure rule. Undisclosed use cannot be seen, so each count
-  is a floor. Standard community automation, such as `r-ryantm`, is exempt
-  from the policy and counts under bots.
-- **Outflow.** Merged, closed without merge, the backlog open at each month's
-  end, merges without an approval, and self-merges.
-- **Latency.** Hours to the first review by someone else and the share
-  reviewed within seven days, both for human authors. Days to merge, at the
-  median and the 90th percentile.
+  `llm-assisted` label. The site counts other forms of AI attribution, such
+  as a `Co-authored-by:` trailer, separately. The policy says that these
+  forms do not satisfy the disclosure rule. Nobody can see undisclosed use,
+  so each count is a minimum. Standard community automation, such as
+  `r-ryantm`, is exempt from the policy. It counts under bots.
+- **Outflow.** Merged, closed with no merge, the backlog that is open at the
+  end of each month, merges with no approval, and self-merges.
+- **Latency.** The hours to the first review by another person, and the part
+  that got a review in seven days, both for human authors. The days to merge,
+  at the median and the 90th percentile.
 - **Outcomes by cohort.** Of the pull requests opened in a month and closed
-  since, the share merged: for all, for first-time contributors and for
+  since, the part that merged: for all, for first-time contributors and for
   disclosed AI use.
-- **Load.** Over the last 365 days, how many people did half, and 80%, of the
-  merges, of the reviews and of the human-authored pull requests. This shows how
-  few people carry nixpkgs without naming them.
-- **Areas.** Open, never reviewed, opened and merged per area of the tree, from
-  the files a pull request changes.
+- **Load.** In the last 365 days, how many people did half, and 80%, of the
+  merges, of the reviews and of the pull requests by humans. This shows how
+  few people do the work of nixpkgs, and it names nobody.
+- **Directories.** Open, never reviewed, opened and merged pull requests for
+  each part of the tree, from the files that a pull request changes.
 
-The full sync reads only pull requests updated in the last 60 days and all open
-ones. A second walk, the **history walk**, reads every pull request created
-since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default 2020-01-01).
-It reads 50 pull requests per query with fewer fields: the first 10 reviews,
-the first 50 files, the labels and the last commit message, but not the
-description. It stores them in a table of their own, so
-they never reach the ledger. It walks 100 pages per sync pass and resumes from
-its cursor. The first walk back to 2020 takes several hours. Until it ends,
-older months are incomplete. The backlog before `--history-since` is a floor,
-because a pull request closed before the walk started is not in it.
+The full sync reads only the pull requests updated in the last 60 days and
+all open ones. A second read goes back in time. It reads each pull request
+created since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default
+2020-01-01). It reads 50 pull requests in each query, with fewer fields: the
+first 10 reviews, the first 50 files, the labels and the last commit message,
+but not the description. It keeps them in a separate table, so they never go
+into the ledger. It reads 100 pages in each sync and continues from its
+cursor. The first read back to 2020 takes some hours. Until it ends, the
+older months are not complete. The backlog before `--history-since` is a
+minimum, because a pull request closed before the read started is not in it.
