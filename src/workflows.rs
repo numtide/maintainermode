@@ -4,7 +4,7 @@
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const REVIEW: &str = "review.yml";
@@ -136,6 +136,337 @@ pub async fn runs(token: &str, repo: &str, workflow: &str) -> Result<Vec<Run>> {
         .collect())
 }
 
+/// One GitHub answer of the setup check: the HTTP status, or `None` when no
+/// answer came or the check did not ask.
+pub type Reply = Option<u16>;
+
+fn ok(r: Reply) -> bool {
+    r.is_some_and(|s| (200..300).contains(&s))
+}
+
+/// What GitHub said about one workflow repository.
+#[derive(Debug, Clone, Default)]
+pub struct RepoAnswers {
+    pub repo: Reply,
+    pub branch: Option<String>,
+    /// `.github/workflows/<file>` on the default branch.
+    pub file: Reply,
+    /// The Actions API answers a person's token only when the App is
+    /// installed on the repository.
+    pub actions: Reply,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Answers {
+    pub review: RepoAnswers,
+    pub update: RepoAnswers,
+    pub fork: Reply,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Mark {
+    Ok,
+    Missing,
+    Unknown,
+}
+
+/// Which button a line of the check blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Needed {
+    Review,
+    Update,
+    Both,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Line {
+    pub step: u8,
+    pub mark: Mark,
+    pub needed: Needed,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Check {
+    pub at: DateTime<Utc>,
+    pub lines: Vec<Line>,
+}
+
+impl Check {
+    pub fn step(&self, n: u8) -> Mark {
+        let marks: Vec<Mark> = self
+            .lines
+            .iter()
+            .filter(|l| l.step == n)
+            .map(|l| l.mark)
+            .collect();
+        if marks.contains(&Mark::Missing) {
+            Mark::Missing
+        } else if !marks.is_empty() && marks.iter().all(|m| *m == Mark::Ok) {
+            Mark::Ok
+        } else {
+            Mark::Unknown
+        }
+    }
+
+    /// The first line that blocks the button. A line that GitHub could not
+    /// answer blocks nothing.
+    pub fn blocker(&self, button: Needed) -> Option<&Line> {
+        self.lines
+            .iter()
+            .find(|l| l.mark == Mark::Missing && (l.needed == button || l.needed == Needed::Both))
+    }
+}
+
+/// The repository names the check reads, and whether the person saved them.
+pub struct Names<'a> {
+    pub review: &'a str,
+    pub update: &'a str,
+    pub fork: &'a str,
+    pub saved: bool,
+}
+
+const EXPIRED: &str = "GitHub refused your token. Sign out and sign in again.";
+
+fn line(step: u8, mark: Mark, needed: Needed, text: String) -> Line {
+    Line {
+        step,
+        mark,
+        needed,
+        text,
+    }
+}
+
+fn other(step: u8, needed: Needed, repo: &str, r: Reply) -> Line {
+    let text = match r {
+        Some(401) => return line(step, Mark::Missing, needed, EXPIRED.into()),
+        Some(s) => format!("GitHub answered {s} for {repo}. Check again later."),
+        None => format!("GitHub did not answer for {repo}. Check again later."),
+    };
+    line(step, Mark::Unknown, needed, text)
+}
+
+fn not_checked(step: u8, needed: Needed, repo: &str) -> Line {
+    line(
+        step,
+        Mark::Unknown,
+        needed,
+        format!("Not checked: Maintainer Mode cannot read {repo}."),
+    )
+}
+
+fn repo_line(repo: &str, a: &RepoAnswers, needed: Needed) -> Line {
+    match a.repo {
+        r if ok(r) => line(
+            1,
+            Mark::Ok,
+            needed,
+            format!("{repo} exists, and your token can read it."),
+        ),
+        Some(403 | 404) => line(
+            1,
+            Mark::Missing,
+            needed,
+            format!(
+                "{repo} does not exist, or your token cannot read it. Fork nixpkgs-review-gha (step 1), or correct the name (step 5)."
+            ),
+        ),
+        r => other(1, needed, repo, r),
+    }
+}
+
+fn file_line(repo: &str, file: &str, a: &RepoAnswers, needed: Needed) -> Line {
+    if !ok(a.repo) {
+        return not_checked(2, needed, repo);
+    }
+    let branch = a.branch.as_deref().unwrap_or("main");
+    match a.file {
+        r if ok(r) => line(
+            2,
+            Mark::Ok,
+            needed,
+            format!("{repo} has .github/workflows/{file} on {branch}."),
+        ),
+        Some(404) => {
+            let fix = if file == REVIEW {
+                "Sync your fork with Defelo/nixpkgs-review-gha."
+            } else {
+                "Copy gha/update.yml there (step 2)."
+            };
+            line(
+                2,
+                Mark::Missing,
+                needed,
+                format!(
+                    "{repo} has no .github/workflows/{file} on its default branch {branch}. {fix}"
+                ),
+            )
+        }
+        r => other(2, needed, repo, r),
+    }
+}
+
+fn actions_line(repo: &str, a: &RepoAnswers, needed: Needed) -> Line {
+    if !ok(a.repo) {
+        return not_checked(4, needed, repo);
+    }
+    match a.actions {
+        r if ok(r) => line(
+            4,
+            Mark::Ok,
+            needed,
+            format!("The App can reach the Actions of {repo}."),
+        ),
+        Some(403 | 404) => line(
+            4,
+            Mark::Missing,
+            needed,
+            format!(
+                "The App cannot reach the Actions of {repo}. Install the App on {repo} (step 4)."
+            ),
+        ),
+        r => other(4, needed, repo, r),
+    }
+}
+
+/// Each line says what is OK, or what is missing and how to fix it.
+pub fn verdict(n: &Names, a: &Answers) -> Vec<Line> {
+    let repos = if n.review == n.update {
+        vec![(n.review, &a.review, Needed::Both)]
+    } else {
+        vec![
+            (n.review, &a.review, Needed::Review),
+            (n.update, &a.update, Needed::Update),
+        ]
+    };
+    let mut lines: Vec<Line> = repos
+        .iter()
+        .map(|(repo, ra, needed)| repo_line(repo, ra, *needed))
+        .collect();
+    lines.push(file_line(n.review, REVIEW, &a.review, Needed::Review));
+    lines.push(file_line(n.update, UPDATE, &a.update, Needed::Update));
+    lines.push(match a.fork {
+        r if ok(r) => line(3, Mark::Ok, Needed::Update, format!("{} exists.", n.fork)),
+        Some(403 | 404) => line(
+            3,
+            Mark::Missing,
+            Needed::Update,
+            format!(
+                "{} does not exist, or your token cannot read it. Fork NixOS/nixpkgs, or correct the name (step 5).",
+                n.fork
+            ),
+        ),
+        r => other(3, Needed::Update, n.fork, r),
+    });
+    lines.push(line(
+        3,
+        Mark::Unknown,
+        Needed::Update,
+        format!(
+            "Maintainer Mode cannot read secrets. Make sure that {} has a GH_TOKEN secret that can push to {}.",
+            n.update, n.fork
+        ),
+    ));
+    lines.extend(
+        repos
+            .iter()
+            .map(|(repo, ra, needed)| actions_line(repo, ra, *needed)),
+    );
+    lines.push(if n.saved {
+        line(
+            5,
+            Mark::Ok,
+            Needed::Both,
+            "You saved the repository names.".into(),
+        )
+    } else {
+        line(
+            5,
+            Mark::Unknown,
+            Needed::Both,
+            "You did not save the repository names, so the defaults below apply.".into(),
+        )
+    });
+    lines
+}
+
+async fn status(token: &str, path: &str) -> (Reply, Value) {
+    let Ok(resp) = api(token, reqwest::Method::GET, path).send().await else {
+        return (None, Value::Null);
+    };
+    let s = resp.status();
+    let v = if s.is_success() {
+        resp.json().await.unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    (Some(s.as_u16()), v)
+}
+
+async fn probe_file(token: &str, repo: &str, file: &str) -> Reply {
+    status(
+        token,
+        &format!("/repos/{repo}/contents/.github/workflows/{file}"),
+    )
+    .await
+    .0
+}
+
+async fn probe_repo(token: &str, repo: &str, file: &str) -> RepoAnswers {
+    if !valid_repo(repo) {
+        return RepoAnswers {
+            repo: Some(404),
+            ..RepoAnswers::default()
+        };
+    }
+    let (r, v) = status(token, &format!("/repos/{repo}")).await;
+    if !ok(r) {
+        return RepoAnswers {
+            repo: r,
+            ..RepoAnswers::default()
+        };
+    }
+    let actions_path = format!("/repos/{repo}/actions/workflows?per_page=1");
+    let (file, actions) = tokio::join!(probe_file(token, repo, file), status(token, &actions_path));
+    RepoAnswers {
+        repo: r,
+        branch: v["default_branch"].as_str().map(String::from),
+        file,
+        actions: actions.0,
+    }
+}
+
+async fn probe_fork(token: &str, fork: &str) -> Reply {
+    if !valid_repo(fork) {
+        return Some(404);
+    }
+    status(token, &format!("/repos/{fork}")).await.0
+}
+
+/// Reads, with the person's token, what [`verdict`] needs. It only reads.
+pub async fn probe(token: &str, review: &str, update: &str, fork: &str) -> Answers {
+    let (review_a, fork_a) =
+        tokio::join!(probe_repo(token, review, REVIEW), probe_fork(token, fork));
+    let update_a = if review == update {
+        let file = if ok(review_a.repo) {
+            probe_file(token, update, UPDATE).await
+        } else {
+            None
+        };
+        RepoAnswers {
+            file,
+            ..review_a.clone()
+        }
+    } else {
+        probe_repo(token, update, UPDATE).await
+    };
+    Answers {
+        review: review_a,
+        update: update_a,
+        fork: fork_a,
+    }
+}
+
 /// The step of `.github/workflows/update.yml` that pushes the branch.
 const PUSH_STEP: &str = "push the branch";
 
@@ -224,5 +555,180 @@ mod tests {
             compare_url("alice/nixpkgs", "hello"),
             "https://github.com/NixOS/nixpkgs/compare/master...alice:nixpkgs:update/hello?expand=1"
         );
+    }
+
+    fn reachable() -> RepoAnswers {
+        RepoAnswers {
+            repo: Some(200),
+            branch: Some("main".into()),
+            file: Some(200),
+            actions: Some(200),
+        }
+    }
+
+    fn all_ok() -> Answers {
+        Answers {
+            review: reachable(),
+            update: reachable(),
+            fork: Some(200),
+        }
+    }
+
+    const SAME: Names = Names {
+        review: "alice/nixpkgs-review-gha",
+        update: "alice/nixpkgs-review-gha",
+        fork: "alice/nixpkgs",
+        saved: true,
+    };
+
+    fn check(n: &Names, a: &Answers) -> Check {
+        Check {
+            at: Utc::now(),
+            lines: verdict(n, a),
+        }
+    }
+
+    #[test]
+    fn a_complete_setup_is_ready_for_both_buttons() {
+        let c = check(&SAME, &all_ok());
+        assert!(c.blocker(Needed::Review).is_none() && c.blocker(Needed::Update).is_none());
+        for step in [1, 2, 4, 5] {
+            assert_eq!(c.step(step), Mark::Ok, "step {step}");
+        }
+        assert_eq!(c.step(3), Mark::Unknown, "secrets stay unread");
+        assert_eq!(c.lines.iter().filter(|l| l.step == 1).count(), 1);
+    }
+
+    #[test]
+    fn a_missing_repository_skips_what_depends_on_it() {
+        let a = Answers {
+            review: RepoAnswers {
+                repo: Some(404),
+                ..RepoAnswers::default()
+            },
+            update: RepoAnswers {
+                repo: Some(404),
+                ..RepoAnswers::default()
+            },
+            fork: Some(200),
+        };
+        let c = check(&SAME, &a);
+        assert!(!c.blocker(Needed::Review).is_none() && !c.blocker(Needed::Update).is_none());
+        assert_eq!(c.step(1), Mark::Missing);
+        assert_eq!(c.step(2), Mark::Unknown);
+        assert_eq!(c.step(4), Mark::Unknown);
+        assert!(
+            c.blocker(Needed::Review)
+                .unwrap()
+                .text
+                .contains("Fork nixpkgs-review-gha")
+        );
+    }
+
+    #[test]
+    fn an_app_without_access_blocks_the_buttons() {
+        let mut a = all_ok();
+        a.review.actions = Some(404);
+        a.update.actions = Some(404);
+        let c = check(&SAME, &a);
+        assert_eq!(c.step(4), Mark::Missing);
+        assert!(!c.blocker(Needed::Review).is_none());
+        assert!(
+            c.blocker(Needed::Update)
+                .unwrap()
+                .text
+                .contains("Install the App")
+        );
+    }
+
+    #[test]
+    fn a_missing_update_workflow_blocks_only_the_update_button() {
+        let mut a = all_ok();
+        a.update.file = Some(404);
+        let c = check(&SAME, &a);
+        assert!(c.blocker(Needed::Review).is_none());
+        assert!(!c.blocker(Needed::Update).is_none());
+        let l = c.blocker(Needed::Update).unwrap();
+        assert_eq!(l.step, 2);
+        assert!(
+            l.text
+                .contains("update.yml on its default branch main. Copy gha/update.yml")
+        );
+    }
+
+    #[test]
+    fn a_missing_fork_blocks_only_the_update_button() {
+        let mut a = all_ok();
+        a.fork = Some(404);
+        let c = check(&SAME, &a);
+        assert!(c.blocker(Needed::Review).is_none());
+        assert!(!c.blocker(Needed::Update).is_none());
+        assert_eq!(c.step(3), Mark::Missing);
+    }
+
+    #[test]
+    fn two_repositories_are_checked_apart() {
+        let n = Names {
+            update: "alice/updates",
+            ..SAME
+        };
+        let mut a = all_ok();
+        a.update.actions = Some(403);
+        let c = check(&n, &a);
+        assert_eq!(c.lines.iter().filter(|l| l.step == 1).count(), 2);
+        assert!(c.blocker(Needed::Review).is_none());
+        assert!(!c.blocker(Needed::Update).is_none());
+        assert!(
+            c.blocker(Needed::Update)
+                .unwrap()
+                .text
+                .contains("alice/updates")
+        );
+    }
+
+    #[test]
+    fn no_answer_from_github_blocks_nothing() {
+        let a = Answers {
+            review: RepoAnswers::default(),
+            update: RepoAnswers::default(),
+            fork: None,
+        };
+        let c = check(&SAME, &a);
+        assert!(c.blocker(Needed::Review).is_none() && c.blocker(Needed::Update).is_none());
+        assert_eq!(c.step(1), Mark::Unknown);
+        assert!(c.lines[0].text.contains("did not answer"));
+    }
+
+    #[test]
+    fn a_refused_token_says_to_sign_in_again() {
+        let a = Answers {
+            review: RepoAnswers {
+                repo: Some(401),
+                ..RepoAnswers::default()
+            },
+            update: RepoAnswers::default(),
+            fork: Some(401),
+        };
+        let c = check(&SAME, &a);
+        assert!(!c.blocker(Needed::Review).is_none());
+        assert_eq!(c.blocker(Needed::Review).unwrap().text, EXPIRED);
+    }
+
+    #[test]
+    fn unsaved_names_use_the_defaults_and_block_nothing() {
+        let n = Names {
+            saved: false,
+            ..SAME
+        };
+        let c = check(&n, &all_ok());
+        assert_eq!(c.step(5), Mark::Unknown);
+        assert!(c.blocker(Needed::Review).is_none());
+    }
+
+    #[test]
+    fn a_check_survives_the_settings_store() {
+        let c = check(&SAME, &all_ok());
+        let back: Check = serde_json::from_str(&serde_json::to_string(&c).unwrap()).unwrap();
+        assert_eq!(back.lines, c.lines);
     }
 }
