@@ -1,3 +1,4 @@
 /target
 /result*
 *.sqlite*
+/ux-audit
