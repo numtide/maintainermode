@@ -437,7 +437,7 @@ pub(crate) fn item_row(
         format!("<div class=\"f6 color-fg-muted mt-1\">{meta}</div>")
     };
     format!(
-        "<div class=\"Box-row d-flex flex-items-start\">{ic}<div class=\"flex-auto min-width-0\">{title}{badges}{meta}</div>{status}</div>"
+        "<div class=\"Box-row d-flex flex-items-start\">{ic}<div class=\"flex-auto min-width-0 wb-break-word\">{title}{badges}{meta}</div>{status}</div>"
     )
 }
 
