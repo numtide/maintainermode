@@ -79,6 +79,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'id=\"contributor-guide\"' /tmp/rules && grep -q 'nixpkgs/blob/master/pkgs/README.md' /tmp/rules")
     machine.succeed("grep -q 'selected\" href=\"/state?tab=rules\" aria-current=\"page\">Rules</a>' /tmp/rules")
     machine.succeed("curl -s -D /tmp/rules.h -o /dev/null http://127.0.0.1:8790/rules && grep -qi '^location: /state?tab=rules' /tmp/rules.h")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=docs' -o /tmp/docs && grep -q 'href=\"/state?tab=docs&amp;doc=health\"' /tmp/docs")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=docs&doc=personal' -o /tmp/doc && grep -q 'Your own view</h1>' /tmp/doc && grep -q 'href=\"/state?tab=docs&amp;doc=health#the-risk-score\"' /tmp/doc")
     machine.succeed("curl -s -D /tmp/sync.h -o /dev/null http://127.0.0.1:8790/sync && grep -qi '^location: /state?tab=status' /tmp/sync.h")
     machine.succeed("curl -sf http://127.0.0.1:8790/review -o /tmp/review")
     machine.succeed("grep -q 'selected\" href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">0</span>' /tmp/review")

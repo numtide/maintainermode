@@ -91,6 +91,9 @@ Read its own guides first:
 
 ## Documentation
 
+The site also shows these pages, in the Docs tab of
+[/state](https://maintainermode.org/state?tab=docs).
+
 | Page                                     | What it covers                                                    |
 | ---------------------------------------- | ----------------------------------------------------------------- |
 | [docs/rules.md](docs/rules.md)           | review credit, routing, the state of nixpkgs (`/state?tab=rules`) |
