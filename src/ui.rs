@@ -17,6 +17,8 @@ pub(crate) enum Section {
     Nixpkgs,
     /// A page of the personal menu: no top tab is current.
     Personal(Personal),
+    /// No tab of the main navigation is current.
+    Other,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -513,6 +515,7 @@ mod tests {
             assert_eq!(NAV.iter().filter(|(n, ..)| *n == s).count(), 1);
             assert_eq!(nav(s).matches("aria-current").count(), 1);
         }
+        assert!(!nav(Section::Other).contains("aria-current"));
     }
 
     #[test]

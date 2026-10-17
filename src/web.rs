@@ -616,7 +616,7 @@ async fn person_page(
         );
     }
     out.push_str("</details>");
-    Page::new(Section::Packages, format!("Review record of {login}"))
+    Page::new(Section::Other, format!("Review record of {login}"))
         .heading(esc(&login))
         .icon(octicon!("person"))
         .subnav(person_tabs(&login, false))

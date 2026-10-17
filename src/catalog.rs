@@ -1841,7 +1841,7 @@ async fn maintains_page(
         None,
         &maintained_rows(&s, &index, &h, &ch, &m.modules),
     ));
-    Page::new(Section::Packages, format!("What {login} maintains"))
+    Page::new(Section::Other, format!("What {login} maintains"))
         .heading(esc(&login))
         .icon(octicon!("person"))
         .subnav(crate::web::person_tabs(&login, true))
