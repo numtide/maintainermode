@@ -380,7 +380,7 @@ async fn committer_page(State(app): State<Shared>, headers: HeaderMap) -> Respon
     let Some(login) = viewer.as_deref().filter(|v| s.committers.is(v)) else {
         let _ = write!(
             out,
-            "<div class=\"note mb-3\">This view is for people with merge rights in nixpkgs. \
+            "<div class=\"callout mb-3\">This view is for people with merge rights in nixpkgs. \
              Maintainer Mode counts a login as a committer when it merged a pull request in the last {MERGED_DAYS} days, \
              or when it is in the team {TEAM}. {}</div>{}\
              <p class=\"f6\">The lists without the personal part are in <a href=\"/api/v1/committer\">the JSON API</a>, \

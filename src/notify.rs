@@ -7,7 +7,7 @@ use anyhow::{Context, bail};
 use axum::Router;
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
 use lettre::message::header::{ContentType, HeaderName, HeaderValue};
@@ -22,12 +22,13 @@ use std::fmt::Write;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
-use crate::catalog::{Event, head, person_events};
+use crate::catalog::{Event, person_events};
 use crate::github::urlencode;
 use crate::secret::Secret;
 use crate::sets::token_hash;
 use crate::store::Confirmation;
-use crate::web::{App, Shared, ago, esc, icon, octicon, page, random_id};
+use crate::ui::{Page, Section, Tab};
+use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 const READ_AT: &str = "inbox_read_at";
 const KINDS: &str = "notify_kinds";
@@ -208,39 +209,32 @@ async fn inbox_page(
     let sub = q.sub.as_deref().filter(|s| !s.is_empty());
     let kind = q.kind.as_deref().and_then(Kind::parse);
     let any_unread = all.iter().any(|e| unread(e, read));
-    let mut out = head(
-        &format!("{} Inbox", icon(octicon!("inbox"))),
-        "What happened in the last 30 days to what you watch and to your package set, newest first. \
-         These are the events of your Atom feed. Only you see this page.",
-        if any_unread {
-            "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>"
-        } else {
-            ""
-        },
-    );
-    out.push_str("<div class=\"d-flex flex-wrap flex-items-center mb-3\" style=\"gap:8px\">");
-    let sel = |on: bool| if on { " selected" } else { "" };
-    let _ = write!(
-        out,
-        "<a class=\"SegmentedControl-item btn btn-sm{}\" href=\"{}\">All</a>",
-        sel(kind.is_none()),
-        esc(&inbox_href(sub, None))
-    );
-    for k in Kind::ALL {
-        let _ = write!(
-            out,
-            "<a class=\"SegmentedControl-item btn btn-sm{}\" href=\"{}\">{} {}</a>",
-            sel(kind == Some(k)),
-            esc(&inbox_href(sub, Some(k))),
-            k.icon(),
-            k.label()
+    let mut page = Page::new(Section::Home, "Inbox")
+        .icon(octicon!("inbox"))
+        .sub(
+            "What happened in the last 30 days to what you watch and to your package set, newest first. \
+             These are the events of your Atom feed. Only you see this page.",
+        );
+    if any_unread {
+        page = page.actions(
+            "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>",
         );
     }
+    let mut tabs = vec![Tab::new(inbox_href(sub, None), "All", kind.is_none())];
+    for k in Kind::ALL {
+        tabs.push(Tab::new(
+            inbox_href(sub, Some(k)),
+            format!("{} {}", k.icon(), k.label()),
+            kind == Some(k),
+        ));
+    }
+    let page = page.subnav(tabs);
+    let mut out = String::new();
     let subjects: BTreeSet<&str> = all.iter().map(|e| e.subject.as_str()).collect();
     if !subjects.is_empty() {
         let _ = write!(
             out,
-            "<form method=\"get\" action=\"/me/inbox\" class=\"d-flex\" style=\"gap:8px\">{}\
+            "<form method=\"get\" action=\"/me/inbox\" class=\"d-flex gap-2 mb-3\">{}\
              <select class=\"form-select\" name=\"sub\" aria-label=\"subscription\"><option value=\"\">Every subscription</option>",
             kind.map(|k| format!(
                 "<input type=\"hidden\" name=\"kind\" value=\"{}\">",
@@ -260,7 +254,6 @@ async fn inbox_page(
             "</select><button class=\"btn btn-sm\" type=\"submit\">Filter</button></form>",
         );
     }
-    out.push_str("</div>");
     let shown: Vec<&Event> = all
         .iter()
         .filter(|e| sub.is_none_or(|s| e.subject == s))
@@ -301,7 +294,7 @@ async fn inbox_page(
         }
         out.push_str("</div>");
     }
-    page(&app, Some(&login), "", &out).into_response()
+    page.body(out).render(&app, Some(&login))
 }
 
 async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -421,11 +414,18 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
         n => format!("<div class=\"flash mb-3\">{n}</div>"),
     };
     format!(
-        "<div class=\"Box mb-4\" id=\"notify\"><div class=\"Box-header text-bold\">{} Notifications</div><div class=\"Box-row\">{note}\
-         <form method=\"post\" action=\"/me/notify\">\
-         <p>Your <a href=\"/me/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
-         {boxes}{email}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form>{test}</div></div>",
-        icon(octicon!("bell")),
+        "<div id=\"notify\">{}</div>",
+        crate::ui::section(
+            &format!("{} Notifications", icon(octicon!("bell"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\">{note}\
+                 <form method=\"post\" action=\"/me/notify\">\
+                 <p>Your <a href=\"/me/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
+                 {boxes}{email}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form>{test}</div>"
+            )
+        )
     )
 }
 
@@ -588,23 +588,36 @@ const UNKNOWN_CONFIRM: &str = "<div class=\"blankslate\"><p>This confirmation li
 /// A link scanner opens every link of an email, so a GET only asks.
 async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     if pending_confirmation(&app, &token, Utc::now()).is_none() {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_CONFIRM);
+        return unsubscribe_reply(
+            &app,
+            StatusCode::NOT_FOUND,
+            "Confirm your address",
+            "",
+            UNKNOWN_CONFIRM,
+        );
     }
     let body = format!(
-        "{}<form method=\"post\" action=\"/confirm/{}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>",
-        head(
-            "Confirm your address",
-            "Start the daily email digest of Maintainer Mode at this address.",
-            ""
-        ),
+        "<form method=\"post\" action=\"/confirm/{}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>",
         esc(&token)
     );
-    unsubscribe_reply(&app, StatusCode::OK, &body)
+    unsubscribe_reply(
+        &app,
+        StatusCode::OK,
+        "Confirm your address",
+        "Start the daily email digest of Maintainer Mode at this address.",
+        &body,
+    )
 }
 
 async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     let Some(c) = pending_confirmation(&app, &token, Utc::now()) else {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_CONFIRM);
+        return unsubscribe_reply(
+            &app,
+            StatusCode::NOT_FOUND,
+            "Confirm your address",
+            "",
+            UNKNOWN_CONFIRM,
+        );
     };
     let done = app
         .store
@@ -616,11 +629,9 @@ async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Respon
     unsubscribe_reply(
         &app,
         StatusCode::OK,
-        &head(
-            "Address confirmed",
-            "The daily digest goes to this address from now on. Each email has a link to unsubscribe.",
-            "",
-        ),
+        "Address confirmed",
+        "The daily digest goes to this address from now on. Each email has a link to unsubscribe.",
+        "",
     )
 }
 
@@ -1036,15 +1047,18 @@ pub async fn run(app: Shared) {
     }
 }
 
-fn unsubscribe_reply(app: &App, code: StatusCode, body: &str) -> Response {
-    let Html(page) = page(app, None, "", body);
+fn unsubscribe_reply(app: &App, code: StatusCode, title: &str, sub: &str, body: &str) -> Response {
+    let page = Page::new(Section::Home, title)
+        .sub(sub)
+        .body(body)
+        .render(app, None);
     (
         code,
         [
             (header::CACHE_CONTROL, "no-store"),
             (header::REFERRER_POLICY, "no-referrer"),
         ],
-        Html(page),
+        page,
     )
         .into_response()
 }
@@ -1065,23 +1079,24 @@ const UNKNOWN_LINK: &str = "<div class=\"blankslate\"><p>This unsubscribe link i
 /// one-click POST of RFC 8058 and the button below do the work.
 async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     if unsubscribe_login(&app, &token).is_none() {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_LINK);
+        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
     }
     let body = format!(
-        "{}<form method=\"post\" action=\"/unsubscribe/{}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>",
-        head(
-            "Unsubscribe",
-            "Stop the email digest of Maintainer Mode. Your inbox on the site stays.",
-            ""
-        ),
+        "<form method=\"post\" action=\"/unsubscribe/{}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>",
         esc(&token)
     );
-    unsubscribe_reply(&app, StatusCode::OK, &body)
+    unsubscribe_reply(
+        &app,
+        StatusCode::OK,
+        "Unsubscribe",
+        "Stop the email digest of Maintainer Mode. Your inbox on the site stays.",
+        &body,
+    )
 }
 
 async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     let Some(login) = unsubscribe_login(&app, &token) else {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, UNKNOWN_LINK);
+        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
     };
     if let Err(e) = forget_address(&app, &login) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
@@ -1089,11 +1104,9 @@ async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Re
     unsubscribe_reply(
         &app,
         StatusCode::OK,
-        &head(
-            "Unsubscribed",
-            "Maintainer Mode sends you no more email. The server deleted your address.",
-            "",
-        ),
+        "Unsubscribed",
+        "Maintainer Mode sends you no more email. The server deleted your address.",
+        "",
     )
 }
 

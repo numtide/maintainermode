@@ -299,7 +299,7 @@ section.Box > .Box-header {
   min-width: 140px;
   font-weight: 600;
 }
-.note {
+.callout {
   padding: 16px;
   border: 1px solid var(--borderColor-default);
   border-radius: 6px;

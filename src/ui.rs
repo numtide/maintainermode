@@ -345,7 +345,7 @@ pub(crate) fn badge(tone: Tone, text: &str) -> String {
 
 /// A neutral callout. The yellow `flash` is for warnings only.
 pub(crate) fn note(html: &str) -> String {
-    format!("<div class=\"note mb-3\">{html}</div>")
+    format!("<div class=\"callout mb-3\">{html}</div>")
 }
 
 #[derive(Clone, Copy)]
