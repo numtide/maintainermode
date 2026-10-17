@@ -138,8 +138,12 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/people/nobody -o /tmp/page && grep -q '\"packages\":\\[\\]' /tmp/page && grep -q '\"dossier\"' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/status.json && grep -q nixpkgs-committers /tmp/status.json")
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
-    machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'Faster with forwarded events' /tmp/sync")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'How fast changes show here' /tmp/sync")
+    # without a bot token the notifications poller is off, and the page says so
+    machine.succeed("grep -q 'Notifications</div><div class=\"flex-auto min-width-0\">off: this server has no token of a bot account' /tmp/sync")
+    machine.succeed("grep -q 'With the token of a bot account that watches nixpkgs' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
+    machine.succeed("grep -q '\"notifications\":{[^}]*\"enabled\":false' /tmp/sync.json && grep -q '\"walk_every_seconds\":600' /tmp/sync.json")
     machine.succeed("grep -q 'CVE Program records' /tmp/sync")
     machine.succeed("grep -q 'its own task' /tmp/sync")
     machine.succeed("grep -q 'Packaging hygiene' /tmp/sync")
