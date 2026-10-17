@@ -56,7 +56,7 @@ Step 4 lists the installations of the App that your login token can see. It does
 
 Each line says OK, or what is missing and how to fix it. The check cannot read secrets, so step 3 always asks you to check `GH_TOKEN` yourself. When GitHub does not answer, the line says "Check again later" and blocks nothing.
 
-The server keeps the result for five minutes. **Check again** drops it, and so does a save of the names or a run that failed to start.
+The server keeps the result for five minutes. **Check again** drops it. A save of the names, a run that failed to start, and the return from the App installation also drop it. After five minutes, the buttons start the check again on the next click.
 
 While a step is missing, **Review in CI** and **Update with nix-update** link to `/me/settings#workflows`. They do not start a run that fails. A missing `update.yml` or nixpkgs fork blocks only the update button. A click also runs the check first. When a step is missing, the click opens the settings and tells you which step.
 

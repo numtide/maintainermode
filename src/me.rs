@@ -59,6 +59,8 @@ const SETTINGS: [(&str, &str); 9] = [
 #[derive(Deserialize)]
 struct SettingsQuery {
     mail: Option<String>,
+    /// GitHub adds it when it sends the person back after an App install.
+    setup_action: Option<String>,
 }
 
 async fn settings_page(
@@ -69,6 +71,9 @@ async fn settings_page(
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
+    if q.setup_action.is_some() {
+        crate::actions::forget_check(&app, &login);
+    }
     let workflows = crate::actions::repos_box(&app, &login).await;
     let body = [
         crate::notify::settings_box(&app, &login, q.mail.as_deref()),
@@ -240,7 +245,10 @@ mod tests {
         let r = settings_page(
             State(app.clone()),
             HeaderMap::new(),
-            Query(SettingsQuery { mail: None }),
+            Query(SettingsQuery {
+                mail: None,
+                setup_action: None,
+            }),
         )
         .await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
@@ -253,7 +261,15 @@ mod tests {
                 lines: vec![],
             },
         );
-        let r = settings_page(State(app), h, Query(SettingsQuery { mail: None })).await;
+        let r = settings_page(
+            State(app),
+            h,
+            Query(SettingsQuery {
+                mail: None,
+                setup_action: None,
+            }),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(
             r.headers().get(header::CACHE_CONTROL).unwrap(),
