@@ -208,7 +208,7 @@ fn tools() -> Vec<Value> {
         tool(
             "person",
             "A person",
-            "The public review record of a GitHub login, and the packages and NixOS modules whose meta.maintainers or meta.teams name it, with their flags. It never ranks people.",
+            "The public profile of a GitHub login: facts (committer, teams, first pull request), its open pull requests with their review state, its review record, and the packages and NixOS modules whose meta.maintainers or meta.teams name it, with their flags. It never ranks people.",
             json!({ "login": s("a GitHub login") }),
             &["login"],
         ),
