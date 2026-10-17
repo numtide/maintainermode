@@ -53,6 +53,31 @@ The home page uses the same order. Its section "Your packages that need you" sho
 | `/me?tab=machines` | `/packages?filter=machines` |
 | `/me/sets`         | `/packages?filter=machines` |
 
+## Profiles
+
+`/u/<login>` is the public profile of one person. Every login on the site
+links to it. The header shows the GitHub avatar, a link to the GitHub
+account, and these facts when the data has them:
+
+- committer: the login merged a pull request in the last year, or is in
+  the nixpkgs-committers team;
+- the number of packages and NixOS modules that the login maintains;
+- the `lib.teams` teams that name the login;
+- the date of the first pull request in the synced data.
+
+The page shows facts only. It has no score and no ranking.
+
+| Tab                        | What it shows                                                                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `/u/<login>`               | Overview: the open pull requests, the merged or closed pull requests of the last 60 days, and the directories of the recent pull requests |
+| `/u/<login>?tab=reviews`   | the review record                                                                                                                         |
+| `/u/<login>?tab=maintains` | what nixpkgs names the login as a maintainer of                                                                                           |
+
+The Overview tab shows the review state, the age and the checks of each open
+pull request. Pull requests with no review for 7 days or more come first: a
+review helps there. When you look at your own profile, a link goes to your
+private pages under `/me`. The profile itself shows no private data.
+
 ## Settings
 
 `/me/settings` is one page with these sections. The links at the top go to each section.

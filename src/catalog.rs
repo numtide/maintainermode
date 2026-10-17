@@ -57,7 +57,6 @@ pub fn routes() -> Router<Shared> {
         .route("/p/:attr", get(package_page))
         .route("/m/*file", get(module_page))
         .route("/a/*path", get(area_page))
-        .route("/u/:login/maintains", get(maintains_page))
         .route("/me/watch", post(add_watch))
         .route("/me/watch/remove", post(remove_watch))
         .route("/me/watch/maintained", post(watch_maintained))
@@ -1818,45 +1817,36 @@ fn maintained_rows(
     out
 }
 
-async fn maintains_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Path(login): Path<String>,
-) -> Response {
-    let viewer = app.viewer(&headers);
+/// The Maintains tab of `/u/<login>`.
+pub(crate) fn maintains_body(app: &crate::web::App, login: &str) -> String {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let m = maintained(&index, &login);
-    let mut out = crate::ui::section(
+    let m = maintained(&index, login);
+    let mut out = format!(
+        "<p class=\"f6 color-fg-muted\">Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name {0}, \
+         at nixpkgs {1}. Change the list in nixpkgs, not here.</p>",
+        esc(login),
+        esc(if index.rev.is_empty() {
+            "(index pending)"
+        } else {
+            &index.rev[..index.rev.len().min(12)]
+        })
+    );
+    out.push_str(&crate::ui::section(
         &format!("{} Packages", icon(octicon!("package"))),
         Some(m.packages.len()),
         None,
         &maintained_rows(&s, &index, &h, &ch, &m.packages),
-    );
+    ));
     out.push_str(&crate::ui::section(
         &format!("{} NixOS modules", icon(octicon!("gear"))),
         Some(m.modules.len()),
         None,
         &maintained_rows(&s, &index, &h, &ch, &m.modules),
     ));
-    Page::new(Section::Other, format!("What {login} maintains"))
-        .heading(esc(&login))
-        .icon(octicon!("person"))
-        .subnav(crate::web::person_tabs(&login, true))
-        .sub(format!(
-            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name {0}, \
-             at nixpkgs {1}. Change the list in nixpkgs, not here.",
-            esc(&login),
-            esc(if index.rev.is_empty() {
-                "(index pending)"
-            } else {
-                &index.rev[..index.rev.len().min(12)]
-            })
-        ))
-        .body(out)
-        .render(&app, viewer.as_deref())
+    out
 }
 
 #[derive(Deserialize)]

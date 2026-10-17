@@ -121,7 +121,8 @@ async fn every_signed_in_page_answers_and_stays_private() {
         "/review?tab=bumps",
         "/review?tab=all",
         "/u/alice",
-        "/u/alice/maintains",
+        "/u/alice?tab=reviews",
+        "/u/alice?tab=maintains",
         "/packages",
         "/p/hello",
         "/state",
@@ -316,7 +317,8 @@ async fn public_pages_keep_private_data_out() {
         .expect("a feed token");
     for path in [
         "/u/alice",
-        "/u/alice/maintains",
+        "/u/alice?tab=reviews",
+        "/u/alice?tab=maintains",
         "/api/v1/people/alice",
         "/p/hello",
     ] {
