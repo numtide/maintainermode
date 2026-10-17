@@ -20,9 +20,10 @@ use crate::web::{Snapshot, ago, ci_label, entry_rows, esc};
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
 pub const SECURITY: &str = "1.severity: security";
-const SECTION: usize = 50;
 /// Rows of each board list on the first page of the tab.
 const PREVIEW: usize = 5;
+/// Rows of "Ready to merge" on the first page; later pages hold `review::PAGE`.
+const FIRST: usize = 20;
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
 
 /// Logins are kept in lower case: `meta.maintainers` and GitHub disagree on case.
@@ -372,32 +373,9 @@ pub(crate) fn ready_tab(
     );
     match viewer.filter(|v| s.committers.is(v)) {
         Some(login) if first => {
-            let mine = yours(app, s, login);
-            let mut list: Vec<Line> = s
-                .queues
-                .merge
-                .iter()
-                .filter(|e| e.author != login)
-                .filter_map(|e| {
-                    mine(e).map(|why| Line {
-                        entry: e,
-                        why,
-                        since: None,
-                    })
-                })
-                .collect();
-            let n = list.len();
-            list.truncate(SECTION);
-            out.push_str(&section(
-                "In your areas",
-                Some(n),
-                None,
-                &format!(
-                    "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
-                     Only you see this section.</div>{}",
-                    lines(&list, "Nothing ready touches your areas or what you watch.", act)
-                ),
-            ));
+            let list = in_your_areas(app, s, login);
+            let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&amp;section=yours", "see all"));
+            out.push_str(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more, act));
         }
         None if first => out.push_str(&note(&format!(
             "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
@@ -406,7 +384,12 @@ pub(crate) fn ready_tab(
         _ => {}
     }
     let all: Vec<&Entry> = s.queues.merge.iter().collect();
-    let (page, next) = crate::review::paged_by_offset(&all, after);
+    let (page, next) = if first {
+        let page = &all[..all.len().min(FIRST)];
+        (page, (all.len() > FIRST).then(|| FIRST.to_string()))
+    } else {
+        crate::review::paged_by_offset(&all, after)
+    };
     let rows = if page.is_empty() {
         empty("Nothing is ready yet.")
     } else {
@@ -495,11 +478,22 @@ pub(crate) fn board_page(
     after: Option<u64>,
 ) -> Option<String> {
     let act = crate::actions::Act::of(app, viewer);
+    let back = "<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>";
+    if id == "yours" {
+        let login = viewer.filter(|v| s.committers.is(v))?;
+        let list = in_your_areas(app, s, login);
+        let (page, next) = crate::review::paged_by_offset(&list, after);
+        return Some(format!(
+            "{back}{}{}",
+            yours_section(page, list.len(), None, act),
+            pager("/review?tab=ready&section=yours", next.as_deref())
+        ));
+    }
     let (id, title, sub, rows, empty_text) =
         board_lists(&s.board).into_iter().find(|l| l.0 == id)?;
     let (page, next) = crate::review::paged_by_offset(rows, after);
     Some(format!(
-        "<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>{}{}",
+        "{back}{}{}",
         section(
             title,
             Some(rows.len()),
@@ -511,6 +505,44 @@ pub(crate) fn board_page(
         ),
         pager(&format!("/review?tab=ready&section={id}"), next.as_deref())
     ))
+}
+
+fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec<Line<'a>> {
+    let mine = yours(app, s, login);
+    s.queues
+        .merge
+        .iter()
+        .filter(|e| e.author != login)
+        .filter_map(|e| {
+            mine(e).map(|why| Line {
+                entry: e,
+                why,
+                since: None,
+            })
+        })
+        .collect()
+}
+
+fn yours_section(
+    page: &[Line],
+    total: usize,
+    more: Option<(&str, &str)>,
+    act: crate::actions::Act,
+) -> String {
+    section(
+        "In your areas",
+        Some(total),
+        more,
+        &format!(
+            "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
+             Only you see this section.</div>{}",
+            lines(
+                page,
+                "Nothing ready touches your areas or what you watch.",
+                act
+            )
+        ),
+    )
 }
 
 fn api_links() -> String {
