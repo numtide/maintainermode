@@ -1696,6 +1696,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     let mine: Option<std::collections::BTreeSet<String>> = viewer
         .as_deref()
         .map(|v| crate::sets::set_attrs(&app, v).into_iter().collect());
+    let next = crate::needs::here(&app, &headers, &format!("pr:{n}"));
     let panel = {
         let index = app.index.read().unwrap();
         crate::prpanel::render(&crate::prpanel::Ctx {
@@ -1719,7 +1720,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             } else {
                 String::new()
             },
-            extra_actions: String::new(),
+            extra_actions: next,
         })
     };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
@@ -1735,7 +1736,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             ago(pr.created_at),
             a = esc(&pr.author)
         ))
-        .actions(exits(n) + &crate::needs::here(&app, &headers, &format!("pr:{n}")));
+        .actions(exits(n));
     let mut out = panel;
     out.push_str(&description_html(pr, &talk));
     out.push_str(&about(pr));
