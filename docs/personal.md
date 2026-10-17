@@ -111,7 +111,7 @@ Sign in, and `/review` opens on **For you**. For you looks at `meta.maintainers`
 
 Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On Ready to merge, it is the count of rows on the previous pages, because that tab is not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
-The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The MCP tool `queue_review` and the CLI (`maintainer-mode review --bucket foryou --login <login>`) take the same name. `mine` is an alias of `foryou`. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts.
+The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts. See [api.md](api.md).
 
 ## Your progress
 
@@ -285,4 +285,4 @@ In the last three sections, "ready" means that the checks pass, that there is no
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
-**The API.** `/api/v1/committer` gives the same lists without **In your areas**. It is the same for all callers, because your subscriptions are private.
+**The API.** `/api/v1/prs?queue=ready` gives the same lists without **In your areas**. It is the same for all callers, because your subscriptions are private.
