@@ -350,14 +350,11 @@ fn header_facts(login: &str, f: &Facts) -> String {
             &format!("first pull request {}", t.format("%Y-%m-%d")),
         ));
     }
-    let gh = format!(
-        "<a href=\"https://github.com/{0}\">{1} github.com/{2}</a>",
-        crate::github::urlencode(login),
-        icon(octicon!("mark-github")),
-        esc(login)
-    );
+    if b.is_empty() {
+        return String::new();
+    }
     format!(
-        "<span class=\"d-inline-flex flex-wrap gap-1 flex-items-center\">{gh} {}</span>",
+        "<span class=\"d-inline-flex flex-wrap gap-1 flex-items-center\">{}</span>",
         b.join(" ")
     )
 }
@@ -370,12 +367,12 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     }
 }
 
+/// The login follows the avatar, so the image is decorative: `alt` is empty.
 fn avatar(login: &str) -> String {
     format!(
-        "<img class=\"avatar mr-2 v-align-middle\" src=\"https://avatars.githubusercontent.com/{0}?s=96\" \
-         alt=\"GitHub avatar of {1}\" width=\"48\" height=\"48\" loading=\"lazy\">",
-        crate::github::urlencode(login),
-        esc(login)
+        "<img class=\"avatar mr-2 v-align-middle\" src=\"https://avatars.githubusercontent.com/{}?s=96\" \
+         alt=\"\" width=\"48\" height=\"48\" loading=\"lazy\">",
+        crate::github::urlencode(login)
     )
 }
 
@@ -451,13 +448,7 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
     out.push_str(&section(
         &format!("{} Open pull requests", icon(octicon!("git-pull-request"))),
         Some(open.len()),
-        Some((
-            &format!(
-                "https://github.com/NixOS/nixpkgs/pulls/{}",
-                crate::github::urlencode(login)
-            ),
-            "on GitHub",
-        )),
+        None,
         &if rows.is_empty() {
             empty("No open pull request in the synced data.")
         } else {
@@ -715,14 +706,18 @@ async fn page(
     let own = viewer
         .as_deref()
         .is_some_and(|v| v.eq_ignore_ascii_case(&login));
-    let actions = if own {
-        format!(
-            "<a class=\"btn btn-sm\" href=\"/me\">{} Your private pages</a>",
+    let mut actions = format!(
+        "<a class=\"btn btn-sm\" href=\"https://github.com/{}\">{} GitHub</a>",
+        crate::github::urlencode(&login),
+        icon(octicon!("mark-github"))
+    );
+    if own {
+        let _ = write!(
+            actions,
+            " <a class=\"btn btn-sm\" href=\"/me\">{} Your private pages</a>",
             icon(octicon!("person"))
-        )
-    } else {
-        String::new()
-    };
+        );
+    }
     Page::new(Section::Other, title)
         .heading(format!("{}{}", avatar(&login), esc(&login)))
         .sub(header_facts(&login, &f))
@@ -880,6 +875,7 @@ mod tests {
         assert!(h.contains("src=\"https://avatars.githubusercontent.com/alice?s=96\""));
         assert!(h.contains("loading=\"lazy\""));
         assert!(h.contains("href=\"https://github.com/alice\""));
+        assert!(h.contains("alt=\"\" width=\"48\" height=\"48\""));
         assert!(h.contains("team: web"));
         assert!(h.contains("first pull request "));
         assert!(h.contains("selected\" href=\"/u/alice\" aria-current=\"page\">Overview</a>"));
@@ -932,5 +928,40 @@ mod tests {
         assert_eq!(v["open_prs"][0]["waiting_for_first_review"], true);
         assert_eq!(v["open_prs"][1]["checks"], "fail");
         assert_eq!(v["recent_prs"][0]["number"], 3);
+    }
+}
+
+#[cfg(test)]
+mod own {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_owner_gets_a_link_to_the_private_pages_and_no_private_data() {
+        let app = crate::sets::tests::app(&[]);
+        app.store.watch("alice", "pkg:secret-watch").unwrap();
+        let h = crate::notify::tests::signed_in(&app, "alice");
+        let q = || {
+            Query(ProfileQuery {
+                tab: None,
+                after: None,
+            })
+        };
+        let r = page(State(app.clone()), h.clone(), Path("alice".into()), q()).await;
+        let b = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8(b.to_vec()).unwrap();
+        assert!(html.contains("href=\"/me\">"));
+        assert!(html.contains("Your private pages"));
+        assert!(!html.contains("secret-watch"));
+        let r = page(State(app.clone()), h, Path("bob".into()), q()).await;
+        let b = axum::body::to_bytes(r.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8(b.to_vec())
+                .unwrap()
+                .contains("Your private pages")
+        );
     }
 }
