@@ -24,6 +24,11 @@ pub struct Bump<'a> {
     pub new: &'a str,
 }
 
+/// A version has a digit, so `attrs -> attrsOf` is not a bump.
+fn is_version(v: &str) -> bool {
+    v.contains(|c: char| c.is_ascii_digit())
+}
+
 /// `hello: 2.12 -> 2.13`, with `→` for the arrow, words after the new
 /// version, and a `[Backport release-26.05]` prefix all allowed.
 pub fn parse(title: &str) -> Option<Bump<'_>> {
@@ -41,7 +46,7 @@ pub fn parse(title: &str) -> Option<Bump<'_>> {
         .split_whitespace()
         .next()?
         .trim_end_matches([',', ';', ':']);
-    if old.is_empty() || old.contains(char::is_whitespace) || new.is_empty() {
+    if old.contains(char::is_whitespace) || !is_version(old) || !is_version(new) {
         return None;
     }
     Some(Bump { name, old, new })
@@ -374,7 +379,12 @@ mod tests {
         );
         assert_eq!(parse("hello: fix the build"), None);
         assert_eq!(parse("hello: from 1 -> 2"), None);
-        assert_eq!(parse("treewide: a -> b"), b("a", "b", "treewide"));
+        assert_eq!(parse("treewide: a -> b"), None);
+        assert_eq!(parse("lib.types: attrs -> attrsOf"), None);
+        assert_eq!(
+            parse("foo: unstable-2024-01-02 -> 1.0"),
+            b("unstable-2024-01-02", "1.0", "foo")
+        );
         assert_eq!(parse("some words: 1 -> 2"), None);
     }
 
