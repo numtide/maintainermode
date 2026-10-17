@@ -468,7 +468,9 @@ pub(crate) fn view(
         }
         Filter::Watch | Filter::Mine | Filter::All => {}
     }
-    out.push_str(&search_form(f, q));
+    if !(rows.is_empty() && q.is_empty()) {
+        out.push_str(&search_form(f, q));
+    }
     let (page, next) = crate::review::paged_by_offset(&rows, after);
     let list: String = page
         .iter()
