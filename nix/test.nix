@@ -314,7 +314,7 @@ pkgs.testers.runNixOSTest {
                       ("/u/alice", "u"), ("/packages", "packages"), ("/state", "state")]:
         signed_in(path, f"/tmp/s-{out}")
         machine.succeed(f"grep -q 'menu-login\">alice<' /tmp/s-{out}")
-    machine.succeed("grep -q 'Pull requests for you to review' /tmp/s-home")
+    machine.succeed("grep -q 'Pull requests for you to review' /tmp/s-home && grep -q 'Your packages that need you' /tmp/s-home && grep -q 'href=\"/packages?filter=mine\"' /tmp/s-home")
     machine.succeed("grep -q '<a href=\"/inbox\" aria-current=\"page\">' /tmp/s-inbox && ! grep -q 'UnderlineNav-item\" href=\"[^\"]*\" aria-current' /tmp/s-inbox")
     machine.succeed("grep -q '<a href=\"/me/settings\" aria-current=\"page\">' /tmp/s-settings && ! grep -q 'UnderlineNav-item\" href=\"[^\"]*\" aria-current' /tmp/s-settings")
     machine.succeed("curl -s -D /tmp/inbox0.h -o /dev/null http://127.0.0.1:8790/inbox && grep -q '^HTTP/1.1 303' /tmp/inbox0.h && grep -qi '^cache-control: private, no-store' /tmp/inbox0.h")

@@ -3,13 +3,14 @@
 //! order ranks it everywhere: the packages list, the home page and the
 //! review queue. Only the owner sees it.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::{Flags, Subject, maintained, subject_row, subscriptions};
 use crate::channels::Channels;
 use crate::health::{Hydra, Last};
+use crate::queue::Entry;
 use crate::ui::{Tab, empty, pager, section};
 use crate::web::{App, Snapshot, esc, icon, octicon};
 
@@ -254,6 +255,64 @@ pub(crate) fn rank(rows: &mut [Row]) {
             r.sub.label(),
         )
     });
+}
+
+/// The rows of [`Filter::Mine`] that need attention, for the home page.
+pub(crate) fn needs_you(app: &App, login: &str) -> Vec<Row> {
+    let i = Interests::of(app, login);
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), Filter::Mine, "");
+    rows.retain(|r| attention(&r.flags));
+    rows
+}
+
+/// Pull requests for the For you tab of a person: those that touch the
+/// packages of their machines, then what they maintain, own, changed or
+/// tagged, then what they watch. The same [`order`] as the packages.
+pub(crate) fn for_you<'a>(app: &App, s: &'a Snapshot, login: &str) -> Vec<&'a Entry> {
+    let watched = app.store.watched(login).unwrap_or_default();
+    let machines: HashSet<String> = {
+        let index = app.index.read().unwrap();
+        crate::sets::set_attrs(app, login)
+            .iter()
+            .map(|a| Subject::Pkg(canonical(&index, a)).key())
+            .collect()
+    };
+    rank_prs(s, login, &watched, &machines)
+}
+
+pub(crate) fn rank_prs<'a>(
+    s: &'a Snapshot,
+    login: &str,
+    watched: &[String],
+    machine_keys: &HashSet<String>,
+) -> Vec<&'a Entry> {
+    let on_machines: HashSet<u64> = machine_keys
+        .iter()
+        .filter_map(|k| s.links.prs.get(k))
+        .flatten()
+        .copied()
+        .collect();
+    let interest = crate::web::Interest::of(s, Some(login), Some(watched));
+    let mut list: Vec<(Why, &Entry)> = s
+        .queues
+        .review
+        .iter()
+        .filter(|e| e.author != login)
+        .map(|e| {
+            let why = Why {
+                machine: on_machines.contains(&e.number),
+                maintain: interest.maintains(e),
+                watch: interest.watches(e),
+            };
+            (why, e)
+        })
+        .filter(|(w, _)| w.machine || w.maintain || w.watch)
+        .collect();
+    list.sort_by_key(|(w, e)| (order(*w, false), e.number));
+    list.into_iter().map(|(_, e)| e).collect()
 }
 
 /// A row with its version, the team that names the person, and why it is

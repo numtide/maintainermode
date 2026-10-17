@@ -177,13 +177,7 @@ impl Facts {
             maintained: keys.len(),
             maintained_watched: keys.iter().filter(|k| watched.contains(*k)).count(),
             watched: watched.len(),
-            queue: crate::web::review_bucket(
-                &s,
-                Some(login),
-                Some(&watched.iter().cloned().collect::<Vec<_>>()),
-                "foryou",
-            )
-            .len(),
+            queue: crate::mine::for_you(app, &s, login).len(),
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
             credited: s.ledger.credits_of(login).count(),
             feed: app.store.feed_token(login).ok().flatten().is_some(),
