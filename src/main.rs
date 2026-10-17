@@ -35,6 +35,7 @@ mod severity;
 mod status;
 mod store;
 mod subject;
+mod ui;
 mod upstream;
 mod version;
 mod web;

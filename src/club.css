@@ -261,3 +261,136 @@ a:hover {
   background: var(--bgColor-attention-muted);
   border-bottom: 1px solid var(--borderColor-attention-emphasis);
 }
+
+.page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+.page-head-main {
+  flex: 1 1 320px;
+  min-width: 0;
+}
+.page-actions,
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+section.Box > .Box-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+.Box-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.kv {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.kv-label {
+  min-width: 140px;
+  font-weight: 600;
+}
+.note {
+  padding: 16px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  background: var(--bgColor-muted);
+}
+.gap-1 {
+  gap: 4px;
+}
+.gap-2 {
+  gap: 8px;
+}
+.gap-3 {
+  gap: 16px;
+}
+.gap-4 {
+  gap: 24px;
+}
+.inline-form {
+  display: flex;
+  gap: 8px;
+  max-width: 560px;
+}
+.pre-wrap {
+  white-space: pre-wrap;
+}
+.input-narrow {
+  max-width: 140px;
+}
+
+.menu {
+  position: relative;
+}
+.menu > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+}
+.menu > summary::-webkit-details-marker {
+  display: none;
+}
+.menu-login {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 10;
+  min-width: 180px;
+  padding: 4px 0;
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-floating-small);
+}
+.menu-list a,
+.menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 16px;
+  color: var(--fgColor-default);
+  background: none;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-list a:hover,
+.menu-list button:hover {
+  background: var(--bgColor-muted);
+  text-decoration: none;
+}
+.menu-sep {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--borderColor-muted);
+}
+
+/* Four tabs must fit a 390px phone. */
+@media (max-width: 420px) {
+  .UnderlineNav-item .octicon {
+    display: none;
+  }
+  .UnderlineNav-body {
+    gap: 4px;
+  }
+}
