@@ -84,7 +84,7 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 | nixfresh `score.rs`                                                  | 2026-10 | MIT     | `src/score.rs`: the risk score, simplified                                                          |
 | nixfresh osv collector                                               | 2026-10 | MIT     | `src/osv.rs`: OSV matches for the exact version of PyPI, crates.io and npm packages                 |
 | nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
-| nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the report format and its redaction, trimmed   |
+| nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the local report format, trimmed               |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages

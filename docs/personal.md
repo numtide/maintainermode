@@ -188,20 +188,51 @@ maintainer-mode submit --to https://<host> --token-file ~/.config/maintainer-mod
 - **`scan`** reads the closure of one or more flake outputs (`--flake`,
   `--output`), or of the attributes of a file (`--file`, `--attr`), with
   `nix derivation show -r`. `--runtime` reads the built store paths with
-  `nix path-info -r` instead. It matches each package name to a nixpkgs
-  attribute: the name, the name in lower case, or `python3Packages.<name>`.
-  It uses the nixpkgs that the tree pins in `flake.lock` or in
-  `npins/sources.json`. `--nixpkgs-input` names the pin, and `--nixpkgs` gives
-  a path or a flake reference. It writes the full report to
-  `maintainer-mode-scan.json`, which stays on your machine.
-- **`export`** writes the redacted report. It keeps only the packages with a
-  nixpkgs attribute. It counts the other names and does not list them. It
-  removes the name of the scanned tree. Read it before you send it.
-- **`submit`** sends the redacted report to `POST /api/v1/reports`. It reads
-  the upload token from `MAINTAINER_MODE_UPLOAD_TOKEN`, or from the file of
+  `nix path-info -r` instead. It reads the nixpkgs revision that the tree
+  pins in `flake.lock` or in `npins/sources.json`. `--nixpkgs-input` names
+  the pin. It does not evaluate nixpkgs. It writes the full report to
+  `maintainer-mode-scan.json`. This file stays on your machine.
+- **`export`** downloads the public package list of `--server` from
+  `GET /api/v1/packages/index`. `--index-file` reads a saved copy instead.
+  Then it writes the strict report. Read it before you send it.
+- **`submit`** does the same as `export`, with the list of `--to`. Then it
+  sends the strict report to `POST /api/v1/reports`. It reads the upload
+  token from `MAINTAINER_MODE_UPLOAD_TOKEN`, or from the file of
   `--token-file`.
 
-The report format is the nixfresh report format, schema 1.
+To save the list for an offline export:
+
+```sh
+curl --compressed -o index.json https://<host>/api/v1/packages/index
+maintainer-mode export --index-file index.json --out report.json
+```
+
+**How the client filters.** The public list gives the pname and the version
+of each attribute of the server's current nixpkgs index. The client keeps a
+closure entry only when its name is a public attribute or a public pname. It
+also tries the name in lower case and `python3Packages.<name>`.
+
+- A kept entry carries the attribute and the pname of the list, not the
+  pname of your closure.
+- The version goes only when it is equal to the version that the list has
+  for that attribute.
+- Any other version becomes `null`, with `"modified": true`. A patched
+  version, such as `1.2.3-acme-fix`, never leaves your machine.
+- The client drops every other name. It sends only their count, as
+  `omitted.unknown`.
+
+**What leaves your machine.** The strict report has only these fields:
+
+- `schema`, `client` (the client version) and `generated_at`.
+- `source.system`, `source.nixpkgs_rev`, `source.scanned_at` and
+  `source.index_rev` (the revision of the public list).
+- For each kept entry: `attr`, `pname`, `version` and, if it applies,
+  `modified`.
+- `omitted.unknown`: the number of dropped names.
+
+The name of the scanned tree never leaves your machine. The client sends no
+path, no store hash and no private name. The local report uses the nixfresh
+report format, schema 1.
 
 **The upload token.** Make it in `/me/settings#upload`. The server shows it once and
 keeps only its SHA-256 hash. A new token replaces the old one. One button
@@ -212,13 +243,19 @@ revokes it.
 | Code | Meaning                                              |
 | ---- | ---------------------------------------------------- |
 | 202  | stored; the answer gives the kept and dropped counts |
-| 400  | an unreadable report or a schema other than 1        |
+| 400  | not a strict report; the error names the problem     |
 | 401  | no token, or an unknown token                        |
 | 413  | more than 16 MiB, or more than 50,000 packages       |
 | 503  | the nixpkgs index is not built yet                   |
 
-- It keeps an attribute only when its own nixpkgs index has it. It drops all
-  other entries. A broken or hostile client cannot store a private name.
+- It refuses a report with a field outside the strict schema, such as a
+  tree name.
+- It refuses a version that its index does not have for that attribute. The
+  entry must then have `"version": null` and `"modified": true`.
+- It refuses a pname that is not the pname of its index for that attribute.
+- It drops an attribute that its index does not have, and counts it. The
+  index can change between the download of the list and the upload. A
+  broken or hostile client cannot store a private name.
 - It keeps one set per login: a new report replaces the old one.
 - It keeps the attributes, the time of the upload, the time of the scan and
   the nixpkgs revision. It keeps nothing else from the report.
@@ -241,7 +278,7 @@ requests and issues of the set, because a closure has thousands of packages.
 operator turns it on, the My machines tab has a form for a public flake reference
 (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
 and an output. After each nixpkgs index, the server scans the output again.
-It keeps the result with the rules of an upload: the same redaction, the
+It keeps the result with the rules of an upload: the same public-list filter, the
 same index filter and the same 90-day rule. The server stops the scans of a
 person who has not opened the My machines tab for 90 days. The rows of the panel then
 show "in a scanned flake".
