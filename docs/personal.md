@@ -74,7 +74,7 @@ with its flags, the ones that need attention first.
 
 Sign in, and `/review` opens on **For you**. For you looks at `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
 
-Each tab shows 50 rows. "Next page" adds `?after=<number>`, the number of the last pull request on the page. `/merge`, `/committer` and `/bumps` redirect to their tab.
+Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On Ready to merge, it is the count of rows on the previous pages, because that tab is not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
 The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The MCP tool `queue_review` and the CLI (`maintainer-mode review --bucket foryou --login <login>`) take the same name. `mine` is an alias of `foryou`. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts.
 
