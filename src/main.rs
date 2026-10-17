@@ -26,6 +26,7 @@ mod me;
 mod metrics;
 mod mine;
 mod model;
+mod needs;
 mod nixpkgs;
 mod notifications;
 mod notify;

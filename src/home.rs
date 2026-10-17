@@ -1,12 +1,13 @@
 //! The landing page. A visitor gets ways into nixpkgs; a person who signed
-//! in gets what needs them: their inbox, what they maintain, what to review,
-//! and their own pull requests.
+//! in gets Needs you on top, then their inbox, their packages and their own
+//! pull requests.
 
 use axum::Router;
-use axum::extract::State;
-use axum::http::HeaderMap;
+use axum::extract::{Query, State};
+use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use axum::routing::get;
+use serde::Deserialize;
 use std::fmt::Write;
 
 use crate::catalog::{Flags, Subject, person_events, subject_row};
@@ -134,9 +135,10 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     out
 }
 
-fn dashboard(app: &App, login: &str) -> String {
+fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderMap) -> String {
     let s = app.snap();
     let mut out = String::from("<h1 class=\"sr-only\">Home</h1>");
+    out.push_str(&crate::needs::section(app, login, mood, headers));
     out.push_str(&crate::welcome::card(app, login));
     out.push_str(&crate::progress::widget(app, login));
 
@@ -191,17 +193,6 @@ fn dashboard(app: &App, login: &str) -> String {
             empty("Nothing needs you now. The packages of your machines, what you maintain and what you watch show here when they get an advisory, a new release, a failed build or a pull request.")
         } else {
             mine_html
-        },
-    ));
-
-    let review = crate::mine::for_you(app, &s, login);
-    out.push_str(&section(
-        &format!("{} Pull requests for you to review", icon(octicon!("eye"))),
-        Some(("/review?tab=foryou", "the whole queue")),
-        &if review.is_empty() {
-            empty("No open pull request touches your machines, what you maintain or what you watch. The pull requests with <a href=\"/review?tab=unowned\">no maintainer</a> need reviews too.")
-        } else {
-            entry_rows(&review)
         },
     ));
 
@@ -274,12 +265,32 @@ fn dashboard(app: &App, login: &str) -> String {
     out
 }
 
-async fn home(State(app): State<Shared>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct HomeQuery {
+    mood: Option<String>,
+}
+
+async fn home(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<HomeQuery>,
+) -> Response {
     let viewer = app.viewer(&headers);
-    let page = match viewer.as_deref() {
-        Some(login) => Page::new(Section::Home, "Home").body(dashboard(&app, login)),
-        None => Page::new(Section::Home, "Maintainer Mode").body(visitor(&app, &headers)),
+    let Some(login) = viewer.as_deref() else {
+        return Page::new(Section::Home, "Maintainer Mode")
+            .body(visitor(&app, &headers))
+            .bare()
+            .render(&app, None);
+    };
+    let mood = crate::needs::Mood::of(q.mood.as_deref(), &headers);
+    let mut res = Page::new(Section::Home, "Home")
+        .body(dashboard(&app, login, mood, &headers))
+        .bare()
+        .render(&app, Some(login));
+    if let Some(m) = crate::needs::Mood::parse(q.mood.as_deref()) {
+        if let Ok(v) = HeaderValue::from_str(&crate::needs::mood_cookie(&app, m)) {
+            res.headers_mut().append(header::SET_COOKIE, v);
+        }
     }
-    .bare();
-    page.render(&app, viewer.as_deref())
+    res
 }

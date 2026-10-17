@@ -471,3 +471,23 @@ section.Box > .Box-header {
 .subnav::after {
   display: none;
 }
+.needs-item:focus,
+.needs-item.needs-sel {
+  outline: 2px solid var(--focus-outlineColor);
+  outline-offset: -2px;
+  background: var(--bgColor-accent-muted);
+}
+.needs-keys kbd {
+  display: inline-block;
+  padding: 0 4px;
+  font: 11px var(--fontStack-monospace);
+  line-height: 16px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 4px;
+}
+/* Keys need a keyboard: a phone shows no hint. */
+@media (max-width: 543px) {
+  .needs-keys {
+    display: none;
+  }
+}

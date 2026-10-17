@@ -34,6 +34,10 @@ const ENDPOINTS: &[(&str, &str)] = &[
         "the public profile of a login: facts, open pull requests, review record, and what it maintains",
     ),
     (
+        "/api/v1/needs",
+        "what waits for you, the most urgent first, with your session only: mood=all|mine|machines|review|maintain",
+    ),
+    (
         "/api/v1/packages/index",
         "the public package list of the current index: pname and version of each attribute, gzip",
     ),
