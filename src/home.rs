@@ -66,6 +66,9 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let mut out = crate::welcome::intro(app, headers);
+    if out.is_empty() {
+        out.push_str("<h1 class=\"sr-only\">Maintainer Mode</h1>");
+    }
     out.push_str(&search_box());
     let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).collect();
     out.push_str(&section(
@@ -134,7 +137,8 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
 fn dashboard(app: &App, login: &str) -> String {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
-    let mut out = crate::welcome::card(app, login);
+    let mut out = String::from("<h1 class=\"sr-only\">Home</h1>");
+    out.push_str(&crate::welcome::card(app, login));
     out.push_str(&crate::progress::widget(app, login));
 
     let unread = app.inbox.get(login);
@@ -284,6 +288,7 @@ async fn home(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let page = match viewer.as_deref() {
         Some(login) => Page::new(Section::Home, "Home").body(dashboard(&app, login)),
         None => Page::new(Section::Home, "Maintainer Mode").body(visitor(&app, &headers)),
-    };
+    }
+    .bare();
     page.render(&app, viewer.as_deref())
 }
