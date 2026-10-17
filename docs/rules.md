@@ -162,7 +162,8 @@ the panel says "unknown". It never guesses a value.
 - **People.** The author, the maintainers, and the approvals on the current
   head. A label shows when an approval is by a maintainer or a committer.
 - **Security.** The CVE ids in the title and the description, with their
-  severity and the advisory of the security tracker. Only for you: a label
+  severity and the advisory of the security tracker, with its verdict:
+  range unknown, fixed in master, or fixed everywhere. Only for you: a label
   when a package is on your machines.
 - **What is missing.** The checks on the lines that the diff adds (hash
   form, `lib.fakeHash`, tests, `versionCheckHook`, the `meta` of a new
@@ -219,7 +220,8 @@ because there is no leaderboard.
   `10.rebuild-linux: 501+`) and from a `release-*` base branch.
 - **Packages.** One package for each package name, from the nixpkgs index,
   the health sources and the open pull requests. The numbers are: packages;
-  behind upstream; with an open advisory, by the worst band of their
+  behind upstream; with an open advisory that can affect master (see
+  [Affected versions](health.md#affected-versions)), by the worst band of their
   advisories (critical, high, medium, low, no score); with no maintainer (no
   `meta.maintainers` and no `meta.teams`); broken (`meta.broken`); insecure
   (`meta.knownVulnerabilities`); with packaging gaps; and open version bumps

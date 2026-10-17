@@ -39,6 +39,7 @@ public /state?tab=status
 public /packages
 public /packages?q=zzzz-nothing-matches
 both /p/${attr}
+public /p/unbound
 public /m/${module}
 public /a/${area}
 public /u/${login}

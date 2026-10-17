@@ -235,6 +235,7 @@ function seedSql() {
     },
     openssl: pkg("openssl", "3.0.14", []),
     jq: pkg("jq", "1.7.1", [SEED_LOGIN]),
+    unbound: pkg("unbound", "1.26.1", ["someone"]),
     ripgrep: pkg("ripgrep", "14.1.0", ["someone"]),
     "a-package-with-a-very-long-name-for-the-phone-layout": pkg(
       "a-package-with-a-very-long-name-for-the-phone-layout",
@@ -275,12 +276,27 @@ function seedSql() {
           issue: null,
         },
       ],
+      unbound: [
+        {
+          code: "NIXPKGS-2026-2615",
+          cves: ["CVE-2026-0003"],
+          title: "unbound: security issues < 1.26.1",
+          issue: 564154,
+          ranges: [
+            {
+              cve: "CVE-2026-0003",
+              constraints: [["affected", "<1.26.1"]],
+            },
+          ],
+        },
+      ],
     },
     cves: {
       "CVE-2026-0001": { band: "critical", cvss: 9.8, epss: 0.35 },
+      "CVE-2026-0003": { band: "critical", cvss: 9.8 },
     },
   };
-  const set = ["curl", "openssl", "hello", "ripgrep"];
+  const set = ["curl", "openssl", "hello", "ripgrep", "unbound"];
   const q = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
   const now = new Date().toISOString();
   const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
