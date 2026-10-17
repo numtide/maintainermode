@@ -3,7 +3,7 @@
 //! pull request rows offer a Claude Code session.
 
 use axum::Router;
-use axum::extract::{Form, Path, Query, State};
+use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -23,7 +23,7 @@ const MCP_AT: &str = "mcp_token_at";
 
 pub fn routes() -> Router<Shared> {
     Router::new()
-        .route("/me/settings", get(settings_page).post(save_settings))
+        .route("/me/settings/llm", post(save_settings))
         .route("/me/mcp-token", post(new_mcp_token))
         .route("/me/mcp-token/delete", post(delete_mcp_token))
         .route("/claude/pr/:number", get(claude_page))
@@ -63,14 +63,17 @@ fn revoke(app: &App, login: &str) -> anyhow::Result<()> {
     app.store.set_setting(login, MCP_AT, "")
 }
 
-fn mcp_box(app: &App, login: &str) -> String {
+fn mcp_state(app: &App, login: &str) -> String {
+    if !opted_in(app, login) {
+        return "<p class=\"mb-0\">Turn on LLMs first, in the section above.</p>".into();
+    }
     let at = app
         .store
         .setting(login, MCP_AT)
         .ok()
         .flatten()
         .filter(|_| has_mcp_token(app, login));
-    let state = match at {
+    match at {
         Some(at) => format!(
             "<p>You made an MCP token on {}. The server shows a token once and keeps only its hash.</p>\
              <form method=\"post\" action=\"/me/mcp-token\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">Replace the token</button></form> \
@@ -78,7 +81,11 @@ fn mcp_box(app: &App, login: &str) -> String {
             esc(at.get(..10).unwrap_or(&at))
         ),
         None => "<form method=\"post\" action=\"/me/mcp-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an MCP token</button></form>".into(),
-    };
+    }
+}
+
+/// The `#mcp` section of `/me/settings`.
+pub fn mcp_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"mcp\">{}</div>",
         section(
@@ -88,59 +95,35 @@ fn mcp_box(app: &App, login: &str) -> String {
             &format!(
                 "<div class=\"Box-row\">\
                  <p>An agent reads this site at <code>{}</code>, with the Streamable HTTP transport. \
-                 It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{state}</div>",
+                 It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{}</div>",
                 esc(&mcp_url(app)),
+                mcp_state(app, login),
             )
         )
     )
 }
 
-#[derive(Deserialize)]
-struct SettingsQuery {
-    mail: Option<String>,
-}
-
-async fn settings_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<SettingsQuery>,
-) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let on = opted_in(&app, &login);
-    let mut out = format!(
+/// The `#llm` section of `/me/settings`.
+pub fn llm_box(app: &App, login: &str) -> String {
+    format!(
         "<div id=\"llm\">{}</div>",
         section(
-            "LLMs",
+            &format!("{} LLMs", icon(octicon!("comment"))),
             None,
             None,
             &format!(
                 "<div class=\"Box-row\">\
-                 <form method=\"post\" action=\"/me/settings\">\
+                 <form method=\"post\" action=\"/me/settings/llm\">\
                  <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \
                  I am OK with LLMs using my data on this site</label>\
                  <p class=\"note\">Off by default. When it is on, an agent that holds your MCP token can read what you watch and the public data \
                  of this site through <code>/mcp</code>, and each open pull request offers a Claude Code session. \
                  Nothing here writes to GitHub. Turning it off revokes your MCP token.</p></div>\
                  <button class=\"btn btn-sm\" type=\"submit\">Save</button></form></div>",
-                checked = if on { " checked" } else { "" },
+                checked = if opted_in(app, login) { " checked" } else { "" },
             )
         )
-    );
-    if on {
-        out.push_str(&mcp_box(&app, &login));
-    }
-    out.push_str(&crate::notify::settings_box(
-        &app,
-        &login,
-        q.mail.as_deref(),
-    ));
-    Page::new(Section::Home, "Settings")
-        .icon(octicon!("gear"))
-        .sub("Choices that apply to you only.")
-        .body(out)
-        .render(&app, Some(&login))
+    )
 }
 
 #[derive(Deserialize)]
@@ -165,7 +148,7 @@ async fn save_settings(
     if let Err(e) = saved {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/me/settings").into_response()
+    Redirect::to("/me/settings#llm").into_response()
 }
 
 async fn new_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -173,7 +156,7 @@ async fn new_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Respons
         return Redirect::to("/auth/login").into_response();
     };
     if !opted_in(&app, &login) {
-        return Redirect::to("/me/settings").into_response();
+        return Redirect::to("/me/settings#llm").into_response();
     }
     let token = random_id();
     let saved = app

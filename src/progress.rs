@@ -255,25 +255,12 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
             "weeks in a row with a review that earned credit"
         ),
     );
-    let _ = write!(
-        out,
-        "<div id=\"goal\">{}</div>",
-        section(
-            "Your weekly goal",
-            None,
-            None,
-            &format!(
-                "<div class=\"Box-row\">{}</div>\
-                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
-                 <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
-                 <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{}\">\
-                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-                 <p class=\"note f6 color-fg-muted\">Set a number you can keep. A careful review counts for more than many quick ones.</p></div>",
-                goal_line(&p),
-                p.goal.unwrap_or(0),
-            )
-        )
-    );
+    out.push_str(&section(
+        "Your weekly goal",
+        None,
+        Some(("/me/settings#goal", "change it")),
+        &format!("<div class=\"Box-row\">{}</div>", goal_line(&p)),
+    ));
     let _ = write!(
         out,
         "<div id=\"listing\">{}</div>",
@@ -318,6 +305,27 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         .render(&app, Some(&login))
 }
 
+/// The `#goal` section of `/me/settings`.
+pub fn goal_box(app: &App, login: &str) -> String {
+    let goal = goal_of(app, login).unwrap_or(0);
+    format!(
+        "<div id=\"goal\">{}</div>",
+        section(
+            &format!("{} Weekly goal", icon(octicon!("flame"))),
+            None,
+            None,
+            &format!(
+                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
+                 <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
+                 <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{goal}\">\
+                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
+                 <p class=\"note f6 color-fg-muted mb-0\">Set a number you can keep. A careful review counts for more than many quick ones. \
+                 <a href=\"/me/progress\">Your progress</a> shows how far you are.</p></div>"
+            )
+        )
+    )
+}
+
 #[derive(Deserialize)]
 struct GoalForm {
     goal: String,
@@ -345,7 +353,7 @@ async fn save_goal(
     if let Err(e) = app.store.set_setting(&login, GOAL, &value) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/me/progress").into_response()
+    Redirect::to("/me/settings#goal").into_response()
 }
 
 #[cfg(test)]

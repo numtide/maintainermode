@@ -371,8 +371,8 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
     };
     let email = if app.smtp.is_some() {
         format!(
-            "<label class=\"d-block mt-3\" for=\"email\">Daily email digest to</label>{state}\
-             <input class=\"form-control width-full my-1\" type=\"email\" id=\"email\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
+            "<label class=\"d-block mt-3\" for=\"email-address\">Daily email digest to</label>{state}\
+             <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
              <p class=\"note\">At most one email a day, with the unread events of these kinds since the last digest. \
              A new address gets a confirmation email first; the digest starts when you open its link. \
              Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>",
@@ -414,7 +414,7 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
         n => format!("<div class=\"flash mb-3\">{n}</div>"),
     };
     format!(
-        "<div id=\"notify\">{}</div>",
+        "<div id=\"email\">{}</div>",
         crate::ui::section(
             &format!("{} Notifications", icon(octicon!("bell"))),
             None,
@@ -468,7 +468,7 @@ async fn save_notify(
     };
     let address = f.email.as_deref().map(str::trim);
     if app.smtp.is_some() && address.is_some_and(|a| !a.is_empty() && !valid_address(a)) {
-        return Redirect::to("/me/settings?mail=invalid#notify").into_response();
+        return Redirect::to("/me/settings?mail=invalid#email").into_response();
     }
     let keys: Vec<&str> = f.chosen().into_iter().map(Kind::key).collect();
     if let Err(e) = app.store.set_setting(&login, KINDS, &keys.join(",")) {
@@ -492,9 +492,9 @@ async fn save_notify(
 
 fn settings_redirect(note: &str) -> Response {
     if note.is_empty() {
-        Redirect::to("/me/settings#notify").into_response()
+        Redirect::to("/me/settings#email").into_response()
     } else {
-        Redirect::to(&format!("/me/settings?mail={note}#notify")).into_response()
+        Redirect::to(&format!("/me/settings?mail={note}#email")).into_response()
     }
 }
 
@@ -639,7 +639,7 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let back = |m: &str| Redirect::to(&format!("/me/settings?mail={m}#notify")).into_response();
+    let back = |m: &str| Redirect::to(&format!("/me/settings?mail={m}#email")).into_response();
     let Some(smtp) = &app.smtp else {
         return back("off");
     };
@@ -897,7 +897,7 @@ async fn send(
     let base = app.public_url.trim_end_matches('/');
     let unsubscribe = format!("{base}/unsubscribe/{token}");
     let body = format!(
-        "{body}\n--\nYour inbox: {base}/me/inbox\nYour notification settings: {base}/me/settings#notify\n\
+        "{body}\n--\nYour inbox: {base}/me/inbox\nYour notification settings: {base}/me/settings#email\n\
          Unsubscribe from these emails: {unsubscribe}\n"
     );
     deliver(smtp, address, subject, body, Some(&unsubscribe)).await
@@ -1111,7 +1111,7 @@ async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Re
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use chrono::Duration;
 
@@ -1411,7 +1411,7 @@ mod tests {
         let r = save("alice@example.org\r\nBcc: x@example.org").await;
         assert_eq!(
             r.headers()[header::LOCATION],
-            "/me/settings?mail=invalid#notify"
+            "/me/settings?mail=invalid#email"
         );
         assert!(app.store.setting("alice", EMAIL).unwrap().is_none());
         save(" alice@example.org ").await;
@@ -1429,7 +1429,7 @@ mod tests {
         let r = test_mail(State(app.clone()), h.clone()).await;
         assert_eq!(
             r.headers()[header::LOCATION],
-            "/me/settings?mail=unconfirmed#notify"
+            "/me/settings?mail=unconfirmed#email"
         );
         let token = new_confirmation(&app, "alice", "alice@example.org", Utc::now()).unwrap();
         confirm(State(app.clone()), Path(token)).await;
@@ -1558,12 +1558,12 @@ mod tests {
         let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
         assert_eq!(
             r.headers()[header::LOCATION],
-            "/me/settings?mail=limit#notify"
+            "/me/settings?mail=limit#email"
         );
         let r = resend_confirmation(State(app.clone()), h).await;
         assert_eq!(
             r.headers()[header::LOCATION],
-            "/me/settings?mail=limit#notify"
+            "/me/settings?mail=limit#email"
         );
         assert_eq!(
             app.store

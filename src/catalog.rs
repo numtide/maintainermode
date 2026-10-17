@@ -1883,7 +1883,7 @@ async fn new_feed(State(app): State<Shared>, headers: HeaderMap) -> Response {
     if let Err(e) = app.store.set_feed_token(&login, &random_id()) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    Redirect::to("/watch#feed").into_response()
+    Redirect::to("/me/settings#feed").into_response()
 }
 
 pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> {
@@ -1951,6 +1951,11 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
             out.push_str("</div>");
         }
     }
+    page.body(out).render(&app, viewer.as_deref())
+}
+
+/// The `#feed` section of `/me/settings`.
+pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> String {
     let feed = match app.store.feed_token(login).ok().flatten() {
         Some(t) => format!(
             "<p>Add this link to a feed reader. It is private: anyone with it reads what you watch, and the advisories and releases of your package set.</p>\
@@ -1962,8 +1967,7 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
         None => "<form method=\"post\" action=\"/me/feed\"><button class=\"btn btn-sm\" type=\"submit\">Make a feed link</button></form>"
             .into(),
     };
-    let _ = write!(
-        out,
+    format!(
         "<div id=\"feed\">{}</div>",
         crate::ui::section(
             &format!("{} Atom feed", icon(octicon!("rss"))),
@@ -1971,8 +1975,7 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
             None,
             &format!("<div class=\"Box-row\">{feed}</div>")
         )
-    );
-    page.body(out).render(&app, viewer.as_deref())
+    )
 }
 
 pub(crate) struct Event {
