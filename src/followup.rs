@@ -383,7 +383,7 @@ pub(crate) fn events<'a>(
             continue;
         }
         if let st @ Status::Due { deadline, .. } = status(pr, &plan, plans.committer, now) {
-            let text = sentence(pr, &plan, &st, now);
+            let text = sentence(pr, &plan, &st, deadline);
             let text = text.trim_end_matches('.');
             push(
                 deadline,
@@ -536,7 +536,7 @@ pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) 
         format!(
             "<form method=\"post\" action=\"/me/followup\" class=\"mt-1\">\
              <input type=\"hidden\" name=\"number\" value=\"{}\"><input type=\"hidden\" name=\"reset\" value=\"1\">\
-             <button class=\"btn-link f6\" type=\"submit\">Use my default</button></form>",
+             <button class=\"btn btn-sm\" type=\"submit\">Use my default</button></form>",
             pr.number
         )
     } else {
@@ -1040,7 +1040,7 @@ pub(crate) mod tests {
         assert_eq!(ids(&list(&p, after)), ["mine-1-due-2026-10-23"]);
         assert_eq!(
             list(&p, after)[0].title,
-            "No review in 12 days. You can merge it yourself: #1 change 1"
+            "No review in 8 days. You can merge it yourself: #1 change 1"
         );
         assert!(list(&p, now()).is_empty());
         let r = by(&p, "bob", "COMMENTED", now() + Duration::days(2), 7);
