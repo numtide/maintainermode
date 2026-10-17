@@ -32,7 +32,7 @@ use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 const READ_AT: &str = "inbox_read_at";
 const KINDS: &str = "notify_kinds";
-const EMAIL: &str = "digest_email";
+pub(crate) const EMAIL: &str = "digest_email";
 const DIGEST_AT: &str = "digest_at";
 const TEST_AT: &str = "test_mail_at";
 /// The address the person confirmed; the digest goes only to an address

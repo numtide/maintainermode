@@ -350,11 +350,18 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '<feed xmlns=\"http://www.w3.org/2005/Atom\">' /tmp/feed.xml && grep -q '<id>http://' /tmp/feed.xml && grep -q '<updated>' /tmp/feed.xml")
     form("/me/upload-token", "/tmp/f-upload", code=200)
     machine.succeed("grep -o 'value=\"[0-9a-f]\\{64\\}\" aria-label=\"upload token\"' /tmp/f-upload | cut -d'\"' -f2 > /tmp/upload.token && test -s /tmp/upload.token")
+    # email needs SMTP, which the VM does not have, so root stores the address
+    machine.succeed(
+        f"sqlite3 -cmd '.timeout 5000' {db} "
+        "\"INSERT OR REPLACE INTO setting (login, key, value) VALUES ('alice', 'digest_email', 'vm-mail@example.org')\""
+        f" && sqlite3 -cmd '.timeout 5000' {db} \"SELECT value FROM setting WHERE login = 'alice' AND key = 'digest_email'\" > /tmp/mail && grep -qx vm-mail@example.org /tmp/mail"
+        f" && chown --reference={db} {db}-wal {db}-shm"
+    )
     # a public page, fetched with no cookie, shows nothing private
     machine.succeed(f"curl -sf -D /tmp/pub.h -o /tmp/pub {base}/u/alice && curl -sf -o /tmp/pub.json {base}/api/v1/people/alice")
     machine.fail("grep -qi '^cache-control: private' /tmp/pub.h")
     machine.fail("grep -q 'menu-login' /tmp/pub")
-    for secret in ["vm-watched", "vm-tag", "vm-dummy-token", "vm-session", "$(cut -d/ -f3 /tmp/feed.path)", "$(cat /tmp/upload.token)"]:
+    for secret in ["vm-watched", "vm-tag", "vm-mail@example.org", "vm-dummy-token", "vm-session", "$(cut -d/ -f3 /tmp/feed.path)", "$(cat /tmp/upload.token)"]:
         machine.fail(f"grep -q -e \"{secret}\" /tmp/pub /tmp/pub.json")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App 1 syncs first' /tmp/log")
     # the key parsed and the JWT was signed; only the request found no network
