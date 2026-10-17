@@ -104,6 +104,11 @@ impl Store {
                UNIQUE (login, reference, output)
              );
              CREATE TABLE IF NOT EXISTS rescan_run (login TEXT NOT NULL, at TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS unsubscribe (
+               hash TEXT PRIMARY KEY,
+               login TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -840,5 +845,52 @@ impl Store {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         Ok((n as usize, failing as usize, time_of(last)))
+    }
+}
+
+impl Store {
+    /// Logins whose setting `key` is not empty, with its value.
+    pub fn settings_with(&self, key: &str) -> Result<Vec<(String, String)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT login, value FROM setting WHERE key = ?1 AND value != '' ORDER BY login",
+        )?;
+        let rows = stmt.query_map([key], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Each email carries its own unsubscribe token; only its hash is kept.
+    pub fn add_unsubscribe(&self, login: &str, hash: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO unsubscribe (hash, login, created_at) VALUES (?1, ?2, ?3)",
+            params![hash, login, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn unsubscribe_login(&self, hash: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                "SELECT login FROM unsubscribe WHERE hash = ?1",
+                [hash],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    pub fn delete_unsubscribes(&self, login: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM unsubscribe WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    pub fn purge_unsubscribes(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "DELETE FROM unsubscribe WHERE created_at < ?1",
+            [before.to_rfc3339()],
+        )?)
     }
 }

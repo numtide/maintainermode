@@ -86,6 +86,8 @@ pub struct App {
     /// Server-side flake rescans; None while they are off.
     pub rescan: Option<crate::rescan::Config>,
     pub inbox: crate::notify::Counts,
+    /// The SMTP server of the email digest; None while email is off.
+    pub smtp: Option<crate::notify::Smtp>,
 }
 
 impl App {

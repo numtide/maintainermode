@@ -3,7 +3,7 @@
 //! pull request rows offer a Claude Code session.
 
 use axum::Router;
-use axum::extract::{Form, Path, State};
+use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -88,7 +88,16 @@ fn mcp_box(app: &App, login: &str) -> String {
     )
 }
 
-async fn settings_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct SettingsQuery {
+    mail: Option<String>,
+}
+
+async fn settings_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<SettingsQuery>,
+) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
@@ -113,7 +122,11 @@ async fn settings_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     if on {
         out.push_str(&mcp_box(&app, &login));
     }
-    out.push_str(&crate::notify::settings_box(&app, &login));
+    out.push_str(&crate::notify::settings_box(
+        &app,
+        &login,
+        q.mail.as_deref(),
+    ));
     page(&app, Some(&login), "", &out).into_response()
 }
 
