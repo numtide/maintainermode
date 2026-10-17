@@ -522,13 +522,16 @@ impl Flags {
         out.join(" · ")
     }
 
+    /// badges() puts the upstream badge last.
     pub(crate) fn html(&self) -> String {
-        let meta = self.meta();
         let mut out = self.badges();
+        let upstream = self.upstream.as_ref().and_then(|_| out.pop());
+        let meta = self.meta();
         if !meta.is_empty() {
             out.push(format!("<span class=\"f6 color-fg-muted\">{meta}</span>"));
         }
-        out.join(" ")
+        out.extend(upstream);
+        out.join(" · ")
     }
 
     pub(crate) fn json(&self) -> Value {
