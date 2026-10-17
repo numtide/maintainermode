@@ -31,12 +31,27 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-        in
-        rec {
           maintainer-mode = pkgs.callPackage ./package.nix {
             evaluator = iets.packages.${system}.classic or null;
           };
+        in
+        {
+          inherit maintainer-mode;
           default = maintainer-mode;
+        }
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          ux-audit = pkgs.callPackage ./nix/ux-audit.nix { inherit maintainer-mode; };
+        }
+      );
+
+      apps = forAll (
+        system:
+        nixpkgs.lib.optionalAttrs nixpkgs.legacyPackages.${system}.stdenv.hostPlatform.isLinux {
+          ux-audit = {
+            type = "app";
+            program = nixpkgs.lib.getExe self.packages.${system}.ux-audit;
+            meta.description = "Screenshot and check every page of Maintainer Mode";
+          };
         }
       );
 
@@ -58,6 +73,9 @@
               pkgs.pkg-config
               pkgs.jq
               (treefmtFor system).config.build.wrapper
+            ]
+            ++ nixpkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+              (pkgs.callPackage ./nix/ux-audit.nix { })
             ];
           };
         }
