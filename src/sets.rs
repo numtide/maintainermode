@@ -403,7 +403,7 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
 fn usage(base: &str) -> String {
     format!(
         "maintainer-mode scan --flake . --output nixosConfigurations.HOST.config.system.build.toplevel\n\
-         maintainer-mode export --out report.json\n\
+         maintainer-mode --server {base} export --out report.json\n\
          maintainer-mode submit --to {base} --token-file ~/.config/maintainer-mode/upload-token"
     )
 }
@@ -461,6 +461,13 @@ async fn delete_set(State(app): State<Shared>, headers: HeaderMap) -> Response {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn the_usage_names_the_server_for_export_and_submit() {
+        let u = usage("https://example.org");
+        assert!(u.contains("--server https://example.org export"));
+        assert!(u.contains("submit --to https://example.org"));
+    }
 
     #[test]
     fn a_token_hash_is_sha256_hex() {

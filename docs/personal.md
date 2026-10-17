@@ -181,7 +181,7 @@ evaluates it. Three client commands do the work:
 
 ```sh
 maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
-maintainer-mode export --out report.json
+maintainer-mode --server https://<host> export --out report.json
 maintainer-mode submit --to https://<host> --token-file ~/.config/maintainer-mode/upload-token
 ```
 
