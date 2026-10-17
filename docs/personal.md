@@ -309,16 +309,16 @@ The tab **Ready to merge** of `/review` shows what waits for a person with merge
 
 **The sections.**
 
-| Section                  | What it shows                                                                                                                             |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| In your areas            | only for a committer who signed in: the ready-to-merge queue in your areas and in what you watch. Only you see it.                        |
-| Ready to merge           | the ready-to-merge queue, 50 rows on each page. Authors with more review credit come first.                                               |
-| Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes |
-| Security fixes           | the label `1.severity: security`, and ready                                                                                               |
-| Backports                | a `release-*` base branch, and ready                                                                                                      |
-| Waiting longest          | ready, oldest approval first                                                                                                              |
+| Section                  | What it shows                                                                                                                                 |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| In your areas            | only for a committer who signed in: the ready-to-merge queue in your areas and in what you watch, 5 rows. Only you see it. Its id is `yours`. |
+| Ready to merge           | the ready-to-merge queue: 20 rows on the first page, then 50 on each page. Authors with more review credit come first.                        |
+| Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes     |
+| Security fixes           | the label `1.severity: security`, and ready                                                                                                   |
+| Backports                | a `release-*` base branch, and ready                                                                                                          |
+| Waiting longest          | ready, oldest approval first                                                                                                                  |
 
-In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first. They show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
+In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first. They and **In your areas** show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
