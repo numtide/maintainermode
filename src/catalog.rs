@@ -105,7 +105,7 @@ fn valid_path(p: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_./+".contains(c))
 }
 
-fn valid_login(l: &str) -> bool {
+pub(crate) fn valid_login(l: &str) -> bool {
     !l.is_empty() && l.len() <= 39 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
