@@ -141,6 +141,16 @@ impl Store {
                PRIMARY KEY (session, key)
              );",
         )?;
+        let versions: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('package_set') WHERE name = 'versions'",
+            [],
+            |r| r.get(0),
+        )?;
+        if versions == 0 {
+            conn.execute_batch(
+                "ALTER TABLE package_set ADD COLUMN versions TEXT NOT NULL DEFAULT '{}'",
+            )?;
+        }
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -562,6 +572,9 @@ pub struct PackageSet {
     pub uploaded_at: DateTime<Utc>,
     pub scanned_at: Option<String>,
     pub nixpkgs_rev: Option<String>,
+    /// attribute → the version the report gave, only where nixpkgs had
+    /// that exact version at upload.
+    pub versions: std::collections::BTreeMap<String, String>,
 }
 
 impl Store {
@@ -607,18 +620,19 @@ impl Store {
     pub fn put_package_set(&self, login: &str, set: &PackageSet) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
              ON CONFLICT(login) DO UPDATE SET attrs = excluded.attrs, dropped = excluded.dropped,
                uploaded_at = excluded.uploaded_at, scanned_at = excluded.scanned_at,
-               nixpkgs_rev = excluded.nixpkgs_rev",
+               nixpkgs_rev = excluded.nixpkgs_rev, versions = excluded.versions",
             params![
                 login,
                 serde_json::to_string(&set.attrs)?,
                 set.dropped as i64,
                 set.uploaded_at.to_rfc3339(),
                 set.scanned_at,
-                set.nixpkgs_rev
+                set.nixpkgs_rev,
+                serde_json::to_string(&set.versions)?
             ],
         )?;
         Ok(())
@@ -628,7 +642,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let row = conn
             .query_row(
-                "SELECT attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev FROM package_set WHERE login = ?1",
+                "SELECT attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions FROM package_set WHERE login = ?1",
                 [login],
                 |r| {
                     Ok((
@@ -637,11 +651,12 @@ impl Store {
                         r.get::<_, String>(2)?,
                         r.get::<_, Option<String>>(3)?,
                         r.get::<_, Option<String>>(4)?,
+                        r.get::<_, String>(5)?,
                     ))
                 },
             )
             .optional()?;
-        let Some((attrs, dropped, uploaded, scanned_at, nixpkgs_rev)) = row else {
+        let Some((attrs, dropped, uploaded, scanned_at, nixpkgs_rev, versions)) = row else {
             return Ok(None);
         };
         Ok(Some(PackageSet {
@@ -650,6 +665,7 @@ impl Store {
             uploaded_at: DateTime::parse_from_rfc3339(&uploaded)?.with_timezone(&Utc),
             scanned_at,
             nixpkgs_rev,
+            versions: serde_json::from_str(&versions).unwrap_or_default(),
         }))
     }
 

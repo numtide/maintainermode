@@ -579,6 +579,7 @@ fn accept(
         uploaded_at: now,
         scanned_at: Some(now.to_rfc3339()),
         nixpkgs_rev: report.source.nixpkgs_rev,
+        versions: Default::default(),
     })
 }
 
@@ -1072,6 +1073,7 @@ mod tests {
             uploaded_at: Utc::now(),
             scanned_at: None,
             nixpkgs_rev: None,
+            versions: Default::default(),
         };
         s.finish_flake_ref(due[0].id, Ok(&set)).unwrap();
         s.finish_flake_ref(due[1].id, Err("no flake.lock")).unwrap();
@@ -1104,6 +1106,7 @@ mod tests {
             uploaded_at: Utc::now() + chrono::Duration::hours(2),
             scanned_at: None,
             nixpkgs_rev: None,
+            versions: Default::default(),
         };
         s.finish_flake_ref(id, Ok(&set)).unwrap();
         let after_visit = Utc::now() + chrono::Duration::hours(1);
