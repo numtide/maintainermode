@@ -21,6 +21,7 @@ mod mcp;
 mod me;
 mod metrics;
 mod model;
+mod nixpkgs;
 mod notify;
 mod osv;
 mod progress;

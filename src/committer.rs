@@ -370,7 +370,7 @@ pub(crate) fn ready_tab(
     let mut out = format!(
         "<p class=\"f6\">Maintainer Mode never merges. Each row links to GitHub, and you decide. \
          Read <a href=\"{GUIDE}#how-to-merge-pull-requests-yourself\">how nixpkgs merges</a>. \
-         <a href=\"/rules\">The rules</a> of this site only decide which pull requests are in the queues.</p>"
+         <a href=\"/state?tab=rules\">The rules</a> of this site only decide which pull requests are in the queues.</p>"
     );
     match viewer.filter(|v| s.committers.is(v)) {
         Some(login) if first => {

@@ -43,7 +43,7 @@ tables and their sync do not change.
 | `failed` | numbers whose fetch failed at the smallest size, with the error                                                 |
 | `meta`   | the cursors, the watermarks and the counters                                                                    |
 
-The counters (items, bytes) change with each write, so `/sync` does not
+The counters (items, bytes) change with each write, so `/state?tab=status` does not
 scan the table.
 
 ## The walk
@@ -68,7 +68,7 @@ The budget is a fixed number of items per repository per pass
 (`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses only the
 GitHub App token and the sync token of the server, through
 `github::Client`. It never uses the tokens that people lend when they sign
-in. With neither server token, the walk does not run, and `/sync` says so.
+in. With neither server token, the walk does not run, and `/state?tab=status` says so.
 It stops for the pass when the token has less than 1000 points left, so
 the sync keeps its budget.
 
@@ -78,7 +78,7 @@ A query asks for 10 items. GitHub answers 502 after 10 seconds, so a
 failed query is asked again with 5 items, then with 1 item and smaller
 first pages. An item that fails at the smallest size is due again one day
 later. The `failed` table keeps it, with the error, until a fetch
-succeeds. `/sync` shows the count of failed items. The walk is complete
+succeeds. `/state?tab=status` shows the count of failed items. The walk is complete
 only when every number up to the highest has a row. A failed item keeps the
 walk from completion.
 
@@ -91,12 +91,12 @@ that looks complete.
 - `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored JSON, or 404.
   The endpoint has no authentication, so the archive keeps public
   repositories only. Each listing asks GitHub for `isPrivate`. For a private
-  repository, the walk stops, `/sync` shows the error, and the endpoint
+  repository, the walk stops, `/state?tab=status` shows the error, and the endpoint
   answers 404.
 - `maintainer-mode archive export --repo NixOS/nixpkgs --out <dir>` writes
   `<dir>/NixOS/nixpkgs/NNNNNNN.ndjson.zst`: one file per 10 000 numbers,
   one JSON line per item.
-- `/sync` shows, for each repository: the items and the bytes stored, the
+- `/state?tab=status` shows, for each repository: the items and the bytes stored, the
   oldest number reached, the percent of the repository, and the time left
   at the current pace. The pace is the drop of the numbers left (the
   highest number less the numbers stored) over the last 6 to 12 hours. A
@@ -137,7 +137,7 @@ plan uses 10 kB of JSON and 3.5 kB after zstd for each item.
 | archive file (zstd per item, SQLite) | 2 to 3 GB                  |
 | export (zstd over 10 000 items)      | less than the archive file |
 
-The sample is small. A single busy item can be 60 kB or more. `/sync`
+The sample is small. A single busy item can be 60 kB or more. `/state?tab=status`
 shows the real bytes when the walk runs, and this table must then be
 updated.
 

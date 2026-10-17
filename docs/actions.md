@@ -84,7 +84,7 @@ JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
 | `queue_merge`  | the ready-to-merge queue, the first 50 or `limit`                             |
 | `queue_review` | the review queue: `bucket` is `mine` (default, your area), `unowned` or `all` |
 | `watching`     | your subscriptions, with their health flags                                   |
-| `sync_status`  | the data of `/sync`                                                           |
+| `sync_status`  | the data of `/state?tab=status`                                               |
 
 | Code | Meaning                                                       |
 | ---- | ------------------------------------------------------------- |

@@ -86,22 +86,22 @@ Read its own guides first:
   list. It never ranks people. See [the rules](docs/rules.md).
 - **Your data stays yours.** Subscriptions, uploads and settings show only to
   you, and never in a public number.
-- **Open about its state.** [/sync](https://maintainermode.org/sync) shows what
+- **Open about its state.** [Data status](https://maintainermode.org/state?tab=status) shows what
   the server has read and how fresh it is.
 
 ## Documentation
 
-| Page                                     | What it covers                                          |
-| ---------------------------------------- | ------------------------------------------------------- |
-| [docs/rules.md](docs/rules.md)           | review credit, routing, the state of nixpkgs (`/rules`) |
-| [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels       |
-| [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set           |
-| [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                 |
-| [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive        |
-| [docs/operations.md](docs/operations.md) | run it, its variables, what we took                     |
-| [docs/events.md](docs/events.md)         | the plan of the event log                               |
-| [docs/ingest.md](docs/ingest.md)         | the plan of the archive                                 |
-| [docs/rescan.md](docs/rescan.md)         | server rescans of flakes, and their threat model        |
+| Page                                     | What it covers                                                    |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| [docs/rules.md](docs/rules.md)           | review credit, routing, the state of nixpkgs (`/state?tab=rules`) |
+| [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels                 |
+| [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set                     |
+| [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                           |
+| [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive                  |
+| [docs/operations.md](docs/operations.md) | run it, its variables, what we took                               |
+| [docs/events.md](docs/events.md)         | the plan of the event log                                         |
+| [docs/ingest.md](docs/ingest.md)         | the plan of the archive                                           |
+| [docs/rescan.md](docs/rescan.md)         | server rescans of flakes, and their threat model                  |
 
 ## Run it
 
