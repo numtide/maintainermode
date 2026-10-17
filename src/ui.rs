@@ -442,7 +442,6 @@ pub(crate) fn item_row(
 
 /// `href` already holds its query string, or none; `after` is the cursor of
 /// the next page.
-#[allow(dead_code)]
 pub(crate) fn pager(href: &str, after: Option<&str>) -> String {
     let Some(after) = after else {
         return String::new();

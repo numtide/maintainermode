@@ -969,16 +969,16 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">In Maintainer Mode</h2></div>",
     );
     let queue = match p.queue {
-        "merge" => "<a href=\"/merge\">Ready to merge</a>".to_string(),
+        "merge" => "<a href=\"/review?tab=ready\">Ready to merge</a>".to_string(),
         "review" => {
             let mut buckets = Vec::new();
             if for_you {
-                buckets.push("<a href=\"/review?bucket=foryou\">for you</a>");
+                buckets.push("<a href=\"/review?tab=foryou\">for you</a>");
             }
             if p.unowned {
-                buckets.push("<a href=\"/review?bucket=unowned\">unowned</a>");
+                buckets.push("<a href=\"/review?tab=unowned\">no maintainer</a>");
             }
-            buckets.push("<a href=\"/review?bucket=all\">all</a>");
+            buckets.push("<a href=\"/review?tab=all\">all</a>");
             format!("Needs review: {}", buckets.join(", "))
         }
         _ => "<span class=\"color-fg-muted\">in no queue</span>".to_string(),

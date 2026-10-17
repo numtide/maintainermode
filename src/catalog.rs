@@ -1541,11 +1541,11 @@ async fn browse(
             let _ = write!(
                 out,
                 "<p><a href=\"/u/{0}/maintains\">What you maintain</a> · <a href=\"/watch\">What you watch</a> · \
-                 <a href=\"/bumps?filter=mine\">Version bumps</a></p>",
+                 <a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>",
                 esc(v)
             );
         }
-        None => out.push_str("<p><a href=\"/bumps\">Version bumps</a></p>"),
+        None => out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>"),
     }
     if q.is_empty() {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();

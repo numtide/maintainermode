@@ -69,13 +69,13 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     out.push_str(&search_box());
     let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).collect();
     out.push_str(&section(
-        "Pull requests that need a first review",
-        Some(("/review?bucket=unowned", "all of them")),
+        "Pull requests with no maintainer",
+        Some(("/review?tab=unowned", "all of them")),
         &if first.is_empty() {
             empty("None right now.")
         } else {
             format!(
-                "<div class=\"Box-row f6 color-fg-muted\">No maintainer covers their files, so a newcomer review helps most here. \
+                "<div class=\"Box-row f6 color-fg-muted\">No maintainer covers their files, so your review helps most here. \
                  Read <a href=\"{}#how-to-review-pull-requests\">how nixpkgs reviews</a> first.</div>{}",
                 crate::web::CONTRIBUTING,
                 entry_rows(&first)
@@ -213,9 +213,9 @@ fn dashboard(app: &App, login: &str) -> String {
     let review = crate::web::review_bucket(&s, Some(login), &watched, "foryou");
     out.push_str(&section(
         &format!("{} Pull requests for you to review", icon(octicon!("eye"))),
-        Some(("/review?bucket=foryou", "the whole queue")),
+        Some(("/review?tab=foryou", "the whole queue")),
         &if review.is_empty() {
-            empty("No open pull request touches what you maintain or watch. The <a href=\"/review?bucket=unowned\">unowned ones</a> need reviews too.")
+            empty("No open pull request touches what you maintain or watch. The pull requests with <a href=\"/review?tab=unowned\">no maintainer</a> need reviews too.")
         } else {
             entry_rows(&review)
         },
@@ -279,10 +279,10 @@ fn dashboard(app: &App, login: &str) -> String {
     if s.committers.is(login) {
         out.push_str(&section(
             &format!("{} You can merge", icon(octicon!("git-merge"))),
-            Some(("/committer", "the committer view")),
+            Some(("/review?tab=ready", "Ready to merge")),
             &format!(
                 "<div class=\"Box-row\">{} pull requests are ready to merge. \
-                 <a href=\"/committer\">See them</a>, yours and your areas first.</div>",
+                 <a href=\"/review?tab=ready\">See them</a>, your areas first.</div>",
                 s.queues.merge.len()
             ),
         ));

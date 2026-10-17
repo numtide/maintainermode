@@ -5,7 +5,6 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
 use axum::http::HeaderMap;
-use axum::response::Response;
 use axum::routing::get;
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -19,16 +18,13 @@ use crate::catalog::{Subject, pr_row, subscriptions, upstream};
 use crate::health::Health;
 use crate::links::pkg_key;
 use crate::model::Pr;
-use crate::ui::{Kind, Page, Section, Tab, Tone, badge, empty, item_row, section};
-use crate::web::{App, Shared, Snapshot, ago, esc, octicon};
+use crate::ui::{Kind, Tone, badge, empty, item_row, pager, section};
+use crate::web::{App, Shared, Snapshot, ago, esc};
 
-const LIST: usize = 200;
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
 
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/bumps", get(bumps_page))
-        .route("/api/v1/bumps", get(api_bumps))
+    Router::new().route("/api/v1/bumps", get(api_bumps))
 }
 
 #[derive(Debug, PartialEq)]
@@ -237,37 +233,50 @@ struct Filter {
     filter: Option<String>,
 }
 
-async fn bumps_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<Filter>,
-) -> Response {
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let only_mine = viewer.is_some() && q.filter.as_deref() == Some("mine");
-    let mut page = Page::new(Section::Review, "Version bumps")
-        .icon(octicon!("versions"))
-        .sub(format!(
-            "Open pull requests titled <code>name: old -&gt; new</code>, most of them from r-ryantm, the oldest first. \
-             Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>."
-        ));
-    let index = app.index.read().unwrap();
-    let mut rows = open(&s, &index, &h);
-    if let (true, Some(v)) = (only_mine, viewer.as_deref()) {
-        rows = mine(&app, &index, v, rows);
-    }
-    if viewer.is_some() {
-        page = page.subnav(vec![
-            Tab::new("/bumps?filter=all", "All", !only_mine),
-            Tab::new(
-                "/bumps?filter=mine",
-                "What you maintain or watch",
-                only_mine,
-            ),
-        ]);
+/// The Bumps tab of `/review`. `rows` are all open bumps; `only_mine` keeps
+/// what the viewer maintains or watches.
+pub(crate) fn tab(
+    app: &App,
+    index: &Index,
+    viewer: Option<&str>,
+    mut rows: Vec<Row>,
+    only_mine: bool,
+    after: Option<u64>,
+) -> String {
+    let only_mine = only_mine && viewer.is_some();
+    if let (true, Some(v)) = (only_mine, viewer) {
+        rows = mine(app, index, v, rows);
     }
     let mut out = format!(
+        "<p>Open pull requests with a title like <code>name: old -&gt; new</code>. Most come from r-ryantm. Oldest first. \
+         Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>.</p>"
+    );
+    let href = if only_mine {
+        "/review?tab=bumps&filter=mine"
+    } else {
+        "/review?tab=bumps"
+    };
+    if viewer.is_some() {
+        let link = |on: bool, href: &str, label: &str| {
+            if on {
+                format!("<strong>{label}</strong>")
+            } else {
+                format!("<a href=\"{}\">{label}</a>", esc(href))
+            }
+        };
+        let _ = write!(
+            out,
+            "<p class=\"f6\">Show: {} · {}</p>",
+            link(!only_mine, "/review?tab=bumps", "all"),
+            link(
+                only_mine,
+                "/review?tab=bumps&filter=mine",
+                "what you maintain or watch"
+            )
+        );
+    }
+    let _ = write!(
+        out,
         "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"/api/v1/bumps\">JSON</a></p>",
         rows.len(),
         median_age_days(&rows, Utc::now())
@@ -276,22 +285,17 @@ async fn bumps_page(
     );
     if rows.is_empty() {
         out.push_str("<div class=\"blankslate\"><p>No open version bump.</p></div>");
-        return page.body(out).render(&app, viewer.as_deref());
+        return out;
     }
-    let act = Act::of(&app, viewer.as_deref());
+    let (page, next) = crate::review::paged(&rows, after, |r| r.pr.number);
+    let act = Act::of(app, viewer);
     out.push_str("<div class=\"Box\">");
-    for r in rows.iter().take(LIST) {
+    for r in page {
         out.push_str(&row_html(r, act));
     }
-    if rows.len() > LIST {
-        let _ = write!(
-            out,
-            "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
-            rows.len() - LIST
-        );
-    }
     out.push_str("</div>");
-    page.body(out).render(&app, viewer.as_deref())
+    out.push_str(&pager(href, next.as_deref()));
+    out
 }
 
 fn row_json(r: &Row) -> Value {
@@ -361,7 +365,7 @@ pub(crate) fn package_section(
     section(
         "Version bumps",
         Some(list.len()),
-        Some(("/bumps", "all open bumps")),
+        Some(("/review?tab=bumps", "all open bumps")),
         &body,
     )
 }

@@ -18,7 +18,7 @@ use crate::ledger::{self, Dropped, Ledger, Trigger};
 use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
-use crate::ui::{Page, Section, Tab};
+use crate::ui::{Page, Section};
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
@@ -198,9 +198,8 @@ pub(crate) type Shared = Arc<App>;
 
 pub fn router(app: Shared) -> Router {
     Router::new()
-        .route("/merge", get(merge_page))
         .merge(crate::home::routes())
-        .route("/review", get(review_page))
+        .merge(crate::review::routes())
         .route("/record", get(record_page))
         .route("/rules", get(rules_page))
         .route("/u/:login", get(person_page))
@@ -330,19 +329,17 @@ fn people(logins: &[String]) -> String {
         .join(", ")
 }
 
-pub(crate) fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) -> String {
+/// One `Box-row` per entry, to go in a [`crate::ui::section`].
+pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
     use crate::ui::{Kind, Tone, badge, item_row};
-    if entries.is_empty() {
-        return format!("<div class=\"blankslate\"><p>{empty}</p></div>");
-    }
-    let mut out = String::from("<div class=\"Box\">");
-    for e in entries.iter().take(200) {
+    let mut out = String::new();
+    for e in entries {
         let mut badges = Vec::new();
         if e.mergeable == "CONFLICTING" {
             badges.push(badge(Tone::Danger, "conflict"));
         }
         if e.unowned {
-            badges.push(badge(Tone::Attention, "unowned"));
+            badges.push(badge(Tone::Attention, "no maintainer"));
         }
         let mut meta = format!(
             "#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
@@ -355,7 +352,7 @@ pub(crate) fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) ->
             let _ = write!(meta, " · approved by {}", people(&e.approved_by));
         }
         if !e.credited_by.is_empty() {
-            let _ = write!(meta, " · moved by {}", people(&e.credited_by));
+            let _ = write!(meta, " · credited review by {}", people(&e.credited_by));
         }
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
@@ -370,42 +367,8 @@ pub(crate) fn rows(entries: &[&Entry], empty: &str, act: crate::actions::Act) ->
             ),
         ));
     }
-    if entries.len() > 200 {
-        let _ = write!(
-            out,
-            "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
-            entries.len() - 200
-        );
-    }
-    out.push_str("</div>");
     out
 }
-
-async fn merge_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let entries: Vec<&Entry> = s.queues.merge.iter().collect();
-    Page::new(Section::Review, "Ready to merge")
-        .icon(octicon!("git-merge"))
-        .sub(format!(
-            "Checks pass, no conflict, the current head is approved, and a review on it earned credit. \
-             Ordered by the author's credit, so people who review rise. Work it from the top. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a>"
-        ))
-        .body(rows(
-            &entries,
-            "Nothing is ready yet.",
-            crate::actions::Act::of(&app, viewer.as_deref()),
-        ))
-        .render(&app, viewer.as_deref())
-}
-
-#[derive(Deserialize)]
-struct ReviewQuery {
-    bucket: Option<String>,
-}
-
-pub(crate) const BUCKETS: [&str; 3] = ["foryou", "unowned", "all"];
 
 /// `mine` is the old name of `foryou`.
 pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
@@ -459,74 +422,6 @@ pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
     login
         .and_then(|l| app.store.watched(l).ok())
         .unwrap_or_default()
-}
-
-const HYGIENE: &str = "<div class=\"callout mb-3\"><strong>The newcomer path.</strong> No maintainer, team or ci/OWNERS line covers these files, so they rot. \
-A first review needs no domain knowledge: is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
-Are hashes fixed-output and pinned? Are <code>platforms</code> right? Does a CLI have <code>versionCheckHook</code>? \
-Leave the finding as an inline comment on the changed line. A review here earns full credit at any age.</div>";
-
-async fn review_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<ReviewQuery>,
-) -> Response {
-    let viewer = app.viewer(&headers);
-    let s = app.snap();
-    let bucket = match q.bucket.as_deref().and_then(bucket_name) {
-        Some("foryou") if viewer.is_none() => "unowned",
-        Some(b) => b,
-        None if viewer.is_some() => "foryou",
-        None => "unowned",
-    };
-    let watched = watched_of(&app, viewer.as_deref());
-    let mut entries = Vec::new();
-    let mut tabs = Vec::new();
-    for id in BUCKETS {
-        if id == "foryou" && viewer.is_none() {
-            continue;
-        }
-        let these = review_bucket(&s, viewer.as_deref(), &watched, id);
-        let label = match id {
-            "foryou" => "For you",
-            "unowned" => "Unowned",
-            _ => "All",
-        };
-        tabs.push(Tab::new(format!("/review?bucket={id}"), label, id == bucket).count(these.len()));
-        if id == bucket {
-            entries = these;
-        }
-    }
-    let intro = match bucket {
-        "foryou" => "<p>Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-            own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/watch\">watch</a>. Oldest first.</p>"
-            .to_string(),
-        "unowned" => HYGIENE.to_string(),
-        _ => "<p>Every listed pull request that is not ready to merge. Oldest first.</p>".to_string(),
-    };
-    let body = format!(
-        "{}{intro}{}",
-        viewer
-            .as_deref()
-            .map(|v| crate::progress::widget(&app, v))
-            .unwrap_or_default(),
-        rows(
-            &entries,
-            "Nothing here.",
-            crate::actions::Act::of(&app, viewer.as_deref())
-        )
-    );
-    Page::new(Section::Review, "Needs review")
-        .icon(octicon!("eye"))
-        .sub(format!(
-            "Credit comes when your review moves a pull request: the author pushes or replies, \
-             you comment on a changed line, or it merges within {} days. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>",
-            ledger::MOVE_DAYS
-        ))
-        .subnav(tabs)
-        .body(body)
-        .render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -844,7 +739,7 @@ async fn callback(
     let next = if crate::welcome::first_visit(&app, &login) {
         "/welcome"
     } else {
-        "/review?bucket=foryou"
+        "/review"
     };
     let bg = app.clone();
     let who = login.clone();
@@ -1144,8 +1039,9 @@ fn packages_section(app: &App) -> String {
             p.open_bumps,
             "open version bumps",
             &match p.bumps_median_age_days {
-                Some(d) => format!("median age {d} days; <a href=\"/bumps\">the list</a>"),
-                None => "<a href=\"/bumps\">the list</a>".into(),
+                Some(d) =>
+                    format!("median age {d} days; <a href=\"/review?tab=bumps\">the list</a>"),
+                None => "<a href=\"/review?tab=bumps\">the list</a>".into(),
             }
         ),
     );
