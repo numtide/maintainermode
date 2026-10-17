@@ -419,6 +419,7 @@ pub(crate) mod tests {
             archive: Vec::new(),
             rescan: None,
             inbox: Default::default(),
+            smtp: None,
         })
     }
 

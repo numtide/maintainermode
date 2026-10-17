@@ -41,6 +41,7 @@ let
     "flame"
     "circle"
     "inbox"
+    "mail"
   ];
 in
 runCommand "primer-assets" { } ''
