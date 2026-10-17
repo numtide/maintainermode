@@ -970,7 +970,7 @@ fn pct(v: Option<f64>) -> String {
 }
 
 fn table(head: &[&str], rows: &[Vec<String>]) -> String {
-    let mut out = String::from("<div class=\"markdown-body\"><table><thead><tr>");
+    let mut out = String::from("<div class=\"markdown-body\"><table class=\"numbers\"><thead><tr>");
     for h in head {
         let _ = write!(out, "<th>{h}</th>");
     }

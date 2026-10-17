@@ -23,7 +23,11 @@ html[data-color-mode][data-light-theme][data-dark-theme] {
   --button-primary-bgColor-rest: oklch(0.55 0.12 264);
   --button-primary-bgColor-hover: oklch(0.5 0.12 264);
   --button-primary-bgColor-active: oklch(0.45 0.09 264);
-  --focus-outlineColor: oklch(0.75 0.12 240);
+  /* at least 3:1 on white */
+  --focus-outlineColor: oklch(0.5 0.12 264);
+  --fontStack-monospace:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", monospace;
 }
 @media (prefers-color-scheme: dark) {
   html[data-color-mode][data-light-theme][data-dark-theme] {
@@ -36,6 +40,7 @@ html[data-color-mode][data-light-theme][data-dark-theme] {
     --fgColor-danger: oklch(0.75 0.12 16);
     --fgColor-done: oklch(0.75 0.12 288);
     --header-bgColor: oklch(0.25 0.05 264);
+    --focus-outlineColor: oklch(0.75 0.12 240);
   }
 }
 
@@ -189,20 +194,51 @@ a:hover {
 }
 .branch-name {
   padding: 0 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--fontStack-monospace);
   font-size: 12px;
   color: var(--fgColor-accent);
   background: var(--bgColor-accent-muted);
   border-radius: 6px;
 }
-.markdown-body {
+/* Prose stays narrow to read well; a table may use the full width and
+   scrolls inside its own border when it is wider. */
+.markdown-body > :not(table) {
   max-width: 860px;
 }
 .markdown-body table {
   border-collapse: collapse;
   margin: 16px 0;
   display: block;
+  width: max-content;
+  max-width: 100%;
   overflow-x: auto;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+}
+.markdown-body tr > :first-child {
+  border-left: 0;
+}
+.markdown-body tr > :last-child {
+  border-right: 0;
+}
+.markdown-body thead tr:first-child > *,
+.markdown-body tbody:first-child tr:first-child > * {
+  border-top: 0;
+}
+.markdown-body tbody tr:last-child > * {
+  border-bottom: 0;
+}
+.markdown-body .numbers td {
+  white-space: nowrap;
+}
+.markdown-body details {
+  margin-bottom: 16px;
+}
+.markdown-body summary {
+  cursor: pointer;
+}
+.Header :focus-visible {
+  outline-color: oklch(0.75 0.12 240);
 }
 .markdown-body th,
 .markdown-body td {
@@ -229,7 +265,7 @@ a:hover {
   margin: 0;
   padding: 8px 0;
   overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--fontStack-monospace);
   font-size: 12px;
   line-height: 20px;
 }
@@ -392,5 +428,23 @@ section.Box > .Box-header {
   }
   .UnderlineNav-body {
     gap: 4px;
+  }
+}
+.text-nowrap {
+  white-space: nowrap;
+}
+.Subhead-heading {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 543px) {
+  .Subhead-heading {
+    font-size: 20px;
+  }
+  .page-actions {
+    width: 100%;
+  }
+  .page-actions .btn {
+    flex: 1 1 auto;
+    text-align: center;
   }
 }

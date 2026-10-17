@@ -1505,7 +1505,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     let act = Act::of(&app, viewer.as_deref());
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
         .heading(format!(
-            "{} <span class=\"color-fg-muted\">#{n}</span>{}",
+            "{} <span class=\"text-nowrap\"><span class=\"color-fg-muted\">#{n}</span>{}</span>",
             esc(&pr.title),
             github_icon(n)
         ))
