@@ -44,13 +44,15 @@ An operator names the App with `MAINTAINER_MODE_GITHUB_APP_SLUG`, or the NixOS o
 
 When `/me/settings` opens, a check reads your setup with your own token. It only reads, and the page never shows the token. The check asks GitHub:
 
-| Step | Request                                            | OK when                                      |
-| ---- | -------------------------------------------------- | -------------------------------------------- |
-| 1    | `GET /repos/<repo>`                                | the workflow repository exists               |
-| 2    | `GET /repos/<repo>/contents/.github/workflows/...` | `review.yml` and `update.yml` exist          |
-| 3    | `GET /repos/<fork>`                                | your nixpkgs fork exists                     |
-| 4    | `GET /repos/<repo>/actions/workflows`              | the App is installed on the repository       |
-| 5    | none                                               | you saved the names; else the defaults apply |
+| Step | Request                                                                     | OK when                                            |
+| ---- | --------------------------------------------------------------------------- | -------------------------------------------------- |
+| 1    | `GET /repos/<repo>`                                                         | the workflow repository exists                     |
+| 2    | `GET /repos/<repo>/contents/.github/workflows/...`                          | `review.yml` and `update.yml` exist                |
+| 3    | `GET /repos/<fork>`                                                         | your nixpkgs fork exists                           |
+| 4    | `GET /user/installations`, then `GET /user/installations/<id>/repositories` | an installation of the App includes the repository |
+| 5    | none                                                                        | you saved the names; else the defaults apply       |
+
+Step 4 lists the installations of the App that your login token can see. It does not ask the Actions API: on a public repository, that API answers any token, with or without the App.
 
 Each line says OK, or what is missing and how to fix it. The check cannot read secrets, so step 3 always asks you to check `GH_TOKEN` yourself. When GitHub does not answer, the line says "Check again later" and blocks nothing.
 
