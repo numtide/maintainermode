@@ -431,6 +431,8 @@ pub(crate) struct Flags {
     pub(crate) open_issues: usize,
     /// Packages only.
     pub(crate) score: Option<Score>,
+    /// The last Hydra build failed, as far as a page view learned it.
+    pub(crate) build_failed: bool,
 }
 
 impl Flags {
@@ -464,6 +466,7 @@ impl Flags {
             open_prs: prs.iter().filter(|p| p.is_open()).count(),
             open_issues: issues.iter().filter(|i| i.is_open()).count(),
             score,
+            build_failed: false,
         }
     }
 
@@ -495,6 +498,12 @@ impl Flags {
                     self.advisories,
                     if self.advisories == 1 { "y" } else { "ies" }
                 ),
+            ));
+        }
+        if self.build_failed {
+            out.push(badge(
+                Tone::Danger,
+                &format!("{} build fails", icon(octicon!("x-circle-fill"))),
             ));
         }
         if let Some(u) = &self.upstream {
@@ -1523,40 +1532,96 @@ async fn area_page(
 #[derive(Deserialize)]
 struct Search {
     q: Option<String>,
+    filter: Option<String>,
+    after: Option<u64>,
 }
 
+/// Signed out, the catalog of nixpkgs. Signed in, a filter bar on top:
+/// what is yours, ranked, or all of nixpkgs.
 async fn browse(
     State(app): State<Shared>,
     headers: HeaderMap,
-    Query(q): Query<Search>,
+    Query(search): Query<Search>,
 ) -> Response {
+    use crate::mine::{Filter, Interests};
     let viewer = app.viewer(&headers);
-    let q = q.q.unwrap_or_default().trim().to_string();
+    let q = search.q.unwrap_or_default().trim().to_string();
+    let Some(login) = viewer else {
+        return match catalog_body(&app, &q, false) {
+            Ok(body) => Page::new(Section::Packages, "Packages, modules and directories")
+                .icon(octicon!("package"))
+                .sub(CATALOG_SUB)
+                .body(body)
+                .render(&app, None),
+            Err(r) => r.into_response(),
+        };
+    };
+    let filter = Filter::parse(search.filter.as_deref(), !q.is_empty());
+    let interests = Interests::of(&app, &login);
+    let all = {
+        let index = app.index.read().unwrap();
+        index.by_pname.len() + index.modules.len()
+    };
+    let (tabs, step) = crate::mine::bar(&interests, filter, all);
+    let page = Page::new(
+        Section::Packages,
+        format!(
+            "Packages: {}",
+            tabs.iter()
+                .find(|t| t.current)
+                .map_or("", |t| t.label.as_str())
+        ),
+    )
+    .heading("Packages")
+    .icon(octicon!("package"))
+    .subnav(tabs);
+    if filter == Filter::All {
+        return match catalog_body(&app, &q, true) {
+            Ok(body) => page
+                .sub(CATALOG_SUB)
+                .body(format!("{step}{body}"))
+                .render(&app, Some(&login)),
+            Err(r) => r.into_response(),
+        };
+    }
+    let v = crate::mine::view(&app, &login, &interests, filter, &q, search.after);
+    page.sub(v.sub)
+        .actions(v.actions)
+        .body(format!("{step}{}", v.body))
+        .render(&app, Some(&login))
+}
+
+const CATALOG_SUB: &str = "Each one has a page with its health, issues and pull requests. Watch the ones that are important to you.";
+
+/// The catalog: a search box, then the directories or the hits. A name
+/// that resolves, or `@login`, answers with a redirect.
+fn catalog_body(app: &crate::web::App, q: &str, signed_in: bool) -> Result<String, Redirect> {
     let s = app.snap();
     if let Some(login) = q.strip_prefix('@').filter(|l| valid_login(l)) {
-        return Redirect::to(&format!("/u/{login}")).into_response();
+        return Err(Redirect::to(&format!("/u/{login}")));
     }
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    if let Some(href) = exact(&s, &index, &q) {
-        return Redirect::to(&href).into_response();
+    if let Some(href) = exact(&s, &index, q) {
+        return Err(Redirect::to(&href));
     }
-    let page = Page::new(Section::Packages, "Packages, modules and directories")
-        .icon(octicon!("package"))
-        .sub("Each one has a page with its health, issues and pull requests. Watch the ones that are important to you.");
     let mut out = format!(
-        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">\
-         <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules, @login\" aria-label=\"search\" autofocus>\
+        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">{}\
+         <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules, @login\" aria-label=\"search\"{}>\
          <button class=\"btn\" type=\"submit\">{} Search</button></form>",
-        esc(&q),
+        if signed_in {
+            "<input type=\"hidden\" name=\"filter\" value=\"all\">"
+        } else {
+            ""
+        },
+        esc(q),
+        if signed_in { "" } else { " autofocus" },
         icon(octicon!("search"))
     );
-    match &viewer {
-        Some(_) => out.push_str(
-            "<p><a href=\"/me?tab=maintain\">What you maintain</a> · <a href=\"/me?tab=watch\">What you watch</a> · \
-             <a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>",
-        ),
-        None => out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>"),
+    if signed_in {
+        out.push_str("<p><a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>");
+    } else {
+        out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>");
     }
     if q.is_empty() {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();
@@ -1589,9 +1654,9 @@ async fn browse(
             })
             .collect();
         out.push_str(&crate::ui::section("Directories", None, None, &list));
-        return page.body(out).render(&app, viewer.as_deref());
+        return Ok(out);
     }
-    let rows: Vec<(Subject, Flags)> = search(&s, &index, &q)
+    let rows: Vec<(Subject, Flags)> = search(&s, &index, q)
         .into_iter()
         .map(|sub| {
             let f = Flags::of(&s, &index, &h, &sub);
@@ -1603,7 +1668,7 @@ async fn browse(
     } else {
         let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
     }
-    page.body(out).render(&app, viewer.as_deref())
+    Ok(out)
 }
 
 /// What a name resolves to first, then packages, modules and busy
@@ -1704,7 +1769,7 @@ pub(crate) fn maintained(index: &Index, login: &str) -> Maintained {
 }
 
 /// A small flag when a channel lags master, with both versions on hover.
-fn lag_label(ch: &Channels, attr: &str, master: &str) -> String {
+pub(crate) fn lag_label(ch: &Channels, attr: &str, master: &str) -> String {
     let behind = ch.behind(attr, master);
     if behind.is_empty() {
         return String::new();
@@ -1827,7 +1892,7 @@ async fn add_watch(
     }
     crate::notify::recount_one(&app, &login);
     let back = if f.name.is_some() {
-        "/me?tab=watch".to_string()
+        "/packages?filter=watch".to_string()
     } else {
         subject.href()
     };
@@ -1854,11 +1919,11 @@ async fn remove_watch(
             if headers
                 .get(header::REFERER)
                 .and_then(|r| r.to_str().ok())
-                .is_some_and(|r| !(r.ends_with("/me") || r.contains("/me?"))) =>
+                .is_some_and(|r| !r.contains("/packages")) =>
         {
             s.href()
         }
-        _ => "/me?tab=watch".into(),
+        _ => "/packages?filter=watch".into(),
     };
     Redirect::to(&back).into_response()
 }
@@ -1874,7 +1939,7 @@ async fn watch_maintained(State(app): State<Shared>, headers: HeaderMap) -> Resp
         }
     }
     crate::notify::recount_one(&app, &login);
-    Redirect::to("/me?tab=maintain").into_response()
+    Redirect::to("/packages?filter=maintain").into_response()
 }
 
 async fn new_feed(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -1894,109 +1959,6 @@ pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> 
         .iter()
         .filter_map(|k| Subject::parse(k))
         .collect()
-}
-
-/// The Watch tab of `/me`.
-pub(crate) fn watch_tab(app: &crate::web::App, login: &str) -> crate::me::TabBody {
-    let mut out = String::from(
-        "<form method=\"post\" action=\"/me/watch\" class=\"inline-form mb-3\">\
-         <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
-         <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>",
-    );
-    let subs = subscriptions(app, login);
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let mut rows: Vec<(Subject, Flags)> = subs
-        .into_iter()
-        .map(|sub| {
-            let f = Flags::of(&s, &index, &h, &sub);
-            (sub, f)
-        })
-        .collect();
-    rows.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
-    let list: String = rows
-        .iter()
-        .map(|(sub, f)| {
-            subject_row(
-                sub,
-                f,
-                "",
-                &format!(
-                    "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
-                     <button class=\"btn btn-sm\" type=\"submit\">Stop watching</button></form>",
-                    esc(&sub.key())
-                ),
-            )
-        })
-        .collect();
-    out.push_str(&crate::ui::section(
-        "What you watch",
-        Some(rows.len()),
-        None,
-        &if list.is_empty() {
-            empty(
-                "You watch nothing yet. To watch all you maintain in one step, open the <a href=\"/me?tab=maintain\">Maintain</a> tab.",
-            )
-        } else {
-            list
-        },
-    ));
-    crate::me::TabBody {
-        sub: "The packages, modules and directories you watch. Those that need attention come first. \
-              Their news reaches your inbox and your <a href=\"/me/settings#feed\">Atom feed</a>."
-            .into(),
-        actions: String::new(),
-        body: out,
-    }
-}
-
-/// The Maintain tab of `/me`: the list of the public page, with one button
-/// to watch all of it.
-pub(crate) fn maintain_tab(app: &crate::web::App, login: &str) -> crate::me::TabBody {
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let ch = app.channels.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let m = maintained(&index, login);
-    let watched: std::collections::HashSet<String> = app
-        .store
-        .watched(login)
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
-    let all = m.packages.iter().chain(&m.modules);
-    let missing = all.filter(|(sub, _)| !watched.contains(&sub.key())).count();
-    let actions = if missing > 0 {
-        format!(
-            "<form method=\"post\" action=\"/me/watch/maintained\" class=\"d-inline\">\
-             <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch all of them</button></form>",
-            icon(octicon!("bell"))
-        )
-    } else {
-        String::new()
-    };
-    let mut out = crate::ui::section(
-        &format!("{} Packages", icon(octicon!("package"))),
-        Some(m.packages.len()),
-        None,
-        &maintained_rows(&s, &index, &h, &ch, &m.packages),
-    );
-    out.push_str(&crate::ui::section(
-        &format!("{} NixOS modules", icon(octicon!("gear"))),
-        Some(m.modules.len()),
-        None,
-        &maintained_rows(&s, &index, &h, &ch, &m.modules),
-    ));
-    crate::me::TabBody {
-        sub: format!(
-            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name you. \
-             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{0}/maintains\">/u/{0}/maintains</a>.",
-            esc(login)
-        ),
-        actions,
-        body: out,
-    }
 }
 
 /// The `#feed` section of `/me/settings`.

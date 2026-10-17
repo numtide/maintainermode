@@ -1,5 +1,5 @@
 //! A person's private package set: the nixpkgs attributes of their latest
-//! uploaded report, and the packages they watch. Only the owner reads it.
+//! uploaded report and of their scanned flakes. Only the owner reads it.
 //! Nothing here feeds a public page, number or API.
 
 use axum::Json;
@@ -11,19 +11,16 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{Duration, Utc};
 use serde_json::json;
-use std::collections::BTreeMap;
-use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
-use crate::catalog::{Flags, Subject, subject_row};
+use crate::mine::MACHINES;
 use crate::report::{MAX_PACKAGES, PublicList, Upload};
 use crate::store::PackageSet;
-use crate::ui::{Page, Section, empty, section};
+use crate::ui::{Page, Section, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
-pub(crate) const MACHINES: &str = "/me?tab=machines";
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -143,14 +140,6 @@ pub fn set_attrs(app: &App, login: &str) -> Vec<String> {
     all.into_iter().collect()
 }
 
-/// Where a row of the panel comes from.
-#[derive(Default)]
-struct Origin {
-    uploaded: bool,
-    watched: bool,
-    flake: bool,
-}
-
 pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)?
@@ -234,65 +223,15 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         .into_response()
 }
 
-const NOTICE: &str = "<div class=\"callout mb-4\"><strong>What the server keeps, and why.</strong> \
-For your latest report, the server keeps the nixpkgs attributes that its index knows, the upload time, \
-the scan time and the nixpkgs revision. It drops all other names. It keeps the hash of your upload token, \
-not the token. Only this page and your private feed use this data. No public page, number or API reads it. \
-There is no admin view. The data expires 90 days after the last upload. For a public flake that you add below, \
-the server keeps the reference, the output, the attributes from the last good scan, and the reason of the last failure. \
-The server scans the flake only while you open this page at least once in 90 days. These attributes expire 90 days \
-after the last good scan or your last visit. The button below deletes your report and your flakes now.</div>";
-
-/// The My machines tab of `/me`. Opening it keeps the scanned flakes alive.
-pub(crate) fn machines_tab(app: &App, login: &str) -> crate::me::TabBody {
-    let _ = app.store.touch_flake_refs(login);
-    let set = app.store.package_set(login).ok().flatten();
-    let watched: Vec<String> = app
-        .store
-        .watched(login)
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|k| match Subject::parse(k) {
-            Some(Subject::Pkg(a)) => Some(a),
-            _ => None,
-        })
-        .collect();
-    let mut out = String::from(NOTICE);
-    let mut from: BTreeMap<String, Origin> = BTreeMap::new();
-    for a in set.iter().flat_map(|s| &s.attrs) {
-        from.entry(a.clone()).or_default().uploaded = true;
-    }
-    for a in &watched {
-        from.entry(a.clone()).or_default().watched = true;
-    }
-    for r in app.store.flake_refs(login).unwrap_or_default() {
-        for a in r.attrs {
-            from.entry(a).or_default().flake = true;
-        }
-    }
-    out.push_str(&summary(set.as_ref()));
-    out.push_str(&crate::rescan::panel(app, login));
-    out.push_str(&rows(app, &from));
-    crate::me::TabBody {
-        sub:
-            "The packages your machines run, from your latest report, and the packages you watch. \
-              New advisories and upstream releases for them reach your inbox and your Atom feed."
-                .into(),
-        actions: String::new(),
-        body: out,
-    }
-}
-
-fn summary(set: Option<&PackageSet>) -> String {
-    let Some(s) = set else {
-        return "<div class=\"Box mb-4\"><div class=\"Box-row color-fg-muted\">No report yet. \
-                Make an <a href=\"/me/settings#upload\">upload token</a>, then run <code>maintainer-mode scan</code> and \
-                <code>maintainer-mode submit</code> on your machine.</div></div>"
-            .into();
+/// The latest machine report: when it came, and a button that
+/// deletes it.
+pub(crate) fn summary(app: &App, login: &str) -> String {
+    let Some(s) = app.store.package_set(login).ok().flatten() else {
+        return String::new();
     };
     format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-row d-flex flex-items-center\"><div class=\"flex-auto\">\
-         {} attributes from the report uploaded {} ago, {} entries dropped. Scanned {}. nixpkgs {}. Expires {}.</div>\
+        "<div class=\"Box mb-3\"><div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\"><div class=\"flex-auto\">\
+         <strong>Latest report: uploaded {1} ago.</strong> {0} packages kept, {2} names dropped. Scanned {3}. nixpkgs {4}. Expires {5}.</div>\
          <form method=\"post\" action=\"/me/sets/delete\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Delete my report</button></form>\
          </div></div>",
         s.attrs.len(),
@@ -310,69 +249,6 @@ fn summary(set: Option<&PackageSet>) -> String {
             .unwrap_or("unknown")),
         (s.uploaded_at + Duration::days(RETENTION_DAYS)).format("%Y-%m-%d"),
     )
-}
-
-fn rows(app: &App, from: &BTreeMap<String, Origin>) -> String {
-    if from.is_empty() {
-        return String::new();
-    }
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let mut list: Vec<(Subject, Flags, &Origin)> = from
-        .iter()
-        .map(|(a, src)| {
-            let sub = Subject::Pkg(a.clone());
-            let f = Flags::of(&s, &index, &h, &sub);
-            (sub, f, src)
-        })
-        .collect();
-    list.sort_by_key(|(sub, f, _)| (f.rank(), sub.label()));
-    let (attention, rest): (Vec<_>, Vec<_>) = list
-        .iter()
-        .partition(|(_, f, _)| f.advisories > 0 || f.upstream.is_some() || f.risk() >= 15);
-    let row = |(sub, f, o): &&(Subject, Flags, &Origin)| {
-        let mut from = Vec::new();
-        if o.watched {
-            from.push("watched");
-        }
-        if o.uploaded {
-            from.push("in your report");
-        }
-        if o.flake {
-            from.push("in a scanned flake");
-        }
-        subject_row(
-            sub,
-            f,
-            &format!(
-                " <span class=\"f6 color-fg-muted\">{}</span>",
-                from.join(" · ")
-            ),
-            "",
-        )
-    };
-    let attention_rows: String = attention.iter().map(row).collect();
-    let mut out = section(
-        "Needs attention: an open advisory or a newer upstream release",
-        Some(attention.len()),
-        None,
-        &if attention_rows.is_empty() {
-            empty("Nothing.")
-        } else {
-            attention_rows
-        },
-    );
-    let _ = write!(
-        out,
-        "<details class=\"Box mb-4\"><summary class=\"Box-header\">The other packages <span class=\"Counter\">{}</span></summary>",
-        rest.len()
-    );
-    for r in &rest {
-        out.push_str(&row(r));
-    }
-    out.push_str("</details>");
-    out
 }
 
 /// The `#upload` section of `/me/settings`.
@@ -394,7 +270,7 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
             None,
             &format!(
                 "<div class=\"Box-row\"><p><code>maintainer-mode submit</code> sends the packages of your machines with this token. \
-                 They show in <a href=\"{MACHINES}\">My machines</a>.</p>{state}</div>"
+                 They show in <a href=\"{MACHINES}\">On my machines</a> on the packages page.</p>{state}</div>"
             )
         )
     )

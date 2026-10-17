@@ -1,4 +1,4 @@
-//! The personal menu points here. Everything under /me is private to the
+//! The settings page, and the old addresses of /me. Everything under /me is private to the
 //! person who signed in.
 
 use axum::Router;
@@ -15,11 +15,11 @@ use crate::web::{Shared, octicon};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
-        .route("/me", get(me_page))
+        .route("/me", get(old_me))
         .route("/me/settings", get(settings_page))
         .route(
             "/watch",
-            get(|| async { Redirect::permanent("/me?tab=watch") }),
+            get(|| async { Redirect::permanent("/packages?filter=watch") }),
         )
         .route(
             "/me/inbox",
@@ -27,15 +27,18 @@ pub fn routes() -> Router<Shared> {
         )
         .route(
             "/me/sets",
-            get(|| async { Redirect::permanent("/me?tab=machines") }),
+            get(|| async { Redirect::permanent(crate::mine::MACHINES) }),
         )
 }
 
 /// Every answer under /me and /inbox, a redirect or an error too, is for
-/// one person.
+/// one person. So is /packages with a session: its filters are private.
 pub async fn no_store(req: Request, next: Next) -> Response {
     let path = req.uri().path();
-    let private = path == "/me" || path.starts_with("/me/") || path == crate::notify::INBOX;
+    let private = path == "/me"
+        || path.starts_with("/me/")
+        || path == crate::notify::INBOX
+        || (path == "/packages" && crate::web::cookie(req.headers(), "session").is_some());
     let mut res = next.run(req).await;
     if private {
         res.headers_mut().insert(
@@ -101,95 +104,30 @@ async fn settings_page(
         .render(&app, Some(&login))
 }
 
-/// What one tab of `/me` adds to the page. `sub`, `actions` and `body` are
-/// HTML.
-pub(crate) struct TabBody {
-    pub sub: String,
-    pub actions: String,
-    pub body: String,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum MeTab {
-    Maintain,
-    Watch,
-    Machines,
-}
-
-impl MeTab {
-    const ALL: [MeTab; 3] = [MeTab::Maintain, MeTab::Watch, MeTab::Machines];
-
-    fn parse(s: Option<&str>) -> Option<MeTab> {
-        match s {
-            Some("maintain") => Some(MeTab::Maintain),
-            Some("watch") => Some(MeTab::Watch),
-            Some("machines") => Some(MeTab::Machines),
-            _ => None,
+/// `/me` and its old tabs: the inbox has its own page, the rest are
+/// filters of `/packages`.
+async fn old_me(uri: axum::http::Uri) -> Redirect {
+    let query = uri.query().unwrap_or_default();
+    let tab = query
+        .split('&')
+        .find_map(|p| p.strip_prefix("tab="))
+        .unwrap_or_default();
+    let to = match tab {
+        "inbox" => {
+            let keep: Vec<&str> = query
+                .split('&')
+                .filter(|p| p.starts_with("sub=") || p.starts_with("kind="))
+                .collect();
+            if keep.is_empty() {
+                crate::notify::INBOX.to_string()
+            } else {
+                format!("{}?{}", crate::notify::INBOX, keep.join("&"))
+            }
         }
-    }
-
-    fn key(self) -> &'static str {
-        match self {
-            MeTab::Maintain => "maintain",
-            MeTab::Watch => "watch",
-            MeTab::Machines => "machines",
-        }
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            MeTab::Maintain => "Maintain",
-            MeTab::Watch => "Watch",
-            MeTab::Machines => "My machines",
-        }
-    }
-}
-
-#[derive(Deserialize)]
-struct MeQuery {
-    tab: Option<String>,
-}
-
-async fn me_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<MeQuery>,
-    uri: axum::http::Uri,
-) -> Response {
-    let Some(tab) = MeTab::parse(q.tab.as_deref()) else {
-        let rest: Vec<&str> = uri
-            .query()
-            .unwrap_or_default()
-            .split('&')
-            .filter(|p| p.starts_with("sub=") || p.starts_with("kind="))
-            .collect();
-        let to = if rest.is_empty() {
-            crate::notify::INBOX.to_string()
-        } else {
-            format!("{}?{}", crate::notify::INBOX, rest.join("&"))
-        };
-        return Redirect::permanent(&to).into_response();
+        "maintain" | "watch" | "machines" => format!("/packages?filter={tab}"),
+        _ => "/packages?filter=mine".to_string(),
     };
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let t = match tab {
-        MeTab::Maintain => crate::catalog::maintain_tab(&app, &login),
-        MeTab::Watch => crate::catalog::watch_tab(&app, &login),
-        MeTab::Machines => crate::sets::machines_tab(&app, &login),
-    };
-    let tabs = MeTab::ALL
-        .iter()
-        .map(|&m| Tab::new(format!("/me?tab={}", m.key()), m.label(), m == tab))
-        .collect();
-    Page::new(Section::Home, format!("My packages: {}", tab.label()))
-        .heading("My packages")
-        .icon(octicon!("package"))
-        .sub(format!("{} Only you see this page.", t.sub))
-        .subnav(tabs)
-        .actions(t.actions)
-        .body(t.body)
-        .render(&app, Some(&login))
+    Redirect::permanent(&to)
 }
 
 #[cfg(test)]
@@ -205,54 +143,23 @@ mod tests {
         String::from_utf8(b.to_vec()).unwrap()
     }
 
-    fn q(tab: &str) -> Query<MeQuery> {
-        Query(MeQuery {
-            tab: Some(tab.into()),
-        })
-    }
-
-    fn uri(s: &str) -> axum::http::Uri {
-        s.parse().unwrap()
-    }
-
     #[tokio::test]
-    async fn me_has_three_tabs_for_its_owner_only() {
-        let app = crate::sets::tests::app(&["hello"]);
-        let r = me_page(
-            State(app.clone()),
-            HeaderMap::new(),
-            q("watch"),
-            uri("/me?tab=watch"),
-        )
-        .await;
-        assert_eq!(r.status(), StatusCode::SEE_OTHER);
-        let r = me_page(
-            State(app.clone()),
-            HeaderMap::new(),
-            q("inbox"),
-            uri("/me?tab=inbox&kind=pr"),
-        )
-        .await;
-        assert_eq!(r.status(), StatusCode::PERMANENT_REDIRECT);
-        assert_eq!(r.headers()[header::LOCATION], "/inbox?kind=pr");
-        let h = signed_in(&app, "alice");
-        app.store.watch("alice", "pkg:hello").unwrap();
-        for (tab, want) in [
-            ("maintain", "/u/alice/maintains"),
-            ("watch", "action=\"/me/watch/remove\""),
-            ("machines", "No report yet."),
+    async fn me_and_its_old_tabs_redirect() {
+        for (from, to) in [
+            ("/me", "/packages?filter=mine"),
+            ("/me?tab=inbox", "/inbox"),
+            (
+                "/me?tab=inbox&sub=hello&kind=pr",
+                "/inbox?sub=hello&kind=pr",
+            ),
+            ("/me?tab=maintain", "/packages?filter=maintain"),
+            ("/me?tab=watch", "/packages?filter=watch"),
+            ("/me?tab=machines", "/packages?filter=machines"),
+            ("/me?tab=nonsense", "/packages?filter=mine"),
         ] {
-            let r = me_page(State(app.clone()), h.clone(), q(tab), uri("/me")).await;
-            assert_eq!(r.status(), StatusCode::OK, "{tab}");
-            let html = body(r).await;
-            assert!(html.contains(want), "{tab}: {want}");
-            for m in MeTab::ALL {
-                assert!(html.contains(&format!("href=\"/me?tab={}\"", m.key())));
-            }
-            assert!(
-                html.contains(&format!("href=\"/me?tab={tab}\" aria-current=\"page\"")),
-                "{tab}"
-            );
+            let r = old_me(from.parse().unwrap()).await.into_response();
+            assert_eq!(r.status(), StatusCode::PERMANENT_REDIRECT, "{from}");
+            assert_eq!(r.headers()[header::LOCATION], to, "{from}");
         }
     }
 

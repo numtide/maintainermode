@@ -108,9 +108,11 @@ async fn every_signed_in_page_answers_and_stays_private() {
     for path in [
         "/",
         "/inbox",
-        "/me?tab=maintain",
-        "/me?tab=watch",
-        "/me?tab=machines",
+        "/packages?filter=mine",
+        "/packages?filter=machines",
+        "/packages?filter=maintain",
+        "/packages?filter=watch",
+        "/packages?filter=all",
         "/me/settings",
         "/me/runs",
         "/me/progress",
@@ -136,19 +138,38 @@ async fn every_signed_in_page_answers_and_stays_private() {
 #[tokio::test]
 async fn me_pages_show_their_parts() {
     let site = serve(signed_in_app()).await;
-    for (tab, label) in [
-        ("maintain", "Maintain"),
-        ("watch", "Watch"),
-        ("machines", "My machines"),
+    for (filter, label) in [
+        ("mine", "Mine"),
+        ("machines", "On my machines"),
+        ("maintain", "I maintain"),
+        ("watch", "I watch"),
+        ("all", "All of nixpkgs"),
     ] {
-        let a = site.get(&format!("/me?tab={tab}"), Some(SID)).await;
+        let a = site
+            .get(&format!("/packages?filter={filter}"), Some(SID))
+            .await;
         assert!(
             a.body.contains(&format!(
-                "href=\"/me?tab={tab}\" aria-current=\"page\">{label}"
+                "href=\"/packages?filter={filter}\" aria-current=\"page\">{label} <span class=\"Counter\">"
             )),
-            "{tab}"
+            "{filter}: {}",
+            a.body
+        );
+        assert!(a.body.contains("href=\"/packages\" aria-current=\"page\""));
+        assert!(
+            a.body
+                .contains("href=\"/me/settings#upload\">Upload the packages of your machines")
         );
     }
+    let a = site.get("/packages", Some(SID)).await;
+    assert!(a.body.contains("aria-current=\"page\">Mine"));
+    assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    assert!(a.body.contains("you maintain"));
+    let a = site.get("/packages?q=hel", Some(SID)).await;
+    assert!(a.body.contains("aria-current=\"page\">All of nixpkgs"));
+    let a = site.get("/packages", None).await;
+    assert!(!a.body.contains("filter="), "a visitor sees no filter bar");
+    assert!(!a.body.contains("Upload the packages"));
     let a = site.get("/inbox", Some(SID)).await;
     assert!(a.body.contains("<a href=\"/inbox\" aria-current=\"page\">"));
     assert!(
@@ -202,16 +223,16 @@ async fn forms_change_what_the_pages_show() {
     let a = site.post("/me/watch", SID, &[("name", "hello")]).await;
     assert_eq!(a.status, StatusCode::SEE_OTHER, "{}", a.body);
     private(&a, "watch");
-    assert_eq!(a.location.as_deref(), Some("/me?tab=watch"));
+    assert_eq!(a.location.as_deref(), Some("/packages?filter=watch"));
     assert_eq!(app.store.watched("alice").unwrap(), vec!["pkg:hello"]);
-    let a = site.get("/me?tab=watch", Some(SID)).await;
+    let a = site.get("/packages?filter=watch", Some(SID)).await;
     assert!(a.body.contains("value=\"pkg:hello\""), "{}", a.body);
 
     let a = site
         .post("/me/watch/remove", SID, &[("key", "pkg:hello")])
         .await;
     assert_eq!(a.status, StatusCode::SEE_OTHER);
-    assert_eq!(a.location.as_deref(), Some("/me?tab=watch"));
+    assert_eq!(a.location.as_deref(), Some("/packages?filter=watch"));
     assert!(app.store.watched("alice").unwrap().is_empty());
 
     let a = site.post("/me/inbox/read", SID, &[]).await;
@@ -344,14 +365,14 @@ async fn settings_tokens_and_sign_out() {
     assert_eq!(a.status, StatusCode::BAD_REQUEST);
     private(&a, "a refused watch");
     let a = site.post("/me/watch/maintained", SID, &[]).await;
-    assert_eq!(a.location.as_deref(), Some("/me?tab=maintain"));
+    assert_eq!(a.location.as_deref(), Some("/packages?filter=maintain"));
     assert!(
         app.store
             .watched("alice")
             .unwrap()
             .contains(&"pkg:hello".to_string())
     );
-    let a = site.get("/me?tab=maintain", Some(SID)).await;
+    let a = site.get("/packages?filter=maintain", Some(SID)).await;
     assert!(a.body.contains("href=\"/p/hello\""));
 
     site.post("/me/tags", SID, &[("tags", "<script>x</script>")])

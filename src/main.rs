@@ -24,6 +24,7 @@ mod llm;
 mod mcp;
 mod me;
 mod metrics;
+mod mine;
 mod model;
 mod nixpkgs;
 mod notifications;

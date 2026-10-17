@@ -137,7 +137,7 @@ async fn review_page(
                     "foryou" => (
                         "For you",
                         "<p>Pull requests that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-                         own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/me?tab=watch\">watch</a>. Oldest first.</p>",
+                         own in <code>ci/OWNERS</code>, changed this year, tagged, or <a href=\"/packages?filter=watch\">watch</a>. Oldest first.</p>",
                     ),
                     "unowned" => ("No maintainer", NO_MAINTAINER),
                     _ => (

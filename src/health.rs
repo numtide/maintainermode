@@ -614,6 +614,11 @@ impl Hydra {
         (at.elapsed() < last.ttl()).then(|| last.clone())
     }
 
+    /// What a page view already learned about a job; it never asks Hydra.
+    pub fn known(&self, job: &str) -> Option<Last> {
+        self.cached(job)
+    }
+
     fn keep(&self, job: &str, last: &Last) {
         let mut cache = self.cache.lock().unwrap();
         if cache.len() >= HYDRA_CACHE_MAX {
