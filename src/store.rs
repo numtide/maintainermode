@@ -126,6 +126,19 @@ impl Store {
                token TEXT NOT NULL,
                created_at TEXT NOT NULL,
                seen_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS needs_snooze (
+               login TEXT NOT NULL,
+               key TEXT NOT NULL,
+               fingerprint TEXT NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (login, key)
+             );
+             CREATE TABLE IF NOT EXISTS needs_seen (
+               session TEXT NOT NULL,
+               key TEXT NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (session, key)
              );",
         )?;
         Ok(Self {
@@ -1026,6 +1039,72 @@ impl Store {
             "DELETE FROM mail_confirm WHERE created_at < ?1",
             [before.to_rfc3339()],
         )?)
+    }
+}
+
+/// What a person put aside on Needs you, and what each session saw there.
+impl Store {
+    /// item key → the fingerprint it had when the person snoozed it.
+    pub fn needs_snoozed(&self, login: &str) -> Result<std::collections::HashMap<String, String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT key, fingerprint FROM needs_snooze WHERE login = ?1")?;
+        let rows = stmt.query_map([login], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn needs_snooze(&self, login: &str, key: &str, fingerprint: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO needs_snooze (login, key, fingerprint, at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(login, key) DO UPDATE SET fingerprint = excluded.fingerprint, at = excluded.at",
+            params![login, key, fingerprint, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    /// Snoozes whose item is gone: a new item with the same key starts fresh.
+    pub fn needs_forget(&self, login: &str, present: &[String]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let keys: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT key FROM needs_snooze WHERE login = ?1")?;
+            let rows = stmt.query_map([login], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        for k in keys.iter().filter(|k| !present.contains(k)) {
+            tx.execute(
+                "DELETE FROM needs_snooze WHERE login = ?1 AND key = ?2",
+                params![login, k],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Records the open items of one session, by the hash of its id, and
+    /// gives the number of items it saw that are open no more.
+    pub fn needs_session(&self, session: &str, present: &[String]) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM needs_seen WHERE at < ?1",
+            [(Utc::now() - chrono::Duration::days(30)).to_rfc3339()],
+        )?;
+        let now = Utc::now().to_rfc3339();
+        for k in present {
+            tx.execute(
+                "INSERT OR IGNORE INTO needs_seen (session, key, at) VALUES (?1, ?2, ?3)",
+                params![session, k, now],
+            )?;
+        }
+        let seen: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT key FROM needs_seen WHERE session = ?1")?;
+            let rows = stmt.query_map([session], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        tx.commit()?;
+        Ok(seen.iter().filter(|k| !present.contains(k)).count())
     }
 }
 

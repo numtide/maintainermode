@@ -38,6 +38,8 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     let private = path == "/me"
         || path.starts_with("/me/")
         || path == crate::notify::INBOX
+        || path.starts_with("/needs/")
+        || path == "/api/v1/needs"
         || (path == "/packages" && crate::web::cookie(req.headers(), "session").is_some());
     let mut res = next.run(req).await;
     if private {

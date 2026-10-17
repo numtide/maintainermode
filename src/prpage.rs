@@ -1516,7 +1516,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             ago(pr.created_at),
             a = esc(&pr.author)
         ))
-        .actions(exits(n));
+        .actions(exits(n) + &crate::needs::here(&app, &headers, &format!("pr:{n}")));
     let mut out = about(pr);
     out.push_str(&place_html(&place, &credits, for_you));
     out.push_str(&touched_html(&list));

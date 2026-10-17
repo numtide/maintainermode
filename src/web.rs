@@ -231,6 +231,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::welcome::routes())
         .merge(crate::notify::routes())
         .merge(crate::me::routes())
+        .merge(crate::needs::routes())
         .layer(axum::middleware::from_fn(crate::me::no_store))
         .layer(axum::middleware::from_fn(same_origin))
         .layer(axum::middleware::from_fn(crate::assets::etag))

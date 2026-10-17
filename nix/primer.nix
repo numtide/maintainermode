@@ -60,6 +60,7 @@ let
     "tools"
     "upload"
     "checklist"
+    "arrow-right"
   ];
   trim = ''
     find ${classes} -type f -exec cat {} + | tr -cs 'A-Za-z0-9_-' '\n' | sort -u > words

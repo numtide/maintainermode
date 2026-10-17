@@ -259,7 +259,7 @@ pub(crate) fn attached<'a>(
 /// Advisories whose nixpkgs issue is still open, or not synced yet. The sync
 /// keeps only issues open or updated in its window, so once every open issue
 /// is read, an issue it does not have closed long ago.
-fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
+pub(crate) fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
     h.advisories
         .get(attr)
         .into_iter()
@@ -847,7 +847,7 @@ fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
 }
 
 /// An OSV match: its own band, or the worst of its CVEs when one is known.
-fn osv_worst(h: &Health, v: Option<&crate::osv::Vuln>) -> Worst {
+pub(crate) fn osv_worst(h: &Health, v: Option<&crate::osv::Vuln>) -> Worst {
     let Some(v) = v else {
         return Worst::default();
     };
@@ -1225,6 +1225,7 @@ async fn package_page(
     let subject = Subject::Pkg(attr.clone());
     let job = Hydra::package_job(&attr);
     let build = app.hydra.last(&job).await;
+    let next = crate::needs::here(&app, &headers, &subject.key());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
@@ -1240,10 +1241,7 @@ async fn package_page(
                 .map(|f| format!(" · {}", source_link(&rev, f)))
                 .unwrap_or_default()
         ))
-        .actions(subscribe_button(
-            watching(&app, viewer.as_deref(), &subject),
-            &subject,
-        ));
+        .actions(subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject) + &next);
     let mut out = String::new();
     let mut health = String::new();
     if let Some(sc) = score_of(&s, &index, &h, &attr) {
