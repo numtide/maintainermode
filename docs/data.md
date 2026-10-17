@@ -179,7 +179,7 @@ An empty list turns the archive off.
   outside the swept sets has no page.
 - Linking issues and pull requests to a package reads conventions, not
   intent. A title that names no package and touches no file of it is missed.
-- Bot authors (`r-ryantm` among them) are never listed, so their pull requests
+- Bot authors (`r-ryantm` among them) are never in the queues, so their pull requests
   do not appear.
 
 ## The pull request page
