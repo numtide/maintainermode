@@ -245,14 +245,97 @@ function seedSql() {
     },
     teams: {},
   };
-  const health = { upstream: { curl: "8.10.0", jq: "1.8.0" }, advisories: {} };
+  const health = {
+    upstream: { curl: "8.10.0", jq: "1.8.0" },
+    advisories: {
+      openssl: [
+        {
+          code: "NIXPKGS-2026-0001",
+          cves: ["CVE-2026-0001"],
+          title: "openssl: a buffer overflow in the TLS handshake",
+          issue: null,
+        },
+      ],
+    },
+    cves: {
+      "CVE-2026-0001": { band: "critical", cvss: 9.8, epss: 0.35 },
+    },
+  };
   const set = ["curl", "openssl", "hello", "ripgrep"];
   const q = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
   const now = new Date().toISOString();
+  const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
+  const file = (p) => pkgs[p].file;
+  const pr = (number, author, title, opened, extra) => ({
+    number,
+    title,
+    url: `https://github.com/NixOS/nixpkgs/pull/${number}`,
+    author,
+    author_is_bot: false,
+    state: "OPEN",
+    is_draft: false,
+    base: "master",
+    created_at: daysAgo(opened),
+    updated_at: daysAgo(0),
+    merged_at: null,
+    merged_by: null,
+    mergeable: "MERGEABLE",
+    head_oid: `${number}`.padStart(40, "0"),
+    files: [],
+    ci: "SUCCESS",
+    reviews: [],
+    author_activity: [],
+    pushes: [daysAgo(opened)],
+    voids: [],
+    ...extra,
+  });
+  const review = (number, author, state, at, inline = false) => ({
+    url: `https://github.com/NixOS/nixpkgs/pull/${number}#pullrequestreview-${number}${at.length}`,
+    author,
+    author_is_bot: false,
+    state,
+    submitted_at: at,
+    commit_oid: `${number}`.padStart(40, "0"),
+    inline_on_change: inline,
+  });
+  // a reviewer with credit from three authors, so their own pull request
+  // is in the review queue
+  const merged = ["one", "two", "three"].map((a, i) =>
+    pr(100160 + i, `author-${a}`, `ripgrep: small fix ${a}`, 20 + i, {
+      state: "MERGED",
+      merged_at: daysAgo(10 + i),
+      files: [file("ripgrep")],
+      reviews: [
+        review(100160 + i, "contributor", "COMMENTED", daysAgo(12 + i), true),
+      ],
+    }),
+  );
+  const prs = [
+    ...merged,
+    pr(100171, SEED_LOGIN, "hello: 2.12.1 -> 2.12.2", 6, {
+      pushes: [daysAgo(4)],
+      files: [file("hello")],
+      reviews: [review(100171, "someone", "CHANGES_REQUESTED", daysAgo(1))],
+    }),
+    pr(100172, SEED_LOGIN, "jq: 1.7.1 -> 1.8.0", 2, {
+      ci: "FAILURE",
+      files: [file("jq")],
+    }),
+    pr(100173, SEED_LOGIN, "ripgrep: enable the pcre2 feature", 9, {
+      files: [file("ripgrep")],
+    }),
+    pr(100174, "contributor", "curl: 8.9.1 -> 8.10.0", 3, {
+      files: [file("curl")],
+    }),
+  ];
   return [
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
     `INSERT OR REPLACE INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
+    ...prs.map(
+      (p) =>
+        `INSERT OR REPLACE INTO pr (number, updated_at, state, data) VALUES (${p.number}, '${p.updated_at}', '${p.state}', ${q(p)});`,
+    ),
     ...[
       "pkg:ripgrep",
       "pkg:openssl",
