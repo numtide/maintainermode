@@ -34,6 +34,7 @@ mod osv;
 mod profile;
 mod progress;
 mod prpage;
+mod prpanel;
 mod queue;
 mod report;
 mod rescan;
