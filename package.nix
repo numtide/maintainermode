@@ -20,6 +20,7 @@ rustPlatform.buildRustPackage {
       ./Cargo.lock
       ./src
       ./docs
+      ./nix/ux-pages.txt
     ];
   };
 

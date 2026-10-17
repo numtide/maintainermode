@@ -1,0 +1,86 @@
+# The pages that `nix run .#ux-audit` opens. A test in src/web.rs fails
+# when a GET route of the router is not here.
+#
+#   set NAME VALUE         a sample value; ${NAME} in a path takes it
+#   public PATH [status=N] audited signed out; N is the expected status
+#   signed-in PATH         audited with a session only
+#   both PATH              audited signed out and signed in
+#   skip ROUTE             a GET route that is not an HTML page
+
+set login zimbatm
+set attr hello
+set module nixos/modules/services/web-servers/nginx/default.nix
+set area pkgs/by-name
+set pr 100171
+set token 0000000000000000000000000000000000000000000000000000000000000000
+
+both /
+public /review?tab=unowned
+public /review?tab=bumps
+public /review?tab=all
+both /review?tab=ready
+signed-in /review?tab=foryou
+public /state
+public /state?tab=rules
+public /state?tab=docs
+public /state?tab=docs&doc=health
+public /state?tab=docs&doc=personal
+public /state?tab=docs&doc=actions
+public /state?tab=docs&doc=data
+public /state?tab=docs&doc=operations
+public /state?tab=docs&doc=api
+public /state?tab=docs&doc=events
+public /state?tab=docs&doc=ingest
+public /state?tab=docs&doc=rescan
+public /state?tab=docs&doc=nixfresh-merge
+public /state?tab=status
+public /packages
+public /packages?q=zzzz-nothing-matches
+both /p/${attr}
+public /m/${module}
+public /a/${area}
+public /u/${login}
+public /u/${login}/maintains
+both /pr/${pr}
+both /actions
+public /confirm/${token} status=404
+public /unsubscribe/${token} status=404
+signed-in /me?tab=inbox
+signed-in /me?tab=maintain
+signed-in /me?tab=watch
+signed-in /me?tab=machines
+signed-in /me/settings
+signed-in /me/runs
+signed-in /me/progress
+signed-in /claude/pr/${pr}
+
+skip /merge
+skip /committer
+skip /bumps
+skip /rules
+skip /sync
+skip /welcome
+skip /watch
+skip /me/inbox
+skip /me/sets
+skip /record
+skip /auth/login
+skip /auth/callback
+skip /feed/:token
+skip /static/:file
+skip /robots.txt
+skip /healthz
+skip /api/v1
+skip /api/v1/
+skip /api/v1/status
+skip /api/v1/metrics
+skip /api/v1/events
+skip /api/v1/sync
+skip /api/v1/prs
+skip /api/v1/prs/:number
+skip /api/v1/people/:login
+skip /api/v1/packages/:attr
+skip /api/v1/modules/*file
+skip /api/v1/areas/*path
+skip /api/v1/find/*name
+skip /api/v1/archive/:owner/:repo/:number

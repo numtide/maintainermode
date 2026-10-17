@@ -1347,3 +1347,126 @@ mod tests {
         assert_eq!(packages(api_metrics(State(app.clone())).await), 1);
     }
 }
+
+#[cfg(test)]
+mod ux_pages {
+    const LIST: &str = include_str!("../nix/ux-pages.txt");
+
+    fn get_routes() -> Vec<String> {
+        let dir = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap();
+        let mut routes = Vec::new();
+        for entry in dir {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            let src = std::fs::read_to_string(&path).unwrap();
+            let src = src.split("#[cfg(test)]").next().unwrap();
+            for call in src.split(".route(").skip(1) {
+                let call = call.trim_start();
+                let Some(rest) = call.strip_prefix('"') else {
+                    continue;
+                };
+                let (route, rest) = rest.split_once('"').unwrap();
+                let handler = rest.trim_start().trim_start_matches(',').trim_start();
+                if handler.starts_with("get(") {
+                    routes.push(route.to_string());
+                }
+            }
+        }
+        routes.sort();
+        routes.dedup();
+        routes
+    }
+
+    fn matches(route: &str, path: &str) -> bool {
+        let mut want = route.trim_start_matches('/').split('/');
+        let mut have = path.trim_start_matches('/').split('/');
+        loop {
+            match (want.next(), have.next()) {
+                (None, None) => return true,
+                (Some(w), Some(h)) if w.starts_with('*') => return !h.is_empty(),
+                (Some(w), Some(h)) if w.starts_with(':') => {
+                    if h.is_empty() {
+                        return false;
+                    }
+                }
+                (Some(w), Some(h)) if w == h => {}
+                _ => return false,
+            }
+        }
+    }
+
+    struct Entries {
+        pages: Vec<String>,
+        skips: Vec<String>,
+    }
+
+    fn entries() -> Entries {
+        let mut vars = std::collections::HashMap::new();
+        let mut pages = Vec::new();
+        let mut skips = Vec::new();
+        for line in LIST.lines().map(str::trim) {
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words[..] {
+                ["set", name, value] => {
+                    vars.insert(name, value);
+                }
+                ["skip", route] => skips.push(route.to_string()),
+                [kind, path, ..] if ["public", "signed-in", "both"].contains(&kind) => {
+                    let mut path = path.split('?').next().unwrap().to_string();
+                    for (name, value) in &vars {
+                        path = path.replace(&format!("${{{name}}}"), value);
+                    }
+                    assert!(!path.contains("${"), "unknown variable in {line}");
+                    pages.push(path);
+                }
+                _ => panic!("nix/ux-pages.txt: cannot read {line:?}"),
+            }
+        }
+        Entries { pages, skips }
+    }
+
+    #[test]
+    fn route_matching_follows_axum() {
+        assert!(matches("/u/:login", "/u/zimbatm"));
+        assert!(!matches("/u/:login", "/u/zimbatm/maintains"));
+        assert!(matches("/m/*file", "/m/nixos/modules/a.nix"));
+        assert!(!matches("/m/*file", "/m/"));
+        assert!(matches("/", "/"));
+    }
+
+    #[test]
+    fn every_page_route_is_in_the_audit_list() {
+        let routes = get_routes();
+        assert!(routes.len() > 30, "found only {routes:?}");
+        let e = entries();
+        for route in &routes {
+            let pages = e.pages.iter().filter(|p| matches(route, p)).count();
+            let skipped = e.skips.contains(route);
+            assert!(
+                pages > 0 || skipped,
+                "GET {route} is not in nix/ux-pages.txt: add a page or a skip line"
+            );
+            assert!(
+                !(pages > 0 && skipped),
+                "GET {route} is both a page and a skip in nix/ux-pages.txt"
+            );
+        }
+        for page in &e.pages {
+            assert!(
+                routes.iter().any(|r| matches(r, page)),
+                "{page} in nix/ux-pages.txt matches no route"
+            );
+        }
+        for skip in &e.skips {
+            assert!(
+                routes.contains(skip),
+                "skip {skip} in nix/ux-pages.txt is not a route"
+            );
+        }
+    }
+}
