@@ -605,7 +605,8 @@ async function shoot(ctx, base, page, state, vp, scheme, outDir, issues) {
   tab.on("pageerror", (e) => consoleErrors.push(String(e).slice(0, 300)));
   tab.on("requestfailed", (r) => {
     const why = r.failure() ? r.failure().errorText : "failed";
-    if (why === "net::ERR_BLOCKED_BY_CLIENT" || why.includes("aborted")) return;
+    if (why.startsWith("net::ERR_BLOCKED_BY_CLIENT") || why.includes("aborted"))
+      return;
     failed.push(`${r.url()} (${why})`);
   });
   tab.on("response", (r) => {
