@@ -12,13 +12,15 @@ merged in the synced window.
 - **Health of a package:** its nixpkgs version and the newest upstream release
   (only when nixpkgs is behind; see [Upstream versions](#upstream-versions)), the last
   Hydra build of `nixpkgs/unstable/<attr>.x86_64-linux`, the open advisories
-  of the [security tracker](https://tracker.security.nixos.org), and its
-  maintainers and teams. An advisory counts as open while its nixpkgs issue is
+  of the [security tracker](https://tracker.security.nixos.org). An advisory
+  counts as open while its nixpkgs issue is
   open. Each advisory shows the worst severity of its CVEs (CVSS), whether
   CISA saw an exploit, and its [EPSS](https://www.first.org/epss/) score: the
   chance of exploitation in the next 30 days. A package from PyPI,
   crates.io or npm also shows the [OSV](https://osv.dev) advisories for the
   exact version nixpkgs ships, unless a tracker advisory names the same CVE.
+- **The Package box:** what nixpkgs says about the package, as the index sweep read it. It shows the description and the long description as plain text. The sweep keeps the first 500 characters of the description and the first 2000 characters of the long description. It shows the homepage, the download page and the changelog. It shows each license with its SPDX id, and marks unfree licenses. It shows a short platform summary (how many, and Linux or Darwin) and `meta.badPlatforms`. It also shows `meta.mainProgram`, `meta.sourceProvenance` and the outputs. It shows whether the package is broken, insecure (with the text of `meta.knownVulnerabilities`) or unfree. It shows the position, with a link to the file and line at the index revision. It ends with the maintainers and teams. The sweep reads only what is already in `meta`, so it builds nothing. An index swept before this has no such data, and the box says so. `GET /api/v1/packages/<attr>` gives the same under `package.meta`.
+- **Version bumps:** an open pull request whose title is `<name>: <old> -> <new>` (or with `→`) is a version bump. Most come from r-ryantm. A `[Backport …]` prefix is allowed. The package page lists the open bumps of the package. `/bumps` lists all open bumps, the oldest first, with their checks, approvals, age and the newest upstream version. When you sign in, "What you maintain or watch" keeps only the bumps of the packages you maintain (directly or through a team), the packages you watch and the areas you watch. `GET /api/v1/bumps` gives the same; add `?filter=mine` with your session. Read [how nixpkgs reviews a package update](https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates) before you approve one.
 - **Packaging hygiene of a package:** cheap checks on what the index sweep
   reads, with no network and no build:
   - `meta.description`, `meta.homepage` and `meta.license` are set;

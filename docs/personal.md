@@ -3,6 +3,25 @@
 What Maintainer Mode shows for you: what you maintain, what you watch, and
 the packages of your own system.
 
+## Get started
+
+The home page shows a short introduction to visitors who are not signed in. It names the three ways to use Maintainer Mode. It links to the nixpkgs contributor guide (CONTRIBUTING.md). Press "Hide" to remove it. A cookie keeps it hidden for one year.
+
+After your first sign-in, Maintainer Mode sends you to `/welcome`. This page is a checklist. Each step shows your real state: done, to do, or optional.
+
+1. What you maintain. Subscribe to all of it in one step.
+2. What you watch. Subscribe to a package, a module or a directory.
+3. The review queue for you, on `/review`.
+4. Notifications. Make your private Atom feed on `/watch`.
+5. Your system. Upload your closure on `/me/sets`.
+6. Actions. Save your workflow repositories on `/actions`.
+7. LLMs. They are off by default. Turn them on in `/me/settings`.
+8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
+
+If you maintain nothing, the first step changes. It sends you to the unowned pull requests on `/review`, with a checklist for a first review. It also links maintainers/README.md.
+
+The header shows "Get started" until you press "I am done". You can open `/welcome` again at any time. Only you see it.
+
 ## What I maintain
 
 `/u/<login>/maintains` lists the packages and NixOS modules whose
@@ -28,6 +47,24 @@ with its flags, the ones that need attention first.
 - **Why here.** Accounts, stored preferences and outbound messages are a write
   path. Maintainer Mode already logs people in and keeps state, so a
   subscription is one more row in its database.
+
+## Needs review, for you
+
+Sign in, and `/review` opens on **For you**. It lists the open pull requests that touch what you maintain (`meta.maintainers`, `meta.teams`), what you own in `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or area you watch. The tabs **Unowned** and **All** stay. Each tab shows its count. Signed out, `/review` opens on **Unowned**.
+
+The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The MCP tool `queue_review` and the CLI (`maintainer-mode review --bucket foryou --login <login>`) take the same name. `mine` is an alias of `foryou`. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts.
+
+## Your progress
+
+`/me/progress` shows your own review record. Only you see it. It never shows the numbers of another person. There is no leaderboard.
+
+- **This week and this month**: the pull requests you reviewed, and your reviews that earned credit. A week starts on Monday, in UTC.
+- **Streak**: the weeks in a row with at least one review that earned credit. A week with no credit yet does not break the streak until the week ends.
+- **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal. `/review` shows how far you are.
+- **Badges**: first review; first review that earned credit on an unowned pull request; first review merged unchanged; 10, 50 and 100 reviews; reviews in 5 areas of the state of nixpkgs.
+- **Being listed**: how many more authors you need. You need credit from 3 different authors in 60 days.
+
+The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. The header and your own `/u/<login>` page link to the page.
 
 ## My package set
 
@@ -117,3 +154,30 @@ show "in a scanned flake".
 
 [`docs/rescan.md`](rescan.md) has the threat model, the sandbox, the
 limits, and why the feature is off by default.
+
+## For committers
+
+`/committer` shows what waits for a person with merge rights. The Committer tab shows only to a committer. Other people see a short page that explains the view.
+
+**Who is a committer.** Maintainer Mode counts a login as a committer when one of these is true:
+
+- The login merged a pull request in the synced data in the last 365 days.
+- The login is a member of the GitHub team `NixOS/nixpkgs-committers`. The server reads the team once a day with its own token. If the token cannot read the team, only the merges count.
+
+`/api/v1/status` shows the counts. No page or API lists the logins.
+
+**The sections.**
+
+| Section                  | What it shows                                                                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Ready to merge           | the ready-to-merge queue: your areas and subscriptions first, then the rest                                                               |
+| Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes |
+| Security fixes           | the label `1.severity: security`, and ready                                                                                               |
+| Backports                | a `release-*` base branch, and ready                                                                                                      |
+| Waiting longest          | ready, oldest approval first                                                                                                              |
+
+Here "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The sections other than the ready queue put the longest wait first and show 50 rows at most.
+
+Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
+
+**The API.** `/api/v1/committer` gives the same lists without the personal order. It is the same for all callers, because your subscriptions are private.
