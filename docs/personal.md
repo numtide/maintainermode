@@ -25,6 +25,7 @@ Only you see the pages under `/me`. The server sends every answer under `/me` wi
 | `/me/settings`     | every choice and token, in one page                                 |
 
 The old addresses `/watch`, `/me/inbox` and `/me/sets` redirect to their tab.
+Only you see the pages under `/me`. The server sends them with `Cache-Control: private, no-store`. `/u/<login>` is public and never shows private data. It has two tabs: **Record** and **Maintains**. Search for `@login` on `/packages` to open it.
 
 ## Settings
 
@@ -68,6 +69,11 @@ The Maintain tab of `/me` lists the packages and NixOS modules whose
 in. Each row carries the same health flags as a page. The highest
 [risk score](health.md#the-risk-score) comes first. "Watch all of them" adds
 every row to what you watch. The list comes from nixpkgs; change it there.
+The **Maintains** tab of `/u/<login>` lists the packages and NixOS modules whose
+`meta.maintainers` names the login, or whose `meta.teams` names a team the
+login is in. Each row carries the same health flags as a page. The highest
+[risk score](health.md#the-risk-score) comes first. The list comes from nixpkgs;
+change it there.
 
 `/u/<login>/maintains` shows the same list for any login. It is public.
 
