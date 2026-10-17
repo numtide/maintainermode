@@ -115,7 +115,7 @@ pub fn llm_box(app: &App, login: &str) -> String {
                 "<div class=\"Box-row\">\
                  <form method=\"post\" action=\"/me/settings/llm\">\
                  <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \
-                 I am OK with LLMs using my data on this site</label>\
+                 LLMs can use my data on this site</label>\
                  <p class=\"note\">Off by default. When it is on, an agent that holds your MCP token can read what you watch and the public data \
                  of this site through <code>/mcp</code>, and each open pull request offers a Claude Code session. \
                  Nothing here writes to GitHub. Turning it off revokes your MCP token.</p></div>\
@@ -303,7 +303,7 @@ async fn claude_page(
     let s = app.snap();
     let Some(pr) = s.pr_at.get(&number).map(|&i| &s.pr_data[i]) else {
         let body = format!(
-            "<div class=\"blankslate\"><p>Pull request #{number} is not in the synced data.</p></div>"
+            "<div class=\"blankslate\"><p>Pull request #{number} is not in the data of this site.</p></div>"
         );
         return (
             StatusCode::NOT_FOUND,

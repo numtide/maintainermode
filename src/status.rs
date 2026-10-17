@@ -190,7 +190,7 @@ fn archive_row(a: &Value) -> String {
         parts.push(format!("{} left at the current pace", hours(h)));
     }
     parts.push(format!(
-        "{} due · {} per pass, a pass every {} · the last ended {}",
+        "{} due · {} per run, a run every {} · the last ended {}",
         a["due"],
         a["items_per_pass"],
         minutes(crate::archive::PASS_EVERY as i64),
@@ -198,7 +198,7 @@ fn archive_row(a: &Value) -> String {
     ));
     if let Some(n) = a["failed"].as_i64().filter(|n| *n > 0) {
         parts.push(format!(
-            "<span class=\"color-fg-attention\">{n} items fail; the walk tries each again a day later</span>"
+            "<span class=\"color-fg-attention\">{n} items fail; the server tries each again a day later</span>"
         ));
     }
     if let Some(e) = a["last_error"].as_str() {
@@ -239,22 +239,22 @@ const SOURCES: [(&str, &str, &str); 6] = [
     (
         "osv-records",
         "OSV records",
-        "the summary and severity of each match, 200 a pass",
+        "the summary and severity of each match, 200 a run",
     ),
     (
         "upstream",
         "Upstream tags and registries",
-        "git tags over HTTPS, crates.io, PyPI and npm; 300 requests a pass, the packages people maintain or watch first; they overrule repology",
+        "git tags over HTTPS, crates.io, PyPI and npm; 300 requests a run, the packages people maintain or watch first; they overrule repology",
     ),
     (
         "cve",
         "Severity",
-        "CVE Program records (CVSS and CISA exploitation), 300 a pass",
+        "CVE Program records (CVSS and CISA exploitation), 300 a run",
     ),
     (
         "nvd",
         "NVD",
-        "CVSS for the CVEs without a score in their record, 50 a pass, only with an API key",
+        "CVSS for the CVEs without a score in their record, 50 a run, only with an API key",
     ),
     (
         "epss",
@@ -308,7 +308,7 @@ pub(crate) fn body(app: &App) -> String {
             done(
                 &p["open_walk_done"],
                 "every open one read",
-                "first walk of the open ones in progress"
+                "first read of the open ones in progress"
             ),
             when(&p["up_to"])
         ),
@@ -321,7 +321,7 @@ pub(crate) fn body(app: &App) -> String {
             done(
                 &i["open_walk_done"],
                 "every open one read",
-                "first walk of the open ones in progress"
+                "first read of the open ones in progress"
             ),
             when(&i["up_to"])
         ),
@@ -331,7 +331,7 @@ pub(crate) fn body(app: &App) -> String {
         &done(
             &v["history"]["done"],
             "complete",
-            "still walking back; the state of nixpkgs fills in as it goes",
+            "in progress: the numbers on the state of nixpkgs grow while it reads",
         ),
     ));
     out.push_str(&kv(
@@ -347,7 +347,7 @@ pub(crate) fn body(app: &App) -> String {
         ),
     ));
     out.push_str(&kv(
-        "Passes",
+        "Updates",
         &format!(
             "one every {} · the last took {} and ended {}",
             minutes(pass["every_seconds"].as_i64().unwrap_or(600)),
@@ -408,10 +408,10 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str(&kv(
         "Packaging hygiene",
         &if pk["checked"].as_u64().unwrap_or(0) == 0 {
-            "from the index sweep, no network · the next index reads it".to_string()
+            "from the nixpkgs index, with no network access · the next index reads it".to_string()
         } else {
             format!(
-                "from the index sweep, no network · {} of {} packages have a gap in meta or no versionCheckHook",
+                "from the nixpkgs index, with no network access · {} of {} packages have a gap in meta or no versionCheckHook",
                 pk["with_gaps"], pk["checked"]
             )
         },
@@ -422,7 +422,7 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str(&kv(
         "Health task",
         &format!(
-            "its own task, one pass every {}: a slow source does not delay the GitHub sync",
+            "its own task, one run every {}: a slow source does not delay the GitHub updates",
             minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
     ));
@@ -502,7 +502,7 @@ pub(crate) fn body(app: &App) -> String {
     let _ = write!(
         out,
         "<div class=\"Box\"><div class=\"Box-header\"><h2 class=\"Box-title\">Faster with forwarded events</h2></div><div class=\"Box-row\">\
-         <p>Today this server polls. A review, push or merge on GitHub shows here after the next pass: \
+         <p>Today this server polls. A review, push or merge on GitHub shows here after the next update: \
          up to <strong>{}</strong> later{}. The Events API keeps only the last 300 events, so a busy hour loses some until \
          GH Archive brings them, about an hour later.</p>\
          <p>If the NixOS organisation forwarded the nixpkgs webhooks here (an organisation webhook, or a GitHub App \
@@ -511,7 +511,7 @@ pub(crate) fn body(app: &App) -> String {
          <li>each change would show in <strong>seconds</strong>, not minutes;</li>\
          <li>no event would be lost in a burst;</li>\
          <li>the queues and the review credit would update the moment a review lands;</li>\
-         <li>the passes would only check, so the rate limit would go to the history and to the issue bodies.</li>\
+         <li>the updates would only check, so the rate limit would go to the older data and to the issue bodies.</li>\
          </ul>\
          <p class=\"color-fg-muted f6\">Maintainer Mode has no webhook receiver yet: GitHub sends webhooks only to the \
          administrators of a repository. See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/events.md\">docs/events.md</a>.</p>\
@@ -520,7 +520,7 @@ pub(crate) fn body(app: &App) -> String {
             .map(minutes)
             .unwrap_or_else(|| minutes(pass["every_seconds"].as_i64().unwrap_or(600))),
         if worst.is_some() {
-            " (the interval plus the last pass)"
+            " (the interval plus the duration of the last update)"
         } else {
             ""
         },

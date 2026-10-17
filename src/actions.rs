@@ -138,10 +138,10 @@ fn update_row(attr: &str, fork: &str, conclusion: Option<&str>, pushed: Option<b
     let success = conclusion == Some("success");
     if pushed == Some(false) {
         let text = if success {
-            format!("{} is already up to date; no branch was pushed", esc(attr))
+            format!("{} is already up to date. No branch was pushed.", esc(attr))
         } else {
             format!(
-                "{}: {}; no branch was pushed",
+                "{}: {}. No branch was pushed.",
                 esc(attr),
                 esc(conclusion.unwrap_or("not finished"))
             )
@@ -155,7 +155,7 @@ fn update_row(attr: &str, fork: &str, conclusion: Option<&str>, pushed: Option<b
         if success {
             "Open a pull request"
         } else {
-            "See the branch, keep working"
+            "Open the branch and continue"
         },
         b = esc(&workflows::update_branch(attr)),
         f = esc(fork),
@@ -428,13 +428,13 @@ mod tests {
     fn an_update_row_tells_the_four_cases_apart() {
         let row = |c, p| update_row("hello", "alice/nixpkgs", Some(c), p);
         assert!(row("success", Some(true)).contains("Open a pull request"));
-        assert!(row("failure", Some(true)).contains("See the branch, keep working"));
+        assert!(row("failure", Some(true)).contains("Open the branch and continue"));
         let fresh = row("success", Some(false));
         assert!(fresh.contains("hello is already up to date"));
         assert!(!fresh.contains("href"));
         let failed = row("failure", Some(false));
-        assert!(failed.contains("failure; no branch was pushed"));
+        assert!(failed.contains("failure. No branch was pushed."));
         assert!(!failed.contains("href"));
-        assert!(row("failure", None).contains("See the branch, keep working"));
+        assert!(row("failure", None).contains("Open the branch and continue"));
     }
 }

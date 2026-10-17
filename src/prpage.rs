@@ -1136,18 +1136,21 @@ fn checklist(pr: &Pr, act: Act) -> String {
     } else {
         String::new()
     };
-    let _ = write!(
-        out,
-        "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">{}{buttons}</div>\
-         <div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode posts nothing on nixpkgs. You leave your review on GitHub.</div></div>",
-        exits(pr.number),
+    if !buttons.is_empty() {
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">{buttons}</div>"
+        );
+    }
+    out.push_str(
+        "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You write your review on GitHub.</div></div>",
     );
     out
 }
 
 fn exits(n: u64) -> String {
     format!(
-        "<a class=\"btn btn-sm btn-primary\" href=\"{u}/files\">{} Review on GitHub</a>\
+        "<a class=\"btn btn-sm btn-primary\" href=\"{u}/files\">{} Review the diff on GitHub</a>\
          <a class=\"btn btn-sm\" href=\"{u}\">{} Open on GitHub</a>",
         icon(octicon!("file-diff")),
         icon(octicon!("mark-github")),
@@ -1356,7 +1359,7 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
         Err(e) => {
             let _ = write!(
                 out,
-                "<div class=\"Box-row color-fg-muted\">The conversation could not be read: {}. The synced reviews, without their text:</div>",
+                "<div class=\"Box-row color-fg-muted\">The conversation could not be read: {}. The reviews that this site keeps, without their text:</div>",
                 why(e)
             );
             for r in &pr.reviews {
@@ -1382,9 +1385,10 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
 
 fn not_synced(app: &App, viewer: Option<&str>, n: u64) -> Response {
     let body = format!(
-        "<div class=\"blankslate\"><p>Pull request #{n} is not in the synced data: \
-         the sync keeps open pull requests and those updated in its window.</p>\
+        "<div class=\"blankslate\"><p>Pull request #{n} is not in the data of this site. \
+         The site keeps the open pull requests and the ones updated in the last {} days.</p>\
          <p class=\"d-flex flex-justify-center gap-2\">{}</p></div>",
+        crate::ledger::WINDOW_DAYS,
         exits(n)
     );
     Page::new(Section::Review, format!("Pull request #{n}"))
@@ -1681,7 +1685,7 @@ mod tests {
         let (status, html) =
             body(pr_page(State(app.clone()), HeaderMap::new(), Path(1)).await).await;
         assert_eq!(status, StatusCode::OK);
-        assert!(html.contains("not in the synced data"));
+        assert!(html.contains("not in the data of this site"));
         assert!(html.contains("href=\"https://github.com/NixOS/nixpkgs/pull/1\""));
         let (status, api) = body(api_pr(State(app), Path(1)).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

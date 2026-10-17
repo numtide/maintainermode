@@ -216,7 +216,7 @@ fn checklist(f: &Facts) -> String {
             "Start as a reviewer",
             &format!(
                 "No package or module names you in <code>meta.maintainers</code> yet. \
-                 Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>: nobody watches them, \
+                 Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>. Nobody watches them, \
                  and a first review needs no domain knowledge. Is <code>meta</code> complete? Are the hashes pinned? \
                  Are <code>platforms</code> right? Leave each finding as an inline comment on the changed line. \
                  To maintain a package later, read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a>."
@@ -225,7 +225,7 @@ fn checklist(f: &Facts) -> String {
     } else {
         let button = if f.maintained_watched < f.maintained {
             "<form method=\"post\" action=\"/me/watch/maintained\" class=\"mt-2\">\
-             <button class=\"btn btn-sm btn-primary\" type=\"submit\">Subscribe to all of it</button></form>"
+             <button class=\"btn btn-sm btn-primary\" type=\"submit\">Watch all of it</button></form>"
         } else {
             ""
         };
@@ -243,10 +243,10 @@ fn checklist(f: &Facts) -> String {
         mark(f.watched > 0),
         "What you watch",
         &format!(
-            "You watch {}. Subscribe to any package, module or nixpkgs directory.\
+            "You watch {}. Watch any package, module or nixpkgs directory.\
              <form method=\"post\" action=\"/me/watch\" class=\"inline-form mt-2\">\
-             <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to subscribe to\">\
-             <button class=\"btn btn-sm\" type=\"submit\">Subscribe</button></form>",
+             <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
+             <button class=\"btn btn-sm\" type=\"submit\">Watch</button></form>",
             f.watched
         ),
     ));
@@ -255,8 +255,10 @@ fn checklist(f: &Facts) -> String {
         "The review queue for you",
         &format!(
             "<a href=\"/review\">{} pull requests</a> touch what you maintain, own, changed this year or tagged. \
-             A review earns credit when it moves a pull request. You have {} credited reviews.",
-            f.queue, f.credited
+             A review gets credit when it leads to a change, a reply or a merge within {} days. You have {} credited reviews.",
+            f.queue,
+            crate::ledger::MOVE_DAYS,
+            f.credited
         ),
     ));
     let inbox = if f.inbox {
@@ -398,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn a_newcomer_gets_the_unowned_queue_and_the_maintainer_guide() {
+    fn a_newcomer_gets_the_no_maintainer_queue_and_the_maintainer_guide() {
         let html = checklist(&facts());
         assert!(html.contains("/review?tab=unowned"));
         assert!(html.contains(MAINTAINERS_README));
@@ -410,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn a_maintainer_can_subscribe_to_the_rest() {
+    fn a_maintainer_can_watch_the_rest() {
         let f = Facts {
             maintained: 3,
             maintained_watched: 1,

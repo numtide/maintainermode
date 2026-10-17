@@ -195,9 +195,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -D /tmp/r9.h -o /dev/null -X POST -H 'Authorization: Bearer nope' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8790/mcp && grep -q '^HTTP/1.1 401' /tmp/r9.h && grep -qi '^www-authenticate: Bearer' /tmp/r9.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/mcp > /tmp/r10 && grep -q 405 /tmp/r10")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/claude/pr/1 > /tmp/r11 && grep -q 303 /tmp/r11")
-    # a pull request that is not synced gets a short page with a GitHub link
+    # a pull request that is not in the data gets a short page with a GitHub link
     machine.succeed("curl -s -o /tmp/pr1 -w '%{http_code}' http://127.0.0.1:8790/pr/1 > /tmp/pr1.code && grep -q 200 /tmp/pr1.code")
-    machine.succeed("grep -q 'href=\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1 && grep -q 'not in the synced data' /tmp/pr1")
+    machine.succeed("grep -q 'href=\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1 && grep -q 'not in the data of this site' /tmp/pr1")
     machine.succeed("curl -s -o /tmp/pr1.json -w '%{http_code}' http://127.0.0.1:8790/api/v1/prs/1 > /tmp/pr1.json.code && grep -q 404 /tmp/pr1.json.code")
     machine.succeed("grep -q '\"url\":\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1.json")
     machine.fail("curl -sf http://127.0.0.1:8790/pr/nope")
