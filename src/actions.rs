@@ -53,6 +53,8 @@ pub fn repos(app: &App, login: &str) -> Repos {
 pub struct Act {
     pub review: bool,
     pub claude: bool,
+    /// The last setup check found a missing step for Review in CI.
+    pub incomplete: bool,
 }
 
 impl Act {
@@ -60,13 +62,14 @@ impl Act {
         Act {
             review: viewer.is_some(),
             claude: viewer.is_some_and(|v| crate::llm::opted_in(app, v)),
+            incomplete: viewer.is_some_and(|v| !ready(app, v, Needed::Review)),
         }
     }
 
     pub fn buttons(self, number: u64) -> String {
         let mut out = String::new();
         if self.review {
-            out.push_str(&review_button(number));
+            out.push_str(&review_button(number, !self.incomplete));
         }
         if self.claude {
             out.push_str(&crate::llm::claude_button(number));
@@ -75,8 +78,23 @@ impl Act {
     }
 }
 
+/// Whether a button starts its workflow, or links to the setup. A person
+/// never checked can press it; the click runs the check first.
+pub fn ready(app: &App, login: &str, button: Needed) -> bool {
+    last_check(app, login).is_none_or(|c| c.blocker(button).is_none())
+}
+
+fn setup_link(label: &str, class: &str) -> String {
+    format!(
+        "<a class=\"btn btn-sm {class}\" href=\"{SETUP}\" title=\"finish the setup of your workflow repository first\">{label}</a>"
+    )
+}
+
 /// A small button for a pull request row.
-pub fn review_button(number: u64) -> String {
+pub fn review_button(number: u64, ready: bool) -> String {
+    if !ready {
+        return setup_link("Review in CI", "ml-2");
+    }
     format!(
         "<form method=\"post\" action=\"/me/runs/review\" class=\"d-inline ml-2\">\
          <input type=\"hidden\" name=\"pr\" value=\"{number}\">\
@@ -85,7 +103,13 @@ pub fn review_button(number: u64) -> String {
 }
 
 /// The update form for a package page, prefilled with the upstream release.
-pub fn update_form(attr: &str, version: Option<&str>) -> String {
+pub fn update_form(attr: &str, version: Option<&str>, ready: bool) -> String {
+    if !ready {
+        return format!(
+            "{} <span class=\"f6 color-fg-muted\">Finish the setup of your workflow repository first.</span>",
+            setup_link("Update with nix-update", "")
+        );
+    }
     format!(
         "<form method=\"post\" action=\"/me/runs/update\" class=\"d-flex flex-items-center gap-2\">\
          <input type=\"hidden\" name=\"attr\" value=\"{a}\">\
@@ -248,11 +272,21 @@ async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
         esc(&r.review),
         esc(&r.update)
     )));
-    out.push_str(
-        "<form method=\"post\" action=\"/me/runs/review\" class=\"inline-form mb-4\">\
-         <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
-         <button class=\"btn btn-primary\" type=\"submit\">Review in CI</button></form>",
-    );
+    let review_ready = ready(&app, login, Needed::Review);
+    if !review_ready || !ready(&app, login, Needed::Update) {
+        let _ = write!(
+            out,
+            "<div class=\"flash flash-warn mb-3\">The setup of your workflow repository is not complete. \
+             <a href=\"{SETUP}\">Finish it in your settings</a>.</div>"
+        );
+    }
+    if review_ready {
+        out.push_str(
+            "<form method=\"post\" action=\"/me/runs/review\" class=\"inline-form mb-4\">\
+             <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
+             <button class=\"btn btn-primary\" type=\"submit\">Review in CI</button></form>",
+        );
+    }
     let Some(t) = token(&app, login) else {
         out.push_str("<div class=\"blankslate\"><p>No GitHub token in your session; sign in again.</p></div>");
         return page.body(out).render(&app, viewer.as_deref());
@@ -649,8 +683,23 @@ mod tests {
 
     #[test]
     fn the_buttons_post_under_me() {
-        assert!(review_button(1).contains("action=\"/me/runs/review\""));
-        assert!(update_form("hello", None).contains("action=\"/me/runs/update\""));
+        assert!(review_button(1, true).contains("action=\"/me/runs/review\""));
+        assert!(update_form("hello", None, true).contains("action=\"/me/runs/update\""));
+    }
+
+    #[test]
+    fn an_incomplete_setup_turns_the_buttons_into_links() {
+        let app = crate::sets::tests::app(&[]);
+        assert!(ready(&app, "alice", Needed::Review), "never checked");
+        missing_app(&app, "alice");
+        let act = Act::of(&app, Some("alice"));
+        let html = act.buttons(1);
+        assert!(html.contains(&format!("href=\"{SETUP}\"")));
+        assert!(!html.contains("<form"));
+        assert!(!ready(&app, "alice", Needed::Update));
+        let form = update_form("hello", None, false);
+        assert!(form.contains(&format!("href=\"{SETUP}\"")));
+        assert!(!form.contains("<form"));
     }
 
     fn missing_app(app: &App, login: &str) {

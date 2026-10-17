@@ -1299,10 +1299,14 @@ async fn package_page(
         ),
     ));
     health.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
-    if viewer.is_some() {
+    if let Some(v) = viewer.as_deref() {
         health.push_str(&kv(
             "Update",
-            &crate::actions::update_form(&attr, upstream(&s, &index, &h, &attr)),
+            &crate::actions::update_form(
+                &attr,
+                upstream(&s, &index, &h, &attr),
+                crate::actions::ready(&app, v, crate::workflows::Needed::Update),
+            ),
         ));
     }
     out.push_str(&crate::ui::section("Health", None, None, &health));
