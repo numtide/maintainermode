@@ -22,6 +22,9 @@ use crate::store::Store;
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
 const RULES: &str = include_str!("../docs/rules.md");
+/// Pull request pages read GitHub on a miss of the cache; crawlers must
+/// not walk them.
+const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /api/v1/prs/\n";
 
 macro_rules! octicon {
     ($name:literal) => {
@@ -206,6 +209,7 @@ pub fn router(app: Shared) -> Router {
         .route("/auth/logout", post(logout))
         .route("/static/primer.css", get(|| css(PRIMER_CSS)))
         .route("/static/club.css", get(|| css(CLUB_CSS)))
+        .route("/robots.txt", get(|| async { ROBOTS }))
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/v1/status", get(api_status))
         .route("/api/v1/queue/merge", get(api_merge))
