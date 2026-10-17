@@ -7,6 +7,7 @@ pkgs.testers.runNixOSTest {
       imports = [ self.nixosModules.default ];
       services.maintainer-mode.enable = true;
       services.maintainer-mode.githubAppId = 1;
+      services.maintainer-mode.githubAppSlug = "test-app";
       services.maintainer-mode.channels = [
         "nixos-unstable"
         "nixos-26.05"
@@ -103,6 +104,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("grep -q 'nixpkgs index' /tmp/review")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me > /tmp/me1 && grep -q 303 /tmp/me1")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/runs > /tmp/me2 && grep -q 303 /tmp/me2")
+    machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/actions && grep -q 'href=\"https://github.com/apps/test-app\"' /tmp/actions")
     machine.succeed("curl -s -D /tmp/at.h -o /dev/null 'http://127.0.0.1:8790/packages?q=@nobody' && grep -qi '^location: /u/nobody' /tmp/at.h")
     machine.fail("grep -q -e 'tab=foryou' -e 'your-progress' /tmp/review")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1 -o /tmp/api.json && grep -q '/api/v1/prs' /tmp/api.json && grep -q '/api/v1/people/<login>' /tmp/api.json")

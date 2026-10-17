@@ -420,6 +420,7 @@ pub(crate) mod tests {
             packages: Default::default(),
             public_url: String::new(),
             github_app: None,
+            github_app_slug: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
             archive: Vec::new(),
             rescan: None,
