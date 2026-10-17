@@ -537,7 +537,7 @@ pub(crate) fn view(
             .to_string(),
         Filter::Maintain => format!(
             "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name you. \
-             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{0}/maintains\">/u/{0}/maintains</a>.",
+             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{0}?tab=maintains\">your public profile</a>.",
             esc(login)
         ),
         Filter::Watch | Filter::All => "The packages, modules and directories you watch. \
