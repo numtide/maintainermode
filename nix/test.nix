@@ -141,8 +141,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test -f /var/lib/maintainer-mode/archive/NixOS/nixpkgs.sqlite")
     machine.succeed("maintainer-mode archive export --db /var/lib/maintainer-mode/maintainer-mode.sqlite --repo NixOS/nixpkgs --out /tmp/export 2> /tmp/export.log && grep -q '0 items of NixOS/nixpkgs' /tmp/export.log")
     machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 303")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/actions/review | grep -q 403")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/me/runs/review > /tmp/runs1 && grep -q 303 /tmp/runs1")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/me/runs/review > /tmp/runs2 && grep -q 403 /tmp/runs2")
     machine.fail("curl -sf http://127.0.0.1:8790/a/..%2Fetc")
     # the event stream never ends, so curl stops at its time limit (exit 28);
     # curl creates the body file only when data arrives
