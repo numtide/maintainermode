@@ -105,12 +105,13 @@ pub(crate) fn touch() {
     });
 }
 
-/// These pages read live state that no `touch` follows: the task status
-/// and the pull requests read from GitHub on demand.
+/// These pages read live state that no `touch` follows: the task status,
+/// the pull requests read from GitHub on demand, and the Hydra result on
+/// the package and module pages.
 fn untagged(path: &str) -> bool {
     path == "/me"
         || [
-            "/me/", "/sync", "/pr/", "/claude/", "/auth/", "/api/", "/static/",
+            "/me/", "/sync", "/pr/", "/p/", "/m/", "/claude/", "/auth/", "/api/", "/static/",
         ]
         .iter()
         .any(|p| path.starts_with(p))
@@ -214,5 +215,11 @@ mod tests {
         assert_ne!(before, tag(&intro));
         touch();
         assert_ne!(before, tag(&none));
+    }
+
+    #[test]
+    fn pages_that_ask_hydra_live_have_no_tag() {
+        assert!(untagged("/p/cups") && untagged("/m/nixos/modules/a.nix"));
+        assert!(!untagged("/packages") && !untagged("/review"));
     }
 }
