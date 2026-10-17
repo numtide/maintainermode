@@ -71,6 +71,9 @@ a:hover {
   color: var(--fgColor-accent) !important;
 }
 .Header-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
   color: #fff;
   font-weight: 600;
 }

@@ -155,8 +155,6 @@ once in 10 minutes.
 
 ### Confirm your address
 
-### Confirm your address
-
 The server sends no digest to an address that you did not confirm.
 When you enter or change the address in `/me/settings#email`, the server stores it as pending.
 The server then sends one confirmation email to the address.
