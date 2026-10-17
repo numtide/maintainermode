@@ -15,7 +15,7 @@ use std::fmt::Write;
 
 use crate::actions::Act;
 use crate::area::{Index, under};
-use crate::catalog::{Subject, head, maintained, pr_row, subscriptions, upstream};
+use crate::catalog::{Subject, head, pr_row, subscriptions, upstream};
 use crate::health::Health;
 use crate::links::pkg_key;
 use crate::model::Pr;
@@ -140,17 +140,18 @@ pub(crate) fn median_age_days(rows: &[Row], now: DateTime<Utc>) -> Option<f64> {
     })
 }
 
-/// Only what the viewer maintains or watches: by the file of the package,
-/// so an alias and its target count as one, and by watched areas.
+/// Only what the viewer maintains or watches. What they maintain comes from
+/// `index.maintainers`, built once per index, not from a walk over every
+/// package. A watched package counts by its file, so an alias and its target
+/// count as one.
 fn mine<'a>(app: &App, index: &Index, login: &str, rows: Vec<Row<'a>>) -> Vec<Row<'a>> {
     let mut files: HashSet<String> = HashSet::new();
-    let mut areas: Vec<String> = Vec::new();
+    let mut areas: Vec<String> = index
+        .maintainers
+        .get(&login.to_lowercase())
+        .map(|s| s.iter().cloned().collect())
+        .unwrap_or_default();
     let file_of = |attr: &str| index.pkgs.get(attr).and_then(|p| p.file.clone());
-    for (sub, _) in maintained(index, login).packages {
-        if let Subject::Pkg(a) = sub {
-            files.extend(file_of(&a));
-        }
-    }
     for sub in subscriptions(app, login) {
         match sub {
             Subject::Pkg(a) => files.extend(file_of(&a)),
@@ -160,10 +161,8 @@ fn mine<'a>(app: &App, index: &Index, login: &str, rows: Vec<Row<'a>>) -> Vec<Ro
     }
     rows.into_iter()
         .filter(|r| {
-            r.attr
-                .as_deref()
-                .and_then(file_of)
-                .is_some_and(|f| files.contains(&f))
+            let file = r.attr.as_deref().and_then(file_of);
+            file.is_some_and(|f| files.contains(&f) || areas.iter().any(|a| under(&f, a)))
                 || r.pr.files.iter().any(|f| areas.iter().any(|a| under(f, a)))
         })
         .collect()
@@ -443,5 +442,42 @@ mod tests {
             .collect();
         assert_eq!(median_age_days(&rows, now), Some(8.0));
         assert_eq!(median_age_days(&[], now), None);
+    }
+
+    #[test]
+    fn mine_keeps_the_bumps_of_what_the_viewer_maintains() {
+        let app = crate::sets::tests::app(&["hello", "curl"]);
+        let mut index = app.index.write().unwrap();
+        index.pkgs.get_mut("hello").unwrap().file =
+            Some("pkgs/by-name/he/hello/package.nix".into());
+        index.pkgs.get_mut("curl").unwrap().file = Some("pkgs/by-name/cu/curl/package.nix".into());
+        index
+            .maintainers
+            .entry("alice".into())
+            .or_default()
+            .insert("pkgs/by-name/he/hello".into());
+        let prs: Vec<Pr> = (1..=2)
+            .map(|n| crate::ledger::tests::pr(n, "r-ryantm", 0))
+            .collect();
+        let rows: Vec<Row> = prs
+            .iter()
+            .zip(["hello", "curl"])
+            .map(|(pr, attr)| Row {
+                pr,
+                bump: Bump {
+                    name: attr,
+                    old: "1",
+                    new: "2",
+                },
+                attr: Some(attr.into()),
+                upstream: None,
+                approvals: 0,
+            })
+            .collect();
+        let kept: Vec<u64> = mine(&app, &index, "Alice", rows)
+            .iter()
+            .map(|r| r.pr.number)
+            .collect();
+        assert_eq!(kept, [1]);
     }
 }
