@@ -29,6 +29,7 @@ pkgs.testers.runNixOSTest {
       environment.systemPackages = [
         config.services.maintainer-mode.package
         pkgs.sqlite
+        pkgs.libxml2
       ];
       # a tree with one private package and a saved public list that knows
       # the other two, so the client exports with no network
@@ -284,6 +285,77 @@ pkgs.testers.runNixOSTest {
     machine.fail("cd /tmp/scan && maintainer-mode submit --to http://127.0.0.1:8790")
     machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=nope maintainer-mode submit --to http://127.0.0.1:8790")
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
+    # sign in without GitHub: a session row with a dummy token. The dynamic
+    # service user cannot reach /var/lib/private, so root writes the row and
+    # gives the WAL files back to the service user
+    db = "/var/lib/maintainer-mode/maintainer-mode.sqlite"
+    machine.succeed(
+        f"sqlite3 -cmd '.timeout 5000' {db} "
+        "\"INSERT INTO session (id, login, token, created_at, seen_at) "
+        "VALUES ('vm-session', 'alice', 'vm-dummy-token', strftime('%Y-%m-%dT%H:%M:%SZ'), strftime('%Y-%m-%dT%H:%M:%SZ'))\""
+        f" && chown --reference={db} {db}-wal {db}-shm"
+    )
+    base = "http://127.0.0.1:8790"
+    cookie = "-H 'Cookie: session=vm-session'"
+
+    def signed_in(path, out, code=200):
+        machine.succeed(f"curl -s {cookie} -D {out}.h -o {out} -w '%{{http_code}}' '{base}{path}' > {out}.code && grep -qx {code} {out}.code")
+        machine.succeed(f"grep -qi '^cache-control: private, no-store' {out}.h")
+
+    def form(path, out, data="", code=303):
+        machine.succeed(f"curl -s {cookie} -D {out}.h -o {out} -w '%{{http_code}}' -X POST {data} '{base}{path}' > {out}.code && grep -qx {code} {out}.code")
+        machine.succeed(f"grep -qi '^cache-control: private, no-store' {out}.h")
+
+    for path, out in [("/", "home"), ("/me", "me"), ("/me/settings", "settings"), ("/me/runs", "runs"),
+                      ("/me/progress", "progress"), ("/review", "review"), ("/review?tab=ready", "ready"),
+                      ("/u/alice", "u"), ("/packages", "packages"), ("/state", "state")]:
+        signed_in(path, f"/tmp/s-{out}")
+        machine.succeed(f"grep -q 'menu-login\">alice<' /tmp/s-{out}")
+    machine.succeed("grep -q 'Pull requests for you to review' /tmp/s-home")
+    for tab, label in [("inbox", "Inbox"), ("maintain", "Maintain"), ("watch", "Watch"), ("machines", "My machines")]:
+        signed_in(f"/me?tab={tab}", f"/tmp/s-me-{tab}")
+        machine.succeed(f"grep -q 'href=\"/me?tab={tab}\" aria-current=\"page\">{label}' /tmp/s-me-{tab}")
+    for anchor in ["email", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
+        machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
+    machine.succeed("grep -q 'Runs</h1>' /tmp/s-runs && grep -q 'Your weekly goal' /tmp/s-progress")
+    machine.succeed("grep -q 'selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review")
+    machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review?tab=foryou\">For you' /tmp/s-ready")
+    machine.succeed("grep -q 'Packages, modules and directories' /tmp/s-packages")
+    # the forms: the index is empty offline, so a package name is refused and
+    # a directory is watched
+    form("/me/watch", "/tmp/f-watch0", "-d name=hello", 400)
+    form("/me/watch", "/tmp/f-watch", "-d name=pkgs/development/vm-watched")
+    machine.succeed("grep -qi '^location: /me?tab=watch' /tmp/f-watch.h")
+    signed_in("/me?tab=watch", "/tmp/s-watch")
+    machine.succeed("grep -q 'value=\"area:pkgs/development/vm-watched\"' /tmp/s-watch")
+    form("/me/watch/remove", "/tmp/f-unwatch", "-d key=area:pkgs/development/vm-watched")
+    signed_in("/me?tab=watch", "/tmp/s-watch2")
+    machine.fail("grep -q 'vm-watched' /tmp/s-watch2")
+    form("/me/watch", "/tmp/f-watch2", "-d name=pkgs/development/vm-watched")
+    form("/me/inbox/read", "/tmp/f-read")
+    form("/me/tags", "/tmp/f-tags", "-d tags=pkgs/vm-tag")
+    signed_in("/me/settings", "/tmp/s-settings2")
+    machine.succeed("grep -q '>pkgs/vm-tag</textarea>' /tmp/s-settings2")
+    form("/me/progress", "/tmp/f-goal", "-d goal=4")
+    signed_in("/me/progress", "/tmp/s-progress2")
+    machine.succeed("grep -q 'of 4' /tmp/s-progress2")
+    form("/me/progress", "/tmp/f-goal2", "-d goal=many", 400)
+    form("/me/settings/llm", "/tmp/f-llm", "-d llm_ok=1")
+    signed_in("/me/settings", "/tmp/s-settings3")
+    machine.succeed("grep -q 'name=\"llm_ok\" value=\"1\" checked' /tmp/s-settings3")
+    form("/me/feed", "/tmp/f-feed")
+    signed_in("/me/settings", "/tmp/s-settings4")
+    machine.succeed("grep -o '/feed/[0-9a-f]*' /tmp/s-settings4 | head -1 > /tmp/feed.path && test -s /tmp/feed.path")
+    machine.succeed(f"curl -sf -o /tmp/feed.xml {base}$(cat /tmp/feed.path) && xmllint --noout /tmp/feed.xml")
+    machine.succeed("grep -q '<feed xmlns=\"http://www.w3.org/2005/Atom\">' /tmp/feed.xml && grep -q '<id>http://' /tmp/feed.xml && grep -q '<updated>' /tmp/feed.xml")
+    form("/me/upload-token", "/tmp/f-upload", code=200)
+    machine.succeed("grep -o 'value=\"[0-9a-f]\\{64\\}\" aria-label=\"upload token\"' /tmp/f-upload | cut -d'\"' -f2 > /tmp/upload.token && test -s /tmp/upload.token")
+    # a public page, fetched with no cookie, shows nothing private
+    machine.succeed(f"curl -sf -D /tmp/pub.h -o /tmp/pub {base}/u/alice && curl -sf -o /tmp/pub.json {base}/api/v1/people/alice")
+    machine.fail("grep -qi '^cache-control: private' /tmp/pub.h")
+    machine.fail("grep -q 'menu-login' /tmp/pub")
+    for secret in ["vm-watched", "vm-tag", "vm-dummy-token", "vm-session", "$(cut -d/ -f3 /tmp/feed.path)", "$(cat /tmp/upload.token)"]:
+        machine.fail(f"grep -q -e \"{secret}\" /tmp/pub /tmp/pub.json")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App 1 syncs first' /tmp/log")
     # the key parsed and the JWT was signed; only the request found no network
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App token: error sending request' /tmp/log")
