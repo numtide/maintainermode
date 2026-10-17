@@ -26,18 +26,20 @@ const CLUB_CSS: &str = include_str!("club.css");
 /// not walk them.
 const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /api/v1/prs/\n";
 
+/// The name of an Octicon that `nix/primer.nix` ships; a name it does not
+/// ship fails the build.
 macro_rules! octicon {
-    ($name:literal) => {
-        include_str!(concat!(env!("PRIMER_DIR"), "/octicons/", $name, "-16.svg"))
-    };
+    ($name:literal) => {{
+        const _: &str = include_str!(concat!(env!("PRIMER_DIR"), "/octicons/", $name, "-16.svg"));
+        $name
+    }};
 }
 pub(crate) use octicon;
 
-pub(crate) fn icon(svg: &str) -> String {
-    svg.replacen(
-        "<svg ",
-        "<svg class=\"octicon\" fill=\"currentColor\" aria-hidden=\"true\" ",
-        1,
+/// The page adds the symbol it points to: see [`crate::assets::sprite`].
+pub(crate) fn icon(name: &str) -> String {
+    format!(
+        "<svg class=\"octicon\" width=\"16\" height=\"16\" aria-hidden=\"true\"><use href=\"#i-{name}\"></use></svg>"
     )
 }
 

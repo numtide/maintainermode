@@ -58,5 +58,6 @@ runCommand "primer-assets" { } ''
   cp oct/package/LICENSE $out/LICENSE.octicons
   for i in ${toString icons}; do
     cp oct/package/build/svg/$i-16.svg $out/octicons/
+    printf '%s\t%s\n' $i "$(sed -e 's|^<svg[^>]*>||' -e 's|</svg>$||' oct/package/build/svg/$i-16.svg)" >> $out/icons.tsv
   done
 ''

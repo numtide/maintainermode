@@ -1,6 +1,7 @@
 mod actions;
 mod archive;
 mod area;
+mod assets;
 mod attrs;
 mod bumps;
 mod catalog;
