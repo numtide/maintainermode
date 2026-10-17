@@ -144,14 +144,14 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         .into_response()
 }
 
-const NOTICE: &str = "<div class=\"flash mb-4\"><strong>What the server keeps, and why.</strong> \
-For your latest report, it keeps the nixpkgs attributes that its own index knows, the time of the upload, \
-the time of the scan and the nixpkgs revision. It drops every other name. It keeps the hash of your upload token, \
-not the token. It uses the set for this page and for your private feed only: no public page, number or API reads it, \
-and there is no admin view. The set expires 90 days after the last upload. For a public flake that you add below, \
-it keeps the reference, the output, the same attributes from the last good scan, and the reason of the last failure; \
-the server scans it only while you open this page at least once in 90 days, and those attributes expire 90 days \
-after the last good scan or your last visit. The button below deletes the set and your flakes now.</div>";
+const NOTICE: &str = "<div class=\"callout mb-4\"><strong>What the server keeps, and why.</strong> \
+For your latest report, the server keeps the nixpkgs attributes that its index knows, the upload time, \
+the scan time and the nixpkgs revision. It drops all other names. It keeps the hash of your upload token, \
+not the token. Only this page and your private feed use this data. No public page, number or API reads it. \
+There is no admin view. The data expires 90 days after the last upload. For a public flake that you add below, \
+the server keeps the reference, the output, the attributes from the last good scan, and the reason of the last failure. \
+The server scans the flake only while you open this page at least once in 90 days. These attributes expire 90 days \
+after the last good scan or your last visit. The button below deletes your report and your flakes now.</div>";
 
 /// The My machines tab of `/me`. Opening it keeps the scanned flakes alive.
 pub(crate) fn machines_tab(app: &App, login: &str) -> crate::me::TabBody {
@@ -203,7 +203,7 @@ fn summary(set: Option<&PackageSet>) -> String {
     format!(
         "<div class=\"Box mb-4\"><div class=\"Box-row d-flex flex-items-center\"><div class=\"flex-auto\">\
          {} attributes from the report uploaded {} ago, {} entries dropped. Scanned {}. nixpkgs {}. Expires {}.</div>\
-         <form method=\"post\" action=\"/me/sets/delete\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Delete my set</button></form>\
+         <form method=\"post\" action=\"/me/sets/delete\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Delete my report</button></form>\
          </div></div>",
         s.attrs.len(),
         ago(s.uploaded_at),
@@ -275,7 +275,7 @@ fn rows(app: &App, from: &BTreeMap<String, Origin>) -> String {
     );
     let _ = write!(
         out,
-        "<details class=\"Box mb-4\"><summary class=\"Box-header\">The rest of the set <span class=\"Counter\">{}</span></summary>",
+        "<details class=\"Box mb-4\"><summary class=\"Box-header\">The other packages <span class=\"Counter\">{}</span></summary>",
         rest.len()
     );
     for r in &rest {

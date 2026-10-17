@@ -215,7 +215,7 @@ pub(crate) fn inbox_tab(
         let _ = write!(
             out,
             "<form method=\"get\" action=\"/me\" class=\"d-flex gap-2 mb-3\"><input type=\"hidden\" name=\"tab\" value=\"inbox\">{}\
-             <select class=\"form-select\" name=\"sub\" aria-label=\"subscription\"><option value=\"\">Every subscription</option>",
+             <select class=\"form-select\" name=\"sub\" aria-label=\"what you watch\"><option value=\"\">Everything you watch</option>",
             kind.map(|k| format!(
                 "<input type=\"hidden\" name=\"kind\" value=\"{}\">",
                 k.key()
@@ -305,7 +305,7 @@ fn mail_note(mail: Option<&str>) -> &'static str {
         Some("invalid") => "Use an address like name@example.org, with no spaces and no name.",
         Some("none") => "Save an address first.",
         Some("confirm") => {
-            "We sent a confirmation email. Open its link in the next 24 hours to start the digest."
+            "We sent a confirmation email. Open its link in the next 24 hours to start the daily email."
         }
         Some("unconfirmed") => {
             "Confirm your address first: open the link in the confirmation email."
@@ -357,10 +357,10 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
     };
     let email = if app.smtp.is_some() {
         format!(
-            "<label class=\"d-block mt-3\" for=\"email-address\">Daily email digest to</label>{state}\
+            "<label class=\"d-block mt-3\" for=\"email-address\">Daily email to</label>{state}\
              <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
-             <p class=\"note\">At most one email a day, with the unread events of these kinds since the last digest. \
-             A new address gets a confirmation email first; the digest starts when you open its link. \
+             <p class=\"note\">At most one email a day, with the unread events of these kinds since the last daily email. \
+             A new address gets a confirmation email first; the daily email starts when you open its link. \
              Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>",
             esc(&address)
         )
@@ -384,7 +384,7 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
             .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
             .map(|t| {
                 format!(
-                    " The last digest went out {} ago.",
+                    " The last daily email went out {} ago.",
                     ago(t.with_timezone(&Utc))
                 )
             })
@@ -518,7 +518,7 @@ async fn request_confirmation(app: &App, smtp: &Smtp, login: &str, address: &str
     };
     let base = app.public_url.trim_end_matches('/');
     let body = format!(
-        "Someone asked Maintainer Mode to send a daily digest to this address, for the GitHub account {login}.\n\n\
+        "Someone asked Maintainer Mode to send a daily email to this address, for the GitHub account {login}.\n\n\
          To confirm, open this link in the next {CONFIRM_HOURS} hours and push the button:\n\
          {base}/confirm/{token}\n\n\
          If you did not ask for this, ignore this email. \
@@ -590,7 +590,7 @@ async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> R
         &app,
         StatusCode::OK,
         "Confirm your address",
-        "Start the daily email digest of Maintainer Mode at this address.",
+        "Start the daily email of Maintainer Mode at this address.",
         &body,
     )
 }
@@ -616,7 +616,7 @@ async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Respon
         &app,
         StatusCode::OK,
         "Address confirmed",
-        "The daily digest goes to this address from now on. Each email has a link to unsubscribe.",
+        "The daily email goes to this address from now on. Each email has a link to unsubscribe.",
         "",
     )
 }
@@ -655,7 +655,7 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     }
     let body = format!(
         "This is a test email from Maintainer Mode, sent because {login} asked for it on the settings page.\n\
-         The daily digest comes from the same address.\n"
+         The daily email comes from the same address.\n"
     );
     match send(
         &app,
@@ -960,7 +960,7 @@ fn one_line(s: &str) -> String {
 
 fn digest_body(list: &[&Event]) -> String {
     let mut out = format!(
-        "{} new events on what you watch and on your package set:\n\n",
+        "{} new events on what you watch and on your machines:\n\n",
         list.len()
     );
     for e in list.iter().take(DIGEST_LINES) {
@@ -1075,7 +1075,7 @@ async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) 
         &app,
         StatusCode::OK,
         "Unsubscribe",
-        "Stop the email digest of Maintainer Mode. Your inbox on the site stays.",
+        "Stop the daily email of Maintainer Mode. Your inbox on the site stays.",
         &body,
     )
 }
