@@ -197,7 +197,7 @@ impl Health {
             for a in list {
                 m.insert(
                     a.code.clone(),
-                    crate::affected::judge(&a.ranges, &a.title, &p.version, &channels),
+                    crate::affected::judge(&a.ranges, &a.title, attr, &p.version, &channels),
                 );
             }
         }
@@ -829,7 +829,7 @@ mod tests {
                 },
                 {
                     "cve_id": "CVE-2026-2",
-                    "affected_products": "[{\"name\":\"x\",\"version_constraints\":[[\"unaffected\",\"==2.4.20\"],[\"affected\",\"<2.4.20\"]]}]",
+                    "affected_products": "[{\"name\":\"CUPS\",\"version_constraints\":[[\"unaffected\",\"==2.4.20\"],[\"affected\",\"<2.4.20\"]]}]",
                     "packages": "{\"cups\":{},\"cups-filters\":{}}"
                 }
             ]

@@ -46,7 +46,9 @@ fn clean(v: &str) -> Option<String> {
         Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => rest,
         _ => v,
     };
-    let hash = v.len() >= 12 && v.chars().all(|c| c.is_ascii_hexdigit());
+    let hash = v
+        .split(['.', '-', '+'])
+        .any(|p| p.len() >= 12 && p.chars().all(|c| c.is_ascii_hexdigit()));
     (v.starts_with(|c: char| c.is_ascii_digit())
         && !hash
         && !v.contains(char::is_whitespace)
@@ -176,32 +178,56 @@ pub fn check_constraints(list: &[(String, String)], v: &str) -> Check {
     }
 }
 
-/// `< X`, `<= X`, `before X` and `through X` in a title.
-pub fn title_constraint(title: &str) -> Option<(String, String)> {
+fn bare(word: &str) -> &str {
+    word.trim_matches(|c: char| matches!(c, ':' | ',' | ';' | '(' | ')' | '"' | '\''))
+}
+
+/// `< X`, `<= X`, `before X` and `through X` in a title, when a word before
+/// it names the attribute: a title about another product says nothing
+/// about its version.
+pub fn title_constraint(title: &str, attr: &str) -> Option<(String, String)> {
     let words: Vec<&str> = title.split_whitespace().collect();
-    words.windows(2).find_map(|w| {
-        let op = match w[0] {
+    (1..words.len()).find_map(|i| {
+        let op = match words[i - 1] {
             "<" | "before" => "<",
             "<=" | "through" => "=<",
             _ => return None,
         };
-        let v = clean(w[1])?;
-        Some(("affected".to_string(), format!("{op}{v}")))
+        let v = clean(words[i])?;
+        words[..i - 1]
+            .iter()
+            .any(|w| same_name(bare(w), attr))
+            .then(|| ("affected".to_string(), format!("{op}{v}")))
+    })
+}
+
+/// A version the title names as affected, not as the fix, and that `v`
+/// has not passed: `PyMuPDF 1.28.2 Path Traversal` against ranges that say
+/// `=<1.8.2`. The ranges are then not trusted.
+fn title_contradicts(title: &str, v: &str) -> bool {
+    let words: Vec<&str> = title.split_whitespace().collect();
+    words.iter().enumerate().any(|(i, w)| {
+        let fix = i > 0 && matches!(words[i - 1], "<" | "before");
+        !fix && clean(bare(w))
+            .is_some_and(|t| same_scheme(v, &t) && compare(v, &t) != Ordering::Greater)
     })
 }
 
 /// The verdict of one advisory for one version: affected when one CVE is.
 /// A CVE whose ranges do not decide falls back on the title.
-pub fn check(ranges: &[Ranges], title: &str, v: &str) -> Check {
+pub fn check(ranges: &[Ranges], title: &str, attr: &str, v: &str) -> Check {
     let Some(v) = clean(v) else {
         return Check::Unknown;
     };
-    let title: Vec<(String, String)> = title_constraint(title).into_iter().collect();
-    let by_title = || check_constraints(&title, &v);
-    if ranges.is_empty() {
-        return by_title();
-    }
+    let title_rows: Vec<(String, String)> = title_constraint(title, attr).into_iter().collect();
+    let by_title = || check_constraints(&title_rows, &v);
     let mut all_clear = true;
+    if ranges.is_empty() {
+        match by_title() {
+            Check::NotAffected => {}
+            c => return c,
+        }
+    }
     for r in ranges {
         let c = match check_constraints(&r.constraints, &v) {
             Check::Unknown => by_title(),
@@ -213,7 +239,7 @@ pub fn check(ranges: &[Ranges], title: &str, v: &str) -> Check {
             Check::NotAffected => {}
         }
     }
-    if all_clear {
+    if all_clear && !title_contradicts(title, &v) {
         Check::NotAffected
     } else {
         Check::Unknown
@@ -221,8 +247,8 @@ pub fn check(ranges: &[Ranges], title: &str, v: &str) -> Check {
 }
 
 /// The release that fixed `v`: the highest `<` bound at or below it.
-pub fn fixed_in(ranges: &[Ranges], title: &str, v: &str) -> Option<String> {
-    let title = title_constraint(title);
+pub fn fixed_in(ranges: &[Ranges], title: &str, attr: &str, v: &str) -> Option<String> {
+    let title = title_constraint(title, attr);
     let rows = ranges
         .iter()
         .flat_map(|r| r.constraints.iter())
@@ -289,18 +315,19 @@ impl Verdict {
 pub fn judge(
     ranges: &[Ranges],
     title: &str,
+    attr: &str,
     master: &str,
     channels: &[(&str, &str, bool)],
 ) -> Verdict {
-    match check(ranges, title, master) {
+    match check(ranges, title, attr, master) {
         Check::Affected => return Verdict::Affects,
         Check::Unknown => return Verdict::Unknown,
         Check::NotAffected => {}
     }
-    let fixed_in = fixed_in(ranges, title, master);
+    let fixed_in = fixed_in(ranges, title, attr, master);
     let mut lags = Vec::new();
     for (channel, version, stable) in channels {
-        match check(ranges, title, version) {
+        match check(ranges, title, attr, version) {
             Check::Affected => lags.push(Lag {
                 channel: channel.to_string(),
                 version: version.to_string(),
@@ -327,24 +354,47 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
-/// The products of a CVE that name this attribute, or all of them when
-/// none does: an unmatched name must not drop a range.
+/// Suffixes of an attribute that keep the upstream numbering, after an
+/// optional major version: `ffmpeg_9-headless`, `unbound-with-systemd`.
+const VARIANTS: &[&str] = &[
+    "",
+    "full",
+    "headless",
+    "minimal",
+    "unwrapped",
+    "withsystemd",
+    "x",
+    "bin",
+    "lts",
+    "small",
+    "nox",
+];
+
+/// A product name and an attribute name the same package: equal, or one
+/// with a major version or a build variant added. `immich-wallpaper` is
+/// not `immich`, and `pylookyloo` is not `lookyloo`.
+pub fn same_name(name: &str, attr: &str) -> bool {
+    let last = |s: &str| norm(s.rsplit('.').next().unwrap_or(s));
+    let (n, a) = (last(name), last(attr));
+    if n.is_empty() || a.is_empty() {
+        return false;
+    }
+    let rest = match (a.strip_prefix(&n), n.strip_prefix(&a)) {
+        (Some(r), _) | (_, Some(r)) => r,
+        _ => return false,
+    };
+    VARIANTS.contains(&rest.trim_start_matches(|c: char| c.is_ascii_digit()))
+}
+
+/// The products of a CVE that name this attribute. None is a valid answer:
+/// the range of another product must not judge this one.
 pub fn products_for(attr: &str, names: &[&str]) -> Vec<usize> {
-    let last = norm(attr.rsplit('.').next().unwrap_or(attr));
-    let hits: Vec<usize> = names
+    names
         .iter()
         .enumerate()
-        .filter(|(_, n)| {
-            let n = norm(n);
-            !n.is_empty() && (n == last || last.starts_with(&n) || n.starts_with(&last))
-        })
+        .filter(|(_, n)| same_name(n, attr))
         .map(|(i, _)| i)
-        .collect();
-    if hits.is_empty() {
-        (0..names.len()).collect()
-    } else {
-        hits
-    }
+        .collect()
 }
 
 #[cfg(test)]
@@ -423,6 +473,11 @@ mod tests {
 
     #[test]
     fn what_cannot_be_read_stays_unknown() {
+        let go = [
+            ("affected", "==< 1.80.0-v2.20.0.20260317120401-d90285929ca0"),
+            ("affected", "==>= 4.0.0-rc.1, < 4.12.3"),
+        ];
+        assert_eq!(c(&go, "2.71.7"), Unknown);
         assert_eq!(c(&[("affected", "*")], "1.0"), Affected);
         assert_eq!(
             c(
@@ -452,22 +507,28 @@ mod tests {
 
     #[test]
     fn the_title_decides_when_the_ranges_do_not() {
+        let tc = title_constraint;
         assert_eq!(
-            title_constraint("unbound: security issues < 1.26.1"),
+            tc("unbound: security issues < 1.26.1", "unbound-with-systemd"),
             Some(("affected".into(), "<1.26.1".into()))
         );
         assert_eq!(
-            title_constraint("Flower before 2.2.0 CSRF via Worker"),
+            tc(
+                "python3Packages.gitpython: security issues < 3.2.0",
+                "python314Packages.gitpython"
+            ),
+            Some(("affected".into(), "<3.2.0".into()))
+        );
+        assert_eq!(
+            tc("Flower before 2.2.0 CSRF via Worker", "flower"),
             Some(("affected".into(), "<2.2.0".into()))
         );
         assert_eq!(
-            title_constraint("foo through 3.1, bar"),
+            tc("foo through 3.1, bar", "foo"),
             Some(("affected".into(), "=<3.1".into()))
         );
-        assert_eq!(
-            title_constraint("Praat Model Loader out-of-bounds write"),
-            None
-        );
+        assert_eq!(tc("Lookyloo < 1.40 zip bomb", "pylookyloo"), None);
+        assert_eq!(tc("Praat Model Loader out-of-bounds write", "praat"), None);
         let hash = Ranges {
             cve: None,
             constraints: vec![(
@@ -476,10 +537,31 @@ mod tests {
             )],
         };
         let t = "gstreamer: security issues < 1.28.5 (backport needed)";
-        assert_eq!(check(std::slice::from_ref(&hash), t, "1.28.5"), NotAffected);
-        assert_eq!(check(std::slice::from_ref(&hash), t, "1.28.4"), Affected);
-        assert_eq!(check(&[hash], "no version here", "1.28.5"), Unknown);
-        assert_eq!(check(&[], t, "1.28.5"), NotAffected);
+        let one = std::slice::from_ref(&hash);
+        assert_eq!(check(one, t, "gstreamer", "1.28.5"), NotAffected);
+        assert_eq!(check(one, t, "gstreamer", "1.28.4"), Affected);
+        assert_eq!(check(one, t, "gst-plugins-bad", "1.28.5"), Unknown);
+        assert_eq!(
+            check(one, "no version here", "gstreamer", "1.28.5"),
+            Unknown
+        );
+        assert_eq!(check(&[], t, "gstreamer", "1.28.5"), NotAffected);
+    }
+
+    #[test]
+    fn a_title_that_names_an_affected_version_overrules_the_ranges() {
+        let r = Ranges {
+            cve: None,
+            constraints: vec![("affected".into(), "=<1.8.2".into())],
+        };
+        let t = "PyMuPDF 1.28.2 Path Traversal via extract_objects()";
+        assert_eq!(
+            check(std::slice::from_ref(&r), t, "pymupdf", "1.27.2.3"),
+            Unknown
+        );
+        assert_eq!(check(&[r], t, "pymupdf", "1.28.3"), NotAffected);
+        let unbound = "unbound: security issues < 1.26.1";
+        assert_eq!(check(&[], unbound, "unbound", "1.26.1"), NotAffected);
     }
 
     #[test]
@@ -488,9 +570,9 @@ mod tests {
             cve: None,
             constraints: vec![("affected".into(), s.into())],
         };
-        assert_eq!(check(&[r("<1.0"), r("<2.0")], "", "1.5"), Affected);
-        assert_eq!(check(&[r("<1.0"), r("==1.5")], "", "1.6"), Unknown);
-        assert_eq!(check(&[r("<1.0"), r("<1.2")], "", "1.6"), NotAffected);
+        assert_eq!(check(&[r("<1.0"), r("<2.0")], "", "x", "1.5"), Affected);
+        assert_eq!(check(&[r("<1.0"), r("==1.5")], "", "x", "1.6"), Unknown);
+        assert_eq!(check(&[r("<1.0"), r("<1.2")], "", "x", "1.6"), NotAffected);
     }
 
     #[test]
@@ -501,9 +583,9 @@ mod tests {
         assert_eq!(lt("1.9", "1.10"), Affected);
         assert_eq!(lt("1.0-rc1", "1.0"), Affected);
         assert_eq!(lt("1.0rc1", "1.0"), Affected);
-        assert_eq!(check(&[], "x < 1.0", "unstable-2024-01-01"), Unknown);
-        assert_eq!(check(&[], "x < 1.0", "0-unstable-2024-01-01"), Unknown);
-        assert_eq!(check(&[], "x < 1.0", "v0.9"), Affected);
+        assert_eq!(check(&[], "x < 1.0", "x", "unstable-2024-01-01"), Unknown);
+        assert_eq!(check(&[], "x < 1.0", "x", "0-unstable-2024-01-01"), Unknown);
+        assert_eq!(check(&[], "x < 1.0", "x", "v0.9"), Affected);
     }
 
     #[test]
@@ -515,17 +597,18 @@ mod tests {
                 ("affected".into(), "==>= 4.2.0, < 4.2.9".into()),
             ],
         };
+        let one = std::slice::from_ref(&r);
+        assert_eq!(fixed_in(one, "", "x", "4.3.5").as_deref(), Some("4.3.3"));
+        assert_eq!(fixed_in(one, "", "x", "4.2.9").as_deref(), Some("4.2.9"));
+        assert_eq!(fixed_in(&[r], "", "x", "4.1"), None);
         assert_eq!(
-            fixed_in(std::slice::from_ref(&r), "", "4.3.5").as_deref(),
-            Some("4.3.3")
-        );
-        assert_eq!(
-            fixed_in(std::slice::from_ref(&r), "", "4.2.9").as_deref(),
-            Some("4.2.9")
-        );
-        assert_eq!(fixed_in(&[r], "", "4.1"), None);
-        assert_eq!(
-            fixed_in(&[], "unbound: security issues < 1.26.1", "1.26.1").as_deref(),
+            fixed_in(
+                &[],
+                "unbound: security issues < 1.26.1",
+                "unbound",
+                "1.26.1"
+            )
+            .as_deref(),
             Some("1.26.1")
         );
     }
@@ -533,11 +616,13 @@ mod tests {
     #[test]
     fn a_verdict_reads_master_then_each_channel() {
         let t = "unbound: security issues < 1.26.1";
-        assert_eq!(judge(&[], t, "1.26.0", &[]), Verdict::Affects);
+        let u = "unbound";
+        assert_eq!(judge(&[], t, u, "1.26.0", &[]), Verdict::Affects);
         assert_eq!(
             judge(
                 &[],
                 t,
+                u,
                 "1.26.1",
                 &[
                     ("nixos-unstable", "1.26.1", false),
@@ -549,7 +634,7 @@ mod tests {
             }
         );
         assert_eq!(
-            judge(&[], t, "1.26.1", &[("nixos-26.05", "1.25.0", true)]),
+            judge(&[], t, u, "1.26.1", &[("nixos-26.05", "1.25.0", true)]),
             Verdict::Behind {
                 fixed_in: Some("1.26.1".into()),
                 channels: vec![Lag {
@@ -560,13 +645,14 @@ mod tests {
             }
         );
         assert_eq!(
-            judge(&[], "unbound: a flaw", "1.26.1", &[]),
+            judge(&[], "unbound: a flaw", u, "1.26.1", &[]),
             Verdict::Unknown
         );
         assert_eq!(
             judge(
                 &[],
                 t,
+                u,
                 "1.26.1",
                 &[("nixos-26.05", "unstable-2024-01-01", true)]
             ),
@@ -575,17 +661,26 @@ mod tests {
     }
 
     #[test]
-    fn products_match_the_attribute_or_all_stay() {
+    fn a_product_judges_only_the_attribute_it_names() {
         assert_eq!(
             products_for("python3Packages.gitpython", &["GitPython", "other"]),
             vec![0]
         );
         assert_eq!(products_for("openssl_3", &["OpenSSL"]), vec![0]);
-        assert_eq!(products_for("cups", &["libcups", "cups-filters"]), vec![1]);
+        assert_eq!(products_for("ffmpeg_9-headless", &["FFmpeg"]), vec![0]);
+        assert_eq!(products_for("unbound-with-systemd", &["Unbound"]), vec![0]);
+        assert_eq!(products_for("etcd_3_6", &["etcd"]), vec![0]);
         assert_eq!(
-            products_for("unbound", &["NLnet Labs Unbound DNS"]),
-            vec![0]
+            products_for("cups", &["libcups", "cups-filters"]),
+            Vec::<usize>::new()
         );
-        assert_eq!(products_for("foo", &["bar", "baz"]), vec![0, 1]);
+        assert_eq!(
+            products_for("gnomeExtensions.immich-wallpaper", &["immich"]),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            products_for("python3Packages.pylookyloo", &["lookyloo"]),
+            Vec::<usize>::new()
+        );
     }
 }
