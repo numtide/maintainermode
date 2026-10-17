@@ -34,8 +34,23 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_RESCAN_TIMEOUT`       | wall-clock limit of one scan in seconds, default 900        |
 | `MAINTAINER_MODE_RESCAN_MEMORY_MB`     | address-space limit of each sandboxed process, default 3072 |
 | `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
+| `MAINTAINER_MODE_SMTP_HOST`            | SMTP server for the email digest; off without it            |
+| `MAINTAINER_MODE_SMTP_PORT`            | SMTP port, default 465 (TLS); another port needs STARTTLS   |
+| `MAINTAINER_MODE_SMTP_USER`            | SMTP user, with the password file                           |
+| `MAINTAINER_MODE_SMTP_PASSWORD_FILE`   | file holding the SMTP password                              |
+| `MAINTAINER_MODE_SMTP_FROM`            | the From address of the digest                              |
 
 CI is the flake's `checks`: `nix flake check`.
+
+## Email
+
+Set `MAINTAINER_MODE_SMTP_HOST` and `MAINTAINER_MODE_SMTP_FROM` to turn
+the email digest on. `MAINTAINER_MODE_SMTP_PORT` is 465 by default. Port
+465 uses TLS from the start. Any other port must offer STARTTLS. Set
+`MAINTAINER_MODE_SMTP_USER` and `MAINTAINER_MODE_SMTP_PASSWORD_FILE`
+together, or leave both unset. In the NixOS module, use
+`services.maintainer-mode.smtp`. The password file goes through
+LoadCredential.
 
 ## What we took, and under which licence
 

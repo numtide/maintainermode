@@ -66,6 +66,34 @@ The JSON API takes `GET /api/v1/queue/review?bucket=foryou&login=<login>`. The M
 
 The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. The header and your own `/u/<login>` page link to the page.
 
+## Notifications
+
+**The inbox.** `/me/inbox` shows the events of your Atom feed: what
+happened in the last 30 days to what you watch and to your package set.
+The newest event comes first. Filter the list by kind (pull request,
+issue, advisory, release) or by subscription. "Mark all read" marks
+every event as read. Only you see your inbox.
+
+**The unread count.** The header shows the number of unread events. The
+server counts them after each sync pass, and when you open the inbox.
+On `/me/settings`, choose the kinds that the count includes.
+
+**The email digest.** This is off by default. It works only when the
+operator sets up SMTP (see [operations.md](operations.md#email)). Enter
+an address on `/me/settings` to get the digest. The server sends at most
+one email a day. The email lists the unread events of your chosen kinds
+since the last digest. "Send me a test email" sends one email, at most
+once in 10 minutes.
+
+- The address is private. It shows only to you, on `/me/settings`.
+- The server accepts only a plain address, like `name@example.org`. It
+  refuses spaces, names and quotes.
+- Each email has an unsubscribe link with a new random token. The server
+  keeps only the hash of the token, for 60 days. The link opens a page
+  with one button. Mail clients that know RFC 8058 unsubscribe in one
+  click. Unsubscribing deletes the address.
+- To stop the digest, you can also empty the address on `/me/settings`.
+
 ## My package set
 
 Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you
