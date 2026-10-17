@@ -714,7 +714,7 @@ async fn page(
     if own {
         let _ = write!(
             actions,
-            " <a class=\"btn btn-sm\" href=\"/me\">{} Your private pages</a>",
+            " <a class=\"btn btn-sm\" href=\"/packages?filter=mine\">{} Your packages</a>",
             icon(octicon!("person"))
         );
     }
@@ -936,7 +936,7 @@ mod own {
     use super::*;
 
     #[tokio::test]
-    async fn the_owner_gets_a_link_to_the_private_pages_and_no_private_data() {
+    async fn the_owner_gets_a_link_to_their_packages_and_no_private_data() {
         let app = crate::sets::tests::app(&[]);
         app.store.watch("alice", "pkg:secret-watch").unwrap();
         let h = crate::notify::tests::signed_in(&app, "alice");
@@ -951,8 +951,8 @@ mod own {
             .await
             .unwrap();
         let html = String::from_utf8(b.to_vec()).unwrap();
-        assert!(html.contains("href=\"/me\">"));
-        assert!(html.contains("Your private pages"));
+        assert!(html.contains("href=\"/packages?filter=mine\">"));
+        assert!(html.contains("Your packages"));
         assert!(!html.contains("secret-watch"));
         let r = page(State(app.clone()), h, Path("bob".into()), q()).await;
         let b = axum::body::to_bytes(r.into_body(), usize::MAX)
