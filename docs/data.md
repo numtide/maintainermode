@@ -236,7 +236,7 @@ An empty list turns the archive off.
 - **Budget.** The sync comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
 - **Cache.** The server keeps the files per head commit and the conversation per update. It keeps them in memory only, up to 32 MB. A restart clears them.
 - **Crawlers.** `/robots.txt` tells crawlers to stay off `/pr/` and `/api/v1/prs/`.
-- **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
+- **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text, except `<details>`, `<summary>` and `<b>` with no attributes. The page closes each of these tags that the text leaves open. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
 - **To act**, use "Review the diff on GitHub" or "Open on GitHub" in the page header. Maintainer Mode writes nothing to nixpkgs.
 - A pull request that is not in the synced data gets a short page with a link to GitHub.
 - `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request that is not synced gets 404 and `{"error": …, "url": …}`.

@@ -640,17 +640,102 @@ fn safe_url(u: pulldown_cmark::CowStr<'_>) -> pulldown_cmark::CowStr<'_> {
     }
 }
 
-/// Markdown written by anyone on GitHub: raw HTML shows as text, HTML
-/// comments go, only web and mail links stay, and an image becomes a link so
-/// the page loads nothing from elsewhere.
+const ALLOWED_TAGS: [&str; 3] = ["details", "summary", "b"];
+
+/// The few tags a body may keep, with no attributes. Every tag it opens is
+/// closed, so a body can never fold or bold the rest of the page.
+#[derive(Default)]
+struct Tags {
+    open: Vec<&'static str>,
+}
+
+impl Tags {
+    fn parse(tag: &str) -> Option<(bool, &'static str)> {
+        let inner = tag.strip_prefix('<')?.strip_suffix('>')?.trim();
+        let (closing, name) = match inner.strip_prefix('/') {
+            Some(n) => (true, n.trim()),
+            None => (false, inner),
+        };
+        let name = name.to_ascii_lowercase();
+        let name = if !closing && name == "details open" {
+            "details"
+        } else {
+            name.as_str()
+        };
+        ALLOWED_TAGS
+            .into_iter()
+            .find(|t| *t == name)
+            .map(|t| (closing, t))
+    }
+
+    /// Splits raw HTML into text to escape and allowed tags to keep.
+    fn split<'a>(&mut self, html: &str) -> Vec<pulldown_cmark::Event<'a>> {
+        use pulldown_cmark::Event;
+        let mut out = Vec::new();
+        let mut text = String::new();
+        let mut rest = html;
+        while let Some(i) = rest.find('<') {
+            let end = rest[i..].find('>').map(|j| i + j + 1);
+            let kept = end.and_then(|e| Tags::parse(&rest[i..e]).map(|t| (e, t)));
+            let Some((e, (closing, name))) = kept else {
+                text.push_str(&rest[..=i]);
+                rest = &rest[i + 1..];
+                continue;
+            };
+            text.push_str(&rest[..i]);
+            rest = &rest[e..];
+            let html = if closing {
+                match self.open.iter().rposition(|t| *t == name) {
+                    Some(at) => self
+                        .open
+                        .drain(at..)
+                        .rev()
+                        .map(|t| format!("</{t}>"))
+                        .collect(),
+                    None => String::new(),
+                }
+            } else if name == "summary" && self.open.last() != Some(&"details") {
+                String::new()
+            } else {
+                self.open.push(name);
+                format!("<{name}>")
+            };
+            if !text.is_empty() {
+                out.push(Event::Text(std::mem::take(&mut text).into()));
+            }
+            if !html.is_empty() {
+                out.push(Event::InlineHtml(html.into()));
+            }
+        }
+        text.push_str(rest);
+        if !text.trim().is_empty() {
+            out.push(Event::Text(text.into()));
+        }
+        out
+    }
+
+    fn close_all(&mut self) -> String {
+        self.open
+            .drain(..)
+            .rev()
+            .map(|t| format!("</{t}>"))
+            .collect()
+    }
+}
+
+/// Markdown written by anyone on GitHub: raw HTML shows as text, except
+/// `details`, `summary` and `b` with no attributes. HTML comments go, only
+/// web and mail links stay, and an image becomes a link so the page loads
+/// nothing from elsewhere.
 pub(crate) fn markdown(text: &str) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut open = false;
-    let events = Parser::new_ext(cut(text, BODY_CAP), opts).filter_map(|e| match e {
+    let mut tags = Tags::default();
+    let events = Parser::new_ext(cut(text, BODY_CAP), opts).flat_map(|e| match e {
         Event::Html(t) | Event::InlineHtml(t) => {
             let kept = strip_comments(&t, &mut open);
-            (!kept.trim().is_empty()).then(|| Event::Text(kept.into()))
+            tags.split(&kept)
         }
         Event::Start(Tag::Link {
             link_type,
@@ -663,17 +748,18 @@ pub(crate) fn markdown(text: &str) -> String {
             dest_url,
             title,
             id,
-        }) => Some(Event::Start(Tag::Link {
+        }) => vec![Event::Start(Tag::Link {
             link_type,
             dest_url: safe_url(dest_url),
             title,
             id,
-        })),
-        Event::End(TagEnd::Image) => Some(Event::End(TagEnd::Link)),
-        e => Some(e),
+        })],
+        Event::End(TagEnd::Image) => vec![Event::End(TagEnd::Link)],
+        e => vec![e],
     });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
+    html.push_str(&tags.close_all());
     html
 }
 
@@ -1549,6 +1635,35 @@ mod tests {
     }
 
     #[test]
+    fn markdown_keeps_details_summary_and_b() {
+        let html = markdown(
+            "<details>\n<summary><b>Rebuild report</b> (click)</summary>\n\n- one\n\n</details>\n\n\
+             <b onclick=x>no</b> <DETAILS open><summary>s</summary>",
+        );
+        assert!(
+            html.contains("<details><summary><b>Rebuild report</b> (click)</summary>"),
+            "{html}"
+        );
+        assert!(html.contains("<li>one</li>"), "{html}");
+        assert!(html.contains("&lt;b onclick=x&gt;no"), "{html}");
+        assert!(!html.contains("onclick=x>"), "{html}");
+        assert_eq!(
+            html.matches("<details>").count(),
+            html.matches("</details>").count(),
+            "{html}"
+        );
+        assert!(html.trim_end().ends_with("</p>\n</details>"), "{html}");
+    }
+
+    #[test]
+    fn markdown_drops_stray_closing_tags() {
+        let html = markdown("a</details></b> <summary>x</summary> <b>bold");
+        assert!(!html.contains("</details>"), "{html}");
+        assert!(!html.contains("<summary>"), "{html}");
+        assert!(html.ends_with("</b>"), "{html}");
+    }
+
+    #[test]
     fn comments_end_in_a_later_event() {
         let mut open = false;
         assert_eq!(strip_comments("a<!-- b", &mut open), "a");
@@ -1661,7 +1776,10 @@ mod tests {
             .lock()
             .unwrap()
             .put(format!("42@{}", p.head_oid), Arc::new(files), 1);
-        let talk = talk_of(&json!({ "body": "**bold** <b>raw</b>" }), "github");
+        let talk = talk_of(
+            &json!({ "body": "**bold** <b>raw</b> <i>no</i>" }),
+            "github",
+        );
         app.pr_cache.talk.lock().unwrap().put(
             format!("42@{}", p.updated_at.to_rfc3339()),
             Arc::new(talk),
@@ -1671,7 +1789,7 @@ mod tests {
             body(pr_page(State(app.clone()), HeaderMap::new(), Path(42)).await).await;
         assert_eq!(status, StatusCode::OK);
         assert!(html.contains("hello: 1 -&gt; &lt;2&gt;"));
-        assert!(html.contains("<strong>bold</strong> &lt;b&gt;raw&lt;/b&gt;"));
+        assert!(html.contains("<strong>bold</strong> <b>raw</b> &lt;i&gt;no&lt;/i&gt;"));
         assert!(html.contains("<span class=\"diff-add\">+2</span>"));
         assert!(html.contains("https://github.com/NixOS/nixpkgs/pull/42/files\""));
         assert!(html.contains("its author is not in the queues"));
@@ -1679,7 +1797,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let v: Value = serde_json::from_str(&api).unwrap();
         assert_eq!(v["files"]["files"][0]["additions"], 1);
-        assert_eq!(v["discussion"]["body"], "**bold** <b>raw</b>");
+        assert_eq!(v["discussion"]["body"], "**bold** <b>raw</b> <i>no</i>");
         assert_eq!(v["queue"]["queue"], "none");
 
         let (status, html) =
