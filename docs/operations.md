@@ -76,7 +76,7 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 | Package                                                              | Version | Licence | Used for                                                                                            |
 | -------------------------------------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
 | [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, served as-is                                                                     |
-| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | thirteen 16px SVG icons                                                                             |
+| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | 16px SVG icons, sent as one hidden sprite on each page                                              |
 | nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
 | nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
 | nixfresh `upstream.rs`, `version.rs` and direct collector            | 2026-10 | MIT     | `src/upstream.rs` and `src/version.rs`: upstream releases from tags and registries                  |
@@ -88,6 +88,10 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages
 are server-rendered HTML; there is no JavaScript.
+
+### Page weight and caching
+
+- `icon()` writes `<svg><use href="#i-NAME"></use></svg>`. Each page holds one hidden sprite with the icons it uses.
 
 Version 22 of `@primer/css` no longer ships `Box`, `Label`, `UnderlineNav`,
 `Subhead` or `flash`. `src/club.css` rebuilds those few on Primer's own

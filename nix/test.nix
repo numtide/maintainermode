@@ -86,6 +86,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'selected\" href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">0</span>' /tmp/review")
     machine.succeed("grep -q 'href=\"/review?tab=bumps\">Bumps' /tmp/review && grep -q 'href=\"/review?tab=ready\">Ready to merge' /tmp/review")
     machine.succeed("grep -q '<title>Review · Maintainer Mode</title>' /tmp/review")
+    # icons point into one hidden sprite on the page
+    machine.succeed("grep -q '<use href=\"#i-eye\">' /tmp/review && grep -q '<symbol id=\"i-eye\"' /tmp/review")
     machine.succeed("grep -q 'href=\"/review\" aria-current=\"page\"' /tmp/review")
     machine.succeed("grep -o 'class=\"UnderlineNav-item\"' /tmp/review | wc -l > /tmp/tabs && grep -qx 4 /tmp/tabs")
     machine.succeed("grep -q 'Data from the last 60 days' /tmp/review")

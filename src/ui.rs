@@ -225,6 +225,11 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     } else {
         format!("{} · Maintainer Mode", esc(&p.title))
     };
+    let club = icon(octicon!("people"));
+    let menu = menu(app, viewer);
+    let nav = nav(p.section);
+    let subnav = subnav(&p.subnav);
+    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &head, &subnav, &p.body]);
     format!(
         r#"<!doctype html>
 <html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
@@ -236,7 +241,7 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 <link rel="stylesheet" href="/static/club.css">
 </head>
 <body class="color-bg-default color-fg-default">
-<header class="Header">
+{sprite}<header class="Header">
   <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">Maintainer Mode</span></a></div>
   <div class="Header-item mr-0">{menu}</div>
 </header>
@@ -249,10 +254,6 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 </footer>
 </body>
 </html>"#,
-        club = icon(octicon!("people")),
-        menu = menu(app, viewer),
-        nav = nav(p.section),
-        subnav = subnav(&p.subnav),
         body = p.body,
         window = crate::ledger::WINDOW_DAYS,
         updated = updated(app),
