@@ -107,8 +107,7 @@ async fn every_signed_in_page_answers_and_stays_private() {
     let site = serve(app.clone()).await;
     for path in [
         "/",
-        "/me",
-        "/me?tab=inbox",
+        "/inbox",
         "/me?tab=maintain",
         "/me?tab=watch",
         "/me?tab=machines",
@@ -138,7 +137,6 @@ async fn every_signed_in_page_answers_and_stays_private() {
 async fn me_pages_show_their_parts() {
     let site = serve(signed_in_app()).await;
     for (tab, label) in [
-        ("inbox", "Inbox"),
         ("maintain", "Maintain"),
         ("watch", "Watch"),
         ("machines", "My machines"),
@@ -151,7 +149,19 @@ async fn me_pages_show_their_parts() {
             "{tab}"
         );
     }
+    let a = site.get("/inbox", Some(SID)).await;
+    assert!(a.body.contains("<a href=\"/inbox\" aria-current=\"page\">"));
+    assert!(
+        !a.body
+            .contains("UnderlineNav-item\" href=\"/\" aria-current")
+    );
+    let a = site.get("/me/inbox", Some(SID)).await;
+    assert_eq!(a.location.as_deref(), Some("/inbox"));
     let a = site.get("/me/settings", Some(SID)).await;
+    assert!(
+        a.body
+            .contains("<a href=\"/me/settings\" aria-current=\"page\">")
+    );
     for id in [
         "email",
         "feed",
@@ -369,7 +379,7 @@ async fn settings_tokens_and_sign_out() {
 
     let a = site.post("/auth/logout", SID, &[]).await;
     assert_eq!(a.location.as_deref(), Some("/"));
-    let a = site.get("/me", Some(SID)).await;
+    let a = site.get("/inbox", Some(SID)).await;
     assert_eq!(a.status, StatusCode::SEE_OTHER);
     let a = site.get("/review", Some(SID)).await;
     assert!(!a.body.contains("menu-login"));

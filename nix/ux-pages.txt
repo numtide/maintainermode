@@ -45,7 +45,7 @@ both /pr/${pr}
 both /actions
 public /confirm/${token} status=404
 public /unsubscribe/${token} status=404
-signed-in /me?tab=inbox
+signed-in /inbox
 signed-in /me?tab=maintain
 signed-in /me?tab=watch
 signed-in /me?tab=machines

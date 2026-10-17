@@ -21,6 +21,7 @@ pub(crate) enum Section {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Personal {
+    Inbox,
     Progress,
     Runs,
     Settings,
@@ -187,28 +188,41 @@ fn menu(app: &App, viewer: Option<&str>, current: Section) -> String {
             String::new()
         };
     };
-    let unread = match app.inbox.get(v) {
-        0 => String::new(),
-        n => format!(" <span class=\"Counter\" title=\"unread in your inbox\">{n}</span>"),
+    let n = app.inbox.get(v);
+    let bell = if n == 0 {
+        String::new()
+    } else {
+        format!(
+            "<a class=\"Header-link d-flex flex-items-center mr-3\" href=\"/inbox\" aria-label=\"Inbox: {n} unread\">{}<span class=\"Counter ml-1\">{n}</span></a>",
+            icon(octicon!("inbox"))
+        )
     };
     let start = if crate::welcome::pending(app, v) {
         "<a href=\"/#start\">Get started</a>"
     } else {
         ""
     };
-    let mut items = String::from("<a href=\"/me\">");
-    items.push_str(&icon(octicon!("package")));
-    items.push_str(" My packages</a>");
+    let mut items = String::new();
     for (item, href, svg, label) in MENU {
         let cur = if current == Section::Personal(item) {
             " aria-current=\"page\""
         } else {
             ""
         };
-        let _ = write!(items, "<a href=\"{href}\"{cur}>{} {label}</a>", icon(svg));
+        let count = match item {
+            Personal::Inbox if n > 0 => {
+                format!(" <span class=\"Counter\" title=\"unread in your inbox\">{n}</span>")
+            }
+            _ => String::new(),
+        };
+        let _ = write!(
+            items,
+            "<a href=\"{href}\"{cur}>{} {label}{count}</a>",
+            icon(svg)
+        );
     }
     format!(
-        "<details class=\"menu\"><summary class=\"Header-link\" aria-label=\"Your menu\">{person}<span class=\"menu-login\">{v}</span>{unread}</summary>\
+        "{bell}<details class=\"menu\"><summary class=\"Header-link\" aria-label=\"Your menu\">{person}<span class=\"menu-login\">{v}</span></summary>\
          <div class=\"menu-list\">{start}{items}\
          <form method=\"post\" action=\"/auth/logout\" class=\"menu-sep\"><button type=\"submit\">{out} Sign out</button></form>\
          </div></details>",
@@ -218,7 +232,8 @@ fn menu(app: &App, viewer: Option<&str>, current: Section) -> String {
     )
 }
 
-const MENU: [(Personal, &str, &str, &str); 3] = [
+const MENU: [(Personal, &str, &str, &str); 4] = [
+    (Personal::Inbox, "/inbox", octicon!("inbox"), "Inbox"),
     (
         Personal::Progress,
         "/me/progress",

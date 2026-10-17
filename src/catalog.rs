@@ -2194,7 +2194,7 @@ async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response 
     let mut out = format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\
          <title>Maintainer Mode: what {l} watches</title><id>{b}/feed/{l}</id><updated>{}</updated>\
-         <link rel=\"alternate\" href=\"{b}/me?tab=inbox\"/>",
+         <link rel=\"alternate\" href=\"{b}/inbox\"/>",
         updated.to_rfc3339(),
         l = xml(&login),
         b = xml(base)

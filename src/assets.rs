@@ -112,6 +112,7 @@ fn untagged(path: &str, query: Option<&str>) -> bool {
     let status = path == "/state" && query.is_some_and(|q| q.split('&').any(|p| p == "tab=status"));
     status
         || path == "/me"
+        || path == "/inbox"
         || [
             "/me/", "/sync", "/pr/", "/p/", "/m/", "/claude/", "/auth/", "/api/", "/static/",
         ]

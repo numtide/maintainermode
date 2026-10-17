@@ -165,7 +165,7 @@ fn dashboard(app: &App, login: &str) -> String {
                 String::new()
             }
         ),
-        Some(("/me", "open the inbox")),
+        Some(("/inbox", "open the inbox")),
         &if news.is_empty() {
             empty("Nothing new. <a href=\"/me?tab=watch\">Watch</a> packages, modules or directories to hear about them.")
         } else {
