@@ -739,7 +739,7 @@ fn place(s: &Snapshot, pr: &Pr) -> Place {
             } else if !s.ledger.is_listed(&pr.author) {
                 let p = s.ledger.people.get(&pr.author);
                 why.push(format!(
-                    "its author is not listed: credit from {} of {} authors",
+                    "its author is not in the queues: credit from {} of {} authors",
                     p.map_or(0, |p| p.counterparties),
                     ledger::MIN_COUNTERPARTIES
                 ));
@@ -996,9 +996,9 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
     }
     if p.unowned {
         out.push_str(&kv(
-            "Unowned",
+            "No maintainer",
             "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files. \
-             A review here earns full credit at any age.",
+             A review here gets full credit at any age.",
         ));
     }
     out.push_str(&kv("Approved head", &people(&p.approved_by)));
@@ -1025,7 +1025,7 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
         rows = "<span class=\"color-fg-muted\">none yet</span>".into();
     }
     out.push_str(&kv(
-        "Credit earned",
+        "Credit",
         &format!("{rows}<div class=\"f6 color-fg-muted\"><a href=\"/state?tab=rules#the-rules\">How credit works</a></div>"),
     ));
     out.push_str("</div>");
@@ -1670,7 +1670,7 @@ mod tests {
         assert!(html.contains("<strong>bold</strong> &lt;b&gt;raw&lt;/b&gt;"));
         assert!(html.contains("<span class=\"diff-add\">+2</span>"));
         assert!(html.contains("https://github.com/NixOS/nixpkgs/pull/42/files\""));
-        assert!(html.contains("its author is not listed"));
+        assert!(html.contains("its author is not in the queues"));
         let (status, api) = body(api_pr(State(app.clone()), Path(42)).await).await;
         assert_eq!(status, StatusCode::OK);
         let v: Value = serde_json::from_str(&api).unwrap();
@@ -1802,6 +1802,6 @@ mod tests {
         let place = super::place(&s, &p);
         assert_eq!(place.queue, "none");
         assert!(place.why.contains(&"it is a draft".to_string()));
-        assert!(place.why.iter().any(|w| w.contains("not listed")));
+        assert!(place.why.iter().any(|w| w.contains("not in the queues")));
     }
 }

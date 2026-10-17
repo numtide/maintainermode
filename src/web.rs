@@ -478,18 +478,7 @@ async fn person_page(
     let s = app.snap();
     let p = s.ledger.people.get(&login).cloned().unwrap_or_default();
     let d = dossier::build(&s.pr_data, &login);
-    let listed = if p.listed {
-        badge(Tone::Success, "listed")
-    } else {
-        badge(
-            Tone::Neutral,
-            &format!(
-                "not listed: {} of {} authors",
-                p.counterparties,
-                ledger::MIN_COUNTERPARTIES
-            ),
-        )
-    };
+    let listed = ledger::queues_badge(p.listed, p.counterparties);
     let mut out = format!(
         "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(

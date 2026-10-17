@@ -244,6 +244,32 @@ pub fn compute(prs: &[Pr], orphan: impl Fn(&Pr) -> bool, now: DateTime<Utc>) -> 
     }
 }
 
+/// The rule behind "in the queues", in one sentence for a tooltip.
+pub fn queues_rule() -> String {
+    format!(
+        "The pull requests of an author show in the queues when their reviews got credit from {MIN_COUNTERPARTIES} different authors in the last {WINDOW_DAYS} days."
+    )
+}
+
+/// The "in the queues" badge, with the rule as its tooltip.
+pub fn queues_badge(in_queues: bool, counterparties: usize) -> String {
+    use crate::ui::{Tone, badge};
+    let rule = queues_rule();
+    if in_queues {
+        badge(
+            Tone::Success,
+            &format!("<span title=\"{rule}\">in the queues</span>"),
+        )
+    } else {
+        badge(
+            Tone::Neutral,
+            &format!(
+                "<span title=\"{rule}\">not in the queues: credit from {counterparties} of {MIN_COUNTERPARTIES} authors</span>"
+            ),
+        )
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
