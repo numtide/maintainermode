@@ -11,13 +11,25 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::ui::{Page, Section, Tab, section};
-use crate::web::{Shared, esc, octicon};
+use crate::web::{Shared, octicon};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/me", get(me_page))
         .route("/me/runs", get(runs_page))
         .route("/me/settings", get(settings_page))
+        .route(
+            "/watch",
+            get(|| async { Redirect::permanent("/me?tab=watch") }),
+        )
+        .route(
+            "/me/inbox",
+            get(|| async { Redirect::permanent("/me?tab=inbox") }),
+        )
+        .route(
+            "/me/sets",
+            get(|| async { Redirect::permanent("/me?tab=machines") }),
+        )
 }
 
 /// Every answer under /me, a redirect or an error too, is for one person.
@@ -91,54 +103,93 @@ fn links(list: &[(&str, &str, &str)]) -> String {
         .collect()
 }
 
-async fn me_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
+/// What one tab of `/me` adds to the page. `sub`, `actions` and `body` are
+/// HTML.
+pub(crate) struct TabBody {
+    pub sub: String,
+    pub actions: String,
+    pub body: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum MeTab {
+    Inbox,
+    Maintain,
+    Watch,
+    Machines,
+}
+
+impl MeTab {
+    const ALL: [MeTab; 4] = [MeTab::Inbox, MeTab::Maintain, MeTab::Watch, MeTab::Machines];
+
+    fn parse(s: Option<&str>) -> MeTab {
+        match s {
+            Some("maintain") => MeTab::Maintain,
+            Some("watch") => MeTab::Watch,
+            Some("machines") => MeTab::Machines,
+            _ => MeTab::Inbox,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            MeTab::Inbox => "inbox",
+            MeTab::Maintain => "maintain",
+            MeTab::Watch => "watch",
+            MeTab::Machines => "machines",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            MeTab::Inbox => "Inbox",
+            MeTab::Maintain => "Maintain",
+            MeTab::Watch => "Watch",
+            MeTab::Machines => "My machines",
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct MeQuery {
+    tab: Option<String>,
+    sub: Option<String>,
+    kind: Option<String>,
+}
+
+async fn me_page(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<MeQuery>,
+) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let maintains = format!("/u/{}/maintains", esc(&login));
-    let record = format!("/u/{}", esc(&login));
-    let body = section(
-        "Your pages",
-        None,
-        None,
-        &links(&[
-            (
-                "/me/inbox",
-                "Inbox",
-                "New pull requests, merges, issues, advisories and releases.",
-            ),
-            (
-                &maintains,
-                "Maintain",
-                "What nixpkgs names you as a maintainer of. This page is public.",
-            ),
-            (
-                "/watch",
-                "Watch",
-                "The packages, modules and directories you watch.",
-            ),
-            (
-                "/me/sets",
-                "My machines",
-                "The packages your own machines run.",
-            ),
-            (
-                "/me/progress",
-                "Progress",
-                "Your reviews, your streak and your goal.",
-            ),
-            (
-                &record,
-                "Record",
-                "Your reviews and what came of each. This page is public.",
-            ),
-            ("/me/settings", "Settings", "Email, LLMs and tokens."),
-        ]),
-    );
-    Page::new(Section::Home, "My packages")
+    let tab = MeTab::parse(q.tab.as_deref());
+    let t = match tab {
+        MeTab::Inbox => crate::notify::inbox_tab(&app, &login, q.sub.as_deref(), q.kind.as_deref()),
+        MeTab::Maintain => crate::catalog::maintain_tab(&app, &login),
+        MeTab::Watch => crate::catalog::watch_tab(&app, &login),
+        MeTab::Machines => crate::sets::machines_tab(&app, &login),
+    };
+    let unread = app.inbox.get(&login);
+    let tabs = MeTab::ALL
+        .iter()
+        .map(|&m| {
+            let t = Tab::new(format!("/me?tab={}", m.key()), m.label(), m == tab);
+            match m {
+                MeTab::Inbox if unread > 0 => t.count(unread),
+                _ => t,
+            }
+        })
+        .collect();
+    Page::new(Section::Home, format!("My packages: {}", tab.label()))
+        .heading("My packages")
         .icon(octicon!("package"))
-        .sub("Only you see this page.")
-        .body(body)
+        .sub(format!("{} Only you see this page.", t.sub))
+        .subnav(tabs)
+        .actions(t.actions)
+        .body(t.body)
         .render(&app, Some(&login))
 }
 
@@ -174,6 +225,43 @@ mod tests {
             .await
             .unwrap();
         String::from_utf8(b.to_vec()).unwrap()
+    }
+
+    fn q(tab: &str) -> Query<MeQuery> {
+        Query(MeQuery {
+            tab: Some(tab.into()),
+            sub: None,
+            kind: None,
+        })
+    }
+
+    #[tokio::test]
+    async fn me_has_four_tabs_for_its_owner_only() {
+        let app = crate::sets::tests::app(&["hello"]);
+        let r = me_page(State(app.clone()), HeaderMap::new(), q("inbox")).await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        let h = signed_in(&app, "alice");
+        app.store.watch("alice", "pkg:hello").unwrap();
+        for (tab, want) in [
+            ("inbox", "Nothing here."),
+            ("maintain", "/u/alice/maintains"),
+            ("watch", "action=\"/me/watch/remove\""),
+            ("machines", "No report yet."),
+            ("nonsense", "Nothing here."),
+        ] {
+            let r = me_page(State(app.clone()), h.clone(), q(tab)).await;
+            assert_eq!(r.status(), StatusCode::OK, "{tab}");
+            let html = body(r).await;
+            assert!(html.contains(want), "{tab}: {want}");
+            for m in MeTab::ALL {
+                assert!(html.contains(&format!("href=\"/me?tab={}\"", m.key())));
+            }
+            let key = MeTab::parse(Some(tab)).key();
+            assert!(
+                html.contains(&format!("href=\"/me?tab={key}\" aria-current=\"page\"")),
+                "{tab}"
+            );
+        }
     }
 
     #[tokio::test]

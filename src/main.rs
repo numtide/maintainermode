@@ -308,7 +308,7 @@ async fn submit(server: &str, path: &std::path::Path, token_file: Option<PathBuf
     let token = match std::env::var("MAINTAINER_MODE_UPLOAD_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => read_secret(&token_file)?.context(
-            "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/sets",
+            "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/settings#upload",
         )?,
     };
     let url = format!("{}/api/v1/reports", server.trim_end_matches('/'));

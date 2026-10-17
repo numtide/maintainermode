@@ -167,9 +167,9 @@ fn dashboard(app: &App, login: &str) -> String {
                 String::new()
             }
         ),
-        Some(("/me/inbox", "open the inbox")),
+        Some(("/me", "open the inbox")),
         &if news.is_empty() {
-            empty("Nothing new. <a href=\"/watch\">Subscribe</a> to packages, modules or directories to hear about them.")
+            empty("Nothing new. <a href=\"/me?tab=watch\">Watch</a> packages, modules or directories to hear about them.")
         } else {
             news
         },
@@ -196,10 +196,7 @@ fn dashboard(app: &App, login: &str) -> String {
             "{} What you maintain that needs you",
             icon(octicon!("package"))
         ),
-        Some((
-            &format!("/u/{}/maintains", esc(login)),
-            "everything you maintain",
-        )),
+        Some(("/me?tab=maintain", "everything you maintain")),
         &if mine.is_empty() {
             empty(
                 "Nothing needs you right now, or nixpkgs names you as a maintainer of nothing yet.",

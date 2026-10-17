@@ -10,7 +10,7 @@ use serde::Deserialize;
 use std::collections::HashSet;
 
 use crate::ui::{Page, Section};
-use crate::web::{App, Shared, esc, icon, octicon};
+use crate::web::{App, Shared, icon, octicon};
 
 const DONE: &str = "welcome_done";
 const SEEN: &str = "welcome_at";
@@ -202,8 +202,7 @@ fn mark(done: bool) -> Mark {
     if done { Mark::Done } else { Mark::Todo }
 }
 
-fn checklist(f: &Facts, login: &str) -> String {
-    let l = esc(login);
+fn checklist(f: &Facts) -> String {
     let mut out = String::from("<div class=\"Box mb-4\">");
     if !f.index_ready {
         out.push_str(&step(
@@ -225,7 +224,7 @@ fn checklist(f: &Facts, login: &str) -> String {
         ));
     } else {
         let button = if f.maintained_watched < f.maintained {
-            "<form method=\"post\" action=\"/watch/maintained\" class=\"mt-2\">\
+            "<form method=\"post\" action=\"/me/watch/maintained\" class=\"mt-2\">\
              <button class=\"btn btn-sm btn-primary\" type=\"submit\">Subscribe to all of it</button></form>"
         } else {
             ""
@@ -234,7 +233,7 @@ fn checklist(f: &Facts, login: &str) -> String {
             mark(f.maintained_watched == f.maintained),
             "What you maintain",
             &format!(
-                "nixpkgs names you on <a href=\"/u/{l}/maintains\">{} packages and modules</a>. \
+                "nixpkgs names you on <a href=\"/me?tab=maintain\">{} packages and modules</a>. \
                  You watch {} of them.{button}",
                 f.maintained, f.maintained_watched
             ),
@@ -245,7 +244,7 @@ fn checklist(f: &Facts, login: &str) -> String {
         "What you watch",
         &format!(
             "You watch {}. Subscribe to any package, module or nixpkgs directory.\
-             <form method=\"post\" action=\"/watch\" class=\"inline-form mt-2\">\
+             <form method=\"post\" action=\"/me/watch\" class=\"inline-form mt-2\">\
              <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to subscribe to\">\
              <button class=\"btn btn-sm\" type=\"submit\">Subscribe</button></form>",
             f.watched
@@ -276,7 +275,7 @@ fn checklist(f: &Facts, login: &str) -> String {
     out.push_str(&step(
         mark(f.system),
         "Your system",
-        "Upload the closure of your machines on <a href=\"/me/sets\">/me/sets</a>. \
+        "Upload the closure of your machines to <a href=\"/me?tab=machines\">My machines</a>. \
          Your feed then tells you about advisories and releases of the packages you really run. It stays private.",
     ));
     out.push_str(&step(
@@ -327,7 +326,7 @@ async fn welcome_page(State(app): State<Shared>, headers: HeaderMap) -> Response
     Page::new(Section::Home, "Get started")
         .sub("Your first steps, from your real state. Come back to this page at any time. Only you see it.")
         .actions(button)
-        .body(checklist(&Facts::of(&app, &login), &login))
+        .body(checklist(&Facts::of(&app, &login)))
         .render(&app, Some(&login))
 }
 
@@ -375,10 +374,10 @@ mod tests {
 
     #[test]
     fn a_newcomer_gets_the_unowned_queue_and_the_maintainer_guide() {
-        let html = checklist(&facts(), "alice");
+        let html = checklist(&facts());
         assert!(html.contains("/review?tab=unowned"));
         assert!(html.contains(MAINTAINERS_README));
-        assert!(!html.contains("/watch/maintained"));
+        assert!(!html.contains("/me/watch/maintained"));
         assert!(!html.contains("inbox"));
         for (name, url, _) in GUIDES {
             assert!(html.contains(url), "{name} is missing");
@@ -393,15 +392,15 @@ mod tests {
             inbox: true,
             ..facts()
         };
-        let html = checklist(&f, "alice");
-        assert!(html.contains("/u/alice/maintains"));
-        assert!(html.contains("/watch/maintained"));
+        let html = checklist(&f);
+        assert!(html.contains("/me?tab=maintain"));
+        assert!(html.contains("/me/watch/maintained"));
         assert!(html.contains("inbox"));
         let all = Facts {
             maintained_watched: 3,
             ..f
         };
-        assert!(!checklist(&all, "alice").contains("/watch/maintained"));
+        assert!(!checklist(&all).contains("/me/watch/maintained"));
     }
 
     #[test]
