@@ -108,8 +108,10 @@ pub(crate) fn touch() {
 /// These pages read live state that no `touch` follows: the task status,
 /// the pull requests read from GitHub on demand, and the Hydra result on
 /// the package and module pages.
-fn untagged(path: &str) -> bool {
-    path == "/me"
+fn untagged(path: &str, query: Option<&str>) -> bool {
+    let status = path == "/state" && query.is_some_and(|q| q.split('&').any(|p| p == "tab=status"));
+    status
+        || path == "/me"
         || [
             "/me/", "/sync", "/pr/", "/p/", "/m/", "/claude/", "/auth/", "/api/", "/static/",
         ]
@@ -137,7 +139,7 @@ fn tag(headers: &HeaderMap) -> String {
 pub(crate) async fn etag(req: Request, next: Next) -> Response {
     let get = matches!(*req.method(), Method::GET | Method::HEAD);
     let public = get
-        && !untagged(req.uri().path())
+        && !untagged(req.uri().path(), req.uri().query())
         && crate::web::cookie(req.headers(), "session").is_none();
     if !public {
         return next.run(req).await;
@@ -221,7 +223,8 @@ mod tests {
 
     #[test]
     fn pages_that_ask_hydra_live_have_no_tag() {
-        assert!(untagged("/p/cups") && untagged("/m/nixos/modules/a.nix"));
-        assert!(!untagged("/packages") && !untagged("/review"));
+        assert!(untagged("/p/cups", None) && untagged("/m/nixos/modules/a.nix", None));
+        assert!(untagged("/state", Some("tab=status")) && !untagged("/state", Some("tab=rules")));
+        assert!(!untagged("/packages", None) && !untagged("/review", None));
     }
 }
