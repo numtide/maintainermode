@@ -38,6 +38,8 @@ const FOLD_LINES: usize = 400;
 /// Reviews, review comments per review, and comments read live.
 const FIRST: usize = 100;
 const BODY_CAP: usize = 65_536;
+/// The archive holds every note; the page shows the latest.
+const NOTE_CAP: usize = 300;
 const SUBJECTS: usize = 50;
 const FETCH_SECS: u64 = 15;
 const CACHE_BYTES: usize = 32 << 20;
@@ -180,6 +182,8 @@ pub struct Note {
 pub struct Talk {
     pub body: String,
     pub notes: Vec<Note>,
+    /// Earlier notes left out by `NOTE_CAP`.
+    pub omitted: usize,
     /// archive or github.
     pub source: &'static str,
     pub updated_at: Option<DateTime<Utc>>,
@@ -252,9 +256,12 @@ fn talk_of(v: &Value, source: &'static str) -> Talk {
         });
     }
     notes.sort_by_key(|n| n.at);
+    let omitted = notes.len().saturating_sub(NOTE_CAP);
+    notes.drain(..omitted);
     Talk {
         body: text(&v["body"]),
         notes,
+        omitted,
         source,
         updated_at: time(&v["updatedAt"]),
     }
@@ -378,29 +385,47 @@ async fn files(app: &App, pr: &Pr) -> Result<Arc<Files>, String> {
     Ok(files)
 }
 
-fn archived(app: &App, n: u64) -> Option<Talk> {
+async fn archived(app: &App, n: u64) -> Option<Talk> {
     let a = app
         .archive
         .iter()
         .find(|a| a.repo.eq_ignore_ascii_case(crate::archive::DEFAULT_REPO))
-        .filter(|a| !a.is_private())?;
-    let json = a.item(n).ok()??.json?;
-    let v: Value = serde_json::from_str(&json).ok()?;
-    (v["__typename"] == "PullRequest").then(|| talk_of(&v, "archive"))
+        .filter(|a| !a.is_private())?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        let json = a.item(n).ok()??.json?;
+        let v: Value = serde_json::from_str(&json).ok()?;
+        (v["__typename"] == "PullRequest").then(|| talk_of(&v, "archive"))
+    })
+    .await
+    .ok()?
+}
+
+/// The archive copy, parsed once per update and kept in the cache.
+async fn stored(app: &App, pr: &Pr, key: &str) -> Option<Arc<Talk>> {
+    let key = format!("archive:{key}");
+    if let Some(t) = app.pr_cache.talk.lock().unwrap().get(&key) {
+        return Some(t);
+    }
+    let t = archived(app, pr.number).await?;
+    let size = talk_size(&t);
+    let t = Arc::new(t);
+    app.pr_cache.talk.lock().unwrap().put(key, t.clone(), size);
+    Some(t)
 }
 
 /// The archive when it is as new as the synced data, else a live read; a
 /// stale archive copy is still better than nothing when the read fails.
 async fn talk(app: &App, pr: &Pr) -> Result<Arc<Talk>, String> {
-    let stored = archived(app, pr.number);
-    if let Some(t) = stored.as_ref() {
-        if t.updated_at.is_some_and(|u| u >= pr.updated_at) {
-            return Ok(Arc::new(stored.unwrap()));
-        }
-    }
     let key = format!("{}@{}", pr.number, pr.updated_at.to_rfc3339());
     if let Some(t) = app.pr_cache.talk.lock().unwrap().get(&key) {
         return Ok(t);
+    }
+    let stored = stored(app, pr, &key).await;
+    if let Some(t) = &stored {
+        if t.updated_at.is_some_and(|u| u >= pr.updated_at) {
+            return Ok(t.clone());
+        }
     }
     let tokens = crate::archive::tokens(app).await;
     match timed(fetch_talk(app, tokens, pr.number)).await {
@@ -410,7 +435,7 @@ async fn talk(app: &App, pr: &Pr) -> Result<Arc<Talk>, String> {
             app.pr_cache.talk.lock().unwrap().put(key, t.clone(), size);
             Ok(t)
         }
-        Err(e) => stored.map(Arc::new).ok_or_else(|| format!("{e:#}")),
+        Err(e) => stored.ok_or_else(|| format!("{e:#}")),
     }
 }
 
@@ -1160,6 +1185,14 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
                     "<div class=\"Box-row color-fg-muted\">No review or comment yet.</div>",
                 );
             }
+            if t.omitted > 0 {
+                let _ = write!(
+                    out,
+                    "<div class=\"Box-row color-fg-muted\">{} earlier reviews and comments are not shown. <a href=\"{}\">Read them on GitHub</a></div>",
+                    t.omitted,
+                    github_url(pr.number)
+                );
+            }
             for n in &t.notes {
                 out.push_str(&note_html(n));
             }
@@ -1505,6 +1538,45 @@ mod tests {
         let (status, api) = body(api_pr(State(app), Path(1)).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
         assert!(api.contains("not in the synced data"));
+    }
+
+    #[tokio::test]
+    async fn the_archive_copy_is_parsed_once_and_shows_the_latest_notes() {
+        let mut app = crate::sets::tests::app(&[]);
+        let dir = std::env::temp_dir().join(format!("mm-prpage-archive-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = crate::archive::Archive::open(&dir, crate::archive::DEFAULT_REPO, 0).unwrap();
+        let comments: Vec<Value> = (0..NOTE_CAP + 5)
+            .map(|i| {
+                json!({ "url": format!("c{i}"), "createdAt": format!("2026-01-01T00:{:02}:{:02}Z", i / 60, i % 60),
+                        "body": format!("note {i}"), "author": { "login": "bob" } })
+            })
+            .collect();
+        let item = |body: &str| {
+            json!({ "__typename": "PullRequest", "body": body, "updatedAt": "2026-02-01T00:00:00Z",
+                    "comments": { "nodes": comments } })
+        };
+        a.put(42, &item("first copy"), Utc::now()).unwrap();
+        let a = Arc::new(a);
+        Arc::get_mut(&mut app).unwrap().archive = vec![a.clone()];
+        let mut p = pr(42, "alice", 0);
+        p.updated_at = "2026-01-15T00:00:00Z".parse().unwrap();
+        app.store.put_prs(std::slice::from_ref(&p)).unwrap();
+        app.recompute().unwrap();
+
+        let (_, html) = body(pr_page(State(app.clone()), HeaderMap::new(), Path(42)).await).await;
+        assert!(html.contains("first copy"));
+        assert!(html.contains("5 earlier reviews and comments are not shown"));
+        assert!(!html.contains(">note 4<"));
+        assert!(html.contains(">note 5<"));
+
+        a.put(42, &item("second copy"), Utc::now()).unwrap();
+        let (_, api) = body(api_pr(State(app.clone()), Path(42)).await).await;
+        let v: Value = serde_json::from_str(&api).unwrap();
+        assert_eq!(v["discussion"]["body"], "first copy");
+        assert_eq!(v["discussion"]["omitted"], 5);
+        assert_eq!(v["discussion"]["notes"].as_array().unwrap().len(), NOTE_CAP);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
