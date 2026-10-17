@@ -120,7 +120,7 @@ The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `p
 - **This week and this month**: the pull requests you reviewed, and your reviews that earned credit. A week starts on Monday, in UTC.
 - **Streak**: the weeks in a row with at least one review that earned credit. A week with no credit yet does not break the streak until the week ends.
 - **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal. `/review` shows how far you are.
-- **Badges**: first review; first review that earned credit on an unowned pull request; first review merged unchanged; 10, 50 and 100 reviews; reviews in 5 areas of the state of nixpkgs.
+- **Badges**: First review; First review with no maintainer; Merged unchanged; 10, 50 and 100 reviews; Five parts of nixpkgs.
 - **In the queues**: how many more authors you need before your pull requests show in the queues. You need credit from 3 different authors in 60 days.
 
 The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. Your menu links to the page.

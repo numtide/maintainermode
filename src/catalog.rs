@@ -704,7 +704,7 @@ fn source_link(rev: &str, file: &str) -> String {
 
 fn subscribe_button(watching: Option<bool>, subject: &Subject) -> String {
     match watching {
-        None => "<a class=\"btn btn-sm\" href=\"/auth/login\">Sign in to subscribe</a>".into(),
+        None => "<a class=\"btn btn-sm\" href=\"/auth/login\">Sign in to watch</a>".into(),
         Some(false) => format!(
             "<form method=\"post\" action=\"/me/watch\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
              <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch</button></form>",
