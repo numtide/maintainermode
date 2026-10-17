@@ -1015,7 +1015,7 @@ pub(crate) async fn tokens(app: &App) -> Vec<String> {
             tokens.push(t);
         }
     }
-    tokens.extend(app.sync_token.iter().cloned());
+    tokens.extend(app.sync_token.iter().map(|s| s.get()));
     tokens
 }
 

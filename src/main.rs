@@ -29,6 +29,7 @@ mod report;
 mod rescan;
 mod scan;
 mod score;
+mod secret;
 mod sets;
 mod severity;
 mod status;
@@ -48,6 +49,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+use crate::secret::Secret;
 use crate::store::Store;
 use crate::web::App;
 
@@ -439,7 +441,7 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                 }
             }
         }
-        tokens.extend(app.sync_token.iter().cloned());
+        tokens.extend(app.sync_token.iter().map(|s| s.get()));
         let server_tokens = tokens.clone();
         tokens.extend(app.store.lent_tokens().unwrap_or_default());
         let mut client = github::Client::new(tokens);
@@ -624,10 +626,10 @@ async fn run(cli: Cli) -> Result<i32> {
                 Some(_) => store.set("nvd_api", "1")?,
                 None => store.delete_key("nvd_api")?,
             }
-            let github_app = match (github_app_id, read_secret(&github_app_key_file)?) {
-                (Some(id), Some(pem)) => Some(github_app::GithubApp::new(
+            let github_app = match (github_app_id, Secret::open(github_app_key_file)?) {
+                (Some(id), Some(key)) => Some(github_app::GithubApp::new(
                     id,
-                    &pem,
+                    key,
                     github_app_installation_id,
                 )?),
                 (None, None) => None,
@@ -637,7 +639,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 tracing::info!("sync token from GitHub App {}", a.id());
             }
             let events = Arc::new(events::Log::open(&data_dir(&db).join("events"))?);
-            let oauth = match (client_id, read_secret(&client_secret_file)?) {
+            let oauth = match (client_id, Secret::open(client_secret_file)?) {
                 (Some(id), Some(secret)) => Some(github::OAuth {
                     client_id: id,
                     client_secret: secret,
@@ -655,7 +657,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 channels: RwLock::new(Arc::new(channels::load(&store, &cli.channels))),
                 store,
                 oauth,
-                sync_token: read_secret(&sync_token_file)?,
+                sync_token: Secret::open(sync_token_file)?.map(Arc::new),
                 github_app,
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
@@ -682,7 +684,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
-            tokio::spawn(health::run(app.clone(), read_secret(&nvd_api_key_file)?));
+            tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
             tokio::spawn(channels::run(app.clone()));
             match &app.sync_token {
                 Some(t) => {
