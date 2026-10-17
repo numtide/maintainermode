@@ -4,7 +4,7 @@
 
 use axum::extract::{Form, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
@@ -23,7 +23,8 @@ use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
 use crate::score::{self, Score};
 use crate::severity::{self, Worst};
-use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, page, random_id};
+use crate::ui::{Page, Section, Tone, badge, empty, item_row, kv};
+use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, random_id};
 
 const LIST: usize = 100;
 const META_GUIDE: &str =
@@ -473,38 +474,53 @@ impl Flags {
         )
     }
 
-    pub(crate) fn html(&self) -> String {
+    pub(crate) fn badges(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(s) = &self.score {
             out.push(score_label(s));
         }
         if self.advisories > 0 {
-            out.push(format!(
-                "<span class=\"Label Label--danger\">{} {} advisor{}</span>",
-                icon(octicon!("shield")),
-                self.advisories,
-                if self.advisories == 1 { "y" } else { "ies" }
+            out.push(badge(
+                Tone::Danger,
+                &format!(
+                    "{} {} advisor{}",
+                    icon(octicon!("shield")),
+                    self.advisories,
+                    if self.advisories == 1 { "y" } else { "ies" }
+                ),
             ));
         }
         if let Some(u) = &self.upstream {
-            out.push(format!(
-                "<span class=\"Label Label--attention\">upstream {}</span>",
-                esc(u)
-            ));
+            out.push(badge(Tone::Attention, &format!("upstream {}", esc(u))));
+        }
+        out
+    }
+
+    /// Counts that are zero are left out.
+    pub(crate) fn meta(&self) -> String {
+        let mut out = Vec::new();
+        match self.open_prs {
+            0 => {}
+            1 => out.push("1 open pull request".to_string()),
+            n => out.push(format!("{n} open pull requests")),
+        }
+        match self.open_issues {
+            0 => {}
+            1 => out.push("1 open issue".to_string()),
+            n => out.push(format!("{n} open issues")),
         }
         if self.unmaintained {
-            out.push("<span class=\"Label\">no maintainer</span>".into());
+            out.push("no maintainer".to_string());
         }
-        out.push(format!(
-            "<span class=\"Label\" title=\"open pull requests\">{} {}</span>",
-            icon(octicon!("git-pull-request")),
-            self.open_prs
-        ));
-        out.push(format!(
-            "<span class=\"Label\" title=\"open issues\">{} {}</span>",
-            icon(octicon!("issue-opened")),
-            self.open_issues
-        ));
+        out.join(" · ")
+    }
+
+    pub(crate) fn html(&self) -> String {
+        let meta = self.meta();
+        let mut out = self.badges();
+        if !meta.is_empty() {
+            out.push(format!("<span class=\"f6 color-fg-muted\">{meta}</span>"));
+        }
         out.join(" ")
     }
 
@@ -523,10 +539,11 @@ impl Flags {
 }
 
 pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
-    let (ic, class) = match p.state.as_str() {
-        "MERGED" => (icon(octicon!("git-merge")), "color-fg-done"),
-        "CLOSED" => (icon(octicon!("git-pull-request-closed")), "color-fg-danger"),
-        _ => (icon(octicon!("git-pull-request")), "color-fg-open"),
+    use crate::ui::Kind;
+    let kind = match p.state.as_str() {
+        "MERGED" => Kind::PR_MERGED,
+        "CLOSED" => Kind::PR_CLOSED,
+        _ => Kind::PR_OPEN,
     };
     let ci = match p.ci.as_deref() {
         Some("SUCCESS") if p.is_open() => " · checks pass",
@@ -538,52 +555,57 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
         (None, Some(t)) => format!("closed {} ago", ago(t)),
         _ => format!("opened {} ago", ago(p.created_at)),
     };
-    format!(
-        "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 {class}\">{ic}</span>\
-         <div class=\"flex-auto\">{t}{draft}\
-         <div class=\"f6 color-fg-muted mt-1\">#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}</div></div>{button}</div>",
-        t = crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
-        n = p.number,
-        a = esc(&p.author),
-        button = if p.is_open() {
+    let badges = if p.is_draft {
+        vec![badge(Tone::Neutral, "draft")]
+    } else {
+        Vec::new()
+    };
+    item_row(
+        Some(kind),
+        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        "",
+        &format!(
+            "#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}",
+            n = p.number,
+            a = esc(&p.author)
+        ),
+        &badges,
+        &if p.is_open() {
             act.buttons(p.number)
         } else {
             String::new()
-        },
-        draft = if p.is_draft {
-            " <span class=\"Label ml-1\">draft</span>"
-        } else {
-            ""
         },
     )
 }
 
 fn issue_row(i: &Issue) -> String {
-    let (ic, class) = if i.is_open() {
-        (icon(octicon!("issue-opened")), "color-fg-open")
-    } else {
-        (icon(octicon!("issue-closed")), "color-fg-done")
-    };
+    use crate::ui::Kind;
     let when = match i.closed_at {
         Some(t) if !i.is_open() => format!("closed {} ago", ago(t)),
         _ => format!("opened {} ago", ago(i.created_at)),
     };
-    let labels: String = i
+    let labels: Vec<String> = i
         .labels
         .iter()
         .filter(|l| !l.starts_with("0.kind:") && !l.starts_with("9."))
-        .take(3)
-        .map(|l| format!(" <span class=\"Label ml-1\">{}</span>", esc(l)))
+        .map(|l| badge(Tone::Neutral, &esc(l)))
         .collect();
-    format!(
-        "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 {class}\">{ic}</span>\
-         <div class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{u}\">{t}</a>{labels}\
-         <div class=\"f6 color-fg-muted mt-1\">#{n} by {a} · {when} · {c} comments</div></div></div>",
-        u = esc(&i.url),
-        t = esc(&i.title),
-        n = i.number,
-        a = esc(&i.author),
-        c = i.comments,
+    item_row(
+        Some(if i.is_open() {
+            Kind::ISSUE_OPEN
+        } else {
+            Kind::ISSUE_CLOSED
+        }),
+        &esc(&i.title),
+        &esc(&i.url),
+        &format!(
+            "#{} by {} · {when} · {} comments",
+            i.number,
+            esc(&i.author),
+            i.comments
+        ),
+        &labels,
+        "",
     )
 }
 
@@ -595,24 +617,18 @@ fn section<T>(
     row: impl Fn(&T) -> String,
 ) -> String {
     let (o, c): (Vec<&&T>, Vec<&&T>) = items.iter().partition(|x| open(x));
-    let mut out = format!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{title} <span class=\"Counter\">{}</span></div>",
-        o.len()
-    );
+    let mut body: String = o.iter().take(LIST).map(|x| row(x)).collect();
     if o.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">None open.</div>");
-    }
-    for x in o.iter().take(LIST) {
-        out.push_str(&row(x));
+        body = empty("None open.");
     }
     if o.len() > LIST {
         let _ = write!(
-            out,
+            body,
             "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
             o.len() - LIST
         );
     }
-    out.push_str("</div>");
+    let mut out = crate::ui::section(title, Some(o.len()), None, &body);
     if !c.is_empty() {
         let _ = write!(
             out,
@@ -625,6 +641,23 @@ fn section<T>(
         out.push_str("</details>");
     }
     out
+}
+
+/// `after_title` is HTML that follows the link, such as a version.
+pub(crate) fn subject_row(sub: &Subject, f: &Flags, after_title: &str, status: &str) -> String {
+    item_row(
+        None,
+        &format!(
+            "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>{after_title}",
+            sub.href(),
+            sub.icon(),
+            esc(&sub.label())
+        ),
+        "",
+        &f.meta(),
+        &f.badges(),
+        status,
+    )
 }
 
 fn people_links(logins: &[String]) -> String {
@@ -720,12 +753,6 @@ fn build_row(label: &str, job: &str, last: &Last) -> String {
         ),
     };
     kv(label, &body)
-}
-
-fn kv(k: &str, v: &str) -> String {
-    format!(
-        "<div class=\"Box-row d-flex\"><div class=\"text-bold\" style=\"min-width:140px\">{k}</div><div class=\"flex-auto\">{v}</div></div>"
-    )
 }
 
 fn severity_html(w: &Worst) -> String {
@@ -1043,7 +1070,7 @@ fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> String {
             "<span class=\"Label Label--danger\">insecure</span><ul class=\"f6 ml-3\">{}</ul>",
             m.known_vulnerabilities
                 .iter()
-                .map(|v| format!("<li style=\"white-space:pre-wrap\">{}</li>", esc(v.trim())))
+                .map(|v| format!("<li class=\"pre-wrap\">{}</li>", esc(v.trim())))
                 .collect::<String>()
         ));
     }
@@ -1078,10 +1105,7 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
             if let Some(d) = &m.long_description {
                 out.push_str(&kv(
                     "Long description",
-                    &format!(
-                        "<div class=\"f6\" style=\"white-space:pre-wrap\">{}</div>",
-                        esc(d.trim_end())
-                    ),
+                    &format!("<div class=\"f6 pre-wrap\">{}</div>", esc(d.trim_end())),
                 ));
             }
             let none = "<span class=\"color-fg-muted\">none</span>";
@@ -1159,7 +1183,13 @@ fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Respons
             ""
         }
     );
-    (StatusCode::NOT_FOUND, page(app, viewer, "packages", &body)).into_response()
+    (
+        StatusCode::NOT_FOUND,
+        Page::new(Section::Packages, "Not found")
+            .body(body)
+            .render(app, viewer),
+    )
+        .into_response()
 }
 
 async fn package_page(
@@ -1187,9 +1217,9 @@ async fn package_page(
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let (prs, issues) = attached(&s, &index, &subject);
-    let mut out = head(
-        &format!("{} {}", subject.icon(), esc(&attr)),
-        &format!(
+    let page = Page::new(Section::Packages, attr.clone())
+        .icon(octicon!("package"))
+        .sub(format!(
             "{} {}{}",
             esc(&p.pname),
             esc(&p.version),
@@ -1197,17 +1227,20 @@ async fn package_page(
                 .as_deref()
                 .map(|f| format!(" · {}", source_link(&rev, f)))
                 .unwrap_or_default()
-        ),
-        &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
-    );
-    out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Health</div>");
+        ))
+        .actions(subscribe_button(
+            watching(&app, viewer.as_deref(), &subject),
+            &subject,
+        ));
+    let mut out = String::new();
+    let mut health = String::new();
     if let Some(sc) = score_of(&s, &index, &h, &attr) {
         let reasons: String = sc
             .reasons
             .iter()
             .map(|r| format!("<li>+{} {}</li>", r.points, esc(&r.text)))
             .collect();
-        out.push_str(&kv(
+        health.push_str(&kv(
             "Risk",
             &format!(
                 "{} {}{}",
@@ -1245,11 +1278,11 @@ async fn package_page(
             }
         ),
     };
-    out.push_str(&kv("Version", &version));
+    health.push_str(&kv("Version", &version));
     let ch = app.channels.read().unwrap().clone();
-    out.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
-    out.push_str(&build_row("Hydra", &job, &build));
-    out.push_str(&kv(
+    health.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
+    health.push_str(&build_row("Hydra", &job, &build));
+    health.push_str(&kv(
         "Advisories",
         &advisories_html(
             &h,
@@ -1261,14 +1294,14 @@ async fn package_page(
             &p.version,
         ),
     ));
-    out.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
+    health.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
     if viewer.is_some() {
-        out.push_str(&kv(
+        health.push_str(&kv(
             "Update",
             &crate::actions::update_form(&attr, upstream(&s, &index, &h, &attr)),
         ));
     }
-    out.push_str("</div>");
+    out.push_str(&crate::ui::section("Health", None, None, &health));
     out.push_str(&package_box(&index, &rev, &p));
     let act = Act::of(&app, viewer.as_deref());
     out.push_str(&crate::bumps::package_section(
@@ -1281,7 +1314,7 @@ async fn package_page(
         |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
-    page(&app, viewer.as_deref(), "packages", &out).into_response()
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 async fn module_page(
@@ -1307,18 +1340,21 @@ async fn module_page(
     let s = app.snap();
     let index = app.index.read().unwrap();
     let (prs, issues) = attached(&s, &index, &subject);
-    let mut out = head(
-        &format!("{} {}", subject.icon(), esc(&name)),
-        &format!("NixOS module · {}", source_link(&rev, &file)),
-        &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
-    );
-    out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Health</div>");
-    out.push_str(&build_row("NixOS test", &job, &build));
-    out.push_str(&kv("Maintainers", &people_links(&m.maintainers)));
+    let page = Page::new(Section::Packages, name.clone())
+        .icon(octicon!("gear"))
+        .sub(format!("NixOS module · {}", source_link(&rev, &file)))
+        .actions(subscribe_button(
+            watching(&app, viewer.as_deref(), &subject),
+            &subject,
+        ));
+    let mut out = String::new();
+    let mut health = String::new();
+    health.push_str(&build_row("NixOS test", &job, &build));
+    health.push_str(&kv("Maintainers", &people_links(&m.maintainers)));
     if !m.teams.is_empty() {
-        out.push_str(&kv("Teams", &teams_html(&index, &m.teams)));
+        health.push_str(&kv("Teams", &teams_html(&index, &m.teams)));
     }
-    out.push_str(&kv(
+    health.push_str(&kv(
         "Area",
         &format!(
             "<a href=\"/a/{0}\">{0}/</a>",
@@ -1327,7 +1363,7 @@ async fn module_page(
                 .map_or("nixos/modules", |(d, _)| d))
         ),
     ));
-    out.push_str("</div>");
+    out.push_str(&crate::ui::section("Health", None, None, &health));
     let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
         "Pull requests",
@@ -1336,7 +1372,7 @@ async fn module_page(
         |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
-    page(&app, viewer.as_deref(), "packages", &out).into_response()
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 /// Packages and modules under a path, the ones that need attention first.
@@ -1379,15 +1415,7 @@ fn contents(index: &Index, s: &Snapshot, h: &Health, path: &str) -> Vec<(Subject
 fn subject_rows(rows: &[(Subject, Flags)]) -> String {
     let mut out = String::new();
     for (sub, f) in rows.iter().take(LIST) {
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
-             <a class=\"Link--primary text-bold flex-auto\" href=\"{}\">{} {}</a>{}</div>",
-            sub.href(),
-            sub.icon(),
-            esc(&sub.label()),
-            f.html()
-        );
+        out.push_str(&subject_row(sub, f, "", ""));
     }
     if rows.len() > LIST {
         let _ = write!(
@@ -1425,15 +1453,18 @@ async fn area_page(
         .rsplit_once('/')
         .map(|(p, _)| format!("<a href=\"/a/{0}\">{0}/</a> · ", esc(p)))
         .unwrap_or_default();
-    let mut out = head(
-        &format!("{} {}/", subject.icon(), esc(&path)),
-        &format!(
+    let page = Page::new(Section::Packages, format!("{path}/"))
+        .icon(octicon!("file-directory"))
+        .sub(format!(
             "{parent}{} packages and modules · {} open pull requests",
             rows.len(),
             s.open_by_dir.get(&path).copied().unwrap_or(0)
-        ),
-        &subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject),
-    );
+        ))
+        .actions(subscribe_button(
+            watching(&app, viewer.as_deref(), &subject),
+            &subject,
+        ));
+    let mut out = String::new();
     let prefix = format!("{path}/");
     let mut children: Vec<(&String, &usize)> = s
         .open_by_dir
@@ -1463,12 +1494,12 @@ async fn area_page(
         out.push_str("</div>");
     }
     if !rows.is_empty() {
-        let _ = write!(
-            out,
-            "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">Packages and modules <span class=\"Counter\">{}</span></div>{}</div>",
-            rows.len(),
-            subject_rows(&rows)
-        );
+        out.push_str(&crate::ui::section(
+            "Packages and modules",
+            Some(rows.len()),
+            None,
+            &subject_rows(&rows),
+        ));
     }
     let act = Act::of(&app, viewer.as_deref());
     out.push_str(&section(
@@ -1478,7 +1509,7 @@ async fn area_page(
         |p| pr_row(p, act),
     ));
     out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
-    page(&app, viewer.as_deref(), "packages", &out).into_response()
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -1502,15 +1533,12 @@ async fn browse(
     if let Some(href) = exact(&s, &index, &q) {
         return Redirect::to(&href).into_response();
     }
-    let mut out = head(
-        &format!("{} Packages, modules and areas", icon(octicon!("package"))),
-        "Each has a page with its health, its issues and its pull requests. Subscribe to the ones you care about.",
-        "",
-    );
-    let _ = write!(
-        out,
-        "<form method=\"get\" action=\"/packages\" class=\"d-flex mb-4\" style=\"gap:8px;max-width:560px\">\
-         <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules\" aria-label=\"search\" autofocus>\
+    let page = Page::new(Section::Packages, "Packages, modules and areas")
+        .icon(octicon!("package"))
+        .sub("Each has a page with its health, its issues and its pull requests. Subscribe to the ones you care about.");
+    let mut out = format!(
+        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">\
+         <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules, @login\" aria-label=\"search\" autofocus>\
          <button class=\"btn\" type=\"submit\">{} Search</button></form>",
         esc(&q),
         icon(octicon!("search"))
@@ -1537,19 +1565,27 @@ async fn browse(
         );
         areas.sort();
         areas.dedup();
-        out.push_str("<div class=\"Box\"><div class=\"Box-header text-bold\">Areas</div>");
-        for a in areas {
-            let _ = write!(
-                out,
-                "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/a/{0}\">{1} {0}/</a><span class=\"Label\">{2} {3}</span></div>",
-                esc(&a),
-                icon(octicon!("file-directory")),
-                icon(octicon!("git-pull-request")),
-                s.open_by_dir.get(&a).copied().unwrap_or(0)
-            );
-        }
-        out.push_str("</div>");
-        return page(&app, viewer.as_deref(), "packages", &out).into_response();
+        let list: String = areas
+            .iter()
+            .map(|a| {
+                let n = s.open_by_dir.get(a).copied().unwrap_or(0);
+                let meta = match n {
+                    0 => String::new(),
+                    1 => "1 open pull request".to_string(),
+                    n => format!("{n} open pull requests"),
+                };
+                item_row(
+                    None,
+                    &format!("{} {}/", icon(octicon!("file-directory")), esc(a)),
+                    &format!("/a/{}", esc(a)),
+                    &meta,
+                    &[],
+                    "",
+                )
+            })
+            .collect();
+        out.push_str(&crate::ui::section("Directories", None, None, &list));
+        return page.body(out).render(&app, viewer.as_deref());
     }
     let rows: Vec<(Subject, Flags)> = search(&s, &index, &q)
         .into_iter()
@@ -1563,7 +1599,7 @@ async fn browse(
     } else {
         let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
     }
-    page(&app, viewer.as_deref(), "packages", &out).into_response()
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 /// What a name resolves to first, then packages, modules and busy
@@ -1708,15 +1744,7 @@ fn maintained_rows(
             .as_ref()
             .map(|t| format!(" <span class=\"Label\">via {}</span>", esc(t)))
             .unwrap_or_default();
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
-             <span class=\"flex-auto\"><a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>{version}{via}</span>{}</div>",
-            sub.href(),
-            sub.icon(),
-            esc(&sub.label()),
-            f.html()
-        );
+        out.push_str(&subject_row(sub, &f, &format!("{version}{via}"), ""));
     }
     out
 }
@@ -1725,7 +1753,7 @@ async fn maintains_page(
     State(app): State<Shared>,
     headers: HeaderMap,
     Path(login): Path<String>,
-) -> Html<String> {
+) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
@@ -1744,9 +1772,20 @@ async fn maintains_page(
     } else {
         String::new()
     };
-    let mut out = head(
-        &format!("What {} maintains", esc(&login)),
-        &format!(
+    let mut out = crate::ui::section(
+        &format!("{} Packages", icon(octicon!("package"))),
+        Some(m.packages.len()),
+        None,
+        &maintained_rows(&s, &index, &h, &ch, &m.packages),
+    );
+    out.push_str(&crate::ui::section(
+        &format!("{} NixOS modules", icon(octicon!("gear"))),
+        Some(m.modules.len()),
+        None,
+        &maintained_rows(&s, &index, &h, &ch, &m.modules),
+    ));
+    Page::new(Section::Packages, format!("What {login} maintains"))
+        .sub(format!(
             "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name <a href=\"/u/{0}\">{0}</a>, \
              at nixpkgs {1}. Change the list in nixpkgs, not here.",
             esc(&login),
@@ -1755,32 +1794,10 @@ async fn maintains_page(
             } else {
                 &index.rev[..index.rev.len().min(12)]
             })
-        ),
-        &button,
-    );
-    let _ = write!(
-        out,
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} Packages <span class=\"Counter\">{}</span></div>{}</div>",
-        icon(octicon!("package")),
-        m.packages.len(),
-        if m.packages.is_empty() {
-            "<div class=\"Box-row color-fg-muted\">None.</div>".into()
-        } else {
-            maintained_rows(&s, &index, &h, &ch, &m.packages)
-        }
-    );
-    let _ = write!(
-        out,
-        "<div class=\"Box mb-4\"><div class=\"Box-header text-bold\">{} NixOS modules <span class=\"Counter\">{}</span></div>{}</div>",
-        icon(octicon!("gear")),
-        m.modules.len(),
-        if m.modules.is_empty() {
-            "<div class=\"Box-row color-fg-muted\">None.</div>".into()
-        } else {
-            maintained_rows(&s, &index, &h, &ch, &m.modules)
-        }
-    );
-    page(&app, viewer.as_deref(), "packages", &out)
+        ))
+        .actions(button)
+        .body(out)
+        .render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -1885,24 +1902,22 @@ pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> 
         .collect()
 }
 
-async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<String> {
+async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let viewer = app.viewer(&headers);
-    let mut out = head(
-        &format!("{} Watching", icon(octicon!("bell"))),
-        "Packages, modules and areas you subscribed to, with what needs attention first. \
-         New pull requests, merges, issues and advisories reach you through your Atom feed.",
-        if viewer.is_some() {
-            "<a class=\"btn btn-sm\" href=\"/me/sets\">Your package set</a>"
-        } else {
-            ""
-        },
-    );
+    let page = Page::new(Section::Home, "Watching")
+        .icon(octicon!("bell"))
+        .sub(
+            "Packages, modules and areas you subscribed to, with what needs attention first. \
+             New pull requests, merges, issues and advisories reach you through your Atom feed.",
+        );
     let Some(login) = viewer.as_deref() else {
-        out.push_str("<div class=\"blankslate\"><p>Sign in to subscribe.</p></div>");
-        return page(&app, None, "watch", &out);
+        return page
+            .body("<div class=\"blankslate\"><p>Sign in to subscribe.</p></div>")
+            .render(&app, None);
     };
-    out.push_str(
-        "<form method=\"post\" action=\"/watch\" class=\"d-flex mb-3\" style=\"gap:8px;max-width:560px\">\
+    let page = page.actions("<a class=\"btn btn-sm\" href=\"/me/sets\">Your package set</a>");
+    let mut out = String::from(
+        "<form method=\"post\" action=\"/watch\" class=\"inline-form mb-3\">\
          <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to subscribe to\">\
          <button class=\"btn btn-primary\" type=\"submit\">Subscribe</button></form>",
     );
@@ -1929,18 +1944,16 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
             rows.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
             out.push_str("<div class=\"Box mb-4\">");
             for (sub, f) in &rows {
-                let _ = write!(
-                    out,
-                    "<div class=\"Box-row d-flex flex-items-center flex-wrap\" style=\"gap:8px\">\
-                     <a class=\"Link--primary text-bold flex-auto\" href=\"{}\">{} {}</a>{}\
-                     <form method=\"post\" action=\"/watch/remove\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
-                     <button class=\"btn btn-sm\" type=\"submit\">Unsubscribe</button></form></div>",
-                    sub.href(),
-                    sub.icon(),
-                    esc(&sub.label()),
-                    f.html(),
-                    esc(&sub.key())
-                );
+                out.push_str(&subject_row(
+                    sub,
+                    f,
+                    "",
+                    &format!(
+                        "<form method=\"post\" action=\"/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
+                         <button class=\"btn btn-sm\" type=\"submit\">Unsubscribe</button></form>",
+                        esc(&sub.key())
+                    ),
+                ));
             }
             out.push_str("</div>");
         }
@@ -1958,10 +1971,15 @@ async fn watch_page(State(app): State<Shared>, headers: HeaderMap) -> Html<Strin
     };
     let _ = write!(
         out,
-        "<div class=\"Box\" id=\"feed\"><div class=\"Box-header text-bold\">{} Atom feed</div><div class=\"Box-row\">{feed}</div></div>",
-        icon(octicon!("rss"))
+        "<div id=\"feed\">{}</div>",
+        crate::ui::section(
+            &format!("{} Atom feed", icon(octicon!("rss"))),
+            None,
+            None,
+            &format!("<div class=\"Box-row\">{feed}</div>")
+        )
     );
-    page(&app, viewer.as_deref(), "watch", &out)
+    page.body(out).render(&app, viewer.as_deref())
 }
 
 pub(crate) struct Event {

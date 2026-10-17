@@ -219,7 +219,7 @@ pub(crate) fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     } else {
         page_header(p.icon, &esc(&p.title), &p.sub, &p.actions)
     };
-    let title = if p.title.is_empty() {
+    let title = if p.title.is_empty() || p.title == "Maintainer Mode" {
         "Maintainer Mode".to_string()
     } else {
         format!("{} · Maintainer Mode", esc(&p.title))
