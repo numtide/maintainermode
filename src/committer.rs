@@ -461,7 +461,21 @@ pub(crate) fn ready_tab(
             ),
         ));
     }
+    out.push_str(&api_links());
     out
+}
+
+fn api_links() -> String {
+    let links: Vec<String> = crate::api::SECTIONS
+        .iter()
+        .map(|s| {
+            format!("<a href=\"/api/v1/prs?queue=ready&amp;section={s}\"><code>{s}</code></a>")
+        })
+        .collect();
+    format!(
+        "<p class=\"f6\">The lists without the personal part are in the JSON API, one section each: {}.</p>",
+        links.join(", ")
+    )
 }
 
 #[cfg(test)]

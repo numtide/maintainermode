@@ -244,7 +244,7 @@ pub(crate) fn tab(
     if let (true, Some(v)) = (only_mine, viewer) {
         rows = mine(app, index, v, true, rows);
     }
-    let json = match (only_mine, viewer.as_deref()) {
+    let json = match (only_mine, viewer) {
         (true, Some(v)) => format!(
             "/api/v1/prs?queue=bumps&amp;login={}",
             crate::github::urlencode(v)
