@@ -426,6 +426,7 @@ pub(crate) fn page(app: &App, viewer: Option<&str>, tab: &str, body: &str) -> Ht
   <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">Maintainer Mode</span></a></div>
   <div class="Header-item">{who}</div>
 </header>
+<div class="flux px-3 py-1 f6" role="note"><strong>Work in progress.</strong> Maintainer Mode changes every day: pages, numbers and links can change or break. <a href="https://github.com/numtide/maintainermode/issues">Tell us what is wrong or missing</a>.</div>
 <nav class="UnderlineNav px-3" aria-label="Queues"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">

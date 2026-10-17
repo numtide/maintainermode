@@ -64,6 +64,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf -H 'Cookie: intro=hidden' http://127.0.0.1:8790/ -o /tmp/page && ! grep -q 'id=\"intro\"' /tmp/page")
     machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/home && grep -q 'need a first review' /tmp/home && grep -q 'nixpkgs in numbers' /tmp/home")
     machine.succeed("curl -sf http://127.0.0.1:8790/merge -o /tmp/merge && grep -q 'Ready to merge</h1>' /tmp/merge")
+    machine.succeed("grep -q 'Work in progress.' /tmp/merge")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/welcome > /tmp/w1 && grep -q 303 /tmp/w1")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d done=1 http://127.0.0.1:8790/welcome > /tmp/w2 && grep -q 303 /tmp/w2")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/status -o /tmp/page && grep -q move_days /tmp/page")
