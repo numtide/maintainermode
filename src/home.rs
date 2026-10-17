@@ -75,7 +75,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
             empty("None right now.")
         } else {
             format!(
-                "<div class=\"Box-row f6 color-fg-muted\">No maintainer covers their files, so your review helps most here. \
+                "<div class=\"Box-row f6 color-fg-muted\">No maintainer, team or ci/OWNERS line covers their files. A first review helps most here. \
                  Read <a href=\"{}#how-to-review-pull-requests\">how nixpkgs reviews</a> first.</div>{}",
                 crate::web::CONTRIBUTING,
                 entry_rows(&first)
@@ -192,9 +192,7 @@ fn dashboard(app: &App, login: &str) -> String {
         ),
         Some(("/me?tab=maintain", "everything you maintain")),
         &if mine.is_empty() {
-            empty(
-                "Nothing needs you right now, or nixpkgs names you as a maintainer of nothing yet.",
-            )
+            empty("Nothing needs you now. Or nixpkgs does not name you as a maintainer yet.")
         } else {
             subject_rows(&mine)
         },
@@ -261,7 +259,7 @@ fn dashboard(app: &App, login: &str) -> String {
             "on GitHub",
         )),
         &if own_html.is_empty() {
-            empty("You have no open pull request in the synced data.")
+            empty("You have no open pull request.")
         } else {
             own_html
         },
@@ -273,7 +271,7 @@ fn dashboard(app: &App, login: &str) -> String {
             Some(("/review?tab=ready", "Ready to merge")),
             &format!(
                 "<div class=\"Box-row\">{} pull requests are ready to merge. \
-                 <a href=\"/review?tab=ready\">See them</a>, your areas first.</div>",
+                 <a href=\"/review?tab=ready\">See them</a>. The ones on what you maintain come first.</div>",
                 s.queues.merge.len()
             ),
         ));

@@ -119,7 +119,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/metrics | grep -c 'concentration_365d'")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/metrics -o /tmp/metrics.json && grep -q '\"open_bumps\":0' /tmp/metrics.json")
     machine.fail("curl -sf http://127.0.0.1:8790/api/v1/people")
-    machine.succeed("curl -sf http://127.0.0.1:8790/packages -o /tmp/page && grep -q 'Packages, modules and areas' /tmp/page")
+    machine.succeed("curl -sf http://127.0.0.1:8790/packages -o /tmp/page && grep -q 'Packages, modules and directories' /tmp/page")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/packages?q=hello' -o /tmp/page && grep -q 'Nothing matches' /tmp/page")
     machine.succeed("curl -s http://127.0.0.1:8790/p/hello -o /tmp/page && grep -q 'first index is still being built' /tmp/page")
     machine.fail("curl -sf http://127.0.0.1:8790/p/hello")

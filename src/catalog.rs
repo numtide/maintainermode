@@ -298,6 +298,14 @@ pub(crate) fn upstream<'a>(
     upstream_from(s, index, h, attr).map(|(v, _)| v)
 }
 
+/// The text of the upstream badge, the same on every page.
+pub(crate) fn upstream_badge(version: &str) -> String {
+    format!(
+        "<span title=\"Upstream released a newer version than nixpkgs has\">{} available</span>",
+        esc(version)
+    )
+}
+
 fn score_label(s: &Score) -> String {
     let why = if s.reasons.is_empty() {
         "nothing to fix".to_string()
@@ -490,7 +498,7 @@ impl Flags {
             ));
         }
         if let Some(u) = &self.upstream {
-            out.push(badge(Tone::Attention, &format!("upstream {}", esc(u))));
+            out.push(badge(Tone::Attention, &upstream_badge(u)));
         }
         out
     }
@@ -500,13 +508,13 @@ impl Flags {
         let mut out = Vec::new();
         match self.open_prs {
             0 => {}
-            1 => out.push("1 open pull request".to_string()),
-            n => out.push(format!("{n} open pull requests")),
+            1 => out.push("1 open PR".to_string()),
+            n => out.push(format!("{n} open PRs")),
         }
         match self.open_issues {
             0 => {}
-            1 => out.push("1 open issue".to_string()),
-            n => out.push(format!("{n} open issues")),
+            1 => out.push("1 issue".to_string()),
+            n => out.push(format!("{n} issues")),
         }
         if self.unmaintained {
             out.push("no maintainer".to_string());
@@ -631,7 +639,8 @@ fn section<T>(
     if !c.is_empty() {
         let _ = write!(
             out,
-            "<details class=\"Box mb-4\"><summary class=\"Box-header\">Closed or merged in the synced window <span class=\"Counter\">{}</span></summary>",
+            "<details class=\"Box mb-4\"><summary class=\"Box-header\">Closed or merged in the last {} days <span class=\"Counter\">{}</span></summary>",
+            crate::ledger::WINDOW_DAYS,
             c.len()
         );
         for x in c.iter().take(LIST) {
@@ -698,13 +707,13 @@ fn subscribe_button(watching: Option<bool>, subject: &Subject) -> String {
         None => "<a class=\"btn btn-sm\" href=\"/auth/login\">Sign in to subscribe</a>".into(),
         Some(false) => format!(
             "<form method=\"post\" action=\"/me/watch\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
-             <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Subscribe</button></form>",
+             <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch</button></form>",
             esc(&subject.key()),
             icon(octicon!("bell"))
         ),
         Some(true) => format!(
             "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
-             <button class=\"btn btn-sm\" type=\"submit\">Unsubscribe</button></form>",
+             <button class=\"btn btn-sm\" type=\"submit\">Stop watching</button></form>",
             esc(&subject.key())
         ),
     }
@@ -804,7 +813,7 @@ fn rated<'a>(h: &Health, list: &[&'a Advisory]) -> Vec<(&'a Advisory, Worst)> {
 
 fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
     let Some(gaps) = hygiene::gaps(attr, p) else {
-        return "<span class=\"color-fg-muted f6\">not read yet: the next index sweep reads it</span>"
+        return "<span class=\"color-fg-muted f6\">not read yet: the next index update reads it</span>"
             .into();
     };
     let mut out: Vec<String> = Vec::new();
@@ -1091,7 +1100,7 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
     match &p.meta {
         None => out.push_str(&kv(
             "meta",
-            "<span class=\"color-fg-muted f6\">not read yet: the next index sweep reads it</span>",
+            "<span class=\"color-fg-muted f6\">not read yet: the next index update reads it</span>",
         )),
         Some(m) => {
             if let Some(d) = &m.long_description {
@@ -1167,7 +1176,7 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
 
 fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Response {
     let body = format!(
-        "<div class=\"blankslate\"><p>{} is not in the nixpkgs index{}.</p><p><a href=\"/packages\">Search packages, modules and areas</a></p></div>",
+        "<div class=\"blankslate\"><p>{} is not in the nixpkgs index{}.</p><p><a href=\"/packages\">Search packages, modules and directories</a></p></div>",
         esc(what),
         if app.index.read().unwrap().rev.is_empty() {
             " yet: the first index is still being built"
@@ -1248,7 +1257,7 @@ async fn package_page(
     }
     let version = match upstream_from(&s, &index, &h, &attr) {
         Some((u, from)) => format!(
-            "{} <span class=\"Label Label--attention\" title=\"from {}\">upstream {}</span>",
+            "{} <span class=\"Label Label--attention\" title=\"Upstream released a newer version, from {}\">{} available</span>",
             esc(&p.version),
             esc(from),
             esc(u)
@@ -1266,7 +1275,7 @@ async fn package_page(
                     }
                 ),
                 _ if h.repology_at.is_some() => "no newer release known to repology".into(),
-                _ => "upstream not checked yet".into(),
+                _ => "no upstream check yet".into(),
             }
         ),
     };
@@ -1347,7 +1356,7 @@ async fn module_page(
         health.push_str(&kv("Teams", &teams_html(&index, &m.teams)));
     }
     health.push_str(&kv(
-        "Area",
+        "Directory",
         &format!(
             "<a href=\"/a/{0}\">{0}/</a>",
             esc(area_key(&file)
@@ -1481,7 +1490,7 @@ async fn area_page(
                     )
                 })
                 .collect();
-            out.push_str(&kv("Busy below", &list.join(" · ")));
+            out.push_str(&kv("Most open pull requests", &list.join(" · ")));
         }
         out.push_str("</div>");
     }
@@ -1525,9 +1534,9 @@ async fn browse(
     if let Some(href) = exact(&s, &index, &q) {
         return Redirect::to(&href).into_response();
     }
-    let page = Page::new(Section::Packages, "Packages, modules and areas")
+    let page = Page::new(Section::Packages, "Packages, modules and directories")
         .icon(octicon!("package"))
-        .sub("Each has a page with its health, its issues and its pull requests. Subscribe to the ones you care about.");
+        .sub("Each one has a page with its health, issues and pull requests. Watch the ones that are important to you.");
     let mut out = format!(
         "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">\
          <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules, @login\" aria-label=\"search\" autofocus>\

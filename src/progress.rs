@@ -120,7 +120,7 @@ pub fn badges(rows: &[Row], credits: &[&Credit], areas: impl Fn(u64) -> Vec<Stri
             earned: nth(1),
         },
         Badge {
-            name: "First unowned review",
+            name: "First review with no maintainer",
             how: "a review that earned credit on a pull request with no maintainer and no owner",
             earned: live.iter().filter(|c| c.orphan).map(|c| c.at).min(),
         },
@@ -148,8 +148,8 @@ pub fn badges(rows: &[Row], credits: &[&Credit], areas: impl Fn(u64) -> Vec<Stri
             earned: nth(100),
         },
         Badge {
-            name: "Five areas",
-            how: "reviews in 5 areas of nixpkgs, like python, NixOS modules or lib",
+            name: "Five parts of nixpkgs",
+            how: "reviews in 5 parts of nixpkgs, such as python, NixOS modules or lib",
             earned: five_areas,
         },
     ]
@@ -206,10 +206,10 @@ fn goal_line(p: &Progress) -> String {
 
 fn listing_line(p: &Progress) -> String {
     if p.listed {
-        "You are listed: your pull requests show in the queues.".to_string()
+        "Your pull requests show in the queues.".to_string()
     } else {
         format!(
-            "{} more authors to be listed: you have credit from {} of {} in the last {} days.",
+            "{} more authors until your pull requests show in the queues: your reviews got credit from {} of {} authors in the last {} days.",
             MIN_COUNTERPARTIES - p.counterparties,
             p.counterparties,
             MIN_COUNTERPARTIES,
@@ -265,7 +265,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         out,
         "<div id=\"listing\">{}</div>",
         section(
-            "Being listed",
+            "In the queues",
             None,
             None,
             &format!(
@@ -297,7 +297,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         .icon(octicon!("flame"))
         .sub(format!(
             "Only you see this page. It compares you with nobody: there is no leaderboard. \
-             It counts the synced data: the last {WINDOW_DAYS} days and every open pull request. \
+             It counts the reviews of the last {WINDOW_DAYS} days and on every open pull request. \
              Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
             l = esc(&login)
         ))
@@ -438,9 +438,9 @@ mod tests {
         assert_eq!(earned("First review"), Some(t(0)));
         assert_eq!(earned("10 reviews"), Some(t(9)));
         assert_eq!(earned("50 reviews"), None);
-        assert_eq!(earned("First unowned review"), Some(t(3)));
+        assert_eq!(earned("First review with no maintainer"), Some(t(3)));
         assert_eq!(earned("Merged unchanged"), Some(t(11)));
-        assert_eq!(earned("Five areas"), Some(t(12)));
+        assert_eq!(earned("Five parts of nixpkgs"), Some(t(12)));
         assert!(!asked.borrow().contains(&22));
         let p = build(&rows, &refs, 1, Some(3), t(12));
         assert!(p.badges.is_empty());
