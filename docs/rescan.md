@@ -39,9 +39,9 @@ you turn it on.
    step. The reference is pinned to the hash of the tree that step 3 checked.
 5. **Evaluate.** `nix derivation show -r --offline` reads the closure of the
    output. This step has no network.
-6. **Filter.** The server matches each package name against its own nixpkgs
-   index, as `scan` does on a client. Then it applies the rules of an upload:
-   the same redaction, the same index filter, and the same 90-day rule.
+6. **Filter.** The server matches each package name against its own public
+   package list, as `export` does on a client. Then it applies the rules of
+   an upload: the same strict check and the same 90-day rule.
 
 ## Threat model
 
