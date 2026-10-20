@@ -14,7 +14,7 @@ use serde_json::json;
 use std::sync::{Arc, Mutex};
 
 use crate::mine::MACHINES;
-use crate::report::{MAX_PACKAGES, PublicList, Upload};
+use crate::report::{Found, MAX_PACKAGES, PublicList, Report, Source, Upload};
 use crate::store::PackageSet;
 use crate::ui::{Page, Section, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
@@ -277,11 +277,98 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
             None,
             &format!(
                 "<div class=\"Box-row\"><p>Send the packages of your machines, and they show first in \
-                 <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p>\
-                 <ol class=\"ml-3\">{}</ol>{state}</div>",
+                 <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p></div>\
+                 {}<div class=\"Box-row\"><ol class=\"ml-3\">{}</ol>{state}</div>",
+                shared(app),
                 steps(app.public_url.trim_end_matches('/'), None)
             )
         )
+    )
+}
+
+/// A made-up closure through the real filter, so the sample cannot drift
+/// from what `submit` sends.
+fn sample() -> (Report, Upload) {
+    let found = |pname: &str, version: &str| Found {
+        pname: pname.into(),
+        version: version.into(),
+        attr: None,
+    };
+    let rev = "5f2c9e148a3b";
+    let at = "2026-10-20T08:00:00Z";
+    let report = Report {
+        schema: crate::report::SCHEMA,
+        client: String::new(),
+        generated_at: at.into(),
+        source: Source {
+            name: "acme-prod".into(),
+            system: "x86_64-linux".into(),
+            nixpkgs_rev: Some(rev.into()),
+            scanned_at: Some(at.into()),
+        },
+        packages: vec![
+            found("openssl", "3.0.15"),
+            found("curl", "8.11.1-acme-fix"),
+            found("acme-billing", "2.4.0"),
+        ],
+    };
+    let mut list = PublicList {
+        rev: rev.into(),
+        attrs: [("openssl", "3.0.15"), ("curl", "8.11.1")]
+            .into_iter()
+            .map(|(a, v)| (a.to_string(), (a.to_string(), v.to_string())))
+            .collect(),
+        pnames: Default::default(),
+    };
+    list.fill_pnames();
+    let mut upload = report.strict(&list);
+    upload.client = "maintainer-mode/VERSION".into();
+    (report, upload)
+}
+
+/// What leaves the machine, what the server keeps and who sees it.
+fn shared(app: &App) -> String {
+    let (report, upload) = sample();
+    let fate = |f: &Found| match upload.packages.iter().find(|e| e.pname == f.pname) {
+        Some(e) if !e.modified => "sent with its version, because nixpkgs has this version",
+        Some(_) => "sent without its version, marked <code>modified</code>",
+        None => "not sent, only counted",
+    };
+    let rows: String = report
+        .packages
+        .iter()
+        .map(|f| {
+            format!(
+                "<li><code>{} {}</code>: {}</li>",
+                esc(&f.pname),
+                esc(&f.version),
+                fate(f)
+            )
+        })
+        .collect();
+    let json = serde_json::to_string_pretty(&upload).unwrap_or_default();
+    let host = app
+        .public_url
+        .split_once("://")
+        .map_or(app.public_url.as_str(), |(_, h)| h)
+        .trim_end_matches('/');
+    format!(
+        "<div class=\"Box-row\" id=\"shared\"><h3 class=\"f5 mb-2\">What leaves your machine</h3>\
+         <p>An example. The scan of the machine <code>{name}</code> finds three packages:</p>\
+         <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent</li></ul>\
+         <p>The tool then sends only this. No path, no store hash, no host name:</p>\
+         <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{json}</pre></div>\
+         <div class=\"Box-row\"><h3 class=\"f5 mb-2\">What the server keeps, and who sees it</h3><ul class=\"ml-3 mb-2\">\
+         <li>It keeps the names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision.</li>\
+         <li>Only you see it, when you sign in. It never shows on public pages or in public numbers.</li>\
+         <li>The admin of {host} can read the server database.</li>\
+         <li>The server deletes it {RETENTION_DAYS} days after the upload. <em>Delete my report</em> on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
+         <p class=\"mb-0\"><strong>The risk.</strong> The report tells which public packages run on your machines, and their versions. \
+         A person who reads it can find the known advisories that can affect you. \
+         Send only machines that you can share at that level.</p></div>",
+        name = esc(&report.source.name),
+        json = esc(&json),
+        host = esc(host),
     )
 }
 
@@ -294,7 +381,7 @@ fn steps(base: &str, token: Option<&str>) -> String {
         let pre = if cmd.is_empty() {
             String::new()
         } else {
-            format!("<pre class=\"p-2 mt-1 color-bg-subtle\">{}</pre>", esc(cmd))
+            format!("<pre class=\"p-2 mt-1 color-bg-subtle overflow-auto\">{}</pre>", esc(cmd))
         };
         format!("<li class=\"mb-3\"><strong>{title}</strong> {body}{pre}</li>")
     };
@@ -327,7 +414,7 @@ fn steps(base: &str, token: Option<&str>) -> String {
         step(
             "Send them.",
             "The tool downloads the public package list of the server, keeps only those names, and sends a version only when nixpkgs has it. \
-             To read the report before you send it, run <code>export</code> first.",
+             <code>export</code> prints the exact report that <code>submit</code> sends. Read it first.",
             &format!(
                 "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE}"
             ),
@@ -350,7 +437,8 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
          <p>Your new upload token. The server shows it only now. Any token you made before no longer works.</p>\
          <input class=\"form-control width-full mb-3 text-mono\" readonly value=\"{t}\" aria-label=\"upload token\">\
          <ol class=\"ml-3\">{s}</ol>\
-         <p class=\"color-fg-muted\">You can also put the token in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code> instead of a file.</p>\
+         <p class=\"color-fg-muted\">You can also put the token in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code> instead of a file. \
+         <a href=\"/me/settings#shared\">What leaves your machine</a> shows an example report and the risk.</p>\
          <a class=\"btn btn-sm\" href=\"/me/settings#upload\">Back to your settings</a></div></div>",
         t = esc(&token),
         s = steps(base, Some(&token)),
@@ -404,6 +492,16 @@ pub(crate) mod tests {
         ));
         assert!(!s.contains("umask"));
         assert!(steps("https://example.org", Some("t")).contains("umask 077"));
+    }
+
+    #[test]
+    fn the_sample_shows_each_rule_of_the_strict_filter() {
+        let (_, upload) = sample();
+        let json = serde_json::to_string(&upload).unwrap();
+        assert!(json.contains(r#""attr":"openssl","pname":"openssl","version":"3.0.15""#));
+        assert!(json.contains(r#""attr":"curl","pname":"curl","version":null,"modified":true"#));
+        assert!(!json.contains("acme"));
+        assert_eq!(upload.omitted.unknown, 1);
     }
 
     #[test]
