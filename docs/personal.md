@@ -444,8 +444,22 @@ also tries the name in lower case and `python3Packages.<name>`.
 - `omitted.unknown`: the number of dropped names.
 
 The name of the scanned tree never leaves your machine. The client sends no
-path, no store hash and no private name. The local report uses the nixfresh
-report format, schema 1.
+path, no store hash and no private name. The local report uses schema 1.
+
+`/me/settings#shared` shows an example. It runs a made-up closure through the
+same filter as `submit`. `openssl 3.0.15` goes with its version.
+`curl 8.11.1-acme-fix` goes with `"version": null` and `"modified": true`.
+`acme-billing` and the name of the machine do not go. The section also says
+what the server keeps and who sees it. It also states the risk: the report
+tells which public packages run on your machines and their versions, so a
+person who reads it can find the known advisories that can affect you.
+
+**What the server keeps.** It keeps the attributes, the versions that its
+index has, the count of dropped names, the scan time and the nixpkgs
+revision. Only you see them. They never show on public pages or in public
+numbers. The admin of the server can read its database. The server deletes
+a report 90 days after the upload, and "Delete my report" deletes it at
+once.
 
 **The upload token.** Make it in `/me/settings#upload`. The server shows it once and
 keeps only its SHA-256 hash. A new token replaces the old one. One button
