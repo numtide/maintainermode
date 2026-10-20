@@ -213,7 +213,8 @@ fn checklist(f: &Facts) -> String {
                  Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>. Nobody watches them, \
                  and a first review needs no domain knowledge. Is <code>meta</code> complete? Are the hashes pinned? \
                  Are <code>platforms</code> right? Leave each finding as an inline comment on the changed line. \
-                 To maintain a package later, read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a>."
+                 To maintain a package, pick <a href=\"/#first\">a first package to work on</a>: a small one with no maintainer and recent work. \
+                 Read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a>."
             ),
         ));
     } else {

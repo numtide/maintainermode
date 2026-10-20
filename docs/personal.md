@@ -242,7 +242,27 @@ After you sign in, the home page shows the Get started card. It is a checklist. 
 7. LLMs. They are off by default. Turn them on in `/me/settings#llm`.
 8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
 
-If you maintain nothing, the first step changes. It sends you to the pull requests with no maintainer on `/review`, with a checklist for a first review. It also links maintainers/README.md.
+If you maintain nothing, the first step changes. It sends you to the pull requests with no maintainer on `/review`, with a checklist for a first review. It also links maintainers/README.md and
+the list below.
+
+### A first package to work on
+
+The home page shows this list to visitors, and to people who maintain
+nothing. Big shared packages such as glibc, and issues that have been stuck
+for years, are a bad first pick. A package is on the list when all of these
+are true:
+
+- It is under `pkgs/by-name`. Core packages with many dependents live
+  elsewhere.
+- It has no maintainer and no team.
+- It is not broken and not insecure. Its risk score is not high.
+- It has 3 open issues and pull requests or fewer.
+- It has an open issue, or an open pull request that is not a draft, from
+  the last 60 days.
+
+Each row gives one task: review the newest pull request, or fix the newest
+issue. The newest task comes first. The list shows 8 rows. After the task,
+add yourself to `meta.maintainers`.
 
 Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card.
 

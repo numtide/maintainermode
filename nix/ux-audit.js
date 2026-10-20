@@ -238,6 +238,7 @@ function seedSql() {
     jq: pkg("jq", "1.7.1", [SEED_LOGIN]),
     unbound: pkg("unbound", "1.26.1", ["someone"]),
     ripgrep: pkg("ripgrep", "14.1.0", ["someone"]),
+    tinyfetch: pkg("tinyfetch", "0.3.0", []),
     "a-package-with-a-very-long-name-for-the-phone-layout": pkg(
       "a-package-with-a-very-long-name-for-the-phone-layout",
       "0.1.0-unstable-2026-01-01",
@@ -361,6 +362,10 @@ function seedSql() {
     }),
     pr(100173, SEED_LOGIN, "ripgrep: enable the pcre2 feature", 9, {
       files: [file("ripgrep")],
+    }),
+    pr(100175, "r-ryantm", "tinyfetch: 0.3.0 -> 0.3.1", 4, {
+      author_is_bot: true,
+      files: [file("tinyfetch")],
     }),
     pr(100174, "contributor", "curl: 8.9.1 -> 8.10.0 (CVE-2024-8096)", 3, {
       files: [file("curl")],
