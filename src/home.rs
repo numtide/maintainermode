@@ -86,6 +86,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
             )
         },
     ));
+    out.push_str(&crate::first::section(app));
     let mut help: Vec<(Subject, Flags)> = {
         let index = app.index.read().unwrap();
         h.advisories
@@ -250,6 +251,17 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
             own_html
         },
     ));
+
+    let maintains = app
+        .index
+        .read()
+        .unwrap()
+        .maintainers
+        .get(login)
+        .is_some_and(|m| !m.is_empty());
+    if !maintains {
+        out.push_str(&crate::first::section(app));
+    }
 
     if s.committers.is(login) {
         out.push_str(&section(
