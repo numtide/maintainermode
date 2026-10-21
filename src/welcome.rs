@@ -180,8 +180,7 @@ impl Facts {
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
             feed: app.store.feed_token(login).ok().flatten().is_some(),
             inbox: true,
-            system: app.store.package_set(login).ok().flatten().is_some()
-                || !app.store.flake_refs(login).unwrap_or_default().is_empty(),
+            system: !app.store.sets(login).unwrap_or_default().is_empty(),
             actions: ["review_repo", "update_repo", "nixpkgs_fork"]
                 .iter()
                 .any(|k| setting(k)),

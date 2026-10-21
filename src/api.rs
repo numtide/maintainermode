@@ -246,6 +246,7 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
         "open_prs": profile["open_prs"],
         "recent_prs": profile["recent_prs"],
         "areas": profile["areas"],
+        "flakes": profile["flakes"],
         "person": person,
         "dossier": dossier,
         "credits": credits,

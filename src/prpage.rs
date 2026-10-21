@@ -2182,6 +2182,7 @@ mod tests {
         app.store
             .put_package_set(
                 "alice",
+                "laptop",
                 &crate::store::PackageSet {
                     attrs: vec!["hello".into()],
                     dropped: 0,
@@ -2190,6 +2191,7 @@ mod tests {
                     nixpkgs_rev: None,
                     versions: Default::default(),
                 },
+                None,
             )
             .unwrap();
         let mut p = pr(44, "alice", 0);

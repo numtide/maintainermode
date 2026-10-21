@@ -395,7 +395,9 @@ function seedSql() {
   return [
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
-    `INSERT OR REPLACE INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
+    `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'laptop', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
+    `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'web-1', ${q(set.slice(0, 2))}, 0, '${daysAgo(3)}', '${daysAgo(3)}', '${index.rev}');`,
+    `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, reference, output, public) VALUES ('${SEED_LOGIN}', 'website', ${q(set.slice(1))}, 1, '${daysAgo(1)}', '${daysAgo(1)}', '${index.rev}', 'github:numtide/maintainermode/main', 'nixosConfigurations.a-rather-long-host-name.config.system.build.toplevel', 1);`,
     ...prs.map(
       (p) =>
         `INSERT OR REPLACE INTO pr (number, updated_at, state, data) VALUES (${p.number}, '${p.updated_at}', '${p.state}', ${q(p)});`,

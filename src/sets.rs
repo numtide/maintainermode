@@ -1,30 +1,35 @@
-//! A person's private package set: the nixpkgs attributes of their latest
-//! uploaded report and of their scanned flakes. Only the owner reads it.
-//! Nothing here feeds a public page, number or API.
+//! A person's named package sets: the nixpkgs attributes of their uploaded
+//! reports and of their scanned flakes. Only the owner reads a private set.
+//! A public flake set shows on the profile; no other page, number or API
+//! reads a set.
 
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, State};
+use axum::extract::{DefaultBodyLimit, Form, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{Duration, Utc};
+use serde::Deserialize;
 use serde_json::json;
+use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
 use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, Source, Upload};
-use crate::store::PackageSet;
-use crate::ui::{Page, Section, section};
+use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put};
+use crate::ui::{Page, Section, Tab, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
+pub const MAX_NAME: usize = 32;
 const MAX_REPORT_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/me/sets/delete", post(delete_set))
+        .route("/me/sets/public", post(set_public))
         .route("/me/upload-token", post(new_token))
         .route("/me/upload-token/delete", post(delete_token))
         .route(
@@ -122,21 +127,38 @@ pub fn token_hash(token: &str) -> String {
         .collect()
 }
 
-/// The attributes of a login's uploaded set and scanned flakes, for the
-/// private feed.
+/// A set name: 1 to 32 lower-case letters, digits and `-_.`, starting
+/// with a letter or a digit. Safe in a URL, in HTML and in a file name.
+pub fn check_name(name: &str) -> Result<(), String> {
+    let ok = !name.is_empty()
+        && name.len() <= MAX_NAME
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_' | '.'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "a set name has 1 to {MAX_NAME} characters: a-z, 0-9 and - _ . and starts with a letter or a digit"
+        ))
+    }
+}
+
+/// The attributes of all sets of a login together: the union that Mine,
+/// For you, Needs you and the private feed use.
 pub fn set_attrs(app: &App, login: &str) -> Vec<String> {
-    let mut all: std::collections::BTreeSet<String> = app
+    let all: std::collections::BTreeSet<String> = app
         .store
-        .package_set(login)
-        .ok()
-        .flatten()
-        .map(|s| s.attrs)
+        .sets(login)
         .unwrap_or_default()
         .into_iter()
+        .filter_map(|s| s.data)
+        .flat_map(|d| d.attrs)
         .collect();
-    for r in app.store.flake_refs(login).unwrap_or_default() {
-        all.extend(r.attrs);
-    }
     all.into_iter().collect()
 }
 
@@ -169,6 +191,17 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
             );
         }
     };
+    let name = report.name.as_deref().unwrap_or(DEFAULT_SET);
+    if let Err(e) = check_name(name) {
+        return refuse(StatusCode::BAD_REQUEST, &e);
+    }
+    if let Some(f) = &report.public_flake {
+        if let Err(e) = crate::rescan::check_reference(&f.reference)
+            .and_then(|()| crate::rescan::check_output(&f.output))
+        {
+            return refuse(StatusCode::BAD_REQUEST, &format!("not a public flake: {e}"));
+        }
+    }
     if report.packages.len() > MAX_PACKAGES {
         return refuse(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -214,14 +247,33 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
             .clone()
             .filter(|r| r.len() <= 64 && r.chars().all(|c| c.is_ascii_hexdigit())),
     };
-    if let Err(e) = app.store.put_package_set(&login, &set) {
-        return refuse(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string());
+    let flake = report
+        .public_flake
+        .as_ref()
+        .map(|f| (f.reference.as_str(), f.output.as_str()));
+    match app.store.put_package_set(&login, name, &set, flake) {
+        Ok(Put::Stored) => {}
+        Ok(Put::Scanned) => {
+            return refuse(
+                StatusCode::CONFLICT,
+                &format!("the set {name} is a flake that the server scans; choose another name"),
+            );
+        }
+        Ok(Put::Full) => {
+            return refuse(
+                StatusCode::CONFLICT,
+                &format!("you have {MAX_SETS} sets; delete one first"),
+            );
+        }
+        Err(e) => return refuse(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
     }
-    tracing::info!("package set of {login} replaced");
+    tracing::info!("a package set of {login} replaced");
     (
         StatusCode::ACCEPTED,
         Json(json!({
             "login": login,
+            "name": name,
+            "public": flake.is_some(),
             "kept": set.attrs.len(),
             "dropped": dropped,
             "expires_at": set.uploaded_at + Duration::days(RETENTION_DAYS),
@@ -230,32 +282,162 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         .into_response()
 }
 
-/// The latest machine report: when it came, and a button that
-/// deletes it.
-pub(crate) fn summary(app: &App, login: &str) -> String {
-    let Some(s) = app.store.package_set(login).ok().flatten() else {
-        return String::new();
+/// The address of the machines filter for one set, or for all of them.
+pub(crate) fn machines_href(set: Option<&str>) -> String {
+    match set {
+        Some(n) => format!("{MACHINES}&set={}", crate::github::urlencode(n)),
+        None => MACHINES.to_string(),
+    }
+}
+
+fn kind(s: &NamedSet) -> &'static str {
+    match (&s.flake, s.rescan) {
+        (Some(_), true) => "server scan",
+        (Some(_), false) => "flake upload",
+        (None, _) => "upload",
+    }
+}
+
+/// The facts of one set, in one line.
+fn facts(s: &NamedSet) -> String {
+    let Some(d) = &s.data else {
+        return "No packages yet.".into();
     };
-    format!(
-        "<div class=\"Box mb-3\"><div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\"><div class=\"flex-auto\">\
-         <strong>Latest report: uploaded {1} ago.</strong> {0} packages kept, {2} names dropped. Scanned {3}. nixpkgs {4}. Expires {5}.</div>\
-         <form method=\"post\" action=\"/me/sets/delete\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Delete my report</button></form>\
-         </div></div>",
-        s.attrs.len(),
-        ago(s.uploaded_at),
-        s.dropped,
-        esc(s
-            .scanned_at
-            .as_deref()
-            .map(|t| t.get(..10).unwrap_or(t))
-            .unwrap_or("at an unknown time")),
-        esc(s
+    let mut out = format!(
+        "{} packages, {} names dropped. {} {} ago.",
+        d.attrs.len(),
+        d.dropped,
+        if s.rescan { "Scanned" } else { "Uploaded" },
+        ago(d.uploaded_at)
+    );
+    if !s.rescan {
+        let _ = write!(
+            out,
+            " Scanned {}.",
+            esc(d
+                .scanned_at
+                .as_deref()
+                .map(|t| t.get(..10).unwrap_or(t))
+                .unwrap_or("at an unknown time"))
+        );
+    }
+    let _ = write!(
+        out,
+        " nixpkgs {}. Expires {}.",
+        esc(d
             .nixpkgs_rev
             .as_deref()
             .map(|r| r.get(..12).unwrap_or(r))
             .unwrap_or("unknown")),
-        (s.uploaded_at + Duration::days(RETENTION_DAYS)).format("%Y-%m-%d"),
+        (d.uploaded_at + Duration::days(RETENTION_DAYS)).format("%Y-%m-%d"),
+    );
+    out
+}
+
+fn small_form(action: &str, name: &str, extra: &str, class: &str, label: &str) -> String {
+    format!(
+        "<form method=\"post\" action=\"{action}\" class=\"d-inline\"><input type=\"hidden\" name=\"name\" value=\"{}\">{extra}\
+         <button class=\"btn btn-sm{class}\" type=\"submit\">{label}</button></form>",
+        esc(name)
     )
+}
+
+/// The sets box of the machines filter: a picker, then one row per set
+/// with its facts, its public switch and its Delete button. `current` is
+/// the set the list shows; `None` shows all of them.
+pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> String {
+    let sets = app.store.sets(login).unwrap_or_default();
+    if sets.is_empty() {
+        return String::new();
+    }
+    let scans: std::collections::HashMap<String, crate::store::FlakeRef> = app
+        .store
+        .flake_refs(login)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.name.clone(), r))
+        .collect();
+    let index_at = app.store.get_time("index_at").ok().flatten();
+    let count = |s: &NamedSet| s.data.as_ref().map_or(0, |d| d.attrs.len());
+    let mut tabs = vec![Tab::new(machines_href(None), "All sets", current.is_none())];
+    for s in &sets {
+        tabs.push(
+            Tab::new(
+                machines_href(Some(&s.name)),
+                &s.name,
+                current == Some(s.name.as_str()),
+            )
+            .count(count(s)),
+        );
+    }
+    let mut out = format!(
+        "<div class=\"Box mb-3\" id=\"sets\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Your sets</h2></div>\
+         <div class=\"Box-row pb-0\">{}</div>",
+        icon(octicon!("device-desktop")),
+        crate::ui::subnav(&tabs).replacen("aria-label=\"Views\"", "aria-label=\"Sets\"", 1)
+    );
+    for s in &sets {
+        let mut labels = format!("<span class=\"Label\">{}</span>", kind(s));
+        if s.public {
+            let _ = write!(
+                labels,
+                " <a class=\"Label Label--accent tap-label\" href=\"/u/{}?tab=flakes\">on your profile</a>",
+                crate::github::urlencode(login)
+            );
+        } else {
+            labels.push_str(" <span class=\"Label\">private</span>");
+        }
+        let flake = s
+            .flake
+            .as_ref()
+            .map(|(r, o)| {
+                format!(
+                    "<div class=\"f6 set-ref\"><code>{}#{}</code></div>",
+                    esc(r),
+                    esc(o)
+                )
+            })
+            .unwrap_or_default();
+        let scan = scans
+            .get(&s.name)
+            .map(|r| {
+                format!(
+                    "<div class=\"f6 color-fg-muted\">{}</div>",
+                    crate::rescan::state(r, index_at)
+                )
+            })
+            .unwrap_or_default();
+        let switch = match (&s.flake, s.public) {
+            (Some(_), true) => small_form(
+                "/me/sets/public",
+                &s.name,
+                "<input type=\"hidden\" name=\"public\" value=\"0\">",
+                "",
+                "Make private",
+            ),
+            (Some(_), false) => small_form(
+                "/me/sets/public",
+                &s.name,
+                "<input type=\"hidden\" name=\"public\" value=\"1\">",
+                "",
+                "Show on my profile",
+            ),
+            (None, _) => String::new(),
+        };
+        let _ = write!(
+            out,
+            "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\"><div class=\"flex-auto set-ref\">\
+             <a class=\"text-bold\" href=\"{}\">{}</a> {labels}\
+             <div class=\"f6 color-fg-muted\">{}</div>{flake}{scan}</div>\
+             <div class=\"d-flex flex-wrap gap-2\">{switch}{}</div></div>",
+            esc(&machines_href(Some(&s.name))),
+            esc(&s.name),
+            facts(s),
+            small_form("/me/sets/delete", &s.name, "", " btn-danger", "Delete"),
+        );
+    }
+    out.push_str("</div>");
+    out
 }
 
 /// The `#upload` section of `/me/settings`.
@@ -415,9 +597,10 @@ fn steps(base: &str, token: Option<&str>) -> String {
         step(
             "Send them.",
             "The tool downloads the public package list of the server, keeps only those names, and sends a version only when nixpkgs has it. \
-             <code>export</code> prints the exact report that <code>submit</code> sends. Read it first.",
+             <code>export</code> prints the exact report that <code>submit</code> sends. Read it first. \
+             Give each machine its own set with <code>--name</code>, such as <code>--name laptop</code>. A new upload replaces the set of that name.",
             &format!(
-                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE}"
+                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE} --name laptop"
             ),
         ),
     ]
@@ -464,18 +647,73 @@ async fn delete_token(State(app): State<Shared>, headers: HeaderMap) -> Response
     Redirect::to("/me/settings#upload").into_response()
 }
 
-async fn delete_set(State(app): State<Shared>, headers: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct NameForm {
+    /// With no name, every set goes.
+    name: Option<String>,
+}
+
+async fn delete_set(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Form(f): Form<NameForm>,
+) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    if let Err(e) = app
-        .store
-        .delete_package_set(&login)
-        .and_then(|()| app.store.delete_flake_refs(&login))
-    {
+    let done = match f.name.as_deref() {
+        Some(n) => app.store.delete_package_set(&login, n),
+        None => app.store.delete_package_sets(&login),
+    };
+    if let Err(e) = done {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     Redirect::to(MACHINES).into_response()
+}
+
+#[derive(Deserialize)]
+struct PublicForm {
+    name: String,
+    public: u8,
+}
+
+/// Only a set whose flake reference passes the public-reference check
+/// can show on the profile.
+async fn set_public(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Form(f): Form<PublicForm>,
+) -> Response {
+    let Some(login) = app.viewer(&headers) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let public = f.public == 1;
+    if public {
+        let flake = app
+            .store
+            .sets(&login)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|s| s.name == f.name)
+            .and_then(|s| s.flake);
+        let Some((reference, output)) = flake else {
+            return (
+                StatusCode::BAD_REQUEST,
+                "only a public flake can show on your profile",
+            )
+                .into_response();
+        };
+        if let Err(e) = crate::rescan::check_reference(&reference)
+            .and_then(|()| crate::rescan::check_output(&output))
+        {
+            return (StatusCode::BAD_REQUEST, e).into_response();
+        }
+    }
+    match app.store.set_public(&login, &f.name, public) {
+        Ok(true) => Redirect::to(&machines_href(Some(&f.name))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, "no flake set of that name").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 #[cfg(test)]
@@ -604,7 +842,11 @@ pub(crate) mod tests {
             StatusCode::UNAUTHORIZED
         );
         assert_eq!(post(&app, "t", report()).await, StatusCode::ACCEPTED);
-        let set = app.store.package_set("alice").unwrap().unwrap();
+        let set = app
+            .store
+            .package_set("alice", DEFAULT_SET)
+            .unwrap()
+            .unwrap();
         assert_eq!(set.attrs, vec!["hello"]);
         assert_eq!(
             set.versions.get("hello").map(String::as_str),
@@ -637,7 +879,12 @@ pub(crate) mod tests {
         ] {
             assert_eq!(post(&app, "t", body).await, StatusCode::BAD_REQUEST);
         }
-        assert!(app.store.package_set("alice").unwrap().is_none());
+        assert!(
+            app.store
+                .package_set("alice", DEFAULT_SET)
+                .unwrap()
+                .is_none()
+        );
         let ok =
             entry(json!({ "attr": "hello", "pname": "hello", "version": null, "modified": true }));
         assert_eq!(post(&app, "t", ok).await, StatusCode::ACCEPTED);
@@ -653,7 +900,12 @@ pub(crate) mod tests {
             post(&app, "t", report()).await,
             StatusCode::SERVICE_UNAVAILABLE
         );
-        assert!(app.store.package_set("alice").unwrap().is_none());
+        assert!(
+            app.store
+                .package_set("alice", DEFAULT_SET)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[tokio::test]
@@ -710,27 +962,238 @@ pub(crate) mod tests {
         assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
     }
 
+    fn data(attrs: &[&str], days: i64) -> PackageSet {
+        PackageSet {
+            attrs: attrs.iter().map(|a| a.to_string()).collect(),
+            dropped: 0,
+            uploaded_at: Utc::now() - Duration::days(days),
+            scanned_at: None,
+            nixpkgs_rev: None,
+            versions: Default::default(),
+        }
+    }
+
     #[test]
     fn the_purge_deletes_only_expired_sets() {
         let app = app(&[]);
-        let now = Utc::now();
-        for (login, days) in [("old", RETENTION_DAYS + 1), ("new", RETENTION_DAYS - 1)] {
-            let set = PackageSet {
-                attrs: vec!["hello".into()],
-                dropped: 0,
-                uploaded_at: now - Duration::days(days),
-                scanned_at: None,
-                nixpkgs_rev: None,
-                versions: Default::default(),
-            };
-            app.store.put_package_set(login, &set).unwrap();
+        let s = &app.store;
+        for (name, days) in [("old", RETENTION_DAYS + 1), ("new", RETENTION_DAYS - 1)] {
+            s.put_package_set("alice", name, &data(&["hello"], days), None)
+                .unwrap();
         }
-        let n = app
-            .store
-            .purge_package_sets(now - Duration::days(RETENTION_DAYS))
+        let n = s
+            .purge_package_sets(Utc::now() - Duration::days(RETENTION_DAYS))
             .unwrap();
         assert_eq!(n, 1);
-        assert!(app.store.package_set("old").unwrap().is_none());
-        assert!(app.store.package_set("new").unwrap().is_some());
+        assert!(s.package_set("alice", "old").unwrap().is_none());
+        assert!(s.package_set("alice", "new").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_set_name_is_short_and_safe() {
+        for ok in ["default", "laptop", "web-1", "a", "x86_64.box", "1st"] {
+            assert_eq!(check_name(ok), Ok(()), "{ok}");
+        }
+        for bad in [
+            "",
+            "Laptop",
+            "-x",
+            ".hidden",
+            "a b",
+            "a/b",
+            "a#b",
+            "<b>",
+            "é",
+            &"x".repeat(MAX_NAME + 1),
+        ] {
+            assert!(check_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    fn named(name: &str, attrs: &[&str]) -> serde_json::Value {
+        let packages: Vec<_> = attrs
+            .iter()
+            .map(|a| json!({ "attr": a, "pname": a, "version": "1.0" }))
+            .collect();
+        json!({ "schema": crate::report::SCHEMA, "name": name, "packages": packages })
+    }
+
+    fn uploader(attrs: &[&str]) -> Shared {
+        let app = app(attrs);
+        for a in attrs {
+            known(&app, a, a, "1.0");
+        }
+        app.store
+            .set_upload_token("alice", &token_hash("t"))
+            .unwrap();
+        app
+    }
+
+    #[tokio::test]
+    async fn each_name_has_its_own_set_and_its_own_delete() {
+        let app = uploader(&["hello", "jq", "curl"]);
+        let s = &app.store;
+        assert_eq!(
+            post(&app, "t", named("laptop", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            post(&app, "t", named("web-1", &["jq"])).await,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            post(&app, "t", named("laptop", &["curl"])).await,
+            StatusCode::ACCEPTED
+        );
+        let names: Vec<String> = s
+            .sets("alice")
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
+        assert_eq!(names, ["laptop", "web-1"]);
+        assert_eq!(
+            s.package_set("alice", "laptop").unwrap().unwrap().attrs,
+            ["curl"]
+        );
+        assert_eq!(set_attrs(&app, "alice"), ["curl", "jq"]);
+        for bad in ["Laptop", "../x", ""] {
+            assert_eq!(
+                post(&app, "t", named(bad, &["hello"])).await,
+                StatusCode::BAD_REQUEST
+            );
+        }
+        s.delete_package_set("alice", "laptop").unwrap();
+        assert_eq!(set_attrs(&app, "alice"), ["jq"]);
+        s.delete_package_sets("alice").unwrap();
+        assert!(s.sets("alice").unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_name_of_a_scanned_flake_and_the_set_limit_are_kept() {
+        let app = uploader(&["hello"]);
+        let s = &app.store;
+        assert!(matches!(
+            s.add_flake_ref("alice", "web", "github:o/r", "x", false, 3)
+                .unwrap(),
+            crate::store::AddFlake::Added
+        ));
+        assert_eq!(
+            post(&app, "t", named("web", &["hello"])).await,
+            StatusCode::CONFLICT
+        );
+        for n in 1..MAX_SETS {
+            s.put_package_set("alice", &format!("m{n}"), &data(&["hello"], 0), None)
+                .unwrap();
+        }
+        assert_eq!(
+            post(&app, "t", named("one-more", &["hello"])).await,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            post(&app, "t", named("m1", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+    }
+
+    #[tokio::test]
+    async fn only_a_public_reference_makes_a_public_set() {
+        let app = uploader(&["hello"]);
+        let s = &app.store;
+        let mut body = named("site", &["hello"]);
+        body["public_flake"] = json!({ "reference": "https://127.0.0.1/x.tar.gz", "output": "x" });
+        assert_eq!(post(&app, "t", body.clone()).await, StatusCode::BAD_REQUEST);
+        body["public_flake"] = json!({ "reference": "github:o/r", "output": "x", "path": "/home" });
+        assert_eq!(post(&app, "t", body.clone()).await, StatusCode::BAD_REQUEST);
+        body["public_flake"] =
+            json!({ "reference": "github:o/r", "output": "packages.x86_64-linux.default" });
+        assert_eq!(post(&app, "t", body).await, StatusCode::ACCEPTED);
+        assert_eq!(
+            post(&app, "t", named("laptop", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        let public: Vec<String> = s
+            .public_sets("alice")
+            .unwrap()
+            .into_iter()
+            .map(|x| x.name)
+            .collect();
+        assert_eq!(public, ["site"]);
+        assert!(!s.set_public("alice", "laptop", true).unwrap());
+        assert!(s.set_public("alice", "site", false).unwrap());
+        assert!(s.public_sets("alice").unwrap().is_empty());
+        assert!(s.set_public("alice", "site", true).unwrap());
+        assert_eq!(
+            post(&app, "t", named("site", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        assert!(
+            s.public_sets("alice").unwrap().is_empty(),
+            "a private upload replaces the flake"
+        );
+    }
+
+    async fn page(app: &Shared, set: Option<&str>) -> String {
+        let i = crate::mine::Interests::of(app, "alice");
+        let v = crate::mine::view(
+            app,
+            "alice",
+            &i,
+            crate::mine::Filter::Machines,
+            "",
+            None,
+            set,
+        );
+        v.body
+    }
+
+    #[tokio::test]
+    async fn the_filter_shows_one_set_or_all_of_them() {
+        let app = uploader(&["hello", "jq"]);
+        assert_eq!(
+            post(&app, "t", named("laptop", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(
+            post(&app, "t", named("web-1", &["jq"])).await,
+            StatusCode::ACCEPTED
+        );
+        let all = page(&app, None).await;
+        assert!(all.contains("href=\"/p/hello\"") && all.contains("href=\"/p/jq\""));
+        assert!(all.contains("href=\"/packages?filter=machines&amp;set=web-1\""));
+        assert!(all.contains("aria-current=\"page\">All sets"));
+        let one = page(&app, Some("laptop")).await;
+        assert!(one.contains("href=\"/p/hello\"") && !one.contains("href=\"/p/jq\""));
+        assert!(one.contains("Packages of laptop"));
+        assert!(one.contains("name=\"set\" value=\"laptop\""));
+        let unknown = page(&app, Some("nope")).await;
+        assert!(
+            unknown.contains("href=\"/p/jq\"")
+                && unknown.contains("aria-current=\"page\">All sets")
+        );
+        let i = crate::mine::Interests::of(&app, "alice");
+        assert_eq!(i.count(crate::mine::Filter::Machines), 2);
+    }
+
+    #[tokio::test]
+    async fn a_private_set_never_reaches_the_profile() {
+        let app = uploader(&["hello", "jq"]);
+        assert_eq!(
+            post(&app, "t", named("secret-box", &["jq"])).await,
+            StatusCode::ACCEPTED
+        );
+        let v = crate::profile::profile_value(&app, "alice");
+        assert_eq!(v["flakes"], json!([]));
+        let mut body = named("site", &["hello"]);
+        body["public_flake"] = json!({ "reference": "github:o/r", "output": "x" });
+        assert_eq!(post(&app, "t", body).await, StatusCode::ACCEPTED);
+        let v = crate::profile::profile_value(&app, "alice");
+        assert_eq!(v["flakes"][0]["name"], "site");
+        assert_eq!(v["flakes"][0]["packages"], json!(["hello"]));
+        assert_eq!(v["flakes"][0]["source"], "upload");
+        let text = v.to_string();
+        assert!(!text.contains("secret-box") && !text.contains("jq"));
+        let person = crate::api::person_value(&app, "alice").to_string();
+        assert!(!person.contains("secret-box") && person.contains("\"site\""));
     }
 }

@@ -294,7 +294,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/notify/confirm > /tmp/n11 && grep -q 303 /tmp/n11")
     machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_SMTP /tmp/env")
     # server rescans are off by default: registering a flake is refused
-    machine.succeed("curl -s -o /tmp/r5.body -w '%{http_code}' -X POST -d reference=github:o/r -d output=packages.x86_64-linux.default http://127.0.0.1:8790/me/sets/flakes > /tmp/r5 && grep -q 403 /tmp/r5")
+    machine.succeed("curl -s -o /tmp/r5.body -w '%{http_code}' -X POST -d name=web -d reference=github:o/r -d output=packages.x86_64-linux.default http://127.0.0.1:8790/me/sets/flakes > /tmp/r5 && grep -q 403 /tmp/r5")
     machine.succeed("grep -q 'does not scan flakes' /tmp/r5.body")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'Flake rescans' /tmp/sync && grep -q 'off on this server' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q '\"rescans\":{\"enabled\":false' /tmp/sync.json")
@@ -452,7 +452,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"python3Packages.requests\":\\[\"requests\",\"2.31\"\\]' /tmp/pi.json && grep -q '\"requests\":\\[\"python3Packages.requests\"\\]' /tmp/pi.json")
     machine.succeed("curl -sf -H 'Accept-Encoding: gzip' -D /tmp/pigz.h -o /tmp/pi.gz http://127.0.0.1:8790/api/v1/packages/index && grep -qi '^content-encoding: gzip' /tmp/pigz.h && gzip -dc /tmp/pi.gz > /tmp/pi2.json && cmp /tmp/pi.json /tmp/pi2.json")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -H 'If-None-Match: \"1111111111111111111111111111111111111111\"' http://127.0.0.1:8790/api/v1/packages/index > /tmp/pi.code && grep -q 304 /tmp/pi.code")
-    machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 > /tmp/submit.json && grep -q '\"kept\":2' /tmp/submit.json && grep -q '\"dropped\":2' /tmp/submit.json")
+    machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 > /tmp/submit.json && grep -q '\"kept\":2' /tmp/submit.json && grep -q '\"dropped\":2' /tmp/submit.json && grep -q '\"name\":\"default\"' /tmp/submit.json")
+    # a named set, and a public flake set from the owner's own scan
+    machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 --name site --public-flake https://127.0.0.1/x.tar.gz#x")
+    machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 --name site --public-flake github:o/r#packages.x86_64-linux.default > /tmp/submit2.json && grep -q '\"public\":true' /tmp/submit2.json")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/u/alice?tab=flakes' -o /tmp/u-flakes && grep -q 'github:o/r' /tmp/u-flakes && ! grep -q '>default<' /tmp/u-flakes")
     # a follow-up plan on a pull request of alice: only she sees the form
     signed_in("/pr/575334", "/tmp/s-pr")
     machine.succeed("grep -q 'Your follow-up plan' /tmp/s-pr && grep -q 'action=\"/me/followup\"' /tmp/s-pr && grep -q 'Your default plan applies' /tmp/s-pr")
@@ -473,7 +477,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'href=\"/packages?filter=machines\">On my machines <span class=\"Counter\">2</span>' /tmp/s-pk-mine2 && ! grep -q 'Upload the packages of your machines' /tmp/s-pk-mine2")
     machine.succeed("grep -q 'href=\"/p/hello\"' /tmp/s-pk-mine2 && grep -q 'on your machines' /tmp/s-pk-mine2")
     signed_in("/packages?filter=machines", "/tmp/s-pk-machines2")
-    machine.succeed("grep -q 'Latest report: uploaded' /tmp/s-pk-machines2 && grep -q 'action=\"/me/sets/delete\"' /tmp/s-pk-machines2 && grep -q 'id=\"flakes\"' /tmp/s-pk-machines2")
+    machine.succeed("grep -q 'Your sets' /tmp/s-pk-machines2 && grep -q 'set=site' /tmp/s-pk-machines2 && grep -q 'action=\"/me/sets/delete\"' /tmp/s-pk-machines2 && grep -q 'id=\"flakes\"' /tmp/s-pk-machines2")
     machine.succeed("curl -sf -o /tmp/pub2 http://127.0.0.1:8790/packages && ! grep -q -e 'on your machines' -e 'filter=' /tmp/pub2")
     machine.succeed("curl -s -o /tmp/r20 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"packages\":[{\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"1.2.3-acme-fix\"}]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r20.code && grep -q 400 /tmp/r20.code && grep -q 'does not have version 1.2.3-acme-fix' /tmp/r20")
     machine.succeed("curl -s -o /tmp/r21 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"source\":{\"name\":\"/home/me/tree\"},\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r21.code && grep -q 400 /tmp/r21.code && grep -q 'unknown field' /tmp/r21")

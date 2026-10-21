@@ -180,23 +180,39 @@ pub(crate) struct Interests {
     pub(crate) has_machines: bool,
     /// Package attribute → the version the machine report gave.
     pub(crate) versions: HashMap<String, String>,
+    /// Set name → the subject keys of its packages.
+    pub(crate) sets: BTreeMap<String, HashSet<String>>,
 }
 
 impl Interests {
     pub(crate) fn of(app: &App, login: &str) -> Interests {
-        let machines = crate::sets::set_attrs(app, login);
-        let set = app.store.package_set(login).ok().flatten();
-        let has_machines =
-            set.is_some() || !app.store.flake_refs(login).unwrap_or_default().is_empty();
+        let sets = app.store.sets(login).unwrap_or_default();
+        let has_machines = !sets.is_empty();
+        let mut machines: Vec<String> = sets
+            .iter()
+            .filter_map(|s| s.data.as_ref())
+            .flat_map(|d| d.attrs.iter().cloned())
+            .collect();
+        machines.sort();
+        machines.dedup();
         let watched = subscriptions(app, login);
         let index = app.index.read().unwrap();
         let mut i = Interests::build(&index, login, &machines, &watched, has_machines);
-        i.versions = set
-            .map(|s| s.versions)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(a, v)| (canonical(&index, &a), v))
-            .collect();
+        for s in sets {
+            let Some(d) = s.data else {
+                i.sets.insert(s.name, HashSet::new());
+                continue;
+            };
+            for (a, v) in d.versions {
+                i.versions.entry(canonical(&index, &a)).or_insert(v);
+            }
+            let keys = d
+                .attrs
+                .iter()
+                .map(|a| Subject::Pkg(canonical(&index, a)).key())
+                .collect();
+            i.sets.insert(s.name, keys);
+        }
         i
     }
     pub(crate) fn build(
@@ -234,6 +250,7 @@ impl Interests {
             items,
             has_machines,
             versions: HashMap::new(),
+            sets: BTreeMap::new(),
         }
     }
 
@@ -377,16 +394,17 @@ pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, marks: Why, status
     )
 }
 
-fn href(f: Filter, q: &str) -> String {
-    if q.is_empty() {
-        format!("/packages?filter={}", f.key())
-    } else {
-        format!(
-            "/packages?filter={}&q={}",
-            f.key(),
-            crate::github::urlencode(q)
-        )
+fn href(f: Filter, q: &str, set: Option<&str>) -> String {
+    let mut out = format!("/packages?filter={}", f.key());
+    if let Some(s) = set {
+        out.push_str("&set=");
+        out.push_str(&crate::github::urlencode(s));
     }
+    if !q.is_empty() {
+        out.push_str("&q=");
+        out.push_str(&crate::github::urlencode(q));
+    }
+    out
 }
 
 /// The filter bar, and the step that asks for a machine report in place
@@ -398,7 +416,7 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
             continue;
         }
         let n = if f == Filter::All { all } else { i.count(f) };
-        tabs.push(Tab::new(href(f, ""), f.label(), f == current).count(n));
+        tabs.push(Tab::new(href(f, "", None), f.label(), f == current).count(n));
     }
     let step = if i.has_machines {
         String::new()
@@ -412,10 +430,13 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
     (tabs, step)
 }
 
-fn search_form(f: Filter, q: &str) -> String {
+fn search_form(f: Filter, q: &str, set: Option<&str>) -> String {
+    let set = set
+        .map(|s| format!("<input type=\"hidden\" name=\"set\" value=\"{}\">", esc(s)))
+        .unwrap_or_default();
     format!(
         "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-3\">\
-         <input type=\"hidden\" name=\"filter\" value=\"{}\">\
+         <input type=\"hidden\" name=\"filter\" value=\"{}\">{set}\
          <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"filter by name\" aria-label=\"filter by name\">\
          <button class=\"btn\" type=\"submit\">{} Filter</button></form>",
         f.key(),
@@ -425,13 +446,14 @@ fn search_form(f: Filter, q: &str) -> String {
 }
 
 const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold py-1\">What the server keeps, and why</summary>\
-<p class=\"mt-2\">For your latest report, the server keeps the nixpkgs attributes that its index knows, the upload time, \
-the scan time and the nixpkgs revision. It drops all other names. It keeps the hash of your upload token, \
-not the token. Only you see this data, here, in your inbox and in your private feed. No public page, number or API reads it. \
-There is no admin view. The data expires 90 days after the last upload.</p>\
-<p class=\"mb-0\">For a public flake that you add below, the server keeps the reference, the output, the attributes from the last good scan, \
-and the reason of the last failure. The server scans the flake only while you open your packages at least once in 90 days. \
-These attributes expire 90 days after the last good scan or your last visit. \"Delete my report\" deletes your report and your flakes now.</p></details>";
+<p class=\"mt-2\">For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
+the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
+It keeps the hash of your upload token, not the token. Only you see a private set, here, in your inbox and in your private feed. \
+No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
+<p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
+its name, its reference and its packages there. For a flake that the server scans, the server also keeps the reason of the last failure. \
+It scans the flake only while you open your packages at least once in 90 days. \
+These attributes expire 90 days after the last good scan or your last visit. \"Delete\" deletes one set now.</p></details>";
 
 /// What one filter of `/packages` shows for a person: `sub`, `actions`
 /// and `body` are HTML.
@@ -441,6 +463,8 @@ pub(crate) struct View {
     pub(crate) body: String,
 }
 
+/// `set` picks one set of the machines filter; an unknown name or `None`
+/// shows all of them.
 pub(crate) fn view(
     app: &App,
     login: &str,
@@ -448,18 +472,23 @@ pub(crate) fn view(
     f: Filter,
     q: &str,
     after: Option<u64>,
+    set: Option<&str>,
 ) -> View {
     let _ = app.store.touch_flake_refs(login);
+    let set = set.filter(|n| f == Filter::Machines && i.sets.contains_key(*n));
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
+    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
+    if let Some(keys) = set.and_then(|n| i.sets.get(n)) {
+        rows.retain(|r| keys.contains(&r.sub.key()));
+    }
     let mut out = String::new();
     let mut actions = String::new();
     match f {
         Filter::Machines => {
-            out.push_str(&crate::sets::summary(app, login));
+            out.push_str(&crate::sets::summary(app, login, set));
             out.push_str(NOTICE);
         }
         Filter::Maintain => {
@@ -479,7 +508,7 @@ pub(crate) fn view(
         Filter::Watch | Filter::Mine | Filter::All => {}
     }
     if !(rows.is_empty() && q.is_empty()) {
-        out.push_str(&search_form(f, q));
+        out.push_str(&search_form(f, q, set));
     }
     let (page, next) = crate::review::paged_by_offset(&rows, after);
     let list: String = page
@@ -505,7 +534,7 @@ pub(crate) fn view(
                 "Nothing yet. <a href=\"{UPLOAD}\">Upload the packages of your machines</a>, or watch a package in <a href=\"/packages?filter=watch\">I watch</a>."
             ),
             Filter::Machines if i.has_machines => {
-                "Your report has no package that the nixpkgs index of this server knows.".into()
+                "This set has no package that the nixpkgs index of this server knows.".into()
             }
             Filter::Machines => format!(
                 "No report yet. Make an <a href=\"{UPLOAD}\">upload token</a>, then run <code>maintainer-mode scan</code> and \
@@ -518,13 +547,17 @@ pub(crate) fn view(
             Filter::Watch | Filter::All => "You watch nothing yet. Write a name below, or press Watch on the page of a package, a module or a directory.".into(),
         }
     };
+    let title = match set {
+        Some(n) => format!("Packages of {}", esc(n)),
+        None => f.title().to_string(),
+    };
     out.push_str(&section(
-        f.title(),
+        &title,
         Some(rows.len()),
         None,
         &if list.is_empty() { empty(&blank) } else { list },
     ));
-    out.push_str(&pager(&href(f, q), next.as_deref()));
+    out.push_str(&pager(&href(f, q, set), next.as_deref()));
     if f == Filter::Watch {
         out.push_str(&section(
             "Watch more",
@@ -542,7 +575,8 @@ pub(crate) fn view(
         Filter::Mine => "The packages of your machines first, then what you maintain, then what you watch. \
                          In each group, those that need attention come first."
             .to_string(),
-        Filter::Machines => "The packages of your latest machine report and of your scanned flakes. \
+        Filter::Machines => "The packages of your sets: your machine reports and your flakes. \
+                             Pick one set, or see all of them. A set that you show on your profile is public. \
                              New advisories and upstream releases for them reach your inbox and your Atom feed."
             .to_string(),
         Filter::Maintain => format!(
