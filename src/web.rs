@@ -238,6 +238,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::actions::routes())
         .merge(crate::status::routes())
         .merge(crate::sets::routes())
+        .merge(crate::cli_login::routes())
         .merge(crate::archive::routes())
         .merge(crate::llm::routes())
         .merge(crate::progress::routes())
@@ -579,19 +580,39 @@ async fn set_tags(
     Redirect::to("/me/settings#tags").into_response()
 }
 
-async fn login(State(app): State<Shared>) -> Response {
+#[derive(Deserialize)]
+struct LoginQuery {
+    next: Option<String>,
+}
+
+/// A path on this site, so the sign-in cannot send a person elsewhere.
+fn local_path(next: &str) -> bool {
+    next.starts_with('/')
+        && !next.starts_with("//")
+        && next
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"/?=&#_.-".contains(&b))
+}
+
+async fn login(State(app): State<Shared>, Query(q): Query<LoginQuery>) -> Response {
     let Some(oauth) = &app.oauth else {
         return (StatusCode::SERVICE_UNAVAILABLE, "login is not configured").into_response();
     };
     let state = random_id();
-    (
-        [(
+    let mut h = HeaderMap::new();
+    h.append(
+        header::SET_COOKIE,
+        set_cookie(&app, "oauth_state", &state, 600)
+            .parse()
+            .unwrap(),
+    );
+    if let Some(next) = q.next.as_deref().filter(|n| local_path(n)) {
+        h.append(
             header::SET_COOKIE,
-            set_cookie(&app, "oauth_state", &state, 600),
-        )],
-        Redirect::to(&oauth.authorize_url(&state)),
-    )
-        .into_response()
+            set_cookie(&app, "next", next, 600).parse().unwrap(),
+        );
+    }
+    (h, Redirect::to(&oauth.authorize_url(&state))).into_response()
 }
 
 #[derive(Deserialize)]
@@ -619,10 +640,10 @@ async fn callback(
     if let Err(e) = app.store.create_session(&id, &login, &token) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    let next = if crate::welcome::first_visit(&app, &login) {
-        "/"
-    } else {
-        "/review"
+    let next = match cookie(&headers, "next").filter(|n| local_path(n)) {
+        Some(n) => n,
+        None if crate::welcome::first_visit(&app, &login) => "/".into(),
+        None => "/review".into(),
     };
     let bg = app.clone();
     let who = login.clone();
@@ -642,7 +663,11 @@ async fn callback(
         header::SET_COOKIE,
         set_cookie(&app, "oauth_state", "", 0).parse().unwrap(),
     );
-    (h, Redirect::to(next)).into_response()
+    h.append(
+        header::SET_COOKIE,
+        set_cookie(&app, "next", "", 0).parse().unwrap(),
+    );
+    (h, Redirect::to(&next)).into_response()
 }
 
 async fn logout(State(app): State<Shared>, headers: HeaderMap) -> Response {

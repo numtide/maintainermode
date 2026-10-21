@@ -1,31 +1,33 @@
 # The JSON API
 
 All endpoints are under `/api/v1`. `GET /api/v1` lists them. Each endpoint
-only reads, except `POST /api/v1/reports`. No endpoint writes to GitHub.
+only reads, except `POST /api/v1/reports` and the two `login` endpoints. No endpoint writes to GitHub.
 
 The API has no compatibility layer. The project changes, and old paths are
 removed, not redirected.
 
 ## Endpoints
 
-| Endpoint                                      | Returns                                                          |
-| --------------------------------------------- | ---------------------------------------------------------------- |
-| `GET /api/v1`                                 | the list of endpoints                                            |
-| `GET /api/v1/prs`                             | open pull requests in one queue, paged                           |
-| `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
-| `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
-| `GET /api/v1/needs`                           | what waits for you, with your session only (private)             |
-| `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                    |
-| `GET /api/v1/modules/<file>`                  | one NixOS module                                                 |
-| `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
-| `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name              |
-| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month                             |
-| `GET /api/v1/status`                          | the counts and the rules of the queues                           |
-| `GET /api/v1/sync`                            | what the server has read, and how fresh it is                    |
-| `GET /api/v1/events`                          | the event log, as Server-Sent Events (see [data.md](data.md))    |
-| `GET /api/v1/archive/<owner>/<repo>/<number>` | one stored issue or pull request                                 |
-| `GET /api/v1/packages/index`                  | the public package list of the current index (see below)         |
-| `POST /api/v1/reports`                        | uploads a strict package report (see [personal.md](personal.md)) |
+| Endpoint                                      | Returns                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /api/v1`                                 | the list of endpoints                                                    |
+| `GET /api/v1/prs`                             | open pull requests in one queue, paged                                   |
+| `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                                |
+| `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains                     |
+| `GET /api/v1/needs`                           | what waits for you, with your session only (private)                     |
+| `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                            |
+| `GET /api/v1/modules/<file>`                  | one NixOS module                                                         |
+| `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                             |
+| `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name                      |
+| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month                                     |
+| `GET /api/v1/status`                          | the counts and the rules of the queues                                   |
+| `GET /api/v1/sync`                            | what the server has read, and how fresh it is                            |
+| `GET /api/v1/events`                          | the event log, as Server-Sent Events (see [data.md](data.md))            |
+| `GET /api/v1/archive/<owner>/<repo>/<number>` | one stored issue or pull request                                         |
+| `GET /api/v1/packages/index`                  | the public package list of the current index (see below)                 |
+| `POST /api/v1/reports`                        | uploads a strict package report (see [personal.md](personal.md))         |
+| `POST /api/v1/login`                          | starts a `maintainer-mode login`; answers a device code and a user code  |
+| `POST /api/v1/login/poll`                     | gives the upload token once the person confirms the code on `/login/cli` |
 
 ## Paging
 
@@ -255,7 +257,8 @@ answer is 503.
 
 ## The command line
 
-The CLI reads the same API. `--server` sets the host, and `--json` prints the
+The CLI reads the same API. `--server` sets the host (default
+`https://maintainermode.org`, or `MAINTAINER_MODE_SERVER`), and `--json` prints the
 raw answer.
 
 | Command                               | Endpoint                                            |
@@ -268,6 +271,7 @@ raw answer.
 | `maintainer-mode metrics`             | `/api/v1/metrics`                                   |
 | `maintainer-mode export`              | `/api/v1/packages/index`                            |
 | `maintainer-mode submit`              | `/api/v1/packages/index` and `POST /api/v1/reports` |
+| `maintainer-mode login`               | `POST /api/v1/login` and `POST /api/v1/login/poll`  |
 
 `prs` takes `--section`, `--login`, `--limit` and `--cursor`. It prints the
 next cursor on stderr.

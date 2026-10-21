@@ -69,6 +69,14 @@ const ENDPOINTS: &[(&str, &str)] = &[
         "POST /api/v1/reports",
         "upload a strict package report, with an upload token",
     ),
+    (
+        "POST /api/v1/login",
+        "start a `maintainer-mode login`: a device code and a user code",
+    ),
+    (
+        "POST /api/v1/login/poll",
+        "the upload token, once the person confirms the code on /login/cli",
+    ),
 ];
 
 pub fn routes() -> Router<Shared> {

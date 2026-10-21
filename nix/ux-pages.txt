@@ -60,6 +60,7 @@ signed-in /packages?filter=maintain
 signed-in /packages?filter=watch
 signed-in /packages?filter=all
 signed-in /me/settings
+signed-in /login/cli?code=BCDF-GHJK
 signed-in /me/runs
 signed-in /me/progress
 signed-in /claude/pr/${pr}
