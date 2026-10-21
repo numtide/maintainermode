@@ -11,7 +11,7 @@ use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqA
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::eval::run_with;
+use crate::eval::{run_with, stream_with};
 use crate::report::{Found, Report, SCHEMA, Source};
 
 const NIX: &str = "nix";
@@ -325,12 +325,22 @@ fn nix(args: &[String]) -> Result<String> {
 fn derivation_closure(target: &Target) -> Result<Vec<(String, String)>> {
     let mut args: Vec<String> = vec!["derivation".into(), "show".into(), "-r".into()];
     args.extend(target.installables());
-    closure_pairs(nix(&args)?.as_bytes())
+    let mut found = Closure {
+        max: usize::MAX,
+        pairs: BTreeSet::new(),
+    };
+    read_derivations(&args, &mut found)?;
+    Ok(found.pairs.into_iter().collect())
 }
 
-/// The packages, as (pname, version), in the output of `nix derivation show -r`.
-pub(crate) fn closure_pairs(text: &[u8]) -> Result<Vec<(String, String)>> {
-    closure_pairs_at_most(text, usize::MAX)
+/// Reads `nix derivation show -r` as it prints it. The closure of a system is
+/// hundreds of megabytes of JSON and a few thousand distinct packages: only
+/// the packages stay.
+fn read_derivations(args: &[String], found: &mut Closure) -> Result<()> {
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    stream_with(NIX, &refs, |out| {
+        found.read(serde_json::Deserializer::from_reader(out))
+    })
 }
 
 /// Reads the closure in one pass and keeps only distinct packages; it stops
@@ -340,11 +350,7 @@ pub(crate) fn closure_pairs_at_most(text: &[u8], max: usize) -> Result<Vec<(Stri
         max,
         pairs: BTreeSet::new(),
     };
-    let mut de = serde_json::Deserializer::from_slice(text);
-    TopLevel(&mut found)
-        .deserialize(&mut de)
-        .and_then(|()| de.end())
-        .context("parse derivation show output")?;
+    found.read(serde_json::Deserializer::from_slice(text))?;
     Ok(found.pairs.into_iter().collect())
 }
 
@@ -354,6 +360,18 @@ struct Closure {
 }
 
 impl Closure {
+    /// Reads a map of derivations, from a file in memory or from the pipe of a
+    /// running nix, and adds its packages to the set.
+    fn read<'de, R: serde_json::de::Read<'de>>(
+        &mut self,
+        mut de: serde_json::Deserializer<R>,
+    ) -> Result<()> {
+        TopLevel(self)
+            .deserialize(&mut de)
+            .and_then(|()| de.end())
+            .context("parse derivation show output")
+    }
+
     fn add<E: de::Error>(&mut self, path: &str, drv: Derivation) -> Result<(), E> {
         let name = if drv.name.is_empty() {
             strip_store_path(path)
@@ -574,7 +592,7 @@ mod tests {
         });
         let new = serde_json::json!({ "derivations": drv, "version": 4 });
         for v in [drv, new] {
-            let pairs = closure_pairs(v.to_string().as_bytes()).unwrap();
+            let pairs = closure_pairs_at_most(v.to_string().as_bytes(), usize::MAX).unwrap();
             assert_eq!(pairs, vec![("zlib".to_string(), "1.3.1".to_string())]);
         }
     }
@@ -603,7 +621,7 @@ mod tests {
             ]
         );
         assert!(closure_pairs_at_most(drv.as_bytes(), 1).is_err());
-        assert!(closure_pairs(b"{} trailing").is_err());
+        assert!(closure_pairs_at_most(b"{} trailing", usize::MAX).is_err());
     }
 
     #[test]
