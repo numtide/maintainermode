@@ -1,4 +1,4 @@
-//! A closure's inventory. The local report keeps the nixfresh format (MIT).
+//! A closure's inventory.
 //! What leaves the machine is the strict `Upload`: only public attributes, with
 //! a version only when the public list has that exact version. The server
 //! checks the same rules again.
@@ -44,7 +44,7 @@ pub struct Found {
     pub pname: String,
     #[serde(default, deserialize_with = "null_as_empty")]
     pub version: String,
-    /// A nixfresh report can name the attribute. It counts only when the
+    /// A report can name the attribute. It counts only when the
     /// public list has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attr: Option<String>,
@@ -412,7 +412,7 @@ mod tests {
     }
 
     #[test]
-    fn a_nixfresh_attribute_counts_only_when_public() {
+    fn a_named_attribute_counts_only_when_public() {
         let mut f = found("own", "1");
         f.attr = Some("packages.x86_64-linux.own".into());
         let up = report(vec![f]).strict(&list());
@@ -463,8 +463,8 @@ mod tests {
     }
 
     #[test]
-    fn a_nixfresh_report_parses() {
-        let text = r#"{"schema":1,"client":"nixfresh/0.1.0","generated_at":"x",
+    fn an_older_client_report_parses() {
+        let text = r#"{"schema":1,"client":"scanner/0.1.0","generated_at":"x",
             "source":{"name":"web","system":"x86_64-linux","nixpkgs_rev":null,"scanned_at":null,"drift":0},
             "packages":[{"pname":"7zz","version":"26.02","attr":"_7zz","resolution":"attr","reach":"runtime"},
             {"pname":"x","version":null}],

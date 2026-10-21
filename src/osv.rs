@@ -1,7 +1,7 @@
 //! Advisories from OSV for the packages whose ecosystem is known: a source
 //! from PyPI, crates.io or npm, or an attribute of a Python package set.
 //! OSV matches the name and the exact version nixpkgs ships, so a match is
-//! precise. Adapted from nixfresh's osv collector (MIT).
+//! precise.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

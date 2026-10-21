@@ -1,8 +1,7 @@
 //! Package health from public sources: the newest upstream version from
 //! repology, advisories from the nixpkgs security tracker, and the last build
 //! on Hydra. The first two are bulk sweeps, kept a day; Hydra is asked per
-//! page view, within a limit, and cached. Adapted from nixfresh's collectors
-//! (MIT).
+//! page view, within a limit, and cached.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

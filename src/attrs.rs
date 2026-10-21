@@ -1,7 +1,7 @@
 //! nixpkgs swept once per revision: every derivation with its package name,
-//! the file that defines it, and its maintainers' GitHub logins. Taken from
-//! nixfresh (MIT); the sweep expression also reads `meta.position` and
-//! `meta.maintainers`, so paths map to packages and to people in one eval.
+//! the file that defines it, and its maintainers' GitHub logins. The sweep
+//! expression also reads `meta.position` and `meta.maintainers`, so paths map
+//! to packages and to people in one eval.
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};

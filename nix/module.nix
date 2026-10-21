@@ -48,14 +48,6 @@ let
   '';
 in
 {
-  imports = [
-    (lib.mkRemovedOptionModule [
-      "services"
-      "maintainer-mode"
-      "nixfreshUrl"
-    ] "Maintainer Mode now collects package health itself.")
-  ];
-
   options.services.maintainer-mode = {
     enable = lib.mkEnableOption "Maintainer Mode, the nixpkgs review and merge queues";
 

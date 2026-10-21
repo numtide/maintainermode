@@ -1,5 +1,5 @@
 //! Version order the way nix sees it, with one change: a prerelease loses to
-//! its release. Taken from nixfresh (MIT).
+//! its release.
 
 use std::cmp::Ordering;
 

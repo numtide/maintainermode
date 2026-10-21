@@ -17,7 +17,7 @@ const RULES: &str = include_str!("../docs/rules.md");
 const REPO: &str = "https://github.com/numtide/maintainermode/blob/main";
 
 /// Every file in `docs/` but `rules.md`, which has its own tab.
-const DOCS: [(&str, &str, &str); 10] = [
+const DOCS: [(&str, &str, &str); 9] = [
     (
         "health",
         "Package pages, the risk score, upstream versions and channels.",
@@ -62,11 +62,6 @@ const DOCS: [(&str, &str, &str); 10] = [
         "rescan",
         "Server rescans of public flakes, and their threat model.",
         include_str!("../docs/rescan.md"),
-    ),
-    (
-        "nixfresh-merge",
-        "The plan to merge nixfresh into Maintainer Mode.",
-        include_str!("../docs/nixfresh-merge.md"),
     ),
 ];
 

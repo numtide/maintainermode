@@ -1,7 +1,6 @@
 //! How bad and how likely: CVSS for the CVEs the security tracker names,
 //! from the CVE Program's own records and, with a key, from NVD; and the
-//! EPSS score of FIRST. Adapted from nixfresh's cve, nvd and epss collectors
-//! (MIT).
+//! EPSS score of FIRST.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
