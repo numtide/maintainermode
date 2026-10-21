@@ -1697,6 +1697,8 @@ struct Search {
     after: Option<u64>,
     /// One set of the machines filter.
     set: Option<String>,
+    /// One output label of that set.
+    output: Option<String>,
 }
 
 /// Signed out, the catalog of nixpkgs. Signed in, a filter bar on top:
@@ -1754,7 +1756,10 @@ async fn browse(
         filter,
         &q,
         search.after,
-        search.set.as_deref(),
+        crate::mine::Pick {
+            set: search.set.as_deref(),
+            output: search.output.as_deref(),
+        },
     );
     page.sub(v.sub)
         .actions(v.actions)
