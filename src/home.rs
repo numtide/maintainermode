@@ -63,9 +63,33 @@ fn search_box() -> String {
     )
 }
 
-fn visitor(app: &App, headers: &HeaderMap) -> String {
+/// Packages with an open advisory in master, the highest risk first.
+pub(crate) fn need_help(app: &App) -> Vec<(Subject, Flags)> {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let mut help: Vec<(Subject, Flags)> = h
+        .advisories
+        .keys()
+        .filter(|a| {
+            index
+                .pkgs
+                .get(*a)
+                .is_some_and(|p| index.by_pname.get(&p.pname) == Some(*a))
+        })
+        .map(|a| {
+            let sub = Subject::Pkg(a.clone());
+            let f = Flags::of(&s, &index, &h, &sub);
+            (sub, f)
+        })
+        .filter(|(_, f)| f.risk() > 0)
+        .collect();
+    help.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
+    help
+}
+
+fn visitor(app: &App, headers: &HeaderMap) -> String {
+    let s = app.snap();
     let mut out = crate::welcome::intro(app, headers);
     if out.is_empty() {
         out.push_str("<h1 class=\"sr-only\">Maintainer Mode</h1>");
@@ -87,25 +111,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
         },
     ));
     out.push_str(&crate::first::section(app));
-    let mut help: Vec<(Subject, Flags)> = {
-        let index = app.index.read().unwrap();
-        h.advisories
-            .keys()
-            .filter(|a| {
-                index
-                    .pkgs
-                    .get(*a)
-                    .is_some_and(|p| index.by_pname.get(&p.pname) == Some(*a))
-            })
-            .map(|a| {
-                let sub = Subject::Pkg(a.clone());
-                let f = Flags::of(&s, &index, &h, &sub);
-                (sub, f)
-            })
-            .filter(|(_, f)| f.risk() > 0)
-            .collect()
-    };
-    help.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
+    let help = need_help(app);
     out.push_str(&section(
         "Packages that need help",
         Some(("/packages", "search all")),

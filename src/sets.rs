@@ -1,7 +1,7 @@
 //! A person's named package sets: the nixpkgs attributes of their uploaded
-//! reports and of their scanned flakes. Only the owner reads a private set.
-//! A public flake set shows on the profile; no other page, number or API
-//! reads a set.
+//! reports and of their scanned flakes. A public flake set shows on the
+//! profile. Only the owner reads a private set: on their pages, and in
+//! their private API and MCP answers.
 
 use axum::Json;
 use axum::Router;
@@ -280,6 +280,49 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         })),
     )
         .into_response()
+}
+
+/// The named sets of their owner, private ones too, as the box "Your
+/// sets" shows them.
+pub(crate) fn value(app: &App, login: &str) -> serde_json::Value {
+    let scans: std::collections::HashMap<String, crate::store::FlakeRef> = app
+        .store
+        .flake_refs(login)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.name.clone(), r))
+        .collect();
+    let sets: Vec<serde_json::Value> = app
+        .store
+        .sets(login)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| {
+            let scan = scans.get(&s.name).map(|r| {
+                json!({ "last_at": r.last_at, "scanned_at": r.scanned_at, "error": r.error })
+            });
+            let source = match (&s.flake, s.rescan) {
+                (Some(_), true) => "server_scan",
+                (Some(_), false) => "flake_upload",
+                (None, _) => "upload",
+            };
+            json!({
+                "name": s.name,
+                "source": source,
+                "public": s.public,
+                "reference": s.flake.as_ref().map(|f| &f.0),
+                "output": s.flake.as_ref().map(|f| &f.1),
+                "uploaded_at": s.data.as_ref().map(|d| d.uploaded_at),
+                "scanned_at": s.data.as_ref().and_then(|d| d.scanned_at.clone()),
+                "expires_at": s.data.as_ref().map(|d| d.uploaded_at + Duration::days(RETENTION_DAYS)),
+                "nixpkgs_rev": s.data.as_ref().and_then(|d| d.nixpkgs_rev.clone()),
+                "dropped": s.data.as_ref().map_or(0, |d| d.dropped),
+                "packages": s.data.map(|d| d.attrs).unwrap_or_default(),
+                "scan": scan,
+            })
+        })
+        .collect();
+    json!({ "login": login, "sets": sets })
 }
 
 /// The address of the machines filter for one set, or for all of them.

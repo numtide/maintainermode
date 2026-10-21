@@ -121,6 +121,12 @@ impl View {
     }
 }
 
+/// The address of each tab, for the table of `crate::api`.
+#[cfg(test)]
+pub(crate) fn views() -> Vec<&'static str> {
+    View::ALL.iter().map(|v| v.href()).collect()
+}
+
 fn tabs(current: View) -> Vec<Tab> {
     View::ALL
         .iter()

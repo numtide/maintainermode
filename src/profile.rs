@@ -82,6 +82,18 @@ impl ProfileTab {
     }
 }
 
+/// Each tab as a route, for the table of `crate::api`.
+#[cfg(test)]
+pub(crate) fn views() -> Vec<String> {
+    ProfileTab::ALL
+        .iter()
+        .map(|t| match t {
+            ProfileTab::Overview => "/u/:login".to_string(),
+            t => format!("/u/:login?tab={}", t.key()),
+        })
+        .collect()
+}
+
 /// The Flakes tab shows only when there is a public flake, or for its
 /// owner, who can add one.
 fn tabs(login: &str, current: ProfileTab, flakes: Option<usize>) -> Vec<Tab> {

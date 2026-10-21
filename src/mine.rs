@@ -27,7 +27,7 @@ pub(crate) enum Filter {
 }
 
 impl Filter {
-    const ALL: [Filter; 5] = [
+    pub(crate) const ALL: [Filter; 5] = [
         Filter::Mine,
         Filter::Machines,
         Filter::Maintain,
@@ -448,7 +448,7 @@ fn search_form(f: Filter, q: &str, set: Option<&str>) -> String {
 const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold py-1\">What the server keeps, and why</summary>\
 <p class=\"mt-2\">For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
 the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
-It keeps the hash of your upload token, not the token. Only you see a private set, here, in your inbox and in your private feed. \
+It keeps the hash of your upload token, not the token. Only you see a private set: here, in your inbox, in your private feed, and in the private answers of the API and the MCP server. \
 No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
 <p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
 its name, its reference and its packages there. For a flake that the server scans, the server also keeps the reason of the last failure. \
@@ -593,6 +593,75 @@ pub(crate) fn view(
         actions,
         body: out,
     }
+}
+
+/// What [`view`] lists, as JSON: one filter of `/packages` for its owner.
+/// `Filter::All` is the public catalog, so it is not here.
+pub(crate) fn value(
+    app: &App,
+    login: &str,
+    f: Filter,
+    q: &str,
+    set: Option<&str>,
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    if f == Filter::All {
+        return Err("filter=all is the public catalog: use /api/v1/search".into());
+    }
+    let i = Interests::of(app, login);
+    if let Some(n) = set.filter(|n| !i.sets.contains_key(*n)) {
+        return Err(format!("no set {n}"));
+    }
+    let set = set.filter(|_| f == Filter::Machines);
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
+    if let Some(keys) = set.and_then(|n| i.sets.get(n)) {
+        rows.retain(|r| keys.contains(&r.sub.key()));
+    }
+    let items: Vec<serde_json::Value> = rows
+        .iter()
+        .map(|r| {
+            let why: Vec<&str> = [
+                (r.why.machine, "machine"),
+                (r.why.maintain, "maintain"),
+                (r.why.watch, "watch"),
+            ]
+            .into_iter()
+            .filter_map(|(on, k)| on.then_some(k))
+            .collect();
+            let (version, machine_version) = match &r.sub {
+                Subject::Pkg(a) => (
+                    index.pkgs.get(a).map(|p| p.version.clone()),
+                    i.versions.get(a).cloned(),
+                ),
+                _ => (None, None),
+            };
+            serde_json::json!({
+                "key": r.sub.key(),
+                "name": r.sub.label(),
+                "version": version,
+                "machine_version": machine_version,
+                "why": why,
+                "via_team": r.via,
+                "flags": r.flags.json(),
+            })
+        })
+        .collect();
+    let mut out = crate::api::page(&items, limit, cursor)?;
+    out["login"] = serde_json::json!(login);
+    out["filter"] = serde_json::json!(f.key());
+    out["set"] = serde_json::json!(set);
+    out["sets"] = serde_json::json!(i.sets.keys().collect::<Vec<_>>());
+    out["counts"] = Filter::ALL
+        .iter()
+        .filter(|f| **f != Filter::All)
+        .map(|f| (f.key().to_string(), serde_json::json!(i.count(*f))))
+        .collect::<serde_json::Map<_, _>>()
+        .into();
+    Ok(out)
 }
 
 #[cfg(test)]

@@ -2,11 +2,11 @@
 //! the most urgent first. The inbox says what happened; this says what is
 //! still open. Only the owner sees it.
 
+use axum::Router;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,7 +33,6 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/needs/next", get(next))
         .route("/needs/snooze", post(snooze))
-        .route("/api/v1/needs", get(api))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
@@ -1058,25 +1057,6 @@ async fn snooze(
         format!("/?mood={}#needs", mood.key())
     };
     Redirect::to(&to).into_response()
-}
-
-#[derive(Deserialize)]
-struct ApiQuery {
-    mood: Option<String>,
-}
-
-async fn api(State(app): State<Shared>, headers: HeaderMap, Query(q): Query<ApiQuery>) -> Response {
-    let private = [(header::CACHE_CONTROL, "private, no-store")];
-    let Some(login) = app.viewer(&headers) else {
-        return (
-            StatusCode::UNAUTHORIZED,
-            private,
-            Json(json!({ "error": "sign in first" })),
-        )
-            .into_response();
-    };
-    let mood = Mood::parse(q.mood.as_deref()).unwrap_or_default();
-    (private, Json(value(&app, &login, mood))).into_response()
 }
 
 /// The answer of `/api/v1/needs` and of the MCP tool `needs`.

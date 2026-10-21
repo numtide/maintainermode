@@ -11,7 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
 
-use crate::api::{LIMIT, MAX_LIMIT};
+use crate::api::{Args, Cover::By, Fail};
 use crate::web::{App, Shared};
 
 const VERSIONS: [&str; 2] = ["2025-06-18", "2025-03-26"];
@@ -134,6 +134,8 @@ async fn handle(app: &App, login: &str, method: &str, params: &Value) -> Rpc {
                 },
                 "instructions": "Read-only data about nixpkgs: packages, NixOS modules, areas of the tree, \
                     their health, issues and pull requests, the review and merge queues, and what a login maintains. \
+                    The tools named my_ and the tools needs, inbox and progress give the caller's own private data. \
+                    Each tool gives the same JSON as one endpoint of the JSON API under /api/v1. \
                     No tool writes to GitHub.",
             }))
         }
@@ -160,154 +162,41 @@ async fn handle(app: &App, login: &str, method: &str, params: &Value) -> Rpc {
     }
 }
 
-fn tool(name: &str, title: &str, description: &str, properties: Value, required: &[&str]) -> Value {
-    json!({
-        "name": name,
-        "title": title,
-        "description": description,
-        "inputSchema": { "type": "object", "properties": properties, "required": required },
-        "annotations": { "readOnlyHint": true, "openWorldHint": false },
-    })
-}
-
-fn limit_prop() -> Value {
-    json!({ "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "description": format!("at most this many rows, default {LIMIT}") })
-}
-
+/// One tool per endpoint of `crate::api::ENDPOINTS` that names one.
 fn tools() -> Vec<Value> {
-    let s = |d: &str| json!({ "type": "string", "description": d });
-    vec![
-        tool(
-            "search",
-            "Search packages, modules and areas",
-            "Find nixpkgs packages, NixOS modules and areas of the tree by name, with their health flags.",
-            json!({ "query": s("an attribute, a package name, nixos/NAME, a module file or a path") }),
-            &["query"],
-        ),
-        tool(
-            "package",
-            "A package",
-            "One nixpkgs package: version, newest upstream release, last Hydra build, open advisories, maintainers, and its issues and pull requests.",
-            json!({ "name": s("an attribute or a package name, like hello or python3Packages.requests") }),
-            &["name"],
-        ),
-        tool(
-            "module",
-            "A NixOS module",
-            "One NixOS module: its NixOS test on Hydra, maintainers, and its issues and pull requests.",
-            json!({ "file": s("the module file, like nixos/modules/services/web-servers/nginx/default.nix, or nixos/NAME") }),
-            &["file"],
-        ),
-        tool(
-            "area",
-            "An area of nixpkgs",
-            "A path of the nixpkgs tree: the packages and modules under it with their flags, and its issues and pull requests.",
-            json!({ "path": s("a nixpkgs path, like pkgs/development/python-modules") }),
-            &["path"],
-        ),
-        tool(
-            "person",
-            "A person",
-            "The public profile of a GitHub login: facts (committer, teams, first pull request), its open pull requests with their review state, its review record, and the packages and NixOS modules whose meta.maintainers or meta.teams name it, with their flags. It never ranks people.",
-            json!({ "login": s("a GitHub login") }),
-            &["login"],
-        ),
-        tool(
-            "prs",
-            "Open pull requests",
-            "Open pull requests in one queue, paged. queue: foryou (what login maintains, owns or changed, and the caller's subscriptions when login is the caller; the default), unowned (no maintainer), firsttime (first contributions with no review yet, the oldest first), bumps (all version bumps; with login, only what login maintains), all (needs review), or ready (ready to merge). With queue=ready, section picks ready (the default), maintainer_approved, security, backports or waiting. Pass next_cursor as cursor for the next page.",
-            json!({
-                "queue": { "type": "string", "enum": crate::api::QUEUES },
-                "section": { "type": "string", "enum": crate::api::SECTIONS },
-                "login": s("whose queue for foryou and bumps; for foryou only, the default is the caller"),
-                "limit": limit_prop(),
-                "cursor": s("next_cursor of the page before"),
-            }),
-            &[],
-        ),
-        tool(
-            "needs",
-            "What needs me",
-            "The caller's Needs you list, the most urgent first, as GET /api/v1/needs gives it: advisories on their machines, reviews and reminders on their own pull requests, pull requests to review, packages to update. It also gives the follow-up plan of each of their open pull requests, and the events of their own pull requests in the last 30 days.",
-            json!({ "mood": { "type": "string", "enum": ["all", "mine", "machines", "review", "maintain"] } }),
-            &[],
-        ),
-        tool(
-            "watching",
-            "What I watch",
-            "The caller's subscriptions on Maintainer Mode, with their health flags.",
-            json!({}),
-            &[],
-        ),
-        tool(
-            "sync_status",
-            "Sync status",
-            "What the server has read from GitHub and the other sources, and how fresh it is.",
-            json!({}),
-            &[],
-        ),
-    ]
-}
-
-fn arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, (i64, String)> {
-    args[key]
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or((-32602, format!("argument {key} is missing")))
+    crate::api::served()
+        .filter_map(|e| {
+            let By((name, title)) = e.mcp else {
+                return None;
+            };
+            Some(json!({
+                "name": name,
+                "title": title,
+                "description": e.about,
+                "inputSchema": crate::api::schema(e),
+                "annotations": { "readOnlyHint": true, "openWorldHint": false },
+            }))
+        })
+        .collect()
 }
 
 /// The outer error is a bad call; the inner one is a tool result that
-/// says what was not found.
+/// says what was wrong or not found.
 async fn call(
     app: &App,
     login: &str,
     name: &str,
     args: &Value,
 ) -> Result<Result<Value, String>, (i64, String)> {
-    let found = |v: Option<Value>, what: &str| {
-        v.ok_or_else(|| format!("{what} is not in the nixpkgs index"))
+    let e = crate::api::tool(name).ok_or((-32602, format!("no tool {name}")))?;
+    let a: Args = match args {
+        Value::Null => Args::default(),
+        v => serde_json::from_value(v.clone()).map_err(|err| (-32602, err.to_string()))?,
     };
-    Ok(match name {
-        "search" => Ok(crate::catalog::search_value(app, arg(args, "query")?)),
-        "package" => {
-            let n = arg(args, "name")?;
-            found(crate::catalog::package_value(app, n).await, n)
-        }
-        "module" => {
-            let f = arg(args, "file")?;
-            let file = match crate::catalog::Subject::resolve(&app.index.read().unwrap(), f) {
-                Some(crate::catalog::Subject::Module(m)) => m,
-                _ => f.to_string(),
-            };
-            found(crate::catalog::module_value(app, &file).await, f)
-        }
-        "area" => {
-            let p = arg(args, "path")?;
-            crate::catalog::area_value(app, p).ok_or_else(|| format!("{p} is not a nixpkgs path"))
-        }
-        "person" => Ok(crate::api::person_value(app, arg(args, "login")?)),
-        "prs" => {
-            let q = crate::api::PrQuery {
-                queue: Some(args["queue"].as_str().unwrap_or("foryou").to_string()),
-                section: args["section"].as_str().map(String::from),
-                login: args["login"].as_str().map(String::from),
-                limit: args["limit"].as_u64().map(|n| n as usize),
-                cursor: args["cursor"].as_str().map(String::from),
-            };
-            match crate::api::prs_value(app, &q, Some(login)) {
-                Ok(p) => Ok(p.value),
-                Err(e) => return Err((-32602, e)),
-            }
-        }
-        "watching" => Ok(crate::catalog::watching_value(app, login)),
-        "needs" => {
-            let mood = crate::needs::Mood::parse(args["mood"].as_str()).unwrap_or_default();
-            Ok(crate::needs::value(app, login, mood))
-        }
-        "sync_status" => Ok(crate::status::state(app)),
-        _ => return Err((-32602, format!("no tool {name}"))),
-    })
+    Ok(crate::api::answer(app, e, &a, Some(login))
+        .await
+        .map(|a| a.value)
+        .map_err(Fail::text))
 }
 
 #[cfg(test)]
@@ -393,7 +282,10 @@ mod tests {
         opt_in(&app, "alice", "t");
         let (code, v) = post(&app, Some("t"), list).await;
         assert_eq!(code, StatusCode::OK);
-        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(
+            v["result"]["tools"].as_array().unwrap().len(),
+            crate::api::served().count()
+        );
     }
 
     #[tokio::test]
@@ -420,12 +312,12 @@ mod tests {
         let (_, v) = post(
             &app,
             Some("t"),
-            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "watching", "arguments": {} } }),
+            json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": { "name": "my_packages", "arguments": { "filter": "watch" } } }),
         )
         .await;
         let text: Value =
             serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-        assert_eq!(text["subscriptions"][0]["key"], "pkg:hello");
+        assert_eq!(text["items"][0]["key"], "pkg:hello");
         let (_, v) = post(
             &app,
             Some("t"),

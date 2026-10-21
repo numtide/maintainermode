@@ -3,11 +3,7 @@
 //! One SQLite file per repository: `archive/<owner>/<name>.sqlite`.
 
 use anyhow::{Context, Result, bail};
-use axum::extract::{Path as UrlPath, State};
-use axum::http::{StatusCode, header};
-use axum::response::{IntoResponse, Response};
-use axum::routing::get;
-use axum::{Json, Router};
+use axum::http::StatusCode;
 use chrono::{DateTime, Duration, Utc};
 use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -18,7 +14,7 @@ use std::time::Duration as StdDuration;
 
 use crate::github;
 use crate::store::Store;
-use crate::web::{App, Shared};
+use crate::web::App;
 
 pub const DEFAULT_REPO: &str = "NixOS/nixpkgs";
 pub const PASS_EVERY: u64 = 300;
@@ -1061,40 +1057,33 @@ pub async fn walk(app: Arc<App>) {
     }
 }
 
-pub fn routes() -> Router<Shared> {
-    Router::new().route("/api/v1/archive/:owner/:repo/:number", get(api_item))
-}
-
 const NOT_ARCHIVED: &str = "this server does not archive that repository";
 
-fn not_found(msg: &str) -> Response {
-    (StatusCode::NOT_FOUND, Json(json!({ "error": msg }))).into_response()
-}
-
-async fn api_item(
-    State(app): State<Shared>,
-    UrlPath((owner, repo, number)): UrlPath<(String, String, u64)>,
-) -> Response {
+/// The stored JSON of one item of a public archived repository.
+pub(crate) fn item_json(
+    app: &App,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<String, (StatusCode, &'static str)> {
     let name = format!("{owner}/{repo}");
-    let Some(a) = app
+    let a = app
         .archive
         .iter()
-        .find(|a| a.repo.eq_ignore_ascii_case(&name))
-    else {
-        return not_found(NOT_ARCHIVED);
-    };
-    if a.is_private() {
-        return not_found(NOT_ARCHIVED);
-    };
+        .find(|a| a.repo.eq_ignore_ascii_case(&name) && !a.is_private())
+        .ok_or((StatusCode::NOT_FOUND, NOT_ARCHIVED))?;
     match a.item(number) {
         Ok(Some(Item {
             json: Some(json), ..
-        })) => ([(header::CONTENT_TYPE, "application/json")], json).into_response(),
-        Ok(Some(_)) => not_found("GitHub has no issue or pull request with this number"),
-        Ok(None) => not_found("not in the archive yet"),
+        })) => Ok(json),
+        Ok(Some(_)) => Err((
+            StatusCode::NOT_FOUND,
+            "GitHub has no issue or pull request with this number",
+        )),
+        Ok(None) => Err((StatusCode::NOT_FOUND, "not in the archive yet")),
         Err(e) => {
             tracing::warn!("archive {name}#{number}: {e:#}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "archive read failed").into_response()
+            Err((StatusCode::INTERNAL_SERVER_ERROR, "archive read failed"))
         }
     }
 }
@@ -1102,6 +1091,8 @@ async fn api_item(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::extract::State;
+    use axum::{Json, Router};
     use std::sync::atomic::{AtomicBool, Ordering};
 
     fn tmp(name: &str) -> PathBuf {

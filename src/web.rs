@@ -1,9 +1,9 @@
 use anyhow::Result;
+use axum::Router;
 use axum::extract::{Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -212,6 +212,15 @@ impl App {
         let id = cookie(headers, "session")?;
         self.store.session(&id).ok().flatten().map(|s| s.login)
     }
+
+    /// The session, or the MCP token of a person who opts in: the MCP
+    /// server already gives that token the same private answers.
+    pub(crate) fn caller(&self, headers: &HeaderMap) -> Option<String> {
+        self.viewer(headers).or_else(|| {
+            let login = crate::llm::mcp_login(self, crate::sets::bearer(headers)?)?;
+            crate::llm::opted_in(self, &login).then_some(login)
+        })
+    }
 }
 
 pub(crate) type Shared = Arc<App>;
@@ -228,17 +237,13 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::assets::routes())
         .route("/robots.txt", get(|| async { ROBOTS }))
         .route("/healthz", get(|| async { "ok" }))
-        .route("/api/v1/status", get(api_status))
-        .route("/api/v1/metrics", get(api_metrics))
         .route("/api/v1/events", get(api_events))
         .merge(crate::nixpkgs::routes())
         .merge(crate::api::routes())
         .merge(crate::catalog::routes())
         .merge(crate::profile::routes())
         .merge(crate::actions::routes())
-        .merge(crate::status::routes())
         .merge(crate::sets::routes())
-        .merge(crate::archive::routes())
         .merge(crate::llm::routes())
         .merge(crate::progress::routes())
         .merge(crate::prpage::routes())
@@ -669,9 +674,9 @@ struct Status {
     rules: serde_json::Value,
 }
 
-async fn api_status(State(app): State<Shared>) -> Json<Status> {
+pub(crate) fn status_value(app: &App) -> serde_json::Value {
     let s = app.snap();
-    Json(Status {
+    json!(Status {
         prs: s.prs,
         last_sync: app.store.get("last_sync").ok().flatten(),
         watermark: app.store.get("watermark").ok().flatten(),
@@ -764,11 +769,11 @@ fn package_stats(app: &App) -> Arc<crate::catalog::PackageStats> {
     app.packages.read().unwrap().clone()
 }
 
-async fn api_metrics(State(app): State<Shared>) -> Json<serde_json::Value> {
+pub(crate) fn metrics_value(app: &App) -> serde_json::Value {
     let mut v = serde_json::to_value(Report::clone(&app.metrics.read().unwrap()))
         .unwrap_or_else(|_| json!({}));
-    v["packages"] = json!(*package_stats(&app));
-    Json(v)
+    v["packages"] = json!(*package_stats(app));
+    v
 }
 
 fn packages_section(app: &App) -> String {
@@ -1294,28 +1299,28 @@ mod tests {
         assert_eq!(f.actor.as_deref(), Some("alice"));
     }
 
-    #[tokio::test]
-    async fn package_numbers_come_from_the_last_recompute() {
+    #[test]
+    fn package_numbers_come_from_the_last_recompute() {
         let app = crate::sets::tests::app(&["hello"]);
         app.index
             .write()
             .unwrap()
             .by_pname
             .insert("hello".into(), "hello".into());
-        let packages = |v: Json<serde_json::Value>| v.0["packages"]["packages"].clone();
-        assert_eq!(packages(api_metrics(State(app.clone())).await), 0);
+        let packages = |v: serde_json::Value| v["packages"]["packages"].clone();
+        assert_eq!(packages(metrics_value(&app)), 0);
         app.recompute().unwrap();
-        assert_eq!(packages(api_metrics(State(app.clone())).await), 1);
+        assert_eq!(packages(metrics_value(&app)), 1);
         app.index.write().unwrap().by_pname.clear();
-        assert_eq!(packages(api_metrics(State(app.clone())).await), 1);
+        assert_eq!(packages(metrics_value(&app)), 1);
     }
 }
 
 #[cfg(test)]
-mod ux_pages {
+pub(crate) mod ux_pages {
     const LIST: &str = include_str!("../nix/ux-pages.txt");
 
-    fn get_routes() -> Vec<String> {
+    pub(crate) fn get_routes() -> Vec<String> {
         let dir = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap();
         let mut routes = Vec::new();
         for entry in dir {
@@ -1337,12 +1342,13 @@ mod ux_pages {
                 }
             }
         }
+        routes.extend(crate::api::served().map(|e| e.path.to_string()));
         routes.sort();
         routes.dedup();
         routes
     }
 
-    fn matches(route: &str, path: &str) -> bool {
+    pub(crate) fn matches(route: &str, path: &str) -> bool {
         let mut want = route.trim_start_matches('/').split('/');
         let mut have = path.trim_start_matches('/').split('/');
         loop {
@@ -1360,12 +1366,12 @@ mod ux_pages {
         }
     }
 
-    struct Entries {
+    pub(crate) struct Entries {
         pages: Vec<String>,
-        skips: Vec<String>,
+        pub(crate) skips: Vec<String>,
     }
 
-    fn entries() -> Entries {
+    pub(crate) fn entries() -> Entries {
         let mut vars = std::collections::HashMap::new();
         let mut pages = Vec::new();
         let mut skips = Vec::new();
