@@ -93,6 +93,7 @@ skip /api/v1/prs
 skip /api/v1/prs/:number
 skip /api/v1/people/:login
 skip /api/v1/needs
+skip /api/v1/sets
 skip /api/v1/packages/index
 skip /api/v1/packages/:attr
 skip /api/v1/modules/*file

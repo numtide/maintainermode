@@ -121,7 +121,14 @@ pub(crate) fn flakes_value(app: &App, login: &str) -> Value {
         .into_iter()
         .filter_map(|s| {
             let (reference, output) = s.flake?;
+            let outputs = s
+                .data
+                .as_ref()
+                .map(|d| crate::sets::outputs_value(&d.outputs))
+                .unwrap_or_default();
             Some(json!({
+                "outputs": outputs.0,
+                "package_outputs": outputs.1,
                 "name": s.name,
                 "reference": reference,
                 "output": output,
