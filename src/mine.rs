@@ -153,6 +153,8 @@ pub(crate) struct Row {
     /// The team through which nixpkgs names the person, if any.
     pub(crate) via: Option<String>,
     pub(crate) flags: Flags,
+    /// The (set, output label) pairs that hold it.
+    pub(crate) hosts: Vec<(String, String)>,
 }
 
 /// An open advisory, a newer upstream release, a failing Hydra build or an
@@ -182,6 +184,9 @@ pub(crate) struct Interests {
     pub(crate) versions: HashMap<String, String>,
     /// Set name → the subject keys of its packages.
     pub(crate) sets: BTreeMap<String, HashSet<String>>,
+    /// Subject key → the (set, output label) pairs that hold it, from the
+    /// uploads with `--with-outputs`.
+    pub(crate) hosts: HashMap<String, Vec<(String, String)>>,
 }
 
 impl Interests {
@@ -205,6 +210,18 @@ impl Interests {
             };
             for (a, v) in d.versions {
                 i.versions.entry(canonical(&index, &a)).or_insert(v);
+            }
+            for a in d.outputs.of.keys() {
+                let hosts = i
+                    .hosts
+                    .entry(Subject::Pkg(canonical(&index, a)).key())
+                    .or_default();
+                for l in d.outputs.labels_of(a) {
+                    let h = (s.name.clone(), l.to_string());
+                    if !hosts.contains(&h) {
+                        hosts.push(h);
+                    }
+                }
             }
             let keys = d
                 .attrs
@@ -251,6 +268,7 @@ impl Interests {
             has_machines,
             versions: HashMap::new(),
             sets: BTreeMap::new(),
+            hosts: HashMap::new(),
         }
     }
 
@@ -287,6 +305,7 @@ impl Interests {
                     why: *why,
                     via: via.clone(),
                     flags,
+                    hosts: self.hosts.get(&sub.key()).cloned().unwrap_or_default(),
                 }
             })
             .collect();
@@ -389,16 +408,49 @@ pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, marks: Why, status
     subject_row(
         &r.sub,
         &r.flags,
-        &format!("{version}{via}{}", marks.labels()),
+        &format!("{version}{via}{}{}", marks.labels(), hosts_html(&r.hosts)),
         status,
     )
 }
 
-fn href(f: Filter, q: &str, set: Option<&str>) -> String {
+const HOSTS_SHOWN: usize = 3;
+
+/// Where a package runs, "on web-1, laptop and 2 more", each a link to the
+/// filter of that output.
+pub(crate) fn hosts_html(hosts: &[(String, String)]) -> String {
+    if hosts.is_empty() {
+        return String::new();
+    }
+    let links: Vec<String> = hosts
+        .iter()
+        .take(HOSTS_SHOWN)
+        .map(|(s, l)| {
+            format!(
+                "<a class=\"Link--secondary\" href=\"{}\">{}</a>",
+                esc(&href(Filter::Machines, "", Some(s), Some(l))),
+                esc(l)
+            )
+        })
+        .collect();
+    let more = match hosts.len().saturating_sub(HOSTS_SHOWN) {
+        0 => String::new(),
+        n => format!(" and {n} more"),
+    };
+    format!(
+        " <span class=\"f6 color-fg-muted hosts\">on {}{more}</span>",
+        links.join(", ")
+    )
+}
+
+fn href(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
     let mut out = format!("/packages?filter={}", f.key());
     if let Some(s) = set {
         out.push_str("&set=");
         out.push_str(&crate::github::urlencode(s));
+    }
+    if let Some(o) = output {
+        out.push_str("&output=");
+        out.push_str(&crate::github::urlencode(o));
     }
     if !q.is_empty() {
         out.push_str("&q=");
@@ -416,7 +468,7 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
             continue;
         }
         let n = if f == Filter::All { all } else { i.count(f) };
-        tabs.push(Tab::new(href(f, "", None), f.label(), f == current).count(n));
+        tabs.push(Tab::new(href(f, "", None, None), f.label(), f == current).count(n));
     }
     let step = if i.has_machines {
         String::new()
@@ -430,10 +482,17 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
     (tabs, step)
 }
 
-fn search_form(f: Filter, q: &str, set: Option<&str>) -> String {
-    let set = set
-        .map(|s| format!("<input type=\"hidden\" name=\"set\" value=\"{}\">", esc(s)))
-        .unwrap_or_default();
+fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
+    let hidden = |name: &str, v: Option<&str>| {
+        v.map(|v| {
+            format!(
+                "<input type=\"hidden\" name=\"{name}\" value=\"{}\">",
+                esc(v)
+            )
+        })
+        .unwrap_or_default()
+    };
+    let set = format!("{}{}", hidden("set", set), hidden("output", output));
     format!(
         "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-3\">\
          <input type=\"hidden\" name=\"filter\" value=\"{}\">{set}\
@@ -448,10 +507,11 @@ fn search_form(f: Filter, q: &str, set: Option<&str>) -> String {
 const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold py-1\">What the server keeps, and why</summary>\
 <p class=\"mt-2\">For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
 the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
+With <code>--with-outputs</code>, it also keeps the label of each output, such as a host name, and the outputs that hold each package. \
 It keeps the hash of your upload token, not the token. Only you see a private set, here, in your inbox and in your private feed. \
 No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
 <p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
-its name, its reference and its packages there. For a flake that the server scans, the server also keeps the reason of the last failure. \
+its name, its reference, its packages and its output labels there. For a flake that the server scans, the server also keeps the reason of the last failure. \
 It scans the flake only while you open your packages at least once in 90 days. \
 These attributes expire 90 days after the last good scan or your last visit. \"Delete\" deletes one set now.</p></details>";
 
@@ -463,8 +523,63 @@ pub(crate) struct View {
     pub(crate) body: String,
 }
 
-/// `set` picks one set of the machines filter; an unknown name or `None`
-/// shows all of them.
+/// The outputs of one set, each with its count of packages, as links to
+/// the filter of each one. Nothing for a set without labels.
+fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> String {
+    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    for (s, l) in i.hosts.values().flatten() {
+        if s == set {
+            *counts.entry(l.as_str()).or_default() += 1;
+        }
+    }
+    if counts.is_empty() {
+        return String::new();
+    }
+    let mut links = vec![(
+        href(Filter::Machines, "", Some(set), None),
+        "All outputs".to_string(),
+        None,
+        current.is_none(),
+    )];
+    links.extend(counts.into_iter().map(|(l, n)| {
+        (
+            href(Filter::Machines, "", Some(set), Some(l)),
+            l.to_string(),
+            Some(n),
+            current == Some(l),
+        )
+    }));
+    let chips: String = links
+        .into_iter()
+        .map(|(href, label, n, on)| {
+            format!(
+                "<a class=\"Label tap-label{}\" href=\"{}\"{}>{}{}</a>",
+                if on { " Label--accent" } else { "" },
+                esc(&href),
+                if on { " aria-current=\"page\"" } else { "" },
+                esc(&label),
+                n.map(|n| format!(" <span class=\"Counter\">{n}</span>"))
+                    .unwrap_or_default()
+            )
+        })
+        .collect();
+    format!(
+        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3 outputs-nav\" aria-label=\"Outputs of {}\">\
+         <span class=\"f6 color-fg-muted\">{} Where it runs:</span>{chips}</nav>",
+        esc(set),
+        icon(octicon!("device-desktop"))
+    )
+}
+
+/// One set of the machines filter, and one output label of that set.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Pick<'a> {
+    pub(crate) set: Option<&'a str>,
+    pub(crate) output: Option<&'a str>,
+}
+
+/// An unknown set or `None` shows all of them; an unknown output shows the
+/// whole set.
 pub(crate) fn view(
     app: &App,
     login: &str,
@@ -472,17 +587,34 @@ pub(crate) fn view(
     f: Filter,
     q: &str,
     after: Option<u64>,
-    set: Option<&str>,
+    pick: Pick,
 ) -> View {
     let _ = app.store.touch_flake_refs(login);
-    let set = set.filter(|n| f == Filter::Machines && i.sets.contains_key(*n));
+    let set = pick
+        .set
+        .filter(|n| f == Filter::Machines && i.sets.contains_key(*n));
+    let output = pick.output.filter(|o| {
+        set.is_some_and(|s| {
+            i.hosts
+                .values()
+                .flatten()
+                .any(|(hs, hl)| hs == s && hl == o)
+        })
+    });
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
-    if let Some(keys) = set.and_then(|n| i.sets.get(n)) {
+    if let Some(name) = set {
+        let keys = &i.sets[name];
         rows.retain(|r| keys.contains(&r.sub.key()));
+        for r in &mut rows {
+            r.hosts.retain(|(s, _)| s == name);
+        }
+    }
+    if let (Some(name), Some(o)) = (set, output) {
+        rows.retain(|r| r.hosts.iter().any(|(s, l)| s == name && l == o));
     }
     let mut out = String::new();
     let mut actions = String::new();
@@ -490,6 +622,9 @@ pub(crate) fn view(
         Filter::Machines => {
             out.push_str(&crate::sets::summary(app, login, set));
             out.push_str(NOTICE);
+            if let Some(name) = set {
+                out.push_str(&outputs_nav(i, name, output));
+            }
         }
         Filter::Maintain => {
             let missing = i
@@ -508,7 +643,7 @@ pub(crate) fn view(
         Filter::Watch | Filter::Mine | Filter::All => {}
     }
     if !(rows.is_empty() && q.is_empty()) {
-        out.push_str(&search_form(f, q, set));
+        out.push_str(&search_form(f, q, set, output));
     }
     let (page, next) = crate::review::paged_by_offset(&rows, after);
     let list: String = page
@@ -547,9 +682,10 @@ pub(crate) fn view(
             Filter::Watch | Filter::All => "You watch nothing yet. Write a name below, or press Watch on the page of a package, a module or a directory.".into(),
         }
     };
-    let title = match set {
-        Some(n) => format!("Packages of {}", esc(n)),
-        None => f.title().to_string(),
+    let title = match (set, output) {
+        (Some(n), Some(o)) => format!("Packages of {} on {}", esc(n), esc(o)),
+        (Some(n), None) => format!("Packages of {}", esc(n)),
+        (None, _) => f.title().to_string(),
     };
     out.push_str(&section(
         &title,
@@ -557,7 +693,7 @@ pub(crate) fn view(
         None,
         &if list.is_empty() { empty(&blank) } else { list },
     ));
-    out.push_str(&pager(&href(f, q, set), next.as_deref()));
+    out.push_str(&pager(&href(f, q, set, output), next.as_deref()));
     if f == Filter::Watch {
         out.push_str(&section(
             "Watch more",

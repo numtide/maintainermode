@@ -316,6 +316,13 @@ fn facts(s: &NamedSet) -> String {
         if s.rescan { "Scanned" } else { "Uploaded" },
         ago(d.uploaded_at)
     );
+    match d.outputs.labels.len() {
+        0 => {}
+        1 => out.push_str(" 1 output label."),
+        n => {
+            let _ = write!(out, " {n} output labels.");
+        }
+    }
     if !s.rescan {
         let _ = write!(
             out,
@@ -1237,6 +1244,10 @@ pub(crate) mod tests {
     }
 
     async fn page(app: &Shared, set: Option<&str>) -> String {
+        page_on(app, set, None).await
+    }
+
+    async fn page_on(app: &Shared, set: Option<&str>, output: Option<&str>) -> String {
         let i = crate::mine::Interests::of(app, "alice");
         let v = crate::mine::view(
             app,
@@ -1245,9 +1256,38 @@ pub(crate) mod tests {
             crate::mine::Filter::Machines,
             "",
             None,
-            set,
+            crate::mine::Pick { set, output },
         );
         v.body
+    }
+
+    #[tokio::test]
+    async fn each_row_says_where_it_runs_and_one_output_filters() {
+        let app = uploader(&["hello", "jq"]);
+        assert_eq!(post(&app, "t", with_hosts()).await, StatusCode::ACCEPTED);
+        assert_eq!(
+            post(&app, "t", named("plain", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        let all = page(&app, None).await;
+        assert!(all.contains(
+            "on <a class=\"Link--secondary\" href=\"/packages?filter=machines&amp;set=infra&amp;output=web-1\">web-1</a>, \
+             <a class=\"Link--secondary\" href=\"/packages?filter=machines&amp;set=infra&amp;output=laptop\">laptop</a></span>"
+        ), "{all}");
+        assert!(!all.contains("Where it runs"));
+        let set = page(&app, Some("infra")).await;
+        assert!(set.contains("Where it runs") && set.contains("All outputs"));
+        let web = page_on(&app, Some("infra"), Some("web-1")).await;
+        assert!(web.contains("href=\"/p/hello\"") && !web.contains("href=\"/p/jq\""));
+        assert!(web.contains("Packages of infra on web-1"));
+        assert!(web.contains("name=\"output\" value=\"web-1\""));
+        assert!(web.contains("aria-current=\"page\">web-1"));
+        let laptop = page_on(&app, Some("infra"), Some("laptop")).await;
+        assert!(laptop.contains("href=\"/p/hello\"") && laptop.contains("href=\"/p/jq\""));
+        let unknown = page_on(&app, Some("infra"), Some("nope")).await;
+        assert!(unknown.contains("Packages of infra<") || unknown.contains("Packages of infra "));
+        let other = page_on(&app, Some("plain"), Some("web-1")).await;
+        assert!(!other.contains("on web-1") && !other.contains("Where it runs"));
     }
 
     #[tokio::test]
