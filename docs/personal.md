@@ -455,8 +455,11 @@ What each command does:
 - **`scan`** reads the closure of one or more flake outputs (`--flake`,
   `--output`), or of the attributes of a file (`--file`, `--attr`), with
   `nix derivation show -r`. `--runtime` reads the built store paths with
-  `nix path-info -r` instead. Each output is read on its own: one that does
-  not evaluate here is named and skipped, and the rest still make a report.
+  `nix path-info -r` instead. Each output is read on its own. An output that
+  `--output` names must read, or the scan stops: a smaller report would
+  replace the whole set on upload. An output that the flake gave and that
+  does not evaluate here is named and skipped, and the rest still make a
+  report.
   Without `--output`, a flake gives every output worth reading on this
   machine: `packages`, `devShells` and `checks` of this system, the
   `config.system.build.toplevel` of each `nixosConfigurations` and

@@ -77,10 +77,15 @@ pub fn stream_with<T>(
     drop(out);
     let status = child.wait().with_context(|| format!("run {program}"))?;
     let err = errors.join().unwrap_or_default();
-    if !status.success() {
-        bail!(failure(program, &all, &err));
+    if status.success() {
+        return value;
     }
-    value
+    // a reader that stopped early, as at the package cap, closes the pipe and
+    // the program then dies of it: the reader's error is the cause, so it stays.
+    match value {
+        Ok(_) => bail!(failure(program, args, &err)),
+        Err(e) => Err(e.context(failure(program, args, &err))),
+    }
 }
 
 /// The last lines of the error output, which hold the message of nix.
@@ -176,6 +181,23 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(e.contains("false"), "{e}");
+        // a program that writes on after the reader stops dies of the closed pipe
+        let dir = private_dir("stream").unwrap();
+        let endless = dir.join("endless");
+        std::fs::write(&endless, "#!/bin/sh\nexec yes\n").unwrap();
+        std::fs::set_permissions(
+            &endless,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
+        let e = stream_with::<()>(&endless.to_string_lossy(), &[], |out| {
+            let mut line = [0u8; 8];
+            out.read_exact(&mut line)?;
+            bail!("more than 1 packages")
+        })
+        .unwrap_err();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(format!("{e:#}").contains("more than 1 packages"), "{e:#}");
     }
 
     #[test]

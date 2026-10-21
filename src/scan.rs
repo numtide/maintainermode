@@ -28,6 +28,10 @@ pub struct Target {
     /// Outputs to leave out, as `--ignore` gives them: an attribute path, or
     /// the start of one, such as `checks`.
     pub ignore: Vec<String>,
+    /// The flake gave the outputs, not `--output`. Only then does an output
+    /// that fails get skipped: a named one that fails would make a smaller
+    /// report, and its upload would replace the whole set.
+    pub discovered: bool,
 }
 
 impl Target {
@@ -94,7 +98,8 @@ impl Target {
         if gone > 0 {
             eprintln!("{gone} {} ignored", outputs(gone));
         }
-        if self.outputs.is_empty() && self.flake.is_some() {
+        // a file with no attribute reads the whole file, so here it must stop
+        if self.outputs.is_empty() && (self.flake.is_some() || gone > 0) {
             bail!("--ignore leaves no output to read");
         }
         if let Some(flake) = discovered {
@@ -122,6 +127,7 @@ impl Target {
         let paths: Vec<Vec<String>> =
             serde_json::from_str(&answer?).context("parse the outputs of the flake")?;
         self.outputs = paths.iter().map(|p| attr_path(p)).collect();
+        self.discovered = true;
         if self.outputs.is_empty() {
             bail!(
                 "{flake} has no package, devShell, check or configuration for this system; \
@@ -206,15 +212,13 @@ fn attr_path(segments: &[String]) -> String {
 
 /// An output goes when `--ignore` names it, or names a path it sits under:
 /// `checks` leaves every check, `checks.x86_64-linux.vm` leaves that one. The
-/// quotes an installable needs around a name such as `me@box` are not part of
-/// the name, so they count for neither side.
+/// paths compare segment by segment, so `checks.a` does not leave
+/// `checks."a.b"`, and the quotes around a name such as `me@box` are optional.
 fn ignored(output: &str, ignore: &[String]) -> bool {
-    let bare = |s: &str| s.replace(['"', '\\'], "");
-    let output = bare(output);
-    ignore.iter().any(|i| {
-        let i = bare(i);
-        output == i || output.starts_with(&format!("{i}."))
-    })
+    let output = crate::trace::attr_path(output);
+    ignore
+        .iter()
+        .any(|i| output.starts_with(&crate::trace::attr_path(i)))
 }
 
 fn outputs(n: usize) -> &'static str {
@@ -626,6 +630,9 @@ fn closure_of(target: &Target) -> Result<Vec<(String, String)>> {
             Err(e) if found.pairs.len() > found.max => {
                 return Err(e.context("too many packages for a report; name fewer with --output"));
             }
+            Err(e) if !target.discovered => {
+                return Err(e.context(format!("read {name}")));
+            }
             Err(e) => {
                 skipped += 1;
                 eprintln!("skip {name}: {e:#}");
@@ -655,7 +662,7 @@ pub fn scan(target: &Target) -> Result<Report> {
         bail!("name a flake with --flake or a file with --file");
     }
     if target.flake.is_some() && target.outputs.is_empty() {
-        bail!("no output to read; Target::discover fills them in, or name one with --output");
+        bail!("no output to read; name one with --output");
     }
     let mut pairs = closure_of(target)?;
     pairs.retain(|(p, _)| !p.is_empty());
@@ -816,6 +823,7 @@ mod tests {
             system: None,
             runtime: false,
             ignore: Vec::new(),
+            discovered: false,
         };
         assert_eq!(t(".").root(), Some(PathBuf::from(".")));
         assert_eq!(
@@ -863,6 +871,27 @@ mod tests {
         assert!(!ignored("packages.x86_64-linux.broken-not", &ignore));
         assert!(!ignored("packages.x86_64-linux.hello", &ignore));
         assert!(!ignored("packages.x86_64-linux.hello", &[]));
+        assert!(!ignored("checks.\"a.b\"", &["packages.a".to_string()]));
+        assert!(!ignored("packages.\"a.b\"", &["packages.a".to_string()]));
+        assert!(ignored(
+            "packages.\"a.b\"",
+            &["packages.\"a.b\"".to_string()]
+        ));
+    }
+
+    #[test]
+    fn ignoring_every_attribute_of_a_file_does_not_read_the_whole_file() {
+        let mut t = Target {
+            flake: None,
+            file: Some(PathBuf::from("host.nix")),
+            outputs: vec!["top".into()],
+            nixpkgs_input: None,
+            system: None,
+            runtime: false,
+            ignore: vec!["top".into()],
+            discovered: false,
+        };
+        assert!(t.choose_outputs().is_err());
     }
 
     #[test]
@@ -875,6 +904,7 @@ mod tests {
             system: None,
             runtime: false,
             ignore: Vec::new(),
+            discovered: false,
         };
         let calls = target(vec!["top".into(), "other".into()]).installables();
         assert_eq!(calls.len(), 2);
