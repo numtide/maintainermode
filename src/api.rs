@@ -14,7 +14,7 @@ use crate::web::{App, Shared};
 
 pub(crate) const LIMIT: usize = 50;
 pub(crate) const MAX_LIMIT: usize = 200;
-pub(crate) const QUEUES: [&str; 5] = ["foryou", "unowned", "bumps", "all", "ready"];
+pub(crate) const QUEUES: [&str; 6] = ["foryou", "unowned", "firsttime", "bumps", "all", "ready"];
 pub(crate) const SECTIONS: [&str; 5] = [
     "ready",
     "maintainer_approved",
@@ -26,7 +26,7 @@ pub(crate) const SECTIONS: [&str; 5] = [
 const ENDPOINTS: &[(&str, &str)] = &[
     (
         "/api/v1/prs",
-        "open pull requests in one queue: queue=foryou|unowned|bumps|all|ready, section= (with queue=ready), login=, limit=, cursor=",
+        "open pull requests in one queue: queue=foryou|unowned|firsttime|bumps|all|ready, section= (with queue=ready), login=, limit=, cursor=",
     ),
     ("/api/v1/prs/<number>", "one pull request"),
     (
@@ -315,6 +315,12 @@ mod tests {
             ..Default::default()
         };
         assert!(prs_value(&app, &q, Some("alice")).unwrap().private);
+        let q = PrQuery {
+            queue: Some("firsttime".into()),
+            ..Default::default()
+        };
+        let p = prs_value(&app, &q, None).unwrap();
+        assert_eq!((p.private, &p.value["queue"]), (false, &json!("firsttime")));
         let q = PrQuery {
             queue: Some("nope".into()),
             ..Default::default()

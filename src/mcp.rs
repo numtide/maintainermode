@@ -215,7 +215,7 @@ fn tools() -> Vec<Value> {
         tool(
             "prs",
             "Open pull requests",
-            "Open pull requests in one queue, paged. queue: foryou (what login maintains, owns or changed, and the caller's subscriptions when login is the caller; the default), unowned (no maintainer), bumps (all version bumps; with login, only what login maintains), all (needs review), or ready (ready to merge). With queue=ready, section picks ready (the default), maintainer_approved, security, backports or waiting. Pass next_cursor as cursor for the next page.",
+            "Open pull requests in one queue, paged. queue: foryou (what login maintains, owns or changed, and the caller's subscriptions when login is the caller; the default), unowned (no maintainer), firsttime (first contributions with no review yet, the oldest first), bumps (all version bumps; with login, only what login maintains), all (needs review), or ready (ready to merge). With queue=ready, section picks ready (the default), maintainer_approved, security, backports or waiting. Pass next_cursor as cursor for the next page.",
             json!({
                 "queue": { "type": "string", "enum": crate::api::QUEUES },
                 "section": { "type": "string", "enum": crate::api::SECTIONS },

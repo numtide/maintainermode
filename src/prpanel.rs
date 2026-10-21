@@ -970,8 +970,7 @@ fn people_block(c: &Ctx) -> String {
             .collect()
     };
     let mut facts: Vec<String> = Vec::new();
-    let first = pr.association == "FIRST_TIME_CONTRIBUTOR"
-        || pr.labels.iter().any(|l| l == "12.first-time contribution");
+    let first = crate::queue::is_first_contribution(pr);
     if pr.author_is_bot {
         facts.push("<span class=\"Label\">bot</span>".into());
     } else if first {

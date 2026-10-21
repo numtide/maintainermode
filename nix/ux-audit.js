@@ -381,6 +381,16 @@ function seedSql() {
       ],
       association: "CONTRIBUTOR",
     }),
+    pr(100175, "newcomer", "ripgrep: add shell completions", 300, {
+      files: [file("ripgrep")],
+      mergeable: "CONFLICTING",
+      ci: "FAILURE",
+      additions: 12,
+      deletions: 1,
+      changed_files: 1,
+      labels: ["12.first-time contribution"],
+      association: "FIRST_TIME_CONTRIBUTOR",
+    }),
   ];
   return [
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
