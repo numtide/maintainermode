@@ -48,8 +48,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
 - **Notifications**: an inbox on the site and a private Atom feed for the
   reviews, merges and closes of your own pull requests, and for new
   pull requests, merges, issues, advisories and releases.
-- **Your progress**: your reviews, your streak and your goals. There is no
-  leaderboard.
+- **Your progress**: your reviews and your weekly goal. Only you see it.
 - **For committers**: what is ready to merge in your areas, on the Ready to merge tab of the review page.
 - **Onboarding**: a first visit walks you through all of this.
 
@@ -87,8 +86,9 @@ Read its own guides first:
   labels. The one write it makes is on your click: it starts a workflow in a
   repository you own.
 - **It grants nothing.** Committers decide; Maintainer Mode shows evidence.
-- **No leaderboard.** Review credit decides which pull requests get on the
-  list. It never ranks people. See [the rules](docs/rules.md).
+- **No ranking of people.** Reviews that move pull requests decide which
+  pull requests get on the list. No page shows a score. See
+  [the rules](docs/rules.md).
 - **Your data stays yours.** Subscriptions, uploads and settings show only to
   you, and never in a public number.
 - **Open about its state.** [Data status](https://maintainermode.org/state?tab=status) shows what
@@ -99,18 +99,18 @@ Read its own guides first:
 The site also shows these pages, in the Docs tab of
 [/state](https://maintainermode.org/state?tab=docs).
 
-| Page                                     | What it covers                                                    |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| [docs/rules.md](docs/rules.md)           | review credit, routing, the state of nixpkgs (`/state?tab=rules`) |
-| [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels                 |
-| [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set                     |
-| [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                           |
-| [docs/api.md](docs/api.md)               | the JSON API and the command line                                 |
-| [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive                  |
-| [docs/operations.md](docs/operations.md) | run it, its variables, what we took                               |
-| [docs/events.md](docs/events.md)         | the plan of the event log                                         |
-| [docs/ingest.md](docs/ingest.md)         | the plan of the archive                                           |
-| [docs/rescan.md](docs/rescan.md)         | server rescans of flakes, and their threat model                  |
+| Page                                     | What it covers                                                 |
+| ---------------------------------------- | -------------------------------------------------------------- |
+| [docs/rules.md](docs/rules.md)           | the queues, routing, the state of nixpkgs (`/state?tab=rules`) |
+| [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels              |
+| [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set                  |
+| [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                        |
+| [docs/api.md](docs/api.md)               | the JSON API and the command line                              |
+| [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive               |
+| [docs/operations.md](docs/operations.md) | run it, its variables, what we took                            |
+| [docs/events.md](docs/events.md)         | the plan of the event log                                      |
+| [docs/ingest.md](docs/ingest.md)         | the plan of the archive                                        |
+| [docs/rescan.md](docs/rescan.md)         | server rescans of flakes, and their threat model               |
 
 ## Run it
 

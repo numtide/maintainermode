@@ -16,7 +16,7 @@ Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are
 
 On these pages, no tab is current. The menu marks the current page.
 
-Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has two tabs: **Record** and **Maintains**. Search for `@login` on `/packages` to open it.
+Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has three tabs: **Overview**, **Reviews** and **Maintains**. The Reviews tab shows the last reviews of the person and the result of each. It shows no score and no rank. Search for `@login` on `/packages` to open it.
 
 ## Needs you
 
@@ -235,7 +235,7 @@ After you sign in, the home page shows the Get started card. It is a checklist. 
 
 1. What you maintain, in the "I maintain" filter of `/packages`. Watch all of it in one step.
 2. What you watch. Watch a package, a module or a directory.
-3. The review queue for you, on `/review`.
+3. The review queue for you, on `/review`. The step is done after your first review. It links to the rule that puts your own pull requests in the queues.
 4. Notifications. Make your private Atom feed in `/me/settings#feed`.
 5. Your system. Upload the packages of your machines in `/me/settings#upload`. They then come first in `/packages`.
 6. Actions. Follow the setup checklist in `/me/settings#workflows`.
@@ -335,15 +335,14 @@ The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firs
 
 ## Your progress
 
-`/me/progress` shows your own review record. Only you see it. It never shows the numbers of another person. There is no leaderboard.
+`/me/progress` shows your own review record. Only you see it. It never shows the numbers of another person.
 
-- **This week and this month**: the pull requests you reviewed, and your reviews that earned credit. A week starts on Monday, in UTC.
-- **Streak**: the weeks in a row with at least one review that earned credit. A week with no credit yet does not break the streak until the week ends.
+- **This week and this month**: the pull requests you reviewed. A week starts on Monday, in UTC.
 - **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal. `/review` shows how far you are.
+- **In the queues**: whether your own pull requests show in the queues. If they do not, it tells how many more authors you need. Your reviews must move the pull requests of 3 different authors in 60 days. See [rule 2](rules.md#2-whose-pull-requests-appear).
 - **Badges**: First review; First review with no maintainer; Merged unchanged; 10, 50 and 100 reviews; Five parts of nixpkgs.
-- **In the queues**: how many more authors you need before your pull requests show in the queues. You need credit from 3 different authors in 60 days.
 
-The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week, your streak and your goal. Your menu links to the page.
+The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week and your goal. Your menu links to the page.
 
 ## Notifications
 
@@ -575,13 +574,13 @@ The tab **Ready to merge** of `/review` shows what waits for a person with merge
 | Section                  | What it shows                                                                                                                                 |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | In your areas            | only for a committer who signed in: the ready-to-merge queue in your areas and in what you watch, 5 rows. Only you see it. Its id is `yours`. |
-| Ready to merge           | the ready-to-merge queue: 20 rows on the first page, then 50 on each page. Authors with more review credit come first.                        |
+| Ready to merge           | the ready-to-merge queue: 20 rows on the first page, then 50 on each page. Authors with more recent counted reviews come first.               |
 | Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes     |
 | Security fixes           | the label `1.severity: security`, and ready                                                                                                   |
 | Backports                | a `release-*` base branch, and ready                                                                                                          |
 | Waiting longest          | ready, oldest approval first                                                                                                                  |
 
-In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need credit. Each row says why it is on the list. The last four sections put the longest wait first. They and **In your areas** show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
+In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need a [counted review](rules.md#1-a-review-that-moves-a-pull-request). Each row says why it is on the list. The last four sections put the longest wait first. They and **In your areas** show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 

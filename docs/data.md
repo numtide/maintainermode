@@ -229,7 +229,7 @@ An empty list turns the archive off.
 
 `/pr/<number>` shows one nixpkgs pull request in Maintainer Mode. Links to pull requests across the site open this page. A small GitHub icon next to each title opens GitHub.
 
-- **From the synced data.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the review credit, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
+- **From the synced data.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the reviews that moved it, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
 - **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the bot token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
 - **The conversation.** The description, the reviews, the inline comments and the comments come from the archive when it has a copy. If the copy is not current, one GraphQL query reads the first 100 of each kind. The page shows the latest 300 reviews and comments. A link opens the rest on GitHub.
 - **Who makes the server read GitHub.** Only signed-in people do. Anonymous visitors and the API get the cache or the archive copy. If neither has the data, they get a note and a link to GitHub.

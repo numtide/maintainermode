@@ -86,8 +86,10 @@ It gives the public data of one login. It is the data of the profile page
   most 20, the newest first;
 - `areas`: the directories its pull requests of the last year change most,
   with the number of pull requests for each;
-- `person`: whether its pull requests are in the queues;
-- `dossier` and `credits`: its review record;
+- `person`: the ledger summary, and whether its pull requests are in the
+  queues (see [Ledger fields](#ledger-fields));
+- `dossier`: its review record;
+- `credits`: its counted reviews (see [Ledger fields](#ledger-fields));
 - `area`: what it maintains, owns and changed;
 - `maintains`: its packages and NixOS modules, with their flags.
 
@@ -114,6 +116,25 @@ Each pull request in `open_prs` and `recent_prs` has these fields:
 - `checks`: `pass`, `fail`, `pending`, or `null` when it is not known.
 
 It never ranks people. Private data, like subscriptions and tags, is never in it.
+
+## Ledger fields
+
+The pages do not show review credit. The ledger still decides the queues.
+See [the rules](rules.md#the-rules). The API keeps these fields, with the
+same names, for the tools that read them. In a field name, "credit" means a
+counted review: a review that moved a pull request.
+
+| Endpoint                     | Field                                                   | What it is                                                               |
+| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `GET /api/v1/people/<login>` | `person.listed`, `person.counterparties`                | in the queues, and the number of distinct authors in 60 days             |
+| `GET /api/v1/people/<login>` | `person.score`, `person.reciprocity`, `person.credits`  | the decayed weight, the reciprocity ratio, the number of counted reviews |
+| `GET /api/v1/people/<login>` | `credits`                                               | each counted review, with its events, its weight and a `dropped` reason  |
+| `GET /api/v1/prs/<n>`        | `credits`, `queue.credited_by`                          | the counted reviews on the pull request, and their reviewers             |
+| `GET /api/v1/prs`            | `author_score`, `credited_by` on each row (not `bumps`) | the weight of the author, and the reviewers with a counted review        |
+
+Do not use `score` to rank people. It sets only the order of the Ready to
+merge queue. The fields stay for compatibility. New tools must not depend on
+them.
 
 ## `GET /api/v1/needs`
 
