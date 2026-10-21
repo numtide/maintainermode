@@ -356,6 +356,9 @@ section.Box > .Box-header {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.upload-step code {
+  overflow-wrap: anywhere;
+}
 .Label.tap-label {
   line-height: 22px;
 }
