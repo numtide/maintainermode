@@ -449,7 +449,9 @@ What each command does:
 - **`scan`** reads the closure of one or more flake outputs (`--flake`,
   `--output`), or of the attributes of a file (`--file`, `--attr`), with
   `nix derivation show -r`. `--runtime` reads the built store paths with
-  `nix path-info -r` instead. It reads the nixpkgs revision that the tree
+  `nix path-info -r` instead. Each output is read on its own: one that does
+  not evaluate here is named and skipped, and the rest still make a report.
+  It reads the nixpkgs revision that the tree
   pins in `flake.lock` or in `npins/sources.json`. `--nixpkgs-input` names
   the pin. It does not evaluate nixpkgs. It writes the full report to
   `maintainer-mode-scan.json`. This file stays on your machine.
