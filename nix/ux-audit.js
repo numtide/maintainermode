@@ -381,7 +381,7 @@ function seedSql() {
       ],
       association: "CONTRIBUTOR",
     }),
-    pr(100175, "newcomer", "ripgrep: add shell completions", 300, {
+    pr(100176, "newcomer", "ripgrep: add shell completions", 300, {
       files: [file("ripgrep")],
       mergeable: "CONFLICTING",
       ci: "FAILURE",
