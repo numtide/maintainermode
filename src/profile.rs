@@ -16,7 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
 use crate::dossier::{self, Outcome};
-use crate::ledger::{self, Dropped, Trigger};
+use crate::ledger;
 use crate::model::Pr;
 use crate::ui::{Kind, Page, Section, Tab, Tone, badge, empty, item_row, note, pager, section};
 use crate::web::{App, Shared, Snapshot, ago, ci_icon, esc, icon, octicon, stat};
@@ -507,15 +507,6 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
     out
 }
 
-fn trigger_label(t: &Trigger) -> &'static str {
-    match t {
-        Trigger::AuthorPushed => "author pushed",
-        Trigger::AuthorReplied => "author replied",
-        Trigger::InlineOnChange => "comment on a changed line",
-        Trigger::Merged => "merged",
-    }
-}
-
 fn outcome_label(o: Outcome) -> &'static str {
     match o {
         Outcome::MergedUnchanged => "<span class=\"Label Label--success\">merged unchanged</span>",
@@ -555,13 +546,11 @@ fn overlap(title: &str, list: &[(String, usize)]) -> String {
 
 /// The review record: facts about reviews, not a judgement.
 fn reviews(s: &Snapshot, login: &str) -> String {
-    let p = s.ledger.people.get(login).cloned().unwrap_or_default();
     let d = dossier::build(&s.pr_data, login);
     let mut out = note(&format!(
         "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
-         It counts the reviews of the last {} days and on every open pull request. {}",
+         It counts the reviews of the last {} days and on every open pull request.",
         ledger::WINDOW_DAYS,
-        ledger::queues_badge(p.listed, p.counterparties)
     ));
     let _ = write!(
         out,
@@ -617,71 +606,6 @@ fn reviews(s: &Snapshot, login: &str) -> String {
         overlap("Reviewed alongside", &d.co_reviewers),
         overlap("Reviewed pull requests of", &d.authors)
     );
-    let _ = write!(
-        out,
-        "<details class=\"Box mt-4\"><summary class=\"Box-header text-bold\">Credit: {:.2}, reciprocity {:.0}% \
-         <span class=\"f6 color-fg-muted text-normal\">(decides listing only; reciprocity is shown, never acted on)</span></summary>",
-        p.score,
-        p.reciprocity * 100.0
-    );
-    let mut credits: Vec<_> = s.ledger.credits_of(login).collect();
-    credits.sort_by_key(|c| std::cmp::Reverse(c.at));
-    if credits.is_empty() {
-        out.push_str("<div class=\"Box-row color-fg-muted\">No credit yet.</div>");
-    }
-    const SHOWN: usize = 100;
-    let more = credits.len().saturating_sub(SHOWN);
-    for c in credits.into_iter().take(SHOWN) {
-        let why: Vec<&str> = c.triggers.iter().map(trigger_label).collect();
-        let status = match &c.dropped {
-            None => format!(
-                "{:.2} <span class=\"color-fg-muted\">of {:.2}</span>",
-                c.value, c.weight
-            ),
-            Some(Dropped::DailyCap) => {
-                "<span class=\"Label\">over the daily cap</span>".to_string()
-            }
-            Some(Dropped::Voided { by, url }) => format!(
-                "<a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
-                esc(url),
-                crate::web::person_link(by)
-            ),
-        };
-        let mut factors = Vec::new();
-        if c.orphan {
-            factors.push("unowned".to_string());
-        } else if !c.queue_head {
-            factors.push(format!("picked fresh ×{}", ledger::PICKED_FACTOR));
-        }
-        if c.pair_factor < 1.0 {
-            factors.push(format!("repeat author ×{}", c.pair_factor));
-        }
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex\"><div class=\"flex-auto\">\
-             <a href=\"{u}\">review</a> of <a href=\"/pr/{n}\">#{n}</a> {t} by <a href=\"/u/{a}\">{a}</a>\
-             <div class=\"f6 color-fg-muted\">{} · {} {}</div></div><div class=\"text-right\">{status}</div></div>",
-            c.at.format("%Y-%m-%d"),
-            why.join(", "),
-            if factors.is_empty() {
-                String::new()
-            } else {
-                format!("· {}", factors.join(", "))
-            },
-            u = esc(&c.review_url),
-            n = c.pr,
-            t = esc(&c.pr_title),
-            a = esc(&c.pr_author),
-        );
-    }
-    if more > 0 {
-        let _ = write!(
-            out,
-            "<div class=\"Box-row color-fg-muted\">and {more} older credits, in <a href=\"/api/v1/people/{}\">the JSON</a></div>",
-            esc(login)
-        );
-    }
-    out.push_str("</details>");
     out
 }
 
@@ -916,6 +840,11 @@ mod tests {
         let h = html(get(&app, Some("reviews")).await).await;
         assert!(h.contains("aria-current=\"page\">Reviews</a>"));
         assert!(h.contains("facts about reviews, not a judgement"));
+        assert!(
+            !h.to_lowercase().contains("credit"),
+            "no credit on the profile"
+        );
+        assert!(!h.contains("in the queues"));
         let h = html(get(&app, Some("maintains")).await).await;
         assert!(h.contains("What alice maintains"));
         assert!(h.contains("aria-current=\"page\">Maintains</a>"));

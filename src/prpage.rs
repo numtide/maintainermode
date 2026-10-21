@@ -933,7 +933,7 @@ fn place(s: &Snapshot, pr: &Pr) -> Place {
     let mut why: Vec<String> = Vec::new();
     match queue {
         "merge" => why.push(
-            "checks pass, it has no conflict, the current head is approved, and a review on it earned credit"
+            "checks pass, it has no conflict, the current head is approved, and a review on it led to a change, a reply or a merge"
                 .into(),
         ),
         "review" => {
@@ -953,7 +953,7 @@ fn place(s: &Snapshot, pr: &Pr) -> Place {
                 why.push("nobody approved the current head commit".into());
             }
             if e.credited_by.is_empty() {
-                why.push("no review on it earned credit yet".into());
+                why.push("no review on it led to a change, a reply or a merge yet".into());
             }
         }
         _ => {
@@ -970,7 +970,7 @@ fn place(s: &Snapshot, pr: &Pr) -> Place {
             } else if !s.ledger.is_listed(&pr.author) {
                 let p = s.ledger.people.get(&pr.author);
                 why.push(format!(
-                    "its author is not in the queues: credit from {} of {} authors",
+                    "its author is not in the queues yet: their reviews moved the pull requests of {} of {} authors",
                     p.map_or(0, |p| p.counterparties),
                     ledger::MIN_COUNTERPARTIES
                 ));
@@ -1228,25 +1228,24 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
     if p.unowned {
         out.push_str(&kv(
             "No maintainer",
-            "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files. \
-             A review here gets full credit at any age.",
+            "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files.",
         ));
     }
     out.push_str(&kv("Approved head", &people(&p.approved_by)));
     let mut rows = String::new();
     for c in credits {
         let status = match &c.dropped {
-            None => format!("{:.2}", c.value),
-            Some(Dropped::DailyCap) => "over the daily cap".into(),
+            Some(Dropped::DailyCap) => continue,
+            None => String::new(),
             Some(Dropped::Voided { by, url }) => format!(
-                "<a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
+                " · <a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
                 esc(url),
                 crate::web::person_link(by)
             ),
         };
         let _ = write!(
             rows,
-            "<div><a href=\"/u/{r}\">{r}</a> · <a href=\"{u}\">review</a> {} ago · {status}</div>",
+            "<div><a href=\"/u/{r}\">{r}</a> · <a href=\"{u}\">review</a> {} ago{status}</div>",
             ago(c.at),
             r = esc(&c.reviewer),
             u = esc(&c.review_url),
@@ -1256,8 +1255,12 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
         rows = "<span class=\"color-fg-muted\">none yet</span>".into();
     }
     out.push_str(&kv(
-        "Credit",
-        &format!("{rows}<div class=\"f6 color-fg-muted\"><a href=\"/state?tab=rules#the-rules\">How credit works</a></div>"),
+        "Reviews that moved it",
+        &format!(
+            "{rows}<div class=\"f6 color-fg-muted\">A change, a reply or a merge followed in {} days. \
+             <a href=\"/state?tab=rules#1-a-review-that-moves-a-pull-request\">Why it matters</a></div>",
+            ledger::MOVE_DAYS
+        ),
     ));
     out.push_str("</div>");
     out

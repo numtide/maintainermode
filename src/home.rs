@@ -141,7 +141,6 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
     let mut out = String::from("<h1 class=\"sr-only\">Home</h1>");
     out.push_str(&crate::needs::section(app, login, mood, headers));
     out.push_str(&crate::welcome::card(app, login));
-    out.push_str(&crate::progress::widget(app, login));
 
     let unread = app.inbox.get(login);
     let events = person_events(app, login);

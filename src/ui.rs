@@ -239,7 +239,7 @@ const MENU: [(Personal, &str, &str, &str); 4] = [
     (
         Personal::Progress,
         "/me/progress",
-        octicon!("flame"),
+        octicon!("pulse"),
         "Progress",
     ),
     (Personal::Runs, "/me/runs", octicon!("play"), "Runs"),

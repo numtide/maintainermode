@@ -49,7 +49,7 @@ let
     "home"
     "key"
     "versions"
-    "flame"
+    "pulse"
     "circle"
     "inbox"
     "mail"

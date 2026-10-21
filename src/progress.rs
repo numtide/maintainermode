@@ -1,6 +1,6 @@
 //! A person's own progress, shown to that person only. It is a pure
-//! function of their review rows and their credit, and it compares them
-//! with nobody: there is no leaderboard.
+//! function of their review rows and the ledger, and it compares them with
+//! nobody.
 
 use axum::Router;
 use axum::extract::{Form, State};
@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 use std::fmt::Write;
 
 use crate::dossier::{self, Outcome, Row};
@@ -36,11 +36,6 @@ pub struct Badge {
 pub struct Progress {
     pub reviews_week: usize,
     pub reviews_month: usize,
-    pub credited_week: usize,
-    pub credited_month: usize,
-    /// Weeks in a row with at least one review that earned credit. The
-    /// current week counts once it has one; until then the run ends last week.
-    pub streak_weeks: usize,
     pub goal: Option<u32>,
     pub counterparties: usize,
     pub listed: bool,
@@ -67,29 +62,14 @@ fn live<'a>(credits: &[&'a Credit]) -> Vec<&'a Credit> {
 /// Everything but the badges, which only the full page needs.
 pub fn build(
     rows: &[Row],
-    credits: &[&Credit],
     counterparties: usize,
     goal: Option<u32>,
     now: DateTime<Utc>,
 ) -> Progress {
-    let live = live(credits);
     let this_week = week_of(now);
-    let weeks: HashSet<NaiveDate> = live.iter().map(|c| week_of(c.at)).collect();
-    let mut w = this_week;
-    if !weeks.contains(&w) {
-        w -= Duration::weeks(1);
-    }
-    let mut streak_weeks = 0;
-    while weeks.contains(&w) {
-        streak_weeks += 1;
-        w -= Duration::weeks(1);
-    }
     Progress {
         reviews_week: rows.iter().filter(|r| week_of(r.at) == this_week).count(),
         reviews_month: rows.iter().filter(|r| same_month(r.at, now)).count(),
-        credited_week: live.iter().filter(|c| week_of(c.at) == this_week).count(),
-        credited_month: live.iter().filter(|c| same_month(c.at, now)).count(),
-        streak_weeks,
         goal,
         counterparties,
         listed: counterparties >= MIN_COUNTERPARTIES,
@@ -121,7 +101,7 @@ pub fn badges(rows: &[Row], credits: &[&Credit], areas: impl Fn(u64) -> Vec<Stri
         },
         Badge {
             name: "First review with no maintainer",
-            how: "a review that earned credit on a pull request with no maintainer and no owner",
+            how: "a review that led to a change, a reply or a merge on a pull request with no maintainer and no owner",
             earned: live.iter().filter(|c| c.orphan).map(|c| c.at).min(),
         },
         Badge {
@@ -175,13 +155,7 @@ pub fn of(app: &App, login: &str, with_badges: bool) -> Progress {
     let rows = dossier::rows(mine, login);
     let credits: Vec<&Credit> = s.ledger.credits_of(login).collect();
     let counterparties = s.ledger.people.get(login).map_or(0, |p| p.counterparties);
-    let mut p = build(
-        &rows,
-        &credits,
-        counterparties,
-        goal_of(app, login),
-        Utc::now(),
-    );
+    let mut p = build(&rows, counterparties, goal_of(app, login), Utc::now());
     if with_badges {
         p.badges = badges(&rows, &credits, |n| {
             s.pr_at
@@ -209,7 +183,7 @@ fn listing_line(p: &Progress) -> String {
         "Your pull requests show in the queues.".to_string()
     } else {
         format!(
-            "{} more authors until your pull requests show in the queues: your reviews got credit from {} of {} authors in the last {} days.",
+            "{} more authors until your pull requests show in the queues. In the last {3} days, your reviews led to a change, a reply or a merge on the pull requests of {1} of {2} authors.",
             MIN_COUNTERPARTIES - p.counterparties,
             p.counterparties,
             MIN_COUNTERPARTIES,
@@ -224,11 +198,10 @@ pub fn widget(app: &App, login: &str) -> String {
     format!(
         "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center gap-3\">\
          <span class=\"text-bold\">{} Your progress</span>\
-         <span>{} reviews this week</span><span>{} weeks in a row</span><span class=\"f6\">{}</span>\
+         <span>{} reviews this week</span><span class=\"f6\">{}</span>\
          <a class=\"ml-auto f6\" href=\"/me/progress\">Details</a></div></div>",
-        icon(octicon!("flame")),
+        icon(octicon!("pulse")),
         p.reviews_week,
-        p.streak_weeks,
         goal_line(&p),
     )
 }
@@ -245,15 +218,9 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     };
     let p = of(&app, &login, true);
     let mut out = format!(
-        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}{}{}{}</div>",
+        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(p.reviews_week, "pull requests reviewed this week"),
         stat(p.reviews_month, "pull requests reviewed this month"),
-        stat(p.credited_week, "reviews that earned credit this week"),
-        stat(p.credited_month, "reviews that earned credit this month"),
-        stat(
-            p.streak_weeks,
-            "weeks in a row with a review that earned credit"
-        ),
     );
     out.push_str(&section(
         "Your weekly goal",
@@ -297,9 +264,9 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         Section::Personal(crate::ui::Personal::Progress),
         "Your progress",
     )
-    .icon(octicon!("flame"))
+    .icon(octicon!("pulse"))
     .sub(format!(
-        "Only you see this page. It compares you with nobody: there is no leaderboard. \
+        "Only you see this page. \
              It counts the reviews of the last {WINDOW_DAYS} days and on every open pull request. \
              Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
         l = esc(&login)
@@ -314,7 +281,7 @@ pub fn goal_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"goal\">{}</div>",
         section(
-            &format!("{} Weekly goal", icon(octicon!("flame"))),
+            &format!("{} Weekly goal", icon(octicon!("pulse"))),
             None,
             None,
             &format!(
@@ -362,8 +329,8 @@ async fn save_goal(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ledger::Trigger;
     use crate::ledger::tests::t;
-    use crate::ledger::{Dropped, Trigger};
 
     fn row(pr: u64, day: i64, outcome: Outcome) -> Row {
         Row {
@@ -397,25 +364,19 @@ mod tests {
     }
 
     #[test]
-    fn the_streak_counts_weeks_with_credit_and_survives_an_empty_current_week() {
-        // t(0) is a Monday
-        let mut capped = credit(4, 21, false);
-        capped.dropped = Some(Dropped::DailyCap);
-        let credits = [
-            credit(1, 0, false),
-            credit(2, 8, false),
-            credit(3, 15, false),
-            capped,
+    fn the_week_starts_on_monday_and_the_month_on_the_first() {
+        // t(0) is Monday 2026-06-01
+        let rows = [
+            row(1, -1, Outcome::Open),
+            row(2, 0, Outcome::Open),
+            row(3, 3, Outcome::Open),
+            row(4, 8, Outcome::Open),
         ];
-        let refs: Vec<&Credit> = credits.iter().collect();
-        let p = build(&[], &refs, 0, None, t(22));
-        assert_eq!(p.streak_weeks, 3);
-        assert_eq!(p.credited_week, 0);
-        let p = build(&[], &refs, 0, None, t(16));
-        assert_eq!(p.streak_weeks, 3);
-        assert_eq!(p.credited_week, 1);
-        let p = build(&[], &refs, 0, None, t(29));
-        assert_eq!(p.streak_weeks, 0);
+        let p = build(&rows, 0, None, t(6));
+        assert_eq!(p.reviews_week, 2);
+        assert_eq!(p.reviews_month, 3);
+        assert!(!p.listed);
+        assert!(build(&rows, 3, None, t(6)).listed);
     }
 
     #[test]
@@ -445,7 +406,7 @@ mod tests {
         assert_eq!(earned("Merged unchanged"), Some(t(11)));
         assert_eq!(earned("Five parts of nixpkgs"), Some(t(12)));
         assert!(!asked.borrow().contains(&22));
-        let p = build(&rows, &refs, 1, Some(3), t(12));
+        let p = build(&rows, 1, Some(3), t(12));
         assert!(p.badges.is_empty());
         assert!(!p.listed);
     }

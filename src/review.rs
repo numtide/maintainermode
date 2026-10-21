@@ -100,7 +100,7 @@ fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
 const NO_MAINTAINER: &str = "<div class=\"callout mb-3\">No maintainer, team or <code>ci/OWNERS</code> line covers the files of these pull requests. \
 A first review needs no special knowledge. Is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
 Are the hashes fixed-output and pinned? Are the <code>platforms</code> correct? Does a CLI have <code>versionCheckHook</code>? \
-Write each finding as a comment on the changed line. A review here gets full credit at any age.</div>";
+Write each finding as a comment on the changed line.</div>";
 
 fn first_timers() -> String {
     format!(
@@ -203,9 +203,8 @@ async fn review_page(
         )
     } else {
         format!(
-            "You get credit when your review leads to a change, a reply or a merge within {} days. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>",
-            crate::ledger::MOVE_DAYS
+            "Pull requests that wait for a review. \
+             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>"
         )
     };
     let widget = v
