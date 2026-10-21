@@ -133,7 +133,14 @@ pub(crate) fn flakes_value(app: &App, login: &str) -> Value {
         .into_iter()
         .filter_map(|s| {
             let (reference, output) = s.flake?;
+            let outputs = s
+                .data
+                .as_ref()
+                .map(|d| crate::sets::outputs_value(&d.outputs))
+                .unwrap_or_default();
             Some(json!({
+                "outputs": outputs.0,
+                "package_outputs": outputs.1,
                 "name": s.name,
                 "reference": reference,
                 "output": output,
@@ -1072,6 +1079,7 @@ mod own {
             scanned_at: None,
             nixpkgs_rev: None,
             versions: Default::default(),
+            outputs: Default::default(),
         };
         let s = &app.store;
         s.put_package_set("alice", "secret-box", &set("private-thing"), None)

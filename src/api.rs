@@ -155,6 +155,11 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 Type::Text,
                 "with filter=machines: the name of one of your sets",
             ),
+            opt(
+                "output",
+                Type::Text,
+                "with set: an output label of that set, like web-1; keep the packages of that output",
+            ),
             opt("q", Type::Text, "keep the rows whose name holds this text"),
             LIMIT_P,
             CURSOR_P,
@@ -165,8 +170,19 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         path: "/api/v1/sets",
-        about: "Your named package sets: machine reports and flakes, private and public, with their packages, their source, their expiry and the state of their last scan.",
-        params: &[],
+        about: "Your named package sets: machine reports and flakes, private and public, with their packages, their source, their expiry and the state of their last scan. A set that you sent with --with-outputs also has its output labels, such as host names, and the outputs that hold each package.",
+        params: &[
+            opt(
+                "set",
+                Type::Text,
+                "the name of one of your sets, like infra",
+            ),
+            opt(
+                "output",
+                Type::Text,
+                "with set: an output label of that set, like web-1; keep the packages of that output",
+            ),
+        ],
         private: true,
         mcp: By(("my_sets", "My package sets")),
         cli: By("get"),
@@ -434,7 +450,17 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ),
     (
         "/packages?filter=machines&set=",
-        By(&["/api/v1/mine?filter=machines&set=<name>", "/api/v1/sets"]),
+        By(&[
+            "/api/v1/mine?filter=machines&set=<name>",
+            "/api/v1/sets?set=<name>",
+        ]),
+    ),
+    (
+        "/packages?filter=machines&set=&output=",
+        By(&[
+            "/api/v1/mine?filter=machines&set=<name>&output=<label>",
+            "/api/v1/sets?set=<name>&output=<label>",
+        ]),
     ),
     (
         "/packages?filter=maintain",
@@ -622,6 +648,7 @@ pub(crate) struct Args {
     pub mood: Option<String>,
     pub filter: Option<String>,
     pub set: Option<String>,
+    pub output: Option<String>,
     pub q: Option<String>,
     pub kind: Option<String>,
     pub sub: Option<String>,
@@ -755,13 +782,19 @@ pub(crate) async fn answer(
                 me,
                 f,
                 &text(&a.q),
-                Args::text(&a.set),
+                crate::mine::Pick {
+                    set: Args::text(&a.set),
+                    output: Args::text(&a.output),
+                },
                 a.limit,
                 a.cursor.as_deref(),
             )
             .map_err(Fail::Bad)?
         }
-        "/api/v1/sets" => crate::sets::value(app, me),
+        "/api/v1/sets" => {
+            crate::sets::sets_value(app, me, Args::text(&a.set), Args::text(&a.output))
+                .map_err(Fail::Missing)?
+        }
         "/api/v1/inbox" => crate::notify::inbox_value(
             app,
             me,

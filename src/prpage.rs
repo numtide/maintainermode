@@ -2192,6 +2192,7 @@ mod tests {
                     scanned_at: None,
                     nixpkgs_rev: None,
                     versions: Default::default(),
+                    outputs: Default::default(),
                 },
                 None,
             )

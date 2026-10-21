@@ -565,10 +565,11 @@ fn accept(
             .map(|(pname, version)| Found {
                 pname,
                 version,
-                attr: None,
+                ..Default::default()
             })
             .collect(),
         files: None,
+        outputs: Vec::new(),
     }
     .strict(&listing.list);
     let (attrs, stale) = report.accepted(&listing.list).map_err(|e| anyhow!(e))?;
@@ -579,6 +580,7 @@ fn accept(
         scanned_at: Some(now.to_rfc3339()),
         nixpkgs_rev: report.source.nixpkgs_rev,
         versions: Default::default(),
+        outputs: Default::default(),
     })
 }
 
@@ -1084,6 +1086,7 @@ mod tests {
             scanned_at: None,
             nixpkgs_rev: None,
             versions: Default::default(),
+            outputs: Default::default(),
         };
         s.finish_flake_ref(&due[0], Ok(&set)).unwrap();
         s.finish_flake_ref(&due[1], Err("no flake.lock")).unwrap();
@@ -1121,6 +1124,7 @@ mod tests {
             scanned_at: None,
             nixpkgs_rev: None,
             versions: Default::default(),
+            outputs: Default::default(),
         };
         s.finish_flake_ref(&r, Ok(&set)).unwrap();
         let after_visit = Utc::now() + chrono::Duration::hours(1);

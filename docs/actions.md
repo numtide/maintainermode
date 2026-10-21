@@ -99,26 +99,26 @@ JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
   do. The same token also reads those endpoints (see
   [Private endpoints](api.md#private-endpoints)).
 
-| Tool             | Returns                                                                  |
-| ---------------- | ------------------------------------------------------------------------ |
-| `search`         | packages, modules and areas that match a name, as `/api/v1/search`       |
-| `package`        | one package, as `/api/v1/packages/<name>`                                |
-| `module`         | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works |
-| `area`           | one path of the tree, as `/api/v1/areas/<path>`                          |
-| `person`         | the record of a login and what it maintains, as `/api/v1/people/<login>` |
-| `prs`            | one queue, as `/api/v1/prs`; `queue` is `all` by default                 |
-| `pr`             | one pull request, as `/api/v1/prs/<number>`                              |
-| `needs`          | your Needs you list, plans and own events, as `/api/v1/needs`            |
-| `my_packages`    | your packages, as `/api/v1/mine`; `filter=watch` gives what you watch    |
-| `my_sets`        | your named package sets, as `/api/v1/sets`                               |
-| `inbox`          | your inbox, as `/api/v1/inbox`                                           |
-| `progress`       | your progress, as `/api/v1/progress`                                     |
-| `first_packages` | packages for a first contribution, as `/api/v1/first`                    |
-| `need_help`      | packages with an open advisory, as `/api/v1/need-help`                   |
-| `metrics`        | the state of nixpkgs, as `/api/v1/metrics`                               |
-| `status`         | the counts and the rules of the queues, as `/api/v1/status`              |
-| `sync_status`    | the data of `/state?tab=status`, as `/api/v1/sync`                       |
-| `archive_item`   | one stored issue or pull request, as `/api/v1/archive/...`               |
+| Tool             | Returns                                                                        |
+| ---------------- | ------------------------------------------------------------------------------ |
+| `search`         | packages, modules and areas that match a name, as `/api/v1/search`             |
+| `package`        | one package, as `/api/v1/packages/<name>`                                      |
+| `module`         | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works       |
+| `area`           | one path of the tree, as `/api/v1/areas/<path>`                                |
+| `person`         | the record of a login and what it maintains, as `/api/v1/people/<login>`       |
+| `prs`            | one queue, as `/api/v1/prs`; `queue` is `all` by default                       |
+| `pr`             | one pull request, as `/api/v1/prs/<number>`                                    |
+| `needs`          | your Needs you list, plans and own events, as `/api/v1/needs`                  |
+| `my_packages`    | your packages, as `/api/v1/mine`; `filter=watch` gives what you watch          |
+| `my_sets`        | your sets and their output labels, as `/api/v1/sets`; takes `set` and `output` |
+| `inbox`          | your inbox, as `/api/v1/inbox`                                                 |
+| `progress`       | your progress, as `/api/v1/progress`                                           |
+| `first_packages` | packages for a first contribution, as `/api/v1/first`                          |
+| `need_help`      | packages with an open advisory, as `/api/v1/need-help`                         |
+| `metrics`        | the state of nixpkgs, as `/api/v1/metrics`                                     |
+| `status`         | the counts and the rules of the queues, as `/api/v1/status`                    |
+| `sync_status`    | the data of `/state?tab=status`, as `/api/v1/sync`                             |
+| `archive_item`   | one stored issue or pull request, as `/api/v1/archive/...`                     |
 
 | Code | Meaning                                                       |
 | ---- | ------------------------------------------------------------- |

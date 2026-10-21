@@ -8,11 +8,11 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::Deserialize;
 use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqAccess, Visitor};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::eval::{private_dir, run_with, stream_with};
-use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
+use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, ScanOutput, Source};
 
 const NIX: &str = "nix";
 const DISCOVER: &str = include_str!("discover.nix");
@@ -481,20 +481,55 @@ fn derivation_closure(installable: &[String], found: &mut Closure) -> Result<()>
 /// Reads the closure in one pass and keeps only distinct packages; it stops
 /// past `max` of them.
 pub(crate) fn closure_pairs_at_most(text: &[u8], max: usize) -> Result<Vec<(String, String)>> {
-    let mut found = Closure {
-        max,
-        pairs: BTreeSet::new(),
-    };
+    let mut found = Closure::new(max);
     found.read(serde_json::Deserializer::from_slice(text))?;
-    Ok(found.pairs.into_iter().collect())
+    Ok(found.pairs.into_keys().collect())
+}
+
+/// The paths of one package that `why` tries. More would only repeat the
+/// same answer for a package that a closure builds many times.
+const MAX_PATHS: usize = 4;
+
+#[derive(Default)]
+struct Seen {
+    outputs: BTreeSet<usize>,
+    paths: Vec<String>,
 }
 
 struct Closure {
     max: usize,
-    pairs: BTreeSet<(String, String)>,
+    pairs: BTreeMap<(String, String), Seen>,
+    /// The output that the scan reads now.
+    output: usize,
+}
+
+/// nix 2.35 names a derivation without the store directory.
+fn store_path(path: &str) -> String {
+    if path.starts_with('/') {
+        return path.to_string();
+    }
+    let dir = std::env::var("NIX_STORE_DIR").unwrap_or_else(|_| "/nix/store".into());
+    format!("{}/{path}", dir.trim_end_matches('/'))
 }
 
 impl Closure {
+    fn new(max: usize) -> Self {
+        Closure {
+            max,
+            pairs: BTreeMap::new(),
+            output: 0,
+        }
+    }
+
+    fn insert(&mut self, pname: String, version: String, path: &str) {
+        let seen = self.pairs.entry((pname, version)).or_default();
+        seen.outputs.insert(self.output);
+        let path = store_path(path);
+        if seen.paths.len() < MAX_PATHS && !seen.paths.contains(&path) {
+            seen.paths.push(path);
+        }
+    }
+
     /// Reads a map of derivations, from a file in memory or from the pipe of a
     /// running nix, and adds its packages to the set.
     fn read<'de, R: serde_json::de::Read<'de>>(
@@ -511,7 +546,7 @@ impl Closure {
     fn add_path(&mut self, path: &str) {
         let (name, version) = split_name(&strip_store_path(path));
         if is_package(&name, &version, false) {
-            self.pairs.insert((name, version));
+            self.insert(name, version, path);
         }
     }
 
@@ -533,7 +568,7 @@ impl Closure {
         let pname = drv.env.pname.unwrap_or(fallback_pname);
         let version = drv.env.version.unwrap_or(fallback_version);
         if is_package(&name, &version, drv.env.output_hash || drv.outputs) {
-            self.pairs.insert((pname, version));
+            self.insert(pname, version, path);
             if self.pairs.len() > self.max {
                 return Err(E::custom(format!("more than {} packages", self.max)));
             }
@@ -611,14 +646,11 @@ fn runtime_closure(installable: &[String], found: &mut Closure) -> Result<()> {
 /// The packages of every output, as one set. Each output is its own nix call:
 /// one that does not evaluate on this machine is named and skipped, and the
 /// others still make a report. It fails only when no output could be read.
-fn closure_of(target: &Target) -> Result<Vec<(String, String)>> {
-    let installables = target.installables();
-    let mut found = Closure {
-        max: MAX_PACKAGES,
-        pairs: BTreeSet::new(),
-    };
+fn closure_of(target: &Target, installables: &[(String, Vec<String>)]) -> Result<Closure> {
+    let mut found = Closure::new(MAX_PACKAGES);
     let mut skipped = 0;
-    for (name, args) in &installables {
+    for (n, (name, args)) in installables.iter().enumerate() {
+        found.output = n;
         let before = found.pairs.len();
         let read = if target.runtime {
             runtime_closure(args, &mut found)
@@ -654,7 +686,53 @@ fn closure_of(target: &Target) -> Result<Vec<(String, String)>> {
     if skipped == installables.len() && skipped > 0 {
         bail!("no output could be read");
     }
-    Ok(found.pairs.into_iter().collect())
+    Ok(found)
+}
+
+/// The short name of an output: the configuration name for a system or a
+/// home, the attribute path without the system for the rest, the file name
+/// for a whole file. Any character that a label cannot hold becomes `_`.
+fn label(output: &str, whole_file: bool) -> String {
+    let segments = crate::trace::attr_path(output);
+    let text = match segments.as_slice() {
+        _ if whole_file => Path::new(output)
+            .file_name()
+            .map_or_else(|| output.to_string(), |f| f.to_string_lossy().into_owned()),
+        [kind, name, ..]
+            if matches!(
+                kind.as_str(),
+                "nixosConfigurations" | "darwinConfigurations" | "homeConfigurations"
+            ) =>
+        {
+            name.clone()
+        }
+        [kind, system, rest @ ..]
+            if !rest.is_empty()
+                && matches!(
+                    kind.as_str(),
+                    "packages" | "devShells" | "checks" | "apps" | "legacyPackages"
+                )
+                && system.contains('-') =>
+        {
+            format!("{kind}.{}", rest.join("."))
+        }
+        _ => segments.join("."),
+    };
+    let mut clean: String = text
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@' | '+') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    clean.truncate(crate::report::MAX_LABEL);
+    if clean.is_empty() {
+        clean.push('_');
+    }
+    clean
 }
 
 pub fn scan(target: &Target) -> Result<Report> {
@@ -664,16 +742,28 @@ pub fn scan(target: &Target) -> Result<Report> {
     if target.flake.is_some() && target.outputs.is_empty() {
         bail!("no output to read; name one with --output");
     }
-    let mut pairs = closure_of(target)?;
-    pairs.retain(|(p, _)| !p.is_empty());
+    let installables = target.installables();
+    let found = closure_of(target, &installables)?;
+    let whole_file = target.file.is_some() && target.outputs.is_empty();
+    let outputs = installables
+        .into_iter()
+        .map(|(name, installable)| ScanOutput {
+            label: label(&name, whole_file),
+            installable,
+        })
+        .collect();
 
     let system = target.system.clone().unwrap_or_else(this_system);
-    let packages = pairs
+    let packages = found
+        .pairs
         .into_iter()
-        .map(|(pname, version)| Found {
+        .filter(|((p, _), _)| !p.is_empty())
+        .map(|((pname, version), seen)| Found {
             pname,
             version,
             attr: None,
+            outputs: seen.outputs.into_iter().collect(),
+            paths: seen.paths,
         })
         .collect();
     let now = Utc::now().to_rfc3339();
@@ -689,7 +779,94 @@ pub fn scan(target: &Target) -> Result<Report> {
         },
         packages,
         files: None,
+        outputs,
     })
+}
+
+/// Prints why each output of the report holds the package: the chain that
+/// `nix why-depends` finds from the output to a path of the package. `only`
+/// is a label. It reads the local report and runs nix here; nothing goes
+/// to a server.
+pub fn why(report: &Report, pname: &str, only: Option<&str>) -> Result<()> {
+    let found: Vec<&Found> = report
+        .packages
+        .iter()
+        .filter(|f| f.pname == pname)
+        .collect();
+    if found.is_empty() {
+        bail!("{pname} is not in the report");
+    }
+    if report.outputs.is_empty() || found.iter().all(|f| f.paths.is_empty()) {
+        bail!("the report has no outputs or paths; scan again with this version");
+    }
+    let labels: BTreeSet<&str> = found
+        .iter()
+        .flat_map(|f| &f.outputs)
+        .filter_map(|i| report.outputs.get(*i))
+        .map(|o| o.label.as_str())
+        .collect();
+    if let Some(o) = only.filter(|o| !labels.contains(o)) {
+        bail!(
+            "{pname} is not in {o}; it is in {}",
+            labels.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
+    let mut shown = 0;
+    for (i, out) in report.outputs.iter().enumerate() {
+        if only.is_some_and(|o| o != out.label) {
+            continue;
+        }
+        let here: Vec<&&Found> = found.iter().filter(|f| f.outputs.contains(&i)).collect();
+        if here.is_empty() {
+            continue;
+        }
+        let derivation = here
+            .iter()
+            .flat_map(|f| &f.paths)
+            .any(|p| p.ends_with(".drv"));
+        let mut args = vec!["path-info".to_string()];
+        if derivation {
+            args.push("--derivation".into());
+        }
+        args.extend(out.installable.iter().cloned());
+        let top = match nix(&args) {
+            Ok(t) => t.lines().next().unwrap_or_default().to_string(),
+            Err(e) => {
+                eprintln!("skip {}: {e:#}", out.label);
+                continue;
+            }
+        };
+        for f in here {
+            let chain = f.paths.iter().find_map(|p| {
+                let mut args = vec!["why-depends".to_string()];
+                if p.ends_with(".drv") {
+                    args.push("--derivation".into());
+                }
+                args.extend([top.clone(), p.clone()]);
+                nix(&args).ok().filter(|t| !t.trim().is_empty())
+            });
+            match chain {
+                Some(c) => {
+                    println!(
+                        "{} holds {}-{}:\n{}",
+                        out.label,
+                        f.pname,
+                        f.version,
+                        c.trim_end()
+                    );
+                    shown += 1;
+                }
+                None => eprintln!(
+                    "{}: no chain to {}-{}; the output changed since the scan?",
+                    out.label, f.pname, f.version
+                ),
+            }
+        }
+    }
+    if shown == 0 {
+        bail!("no chain found; scan again");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -918,10 +1095,7 @@ mod tests {
 
     #[test]
     fn the_set_takes_store_paths_and_stops_past_the_cap() {
-        let mut found = Closure {
-            max: 1,
-            pairs: BTreeSet::new(),
-        };
+        let mut found = Closure::new(1);
         found.add_path("/nix/store/2x905q8m3w6wj9kh1k2agzqx9x0ksapl-zlib-1.3.1");
         // the same package twice is one entry: the set unions as it reads
         found.add_path("/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-zlib-1.3.1");
@@ -930,5 +1104,61 @@ mod tests {
         assert!(found.room().is_ok());
         found.add_path("/nix/store/cccccccccccccccccccccccccccccccc-curl-8.11.1");
         assert!(found.room().is_err());
+    }
+
+    #[test]
+    fn a_label_is_the_host_or_the_path_without_the_system() {
+        for (output, want) in [
+            (
+                "nixosConfigurations.web-1.config.system.build.toplevel",
+                "web-1",
+            ),
+            (
+                "darwinConfigurations.mac.config.system.build.toplevel",
+                "mac",
+            ),
+            ("homeConfigurations.\"me@box\".activationPackage", "me@box"),
+            ("devShells.x86_64-linux.default", "devShells.default"),
+            ("checks.aarch64-darwin.\"a.b\"", "checks.a.b"),
+            ("packages.x86_64-linux.hello", "packages.hello"),
+            ("top", "top"),
+            ("nixosConfigurations.\"a b/c\".config", "a_b_c"),
+        ] {
+            assert_eq!(label(output, false), want, "{output}");
+            assert_eq!(crate::report::check_label(&label(output, false)), Ok(()));
+        }
+        assert_eq!(label("/home/me/hosts/web.nix", true), "web.nix");
+        assert_eq!(
+            label(&"x".repeat(100), false).len(),
+            crate::report::MAX_LABEL
+        );
+    }
+
+    #[test]
+    fn each_package_keeps_its_outputs_and_a_few_paths() {
+        let mut found = Closure::new(usize::MAX);
+        found.add_path("/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-zlib-1.3.1");
+        found.output = 2;
+        let drv = serde_json::json!({ "derivations": {
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-zlib-1.3.1.drv": { "name": "zlib-1.3.1", "env": { "pname": "zlib", "version": "1.3.1" } }
+        }, "version": 4 });
+        found
+            .read(serde_json::Deserializer::from_slice(
+                drv.to_string().as_bytes(),
+            ))
+            .unwrap();
+        let seen = &found.pairs[&("zlib".to_string(), "1.3.1".to_string())];
+        assert_eq!(seen.outputs.iter().copied().collect::<Vec<_>>(), [0, 2]);
+        assert_eq!(
+            seen.paths,
+            [
+                "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-zlib-1.3.1",
+                "/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-zlib-1.3.1.drv"
+            ]
+        );
+        for n in 0..10 {
+            found.add_path(&format!("/nix/store/{n:032}-zlib-1.3.1"));
+        }
+        assert_eq!(found.pairs.values().next().unwrap().paths.len(), MAX_PATHS);
     }
 }
