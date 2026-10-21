@@ -1,9 +1,8 @@
 //! The client: reads the closure of a flake output or of a file's attributes
 //! on the owner's machine. `export` and `submit` match the names against the
-//! server's public list (see `report.rs`). Taken from nixfresh `nix.rs` (MIT)
-//! and trimmed. It always runs
-//! plain `nix`: `derivation show` and `getFlake` are not part of the
-//! `nix eval --file` contract that a swept evaluator has to answer.
+//! server's public list (see `report.rs`). It always runs plain `nix`:
+//! `derivation show` and `getFlake` are not part of the `nix eval --file`
+//! contract that a swept evaluator has to answer.
 
 use anyhow::{Context, Result, bail};
 use chrono::Utc;

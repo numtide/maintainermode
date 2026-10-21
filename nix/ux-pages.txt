@@ -34,7 +34,6 @@ public /state?tab=docs&doc=api
 public /state?tab=docs&doc=events
 public /state?tab=docs&doc=ingest
 public /state?tab=docs&doc=rescan
-public /state?tab=docs&doc=nixfresh-merge
 public /state?tab=status
 public /packages
 public /packages?q=zzzz-nothing-matches

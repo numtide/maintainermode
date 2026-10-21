@@ -76,9 +76,8 @@ watch, your package set, and the same lists in the JSON API (`risk`,
 | Packaging hygiene gaps                                   | 1 each, 3 at most                                              |
 
 The bands are: 0 ok, 1 to 14 low, 15 to 29 medium, 30 to 49 high, 50 and
-more critical. The weights are a policy, not a measurement. They come from
-nixfresh, simplified: there is no judgment of pull requests and no reading
-of the git log.
+more critical. The weights are a policy, not a measurement. The score does
+not judge pull requests and does not read the git log.
 
 The reasons name the verdict: "1 open advisory affects 1.26.0", "1 open
 advisory, range unknown" or "1 advisory fixed in master, still in

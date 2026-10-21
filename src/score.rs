@@ -1,6 +1,5 @@
 //! One number per package: how much it needs attention. Additive, capped per
-//! cause, and every point carries its reason. Simplified from nixfresh's
-//! `score.rs` (MIT).
+//! cause, and every point carries its reason.
 
 use serde::Serialize;
 

@@ -112,13 +112,6 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 | -------------------------------------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
 | [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, trimmed to the classes in `src/` and to the light and dark themes                |
 | [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | 16px SVG icons, sent as one hidden sprite on each page                                              |
-| nixfresh `nix.rs` and `attrs.rs`                                     | 2026-10 | MIT     | `src/eval.rs` and `src/attrs.rs`: the evaluator wrapper and the attribute index, copied and trimmed |
-| nixfresh repology and tracker collectors                             | 2026-10 | MIT     | `src/health.rs`: the bulk reads of repology and the security tracker, rewritten for one host        |
-| nixfresh `upstream.rs`, `version.rs` and direct collector            | 2026-10 | MIT     | `src/upstream.rs` and `src/version.rs`: upstream releases from tags and registries                  |
-| nixfresh `score.rs`                                                  | 2026-10 | MIT     | `src/score.rs`: the risk score, simplified                                                          |
-| nixfresh osv collector                                               | 2026-10 | MIT     | `src/osv.rs`: OSV matches for the exact version of PyPI, crates.io and npm packages                 |
-| nixfresh cve, nvd and epss collectors                                | 2026-10 | MIT     | `src/severity.rs`: CVSS, CISA exploitation and EPSS for the tracker's CVEs                          |
-| nixfresh `nix.rs` and `report.rs`                                    | 2026-10 | MIT     | `src/scan.rs` and `src/report.rs`: the closure scan, the local report format, trimmed               |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages

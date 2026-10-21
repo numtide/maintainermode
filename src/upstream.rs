@@ -1,7 +1,6 @@
 //! The newest release from upstream itself: the git tags of the repository
 //! that `src` comes from, or the registry that publishes the package. This
-//! corrects repology, which reports what other distributions ship. Adapted
-//! from nixfresh's `upstream.rs` and direct collector (MIT).
+//! corrects repology, which reports what other distributions ship.
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};

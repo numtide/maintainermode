@@ -1,6 +1,5 @@
-//! Runs a Nix evaluator. Taken from nixfresh (MIT) and trimmed: there is no
-//! sandbox, because the only thing evaluated is a nixpkgs tarball pinned by
-//! revision.
+//! Runs a Nix evaluator. There is no sandbox, because the only thing
+//! evaluated is a nixpkgs tarball pinned by revision.
 
 use anyhow::{Context, Result, bail};
 use std::process::Command;
