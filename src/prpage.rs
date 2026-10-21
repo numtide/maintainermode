@@ -2052,7 +2052,7 @@ mod tests {
         assert!(html.contains("href=\"https://github.com/NixOS/nixpkgs/pull/1\""));
         let (status, api) = body(api_pr(State(app), Path(1)).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(api.contains("not in the synced data"));
+        assert!(api.contains("not in the synced data") && api.contains("\"url\":"));
     }
 
     #[tokio::test]
