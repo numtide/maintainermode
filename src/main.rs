@@ -296,6 +296,21 @@ enum Command {
         /// A saved copy of /api/v1/packages/index, instead of a download
         #[arg(long)]
         index_file: Option<PathBuf>,
+        /// Also send the label of each output, such as host names, and the
+        /// outputs that hold each package
+        #[arg(long)]
+        with_outputs: bool,
+    },
+    /// Show why the outputs of the last scan hold a package, with
+    /// `nix why-depends`. It runs here and sends nothing
+    Why {
+        /// The package name, as the report has it, such as openssl
+        pname: String,
+        /// Only this output label, such as a host name
+        #[arg(long)]
+        output: Option<String>,
+        #[arg(long, default_value = SCAN_FILE)]
+        report: PathBuf,
     },
     /// Send the strict report to your package set on a server
     Submit {
@@ -318,6 +333,10 @@ enum Command {
         /// scanned, as REFERENCE#OUTPUT. Needs --name.
         #[arg(long, requires = "name")]
         public_flake: Option<String>,
+        /// Also send the label of each output, such as host names, and the
+        /// outputs that hold each package
+        #[arg(long)]
+        with_outputs: bool,
     },
 }
 
@@ -348,6 +367,13 @@ fn print_omitted(r: &report::Upload) {
         r.modified(),
         r.omitted.unknown
     );
+    if !r.outputs.is_empty() {
+        eprintln!(
+            "{} output labels: {}",
+            r.outputs.len(),
+            r.outputs.join(", ")
+        );
+    }
 }
 
 /// The public package list of the server the report goes to, or a saved copy.
@@ -375,10 +401,27 @@ async fn strict(
     server: &str,
     path: &std::path::Path,
     index_file: Option<&std::path::Path>,
+    with_outputs: bool,
 ) -> Result<report::Upload> {
     let report = report::Report::load(path)?;
+    if with_outputs && report.outputs.is_empty() {
+        bail!(
+            "{} has no outputs; scan again with this version",
+            path.display()
+        );
+    }
     let list = public_list(server, index_file).await?;
-    Ok(report.strict(&list))
+    let upload = report.strict_with(&list, with_outputs);
+    if upload.outputs.len() > report::MAX_OUTPUTS {
+        bail!(
+            "more than {} outputs; name fewer with --output",
+            report::MAX_OUTPUTS
+        );
+    }
+    for l in &upload.outputs {
+        report::check_label(l).map_err(|e| anyhow::anyhow!("{l}: {e}"))?;
+    }
+    Ok(upload)
 }
 
 /// `REFERENCE#OUTPUT`, with the rules of a server rescan.
@@ -402,6 +445,7 @@ async fn submit(
     index_file: Option<&std::path::Path>,
     name: Option<String>,
     flake: Option<String>,
+    with_outputs: bool,
 ) -> Result<()> {
     if let Some(n) = &name {
         sets::check_name(n).map_err(|e| anyhow::anyhow!("--name: {e}"))?;
@@ -413,7 +457,7 @@ async fn submit(
             "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/settings#upload",
         )?,
     };
-    let mut report = strict(server, path, index_file).await?;
+    let mut report = strict(server, path, index_file, with_outputs).await?;
     report.name = name;
     report.public_flake = flake;
     let url = format!("{}/api/v1/reports", server.trim_end_matches('/'));
@@ -1185,8 +1229,9 @@ async fn run(cli: Cli) -> Result<i32> {
             report: path,
             out,
             index_file,
+            with_outputs,
         } => {
-            let r = strict(&cli.server, &path, index_file.as_deref()).await?;
+            let r = strict(&cli.server, &path, index_file.as_deref(), with_outputs).await?;
             let text = serde_json::to_string_pretty(&r)?;
             match out {
                 Some(o) => {
@@ -1204,6 +1249,7 @@ async fn run(cli: Cli) -> Result<i32> {
             index_file,
             name,
             public_flake,
+            with_outputs,
         } => {
             submit(
                 to.as_deref().unwrap_or(&cli.server),
@@ -1212,8 +1258,17 @@ async fn run(cli: Cli) -> Result<i32> {
                 index_file.as_deref(),
                 name,
                 public_flake,
+                with_outputs,
             )
             .await?;
+            Ok(0)
+        }
+        Command::Why {
+            pname,
+            output,
+            report: path,
+        } => {
+            scan::why(&report::Report::load(&path)?, &pname, output.as_deref())?;
             Ok(0)
         }
         Command::Archive {

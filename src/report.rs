@@ -27,6 +27,39 @@ pub struct Report {
     /// does not carry it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub files: Option<crate::trace::FileTrace>,
+    /// Each output that the scan read, in order. `Found::outputs` points
+    /// here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<ScanOutput>,
+}
+
+/// One output of a scan. Only the label can leave the machine, and only
+/// with `--with-outputs`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScanOutput {
+    pub label: String,
+    /// The nix arguments that name the output, as the scan gave them.
+    pub installable: Vec<String>,
+}
+
+pub const MAX_OUTPUTS: usize = 256;
+pub const MAX_LABEL: usize = 64;
+
+/// A label: 1 to 64 characters of a-z, A-Z, 0-9 and `-_.@+`. Safe in a URL
+/// query, in HTML and in a log line.
+pub fn check_label(label: &str) -> Result<(), String> {
+    let ok = !label.is_empty()
+        && label.len() <= MAX_LABEL
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '@' | '+'));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "an output label has 1 to {MAX_LABEL} characters: a-z, A-Z, 0-9 and - _ . @ +"
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -43,7 +76,7 @@ pub struct Source {
     pub scanned_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Found {
     pub pname: String,
     #[serde(default, deserialize_with = "null_as_empty")]
@@ -52,6 +85,13 @@ pub struct Found {
     /// public list has it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attr: Option<String>,
+    /// The indices in `Report::outputs` of the outputs that hold it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<usize>,
+    /// Its derivations, or its store paths for a `--runtime` scan, for
+    /// `why`. They never leave the machine.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
 }
 
 fn null_as_empty<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -167,6 +207,10 @@ pub struct Upload {
     /// Only with `--public-flake`: the set shows on the public profile.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub public_flake: Option<PublicFlake>,
+    /// Only with `--with-outputs`: the labels of the outputs, such as host
+    /// names. `Entry::outputs` points here.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -190,7 +234,7 @@ pub struct UploadSource {
     pub index_rev: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub attr: String,
@@ -200,6 +244,9 @@ pub struct Entry {
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub modified: bool,
+    /// The indices in `Upload::outputs` of the outputs that hold it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outputs: Vec<usize>,
 }
 
 /// Closure entries with no public name: counted, never listed.
@@ -230,7 +277,27 @@ impl Report {
     /// only when the list has it for that attribute; any other version
     /// becomes `null` with `modified`. The source name never goes.
     pub fn strict(&self, list: &PublicList) -> Upload {
-        let mut kept = BTreeSet::new();
+        self.strict_with(list, false)
+    }
+
+    /// `with_outputs` adds the label of each output, and to each entry the
+    /// outputs that hold it. Two outputs with one label are one output.
+    pub fn strict_with(&self, list: &PublicList, with_outputs: bool) -> Upload {
+        let mut labels: Vec<String> = Vec::new();
+        let mut slot: Vec<usize> = Vec::new();
+        if with_outputs {
+            for o in &self.outputs {
+                let i = match labels.iter().position(|l| *l == o.label) {
+                    Some(i) => i,
+                    None => {
+                        labels.push(o.label.clone());
+                        labels.len() - 1
+                    }
+                };
+                slot.push(i);
+            }
+        }
+        let mut kept: BTreeMap<Entry, BTreeSet<usize>> = BTreeMap::new();
         let mut unknown = 0;
         for f in &self.packages {
             let candidates = list.candidates(f);
@@ -244,19 +311,23 @@ impl Report {
                     pname: list.attrs[*a].0.clone(),
                     version: Some(f.version.clone()),
                     modified: false,
+                    outputs: Vec::new(),
                 },
                 (None, Some(a)) => Entry {
                     attr: a.to_string(),
                     pname: list.attrs[*a].0.clone(),
                     version: None,
                     modified: true,
+                    outputs: Vec::new(),
                 },
                 (None, None) => {
                     unknown += 1;
                     continue;
                 }
             };
-            kept.insert(entry);
+            kept.entry(entry)
+                .or_default()
+                .extend(f.outputs.iter().filter_map(|i| slot.get(*i).copied()));
         }
         Upload {
             schema: SCHEMA,
@@ -268,10 +339,17 @@ impl Report {
                 scanned_at: self.source.scanned_at.clone(),
                 index_rev: Some(list.rev.clone()),
             },
-            packages: kept.into_iter().collect(),
+            packages: kept
+                .into_iter()
+                .map(|(mut e, o)| {
+                    e.outputs = o.into_iter().collect();
+                    e
+                })
+                .collect(),
             omitted: Omitted { unknown },
             name: None,
             public_flake: None,
+            outputs: labels,
         }
     }
 }
@@ -340,6 +418,40 @@ impl Upload {
         }
         Ok((kept, dropped))
     }
+
+    /// The labels of the outputs, and the outputs of each kept attribute:
+    /// at most [`MAX_OUTPUTS`] distinct labels, each index in range.
+    pub fn outputs_of(&self, kept: &BTreeSet<String>) -> Result<crate::store::SetOutputs, String> {
+        if self.outputs.len() > MAX_OUTPUTS {
+            return Err(format!("more than {MAX_OUTPUTS} outputs"));
+        }
+        let mut seen = BTreeSet::new();
+        for l in &self.outputs {
+            check_label(l).map_err(|e| format!("{l:.80}: {e}"))?;
+            if !seen.insert(l) {
+                return Err(format!("the output label {l} is there twice"));
+            }
+        }
+        let mut of: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        for p in &self.packages {
+            if let Some(i) = p.outputs.iter().find(|i| **i >= self.outputs.len()) {
+                return Err(format!("{}: no output {i}", p.attr));
+            }
+            if kept.contains(&p.attr) && !p.outputs.is_empty() {
+                of.entry(p.attr.clone())
+                    .or_default()
+                    .extend(p.outputs.iter().copied());
+            }
+        }
+        let of = of
+            .into_iter()
+            .map(|(a, o)| (a, o.into_iter().collect()))
+            .collect();
+        Ok(crate::store::SetOutputs {
+            labels: self.outputs.clone(),
+            of,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -350,7 +462,7 @@ mod tests {
         Found {
             pname: pname.into(),
             version: version.into(),
-            attr: None,
+            ..Default::default()
         }
     }
 
@@ -384,6 +496,7 @@ mod tests {
             },
             packages,
             files: None,
+            outputs: Vec::new(),
         }
     }
 
@@ -401,19 +514,97 @@ mod tests {
                     attr: "hello".into(),
                     pname: "hello".into(),
                     version: None,
-                    modified: true
+                    modified: true,
+                    ..Default::default()
                 },
                 Entry {
                     attr: "hello".into(),
                     pname: "hello".into(),
                     version: Some("2.12.1".into()),
-                    modified: false
+                    modified: false,
+                    ..Default::default()
                 },
             ]
         );
         let text = serde_json::to_string(&up).unwrap();
         assert!(!text.contains("acme"));
         assert!(text.contains("\"version\":null,\"modified\":true"));
+    }
+
+    fn two_hosts() -> Report {
+        let at = |pname: &str, version: &str, outputs: Vec<usize>| Found {
+            outputs,
+            paths: vec![format!("/nix/store/0000-{pname}-{version}.drv")],
+            ..found(pname, version)
+        };
+        let mut r = report(vec![
+            at("hello", "2.12.1", vec![0, 2]),
+            at("openssl", "3.5.1", vec![1]),
+            at("our-private-daemon", "1.0", vec![1]),
+        ]);
+        r.outputs = ["web-1", "me@box", "web-1"]
+            .iter()
+            .enumerate()
+            .map(|(i, l)| ScanOutput {
+                label: l.to_string(),
+                installable: vec![format!("/home/me/private-tree#out{i}")],
+            })
+            .collect();
+        r
+    }
+
+    #[test]
+    fn the_strict_report_never_carries_a_store_path_or_an_installable() {
+        for with in [false, true] {
+            let text = serde_json::to_string(&two_hosts().strict_with(&list(), with)).unwrap();
+            assert!(!text.contains("/nix/store"), "{text}");
+            assert!(!text.contains("private"), "{text}");
+            assert!(!text.contains("paths") && !text.contains("installable"));
+            assert_eq!(text.contains("web-1"), with, "{text}");
+        }
+        let plain = serde_json::to_string(&two_hosts().strict(&list())).unwrap();
+        assert!(!plain.contains("outputs"), "{plain}");
+    }
+
+    #[test]
+    fn with_outputs_each_entry_names_its_outputs_once() {
+        let l = list();
+        let up = two_hosts().strict_with(&l, true);
+        assert_eq!(up.outputs, ["web-1", "me@box"]);
+        let of: Vec<(&str, &[usize])> = up
+            .packages
+            .iter()
+            .map(|p| (p.attr.as_str(), p.outputs.as_slice()))
+            .collect();
+        assert_eq!(of, [("hello", &[0][..]), ("openssl_3_5", &[1][..])]);
+        let (kept, _) = up.accepted(&l).unwrap();
+        let o = up.outputs_of(&kept).unwrap();
+        assert_eq!(o.labels, ["web-1", "me@box"]);
+        assert_eq!(o.of["openssl_3_5"], [1]);
+    }
+
+    #[test]
+    fn the_server_checks_the_labels_and_the_indices() {
+        let l = list();
+        let good = two_hosts().strict_with(&l, true);
+        let (kept, _) = good.accepted(&l).unwrap();
+        let mut bad = good.clone();
+        bad.packages[0].outputs = vec![2];
+        assert!(bad.outputs_of(&kept).unwrap_err().contains("no output 2"));
+        for label in ["", "a b", "<b>", "x/y", &"x".repeat(MAX_LABEL + 1)] {
+            let mut bad = good.clone();
+            bad.outputs[0] = label.to_string();
+            assert!(bad.outputs_of(&kept).is_err(), "{label}");
+        }
+        let mut bad = good.clone();
+        bad.outputs[1] = "web-1".into();
+        assert!(bad.outputs_of(&kept).is_err());
+        let mut bad = good.clone();
+        bad.outputs = (0..=MAX_OUTPUTS).map(|i| format!("h{i}")).collect();
+        assert!(bad.outputs_of(&kept).is_err());
+        for ok in ["web-1", "me@box", "devShells.default", "x86_64+y"] {
+            assert_eq!(check_label(ok), Ok(()), "{ok}");
+        }
     }
 
     #[test]
