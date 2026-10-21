@@ -1,31 +1,76 @@
 # The JSON API
 
-All endpoints are under `/api/v1`. `GET /api/v1` lists them. Each endpoint
-only reads, except `POST /api/v1/reports`. No endpoint writes to GitHub.
+All endpoints are under `/api/v1`. `GET /api/v1` lists them, with their
+parameters, their MCP tool and their CLI command. It also lists each page of
+the site and the endpoints that give its data. Each endpoint only reads,
+except `POST /api/v1/reports`. No endpoint writes to GitHub.
 
 The API has no compatibility layer. The project changes, and old paths are
 removed, not redirected.
 
 ## Endpoints
 
-| Endpoint                                      | Returns                                                          |
-| --------------------------------------------- | ---------------------------------------------------------------- |
-| `GET /api/v1`                                 | the list of endpoints                                            |
-| `GET /api/v1/prs`                             | open pull requests in one queue, paged                           |
-| `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
-| `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
-| `GET /api/v1/needs`                           | what waits for you, with your session only (private)             |
-| `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                    |
-| `GET /api/v1/modules/<file>`                  | one NixOS module                                                 |
-| `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
-| `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name              |
-| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month                             |
-| `GET /api/v1/status`                          | the counts and the rules of the queues                           |
-| `GET /api/v1/sync`                            | what the server has read, and how fresh it is                    |
-| `GET /api/v1/events`                          | the event log, as Server-Sent Events (see [data.md](data.md))    |
-| `GET /api/v1/archive/<owner>/<repo>/<number>` | one stored issue or pull request                                 |
-| `GET /api/v1/packages/index`                  | the public package list of the current index (see below)         |
-| `POST /api/v1/reports`                        | uploads a strict package report (see [personal.md](personal.md)) |
+| Endpoint                                      | Returns                                                          | MCP tool         |
+| --------------------------------------------- | ---------------------------------------------------------------- | ---------------- |
+| `GET /api/v1`                                 | the list of endpoints and pages                                  |                  |
+| `GET /api/v1/prs`                             | open pull requests in one queue, paged                           | `prs`            |
+| `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        | `pr`             |
+| `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             | `person`         |
+| `GET /api/v1/needs`                           | what waits for you (private)                                     | `needs`          |
+| `GET /api/v1/mine`                            | your packages, as the filters of `/packages` (private)           | `my_packages`    |
+| `GET /api/v1/sets`                            | your named package sets (private)                                | `my_sets`        |
+| `GET /api/v1/inbox`                           | your inbox (private)                                             | `inbox`          |
+| `GET /api/v1/progress`                        | your progress, your goal and your badges (private)               | `progress`       |
+| `GET /api/v1/search`                          | packages, modules and areas that match a name                    | `search`         |
+| `GET /api/v1/first`                           | packages for a first contribution, paged                         | `first_packages` |
+| `GET /api/v1/need-help`                       | packages with an open advisory, the highest risk first, paged    | `need_help`      |
+| `GET /api/v1/packages/<name>`                 | one package: health, issues and pull requests                    | `package`        |
+| `GET /api/v1/modules/<file>`                  | one NixOS module; `nixos/<name>` also works                      | `module`         |
+| `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     | `area`           |
+| `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name              |                  |
+| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month                             | `metrics`        |
+| `GET /api/v1/status`                          | the counts and the rules of the queues                           | `status`         |
+| `GET /api/v1/sync`                            | what the server has read, and how fresh it is                    | `sync_status`    |
+| `GET /api/v1/events`                          | the event log, as Server-Sent Events (see [data.md](data.md))    |                  |
+| `GET /api/v1/archive/<owner>/<repo>/<number>` | one stored issue or pull request                                 | `archive_item`   |
+| `GET /api/v1/packages/index`                  | the public package list of the current index (see below)         |                  |
+| `POST /api/v1/reports`                        | uploads a strict package report (see [personal.md](personal.md)) |                  |
+
+An endpoint with no tool says why in `GET /api/v1`: a redirect, a stream, a
+list that is too large for one answer, or a write.
+
+## Private endpoints
+
+A private endpoint gives your own data only. It reads your session cookie,
+or your MCP token as `Authorization: Bearer <token>` (see
+[actions.md](actions.md#the-mcp-server)). The token works only while your
+LLM choice is on. Without either, the answer is 401. The answer always has
+`Cache-Control: private, no-store`. No endpoint gives the private data of
+another person.
+
+```sh
+curl -H "Authorization: Bearer $MAINTAINER_MODE_MCP_TOKEN" 'https://<host>/api/v1/mine?filter=machines&set=laptop'
+```
+
+- **`/api/v1/mine`**: the rows of `/packages?filter=<filter>`. `filter` is
+  `mine` (the default), `machines`, `maintain` or `watch`. `set` keeps one of
+  your sets, with `filter=machines`. An unknown set is an error. `q` keeps
+  the names that hold the text. Each row has `key`, `name`, `version`,
+  `machine_version` (the version that your report gave), `why` (`machine`,
+  `maintain` and `watch`), `via_team` and `flags`. The answer also has
+  `sets` (the names of your sets) and `counts` (the rows of each filter).
+  `filter=all` is the public catalog: use `/api/v1/search`.
+- **`/api/v1/sets`**: each of your sets, private and public, with `name`,
+  `source` (`upload`, `flake_upload` or `server_scan`), `public`,
+  `reference`, `output`, `uploaded_at`, `scanned_at`, `expires_at`,
+  `nixpkgs_rev`, `dropped`, `packages` and `scan` (the last server scan, or
+  `null`).
+- **`/api/v1/inbox`**: the events of `/inbox`, the newest first. `kind` is
+  `mine`, `pr`, `issue`, `advisory` or `release`. `sub` keeps one subject,
+  such as `pkg:hello`. Each event has `unread`. The answer also has `unread`
+  (the count in the header) and `subjects`. A read marks nothing read.
+- **`/api/v1/progress`**: the data of `/me/progress`: `reviews_week`,
+  `reviews_month`, `goal`, `counterparties`, `listed` and `badges`.
 
 ## Paging
 
@@ -41,19 +86,21 @@ show twice or not at all.
 
 ## `GET /api/v1/prs`
 
-| Parameter | Meaning                                                                                                |
-| --------- | ------------------------------------------------------------------------------------------------------ |
-| `queue`   | `foryou`, `unowned`, `firsttime`, `bumps`, `all` (the default) or `ready`                              |
-| `section` | with `queue=ready`: `ready` (the default), `maintainer_approved`, `security`, `backports` or `waiting` |
-| `login`   | whose queue, for `foryou` and `bumps`; for `foryou` only, the default is your session                  |
-| `limit`   | rows per page                                                                                          |
-| `cursor`  | the `next_cursor` of the page before                                                                   |
+| Parameter | Meaning                                                                                                         |
+| --------- | --------------------------------------------------------------------------------------------------------------- |
+| `queue`   | `foryou`, `unowned`, `firsttime`, `bumps`, `all` (the default) or `ready`                                       |
+| `section` | with `queue=ready`: `ready` (the default), `yours`, `maintainer_approved`, `security`, `backports` or `waiting` |
+| `login`   | whose queue, for `foryou` and `bumps`; for `foryou` only, the default is the caller                             |
+| `limit`   | rows per page                                                                                                   |
+| `cursor`  | the `next_cursor` of the page before                                                                            |
 
 The queues:
 
 - **`foryou`**: pull requests that need review and touch what `login`
-  maintains, owns in `ci/OWNERS` or changed this year. It needs `login` or a
-  session.
+  maintains, owns in `ci/OWNERS` or changed this year. It needs `login`, a
+  session or an MCP token. For your own login, it is the For you tab of
+  `/review`: the packages of your machines first, then what you maintain,
+  then what you watch.
 - **`unowned`**: pull requests that need review, with no maintainer.
 - **`firsttime`**: first contributions with no review from another person,
   the oldest first. See [personal.md](personal.md#first-timers). The author
@@ -62,10 +109,11 @@ The queues:
   that login maintains.
 - **`all`**: every pull request that needs review, the oldest first.
 - **`ready`**: pull requests ready to merge. The other sections are the lists
-  of the committer view.
+  of the committer view. `yours` is the section "In your areas": it needs
+  your own login, and you must be a committer. Each row has `why`.
 
-Your subscriptions and tags are private. They count only when `login` is your own
-session. Then the answer has `Cache-Control: private, no-store`.
+Your machines, subscriptions and tags are private. They count only when
+`login` is the caller. Then the answer has `Cache-Control: private, no-store`.
 
 ```sh
 curl 'https://<host>/api/v1/prs?queue=unowned&limit=10'
@@ -145,10 +193,9 @@ them.
 It gives the items of [Needs you](personal.md#needs-you): what waits for you,
 the most urgent first. It also gives the follow-up plan of each of your open
 pull requests, and the events of your own pull requests (see
-[Your pull requests](personal.md#your-pull-requests)). It reads your session
-cookie only. Without a session, the answer is 401. The answer always has
-`Cache-Control: private, no-store`. Snoozed items are not in it. The MCP tool
-`needs` gives the same answer.
+[Your pull requests](personal.md#your-pull-requests)). It is private (see
+[Private endpoints](#private-endpoints)). Snoozed items are not in it. The
+MCP tool `needs` gives the same answer.
 
 `mood` keeps the items of one mood: `all` (the default), `mine`, `machines`,
 `review` or `maintain`. `counts` always gives the count of each mood. `mood`
@@ -256,21 +303,68 @@ answer is 503.
 ## The command line
 
 The CLI reads the same API. `--server` sets the host, and `--json` prints the
-raw answer.
+raw answer. For a private endpoint, put your MCP token in
+`MAINTAINER_MODE_MCP_TOKEN`.
 
 | Command                               | Endpoint                                            |
 | ------------------------------------- | --------------------------------------------------- |
 | `maintainer-mode prs --queue <queue>` | `/api/v1/prs`                                       |
+| `maintainer-mode pr <number>`         | `/api/v1/prs/<number>`                              |
 | `maintainer-mode record <login>`      | `/api/v1/people/<login>`                            |
 | `maintainer-mode maintains <login>`   | `/api/v1/people/<login>`                            |
 | `maintainer-mode check <login>`       | `/api/v1/people/<login>`                            |
 | `maintainer-mode show <name>`         | `/api/v1/find/<name>`                               |
+| `maintainer-mode search <query>`      | `/api/v1/search`                                    |
+| `maintainer-mode first`               | `/api/v1/first`                                     |
+| `maintainer-mode needs`               | `/api/v1/needs` (private)                           |
+| `maintainer-mode mine`                | `/api/v1/mine` (private)                            |
 | `maintainer-mode metrics`             | `/api/v1/metrics`                                   |
+| `maintainer-mode get <path>`          | any GET endpoint, such as `/api/v1/sets`            |
 | `maintainer-mode export`              | `/api/v1/packages/index`                            |
 | `maintainer-mode submit`              | `/api/v1/packages/index` and `POST /api/v1/reports` |
 
-`prs` takes `--section`, `--login`, `--limit` and `--cursor`. It prints the
-next cursor on stderr.
+`prs` takes `--section`, `--login`, `--limit` and `--cursor`. `mine` takes
+`--filter`, `--set`, `--query`, `--limit` and `--cursor`. `needs` takes
+`--mood`. `prs` and `mine` print the next cursor on stderr. `get` always
+prints the JSON.
 
-The MCP server has the same data in its tools `prs` and `person` (see
-[actions.md](actions.md)).
+The MCP server has the same data. Each endpoint with a tool gives the same
+JSON as that tool. See [actions.md](actions.md#the-mcp-server).
+
+## Keep the API in sync with the site
+
+Each capability of the site is also in the API, in the MCP server and in the
+CLI. One table in `src/api.rs` holds them:
+
+- `ENDPOINTS` gives each endpoint: its path, its description, its
+  parameters, whether it is private, its MCP tool and its CLI command. When
+  an endpoint has no tool or no command, the table says why. `GET /api/v1`,
+  the routes of the JSON answers and the MCP `tools/list` come from it.
+- `PAGES` gives each view of the site: a page route, a tab, a filter, a
+  section of a page or a section of `/me/settings`. For each view, it gives
+  the endpoints that give its data, or why there is none.
+- `answer` builds the JSON of each endpoint that has a tool. The API and the
+  MCP server both call it, so their answers are the same.
+
+`cargo test` fails when:
+
+- a GET page route, or a value of a tab, a filter, a section or a mood, is
+  not in `PAGES`;
+- a target in `PAGES` is not in `ENDPOINTS`, or has a parameter value that
+  the endpoint does not take;
+- an `/api/v1` route is not in `ENDPOINTS`, or the reverse;
+- an endpoint with a tool has no builder in `answer`, or a CLI command in the
+  table does not exist.
+
+To add a capability:
+
+1. Write a function that gives its JSON, next to the page.
+2. Add a row to `ENDPOINTS` with its parameters, its MCP tool and its CLI
+   command. A private endpoint sets `private: true`.
+3. Add a branch to `answer` that calls the function.
+4. Add the page, or its tab or filter, to `PAGES`.
+5. Add the endpoint to the table at the top of this file, and the tool to
+   [actions.md](actions.md#the-mcp-server).
+
+The MCP server only reads. A public endpoint never gives the private data of
+a person.

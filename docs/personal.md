@@ -322,7 +322,7 @@ Sign in, and `/review` opens on **For you**. For you looks at the packages of yo
 
 Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these tabs are not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
-The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts. The API never reads your machine report, and it keeps the number order. See [api.md](api.md).
+The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own MCP token asks for your login. Then the answer has the rows and the order of the tab. In all other cases only your public area counts, in number order. See [api.md](api.md).
 
 ### First-timers
 
@@ -555,8 +555,10 @@ revokes it.
   at once.
 - **Access.** Only the owner sees the "On my machines" filter and the
   "on your machines" marks. There is no admin view. No public page, count or
-  API uses a private set. A public flake set shows only on the profile and
-  in `GET /api/v1/people/<login>`.
+  API uses a private set. The private endpoints `/api/v1/sets` and
+  `/api/v1/mine` and their MCP tools give your sets to you only (see
+  [api.md](api.md#private-endpoints)). A public flake set shows only on the
+  profile and in `GET /api/v1/people/<login>`.
 
 **Old data.** Before names, a person had one uploaded set and a list of
 scanned flakes. The upload became the set `default`, because `submit`
