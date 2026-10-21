@@ -653,6 +653,8 @@ fn check(e: &Endpoint, a: &Args) -> Result<(), String> {
 pub(crate) enum Fail {
     Bad(String),
     Missing(String),
+    /// A pull request that is not in the synced data: its GitHub URL helps.
+    Unsynced(u64),
     SignIn,
     Failed(String),
 }
@@ -661,14 +663,24 @@ impl Fail {
     pub(crate) fn text(self) -> String {
         match self {
             Fail::Bad(m) | Fail::Missing(m) | Fail::Failed(m) => m,
+            Fail::Unsynced(n) => crate::prpage::not_in_data(n),
             Fail::SignIn => "sign in first, or send your MCP token".into(),
+        }
+    }
+
+    fn json(self) -> Value {
+        match self {
+            Fail::Unsynced(n) => {
+                json!({ "error": Fail::Unsynced(n).text(), "url": crate::prpage::github_url(n) })
+            }
+            f => json!({ "error": f.text() }),
         }
     }
 
     fn code(&self) -> StatusCode {
         match self {
             Fail::Bad(_) => StatusCode::BAD_REQUEST,
-            Fail::Missing(_) => StatusCode::NOT_FOUND,
+            Fail::Missing(_) | Fail::Unsynced(_) => StatusCode::NOT_FOUND,
             Fail::SignIn => StatusCode::UNAUTHORIZED,
             Fail::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -708,7 +720,7 @@ pub(crate) async fn answer(
             let n = a.number.unwrap_or_default();
             crate::prpage::pr_value(app, n)
                 .await
-                .ok_or_else(|| Fail::Missing(crate::prpage::not_in_data(n)))?
+                .ok_or(Fail::Unsynced(n))?
         }
         "/api/v1/people/:login" => person_value(app, &text(&a.login)),
         "/api/v1/needs" => {
@@ -831,7 +843,7 @@ pub(crate) async fn reply(
 ) -> Response {
     let fail = |f: Fail| {
         let code = f.code();
-        (code, Json(json!({ "error": f.text() }))).into_response()
+        (code, Json(f.json())).into_response()
     };
     for (k, v) in path {
         let int = e
