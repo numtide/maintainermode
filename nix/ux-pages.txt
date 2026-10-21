@@ -18,6 +18,7 @@ both /
 signed-in /?mood=mine
 signed-in /?mood=review
 public /review?tab=unowned
+both /review?tab=firsttime
 public /review?tab=bumps
 public /review?tab=all
 both /review?tab=ready

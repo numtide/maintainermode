@@ -352,6 +352,28 @@ fn people(logins: &[String]) -> String {
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
 pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
+    rows(entries, act, false)
+}
+
+/// As [`entry_rows`], with the age as the time the author has waited.
+pub(crate) fn waiting_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
+    rows(entries, act, true)
+}
+
+/// "11 months", "3 weeks": for a sentence, where `ago` is for a column.
+pub(crate) fn age_words(t: DateTime<Utc>) -> String {
+    let days = (Utc::now() - t).num_days().max(0);
+    let (n, unit) = match days {
+        0 => return "less than a day".into(),
+        d if d < 14 => (d, "day"),
+        d if d < 60 => (d / 7, "week"),
+        d if d < 730 => (d / 30, "month"),
+        d => (d / 365, "year"),
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
     use crate::ui::{Kind, Tone, badge, item_row};
     let mut out = String::new();
     for e in entries {
@@ -362,10 +384,17 @@ pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String
         if e.unowned {
             badges.push(badge(Tone::Attention, "no maintainer"));
         }
+        let age = if waiting {
+            format!(
+                "<span class=\"color-fg-attention text-bold\">waiting {}</span>",
+                age_words(e.created_at)
+            )
+        } else {
+            format!("{} old", ago(e.created_at))
+        };
         let mut meta = format!(
-            "#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
+            "#{} by <a href=\"/u/{a}\">{a}</a> · {age} · <span class=\"branch-name\">{}</span>",
             e.number,
-            ago(e.created_at),
             esc(&e.base),
             a = esc(&e.author)
         );
@@ -396,6 +425,7 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
     match b {
         "foryou" | "mine" => Some("foryou"),
         "unowned" => Some("unowned"),
+        "firsttime" => Some("firsttime"),
         "all" => Some("all"),
         _ => None,
     }
@@ -451,11 +481,15 @@ pub(crate) fn review_bucket<'a>(
     bucket: &str,
 ) -> Vec<&'a Entry> {
     let interest = Interest::of(s, viewer, own);
-    s.queues
-        .review
-        .iter()
+    let name = bucket_name(bucket);
+    let list = if name == Some("firsttime") {
+        &s.queues.firsttime
+    } else {
+        &s.queues.review
+    };
+    list.iter()
         .filter(|e| Some(e.author.as_str()) != viewer)
-        .filter(|e| match bucket_name(bucket) {
+        .filter(|e| match name {
             Some("foryou") => interest.maintains(e) || interest.watches(e),
             Some("unowned") => e.unowned,
             _ => true,

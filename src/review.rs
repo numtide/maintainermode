@@ -8,14 +8,15 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::ui::{Page, Section, Tab, empty, pager, section};
-use crate::web::{Shared, entry_rows, octicon, review_bucket, watched_of};
+use crate::web::{Shared, entry_rows, octicon, review_bucket, waiting_rows, watched_of};
 
 pub(crate) const PAGE: usize = 50;
 const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
-const TABS: [(&str, &str); 5] = [
+const TABS: [(&str, &str); 6] = [
     ("foryou", "For you"),
     ("unowned", "No maintainer"),
+    ("firsttime", "First-timers"),
     ("bumps", "Bumps"),
     ("all", "All"),
     ("ready", "Ready to merge"),
@@ -87,6 +88,7 @@ fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
     match asked {
         Some("foryou") if signed_in => "foryou",
         Some("unowned") => "unowned",
+        Some("firsttime") => "firsttime",
         Some("bumps") => "bumps",
         Some("all") => "all",
         Some("ready") => "ready",
@@ -99,6 +101,15 @@ const NO_MAINTAINER: &str = "<div class=\"callout mb-3\">No maintainer, team or 
 A first review needs no special knowledge. Is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
 Are the hashes fixed-output and pinned? Are the <code>platforms</code> correct? Does a CLI have <code>versionCheckHook</code>? \
 Write each finding as a comment on the changed line. A review here gets full credit at any age.</div>";
+
+fn first_timers() -> String {
+    format!(
+        "<div class=\"callout mb-3\">First contributions that no one but the author has reviewed, the oldest first. \
+         A first answer decides if a new contributor stays: start at the top. \
+         <a href=\"{}#how-to-review-pull-requests\">How to review</a></div>",
+        crate::web::CONTRIBUTING
+    )
+}
 
 async fn review_page(
     State(app): State<Shared>,
@@ -144,6 +155,7 @@ async fn review_page(
                 } else {
                     paged(&entries, q.after, |e| e.number)
                 };
+                let first = first_timers();
                 let (title, intro) = match tab {
                     "foryou" => (
                         "For you",
@@ -151,6 +163,7 @@ async fn review_page(
                          own in <code>ci/OWNERS</code>, changed this year or tagged. Then those on what you <a href=\"/packages?filter=watch\">watch</a>. Oldest first in each group.</p>",
                     ),
                     "unowned" => ("No maintainer", NO_MAINTAINER),
+                    "firsttime" => ("First-timers", first.as_str()),
                     _ => (
                         "All",
                         "<p>Every pull request <a href=\"/state?tab=rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>",
@@ -158,6 +171,8 @@ async fn review_page(
                 };
                 let rows = if page.is_empty() {
                     empty("Nothing here.")
+                } else if tab == "firsttime" {
+                    waiting_rows(page, act)
                 } else {
                     entry_rows(page, act)
                 };
@@ -245,6 +260,7 @@ mod tests {
         assert_eq!(tab_id(Some("foryou"), false), "unowned");
         assert_eq!(tab_id(None, true), "foryou");
         assert_eq!(tab_id(Some("ready"), false), "ready");
+        assert_eq!(tab_id(Some("firsttime"), false), "firsttime");
         assert_eq!(tab_id(Some("nonsense"), false), "unowned");
     }
 }

@@ -225,7 +225,7 @@ enum Command {
         )]
         db: PathBuf,
     },
-    /// Open pull requests in one queue: foryou (needs --login), unowned,
+    /// Open pull requests in one queue: foryou (needs --login), unowned, firsttime,
     /// bumps, all, or ready
     Prs {
         #[arg(long, default_value = "all", value_parser = api::QUEUES)]
@@ -634,9 +634,16 @@ macro_rules! out {
 }
 
 fn print_entries(v: &Value) -> Result<()> {
+    let waiting = v["queue"] == "firsttime";
     for e in v["items"].as_array().into_iter().flatten() {
+        let age = e["created_at"]
+            .as_str()
+            .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+            .filter(|_| waiting)
+            .map(|t| format!("  (waiting {})", web::age_words(t.to_utc())))
+            .unwrap_or_default();
         out!(
-            "#{:<7} {:<20} {}",
+            "#{:<7} {:<20} {}{age}",
             e["number"],
             e["author"].as_str().unwrap_or(""),
             e["title"].as_str().unwrap_or("")

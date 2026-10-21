@@ -31,6 +31,31 @@ pub struct Entry {
 pub struct Queues {
     pub merge: Vec<Entry>,
     pub review: Vec<Entry>,
+    /// First contributions that wait for their first review, oldest first.
+    /// Any author, listed or not.
+    pub firsttime: Vec<Entry>,
+}
+
+/// The label the nixpkgs bot puts on the pull request of a new contributor.
+pub const FIRST_LABEL: &str = "12.first-time contribution";
+
+pub fn is_first_contribution(pr: &Pr) -> bool {
+    matches!(
+        pr.association.as_str(),
+        "FIRST_TIME_CONTRIBUTOR" | "FIRST_TIMER"
+    ) || pr.labels.iter().any(|l| l == FIRST_LABEL)
+}
+
+/// Only reviews count as an answer: comments of other people are not stored.
+pub fn first_timer_waits(pr: &Pr) -> bool {
+    pr.is_open()
+        && !pr.is_draft
+        && !pr.author_is_bot
+        && is_first_contribution(pr)
+        && pr
+            .reviews
+            .iter()
+            .all(|r| r.author == pr.author || r.author_is_bot)
 }
 
 pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -> Entry {
@@ -111,6 +136,12 @@ pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queu
             q.review.push(e);
         }
     }
+    for pr in prs.iter().filter(|p| first_timer_waits(p)) {
+        let mut e = entry(pr, ledger, &credited);
+        e.unowned = unowned(pr);
+        q.firsttime.push(e);
+    }
+    q.firsttime.sort_by_key(|e| (e.created_at, e.number));
     // the merge queue rewards those who help; the review queue drains the
     // backlog from its oldest end, which is also where credit is full
     q.merge.sort_by(|a, b| {
@@ -120,4 +151,64 @@ pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queu
     });
     q.review.sort_by_key(|e| (e.created_at, e.number));
     q
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ledger::tests::{pr, review};
+
+    fn first(number: u64, created: i64) -> Pr {
+        let mut p = pr(number, &format!("new{number}"), created);
+        p.association = "FIRST_TIME_CONTRIBUTOR".into();
+        p
+    }
+
+    #[test]
+    fn a_first_timer_waits_until_someone_else_reviews() {
+        assert!(first_timer_waits(&first(1, 0)));
+        let mut by_label = pr(2, "x", 0);
+        assert!(!first_timer_waits(&by_label));
+        by_label.labels.push(FIRST_LABEL.into());
+        assert!(first_timer_waits(&by_label));
+        let mut timer = pr(3, "x", 0);
+        timer.association = "FIRST_TIMER".into();
+        assert!(first_timer_waits(&timer));
+
+        let mut own = first(4, 0);
+        own.reviews.push(review(1, "new4", 1));
+        let mut bot = review(2, "ci[bot]", 1);
+        bot.author_is_bot = true;
+        own.reviews.push(bot);
+        assert!(first_timer_waits(&own));
+        own.reviews.push(review(3, "helper", 2));
+        assert!(!first_timer_waits(&own));
+
+        let mut draft = first(5, 0);
+        draft.is_draft = true;
+        let mut closed = first(6, 0);
+        closed.state = "CLOSED".into();
+        let mut from_bot = first(7, 0);
+        from_bot.author_is_bot = true;
+        let mut known = first(8, 0);
+        known.association = "CONTRIBUTOR".into();
+        for p in [draft, closed, from_bot, known] {
+            assert!(!first_timer_waits(&p), "#{}", p.number);
+        }
+    }
+
+    #[test]
+    fn the_oldest_first_timer_comes_first_listed_or_not() {
+        let prs = vec![
+            first(30, 5),
+            first(20, -300),
+            first(10, -300),
+            pr(40, "x", -400),
+        ];
+        let q = build(&prs, &Ledger::default(), |p| p.number == 10);
+        let order: Vec<u64> = q.firsttime.iter().map(|e| e.number).collect();
+        assert_eq!(order, [10, 20, 30]);
+        assert!(q.firsttime[0].unowned && !q.firsttime[1].unowned);
+        assert!(q.review.is_empty());
+    }
 }
