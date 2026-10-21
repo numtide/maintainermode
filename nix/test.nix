@@ -410,6 +410,18 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '<feed xmlns=\"http://www.w3.org/2005/Atom\">' /tmp/feed.xml && grep -q '<id>http://' /tmp/feed.xml && grep -q '<updated>' /tmp/feed.xml")
     form("/me/upload-token", "/tmp/f-upload", code=200)
     machine.succeed("grep -o 'value=\"[0-9a-f]\\{64\\}\" aria-label=\"upload token\"' /tmp/f-upload | cut -d'\"' -f2 > /tmp/upload.token && test -s /tmp/upload.token")
+    # login: the tool waits until alice confirms its code, then saves a token only she can read
+    machine.succeed("mkdir -p /tmp/lh")
+    machine.succeed(f"HOME=/tmp/lh maintainer-mode --server {base} login < /dev/null > /dev/null 2> /tmp/login.err &")
+    code = machine.wait_until_succeeds("grep -o 'code [A-Z]\\{4\\}-[A-Z]\\{4\\}' /tmp/login.err | cut -d' ' -f2 | grep .").strip()
+    signed_in(f"/login/cli?code={code}", "/tmp/s-cli")
+    machine.succeed(f"grep -q 'value=\"{code}\" autocomplete' /tmp/s-cli")
+    form("/login/cli", "/tmp/f-cli-bad", "-d code=BBBB-BBBB", 404)
+    form("/login/cli", "/tmp/f-cli", f"-d code={code.lower()}", 200)
+    machine.wait_until_succeeds("grep -q 'Signed in as alice' /tmp/login.err")
+    machine.succeed("test $(stat -c %a /tmp/lh/.config/maintainer-mode/upload-token) = 600")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"device_code\":\"x\"}' http://127.0.0.1:8790/api/v1/login/poll > /tmp/poll.code && grep -qx 404 /tmp/poll.code")
+    machine.succeed("curl -s -D /tmp/cli-out.h -o /dev/null 'http://127.0.0.1:8790/login/cli?code=bbbb-bbbb' && grep -qi '^location: /auth/login?next=%2Flogin%2Fcli%3Fcode%3DBBBB-BBBB' /tmp/cli-out.h")
     # email needs SMTP, which the VM does not have, so root stores the address
     machine.succeed(
         f"sqlite3 -cmd '.timeout 5000' {db} "

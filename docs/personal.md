@@ -417,15 +417,17 @@ address:
    nix shell github:numtide/maintainermode
    ```
 
-2. Make an upload token on `/me/settings#upload`. The server shows it once.
-   Save it in a file that only you can read:
+2. Sign in. The tool shows a link and a code. Open the link, check that the
+   page shows the same code, and confirm:
 
    ```sh
-   mkdir -p ~/.config/maintainer-mode
-   (umask 077; cat > ~/.config/maintainer-mode/upload-token)
+   maintainer-mode login
    ```
 
-   Paste the token, then push Enter and Ctrl-D. You can also put the token in
+   The tool saves a new upload token in
+   `~/.config/maintainer-mode/upload-token` (or under `$XDG_CONFIG_HOME`).
+   Only you can read the file. A new token replaces the one you had. For CI,
+   make a token with the button on `/me/settings#upload` and put it in
    `MAINTAINER_MODE_UPLOAD_TOKEN`.
 
 3. In the repository of your NixOS configuration, read its packages:
@@ -444,11 +446,13 @@ address:
 4. Send them. `export` is optional: it shows the report before you send it.
 
    ```sh
-   maintainer-mode --server https://<server> export
-   maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token --name laptop
+   maintainer-mode export
+   maintainer-mode submit --name home
    ```
 
-   Use one name for each machine. Without `--name`, the set is `default`.
+   Use one name for each flake, such as `home`. Without `--name`, the set is
+   `default`.
+   For another server, add `--server https://<server>` to each command.
 
 What each command does:
 
@@ -482,10 +486,16 @@ packages.x86_64-linux.broken` leaves that one. Repeat it for several. It
 - **`export`** downloads the public package list of `--server` from
   `GET /api/v1/packages/index`. `--index-file` reads a saved copy instead.
   Then it writes the strict report. Read it before you send it.
-- **`submit`** does the same as `export`, with the list of `--to`. Then it
-  sends the strict report to `POST /api/v1/reports`. It reads the upload
-  token from `MAINTAINER_MODE_UPLOAD_TOKEN`, or from the file of
-  `--token-file`. `--name` gives the name of the set. `--public-flake
+- **`login`** asks `--server` for a code, then waits while you confirm it
+  on `/login/cli`. You must be signed in on the site. Then it saves the new
+  upload token. Confirm only a code that your own terminal shows: a person
+  who sends you a link with their code gets your upload token. The code
+  expires after 10 minutes.
+- **`submit`** does the same as `export`, with the list of `--to` (default
+  `--server`). Then it sends the strict report to `POST /api/v1/reports`. It
+  reads the upload token from `MAINTAINER_MODE_UPLOAD_TOKEN`, from the file
+  of `--token-file`, or from the file that `login` saved. `--name` gives the
+  name of the set. `--public-flake
 REFERENCE#OUTPUT` makes it a public flake set; see
   [Public flake sets](#public-flake-sets).
 
@@ -542,9 +552,17 @@ numbers. The admin of the server can read its database. The server deletes
 a report 90 days after the upload, and "Delete my report" deletes it at
 once.
 
-**The upload token.** Make it in `/me/settings#upload`. The server shows it once and
-keeps only its SHA-256 hash. A new token replaces the old one. One button
-revokes it.
+**The upload token.** `maintainer-mode login` gets one, or the button in
+`/me/settings#upload` makes one. The server shows a token once and keeps
+only its SHA-256 hash. You have one token: a new one replaces the old one.
+One button revokes it. A token can only send your package sets.
+
+`login` uses a device code. The tool asks `POST /api/v1/login` for a code,
+and the server keeps it in memory for 10 minutes. You open `/login/cli`,
+sign in if you must (the sign-in brings you back to the page), and confirm
+the code. The tool asks `POST /api/v1/login/poll` every 2 seconds. After
+you confirm, the server gives the token once and forgets the code. A
+restart of the server forgets all codes.
 
 **What the server does with a report.**
 
@@ -613,7 +631,7 @@ can be public: `github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an
 
   ```sh
   maintainer-mode scan --flake github:OWNER/REPO --output nixosConfigurations.HOST.config.system.build.toplevel
-  maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token \
+  maintainer-mode submit \
     --name web-1 --public-flake github:OWNER/REPO#nixosConfigurations.HOST.config.system.build.toplevel
   ```
 

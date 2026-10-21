@@ -557,10 +557,16 @@ fn shared(app: &App) -> String {
 }
 
 const TOKEN_FILE: &str = "~/.config/maintainer-mode/upload-token";
+pub(crate) const PUBLIC_SERVER: &str = "https://maintainermode.org";
 
 /// The whole way from nothing to a report on the server. `token` is the
-/// new token, shown once; without it, step 2 points to the button.
+/// new token, shown once; without it, step 2 is `login`.
 fn steps(base: &str, token: Option<&str>) -> String {
+    let server = if base == PUBLIC_SERVER {
+        String::new()
+    } else {
+        format!(" --server {base}")
+    };
     let step = |title: &str, body: &str, cmd: &str| {
         let pre = if cmd.is_empty() {
             String::new()
@@ -580,9 +586,13 @@ fn steps(base: &str, token: Option<&str>) -> String {
             &save,
         ),
         None => step(
-            "Make an upload token",
-            "with the button below. The server shows it once, with the command that saves it.",
-            "",
+            "Sign in.",
+            &format!(
+                "The tool shows a link and a code. Open the link, check the code and confirm. \
+                 The tool saves an upload token in <code>{TOKEN_FILE}</code>, which only you can read. \
+                 It replaces any token you made before. For CI, the button below makes a token to put in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code>."
+            ),
+            &format!("maintainer-mode{server} login"),
         ),
     };
     [
@@ -603,9 +613,9 @@ fn steps(base: &str, token: Option<&str>) -> String {
             "Send them.",
             "The tool downloads the public package list of the server, keeps only those names, and sends a version only when nixpkgs has it. \
              <code>export</code> prints the exact report that <code>submit</code> sends. Read it first. \
-             Give each machine its own set with <code>--name</code>, such as <code>--name laptop</code>. A new upload replaces the set of that name.",
+             Give each flake its own set with <code>--name</code>, such as <code>--name home</code>. A new upload replaces the set of that name.",
             &format!(
-                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE} --name laptop"
+                "maintainer-mode{server} export\nmaintainer-mode{server} submit --name home"
             ),
         ),
     ]
@@ -730,12 +740,14 @@ pub(crate) mod tests {
         let s = steps("https://example.org", None);
         let tool = s.find("nix shell github:numtide/maintainermode").unwrap();
         assert!(tool < s.find("maintainer-mode scan").unwrap());
+        assert!(s.contains("--server https://example.org login"));
         assert!(s.contains("--server https://example.org export"));
-        assert!(s.contains(
-            "submit --to https://example.org --token-file ~/.config/maintainer-mode/upload-token"
-        ));
+        assert!(s.contains("--server https://example.org submit --name home"));
         assert!(!s.contains("umask"));
         assert!(steps("https://example.org", Some("t")).contains("umask 077"));
+        let public = steps(PUBLIC_SERVER, None);
+        assert!(public.contains("maintainer-mode login"));
+        assert!(!public.contains("--server"));
     }
 
     #[test]

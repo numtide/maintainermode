@@ -8,6 +8,7 @@ mod attrs;
 mod bumps;
 mod catalog;
 mod channels;
+mod cli_login;
 mod committer;
 mod dossier;
 #[cfg(test)]
@@ -118,12 +119,12 @@ struct Cli {
     history_since: chrono::NaiveDate,
     #[arg(long, global = true)]
     json: bool,
-    /// Where the query commands read from.
+    /// The server that the query, export, submit and login commands use.
     #[arg(
         long,
         global = true,
         env = "MAINTAINER_MODE_SERVER",
-        default_value = "http://127.0.0.1:8790"
+        default_value = sets::PUBLIC_SERVER
     )]
     server: String,
     #[command(subcommand)]
@@ -304,7 +305,8 @@ enum Command {
         to: Option<String>,
         #[arg(long, default_value = SCAN_FILE)]
         report: PathBuf,
-        /// File holding the upload token; MAINTAINER_MODE_UPLOAD_TOKEN wins over it
+        /// File holding the upload token, instead of the one that `login`
+        /// saves; MAINTAINER_MODE_UPLOAD_TOKEN wins over both
         #[arg(long)]
         token_file: Option<PathBuf>,
         /// A saved copy of /api/v1/packages/index, instead of a download
@@ -319,6 +321,10 @@ enum Command {
         #[arg(long, requires = "name")]
         public_flake: Option<String>,
     },
+    /// Get an upload token from --server: confirm a code on the site, and
+    /// the token goes to ~/.config/maintainer-mode/upload-token. It
+    /// replaces the token you had.
+    Login,
 }
 
 #[derive(Subcommand)]
@@ -409,9 +415,19 @@ async fn submit(
     let flake = flake.as_deref().map(public_flake).transpose()?;
     let token = match std::env::var("MAINTAINER_MODE_UPLOAD_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
-        _ => read_secret(&token_file)?.context(
-            "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/settings#upload",
-        )?,
+        _ => match token_file {
+            Some(f) => read_secret(&Some(f))?.unwrap_or_default(),
+            None => {
+                let f = token_path()?;
+                match std::fs::read_to_string(&f) {
+                    Ok(t) => t.trim().to_string(),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        bail!("no upload token: run `maintainer-mode login` first")
+                    }
+                    Err(e) => return Err(e).with_context(|| format!("read {}", f.display())),
+                }
+            }
+        },
     };
     let mut report = strict(server, path, index_file).await?;
     report.name = name;
@@ -434,6 +450,82 @@ async fn submit(
     print_omitted(&report);
     println!("{body}");
     Ok(())
+}
+
+fn token_path() -> Result<PathBuf> {
+    let config = match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".config"),
+    };
+    Ok(config.join("maintainer-mode").join("upload-token"))
+}
+
+fn save_token(token: &str) -> Result<PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let path = token_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    }
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)
+        .with_context(|| format!("write {}", path.display()))?;
+    f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    writeln!(f, "{token}")?;
+    Ok(path)
+}
+
+async fn api_post(url: &str, body: &Value) -> Result<(reqwest::StatusCode, Value)> {
+    let resp = github::http().post(url).json(body).send().await?;
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        bail!(
+            "{url}: {status}: {}",
+            body["error"].as_str().unwrap_or("no reason given")
+        );
+    }
+    Ok((status, body))
+}
+
+async fn login(server: &str) -> Result<()> {
+    let base = server.trim_end_matches('/');
+    let (_, start) = api_post(&format!("{base}/api/v1/login"), &Value::Null).await?;
+    let device = start["device_code"].as_str().context("no device_code")?;
+    let interval = start["interval"]
+        .as_u64()
+        .unwrap_or(cli_login::INTERVAL_SECONDS);
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_secs(start["expires_in"].as_u64().unwrap_or(600));
+    eprintln!(
+        "Open {}\nand confirm the code {}.",
+        start["url"].as_str().unwrap_or(base),
+        start["user_code"].as_str().unwrap_or("?")
+    );
+    let poll = format!("{base}/api/v1/login/poll");
+    let body = serde_json::json!({ "device_code": device });
+    loop {
+        if std::time::Instant::now() > deadline {
+            bail!("the code expired; run login again");
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+        let (status, v) = api_post(&poll, &body).await?;
+        if status == reqwest::StatusCode::ACCEPTED {
+            continue;
+        }
+        let token = v["token"].as_str().context("no token in the answer")?;
+        let path = save_token(token)?;
+        eprintln!(
+            "Signed in as {}. The upload token is in {}.",
+            v["login"].as_str().unwrap_or("?"),
+            path.display()
+        );
+        return Ok(());
+    }
 }
 
 /// Where the daily copy of the event log goes. Unset turns the copy off.
@@ -1214,6 +1306,10 @@ async fn run(cli: Cli) -> Result<i32> {
                 public_flake,
             )
             .await?;
+            Ok(0)
+        }
+        Command::Login => {
+            login(&cli.server).await?;
             Ok(0)
         }
         Command::Archive {
