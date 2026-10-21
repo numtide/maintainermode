@@ -570,6 +570,7 @@ fn accept(
                 attr: None,
             })
             .collect(),
+        files: None,
     }
     .strict(&listing.list);
     let (attrs, stale) = report.accepted(&listing.list).map_err(|e| anyhow!(e))?;

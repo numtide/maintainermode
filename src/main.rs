@@ -50,6 +50,7 @@ mod severity;
 mod status;
 mod store;
 mod subject;
+mod trace;
 mod ui;
 mod upstream;
 mod version;
@@ -272,6 +273,10 @@ enum Command {
         /// Read the built store paths instead of the derivations
         #[arg(long)]
         runtime: bool,
+        /// Experimental: also record the nixpkgs files that the outputs read,
+        /// with iets. Local flakes only; the upload does not carry them
+        #[arg(long)]
+        files: bool,
         #[arg(long, default_value = SCAN_FILE)]
         out: PathBuf,
     },
@@ -1111,6 +1116,7 @@ async fn run(cli: Cli) -> Result<i32> {
             nixpkgs_input,
             system,
             runtime,
+            files,
             out,
         } => {
             let target = scan::Target {
@@ -1121,7 +1127,17 @@ async fn run(cli: Cli) -> Result<i32> {
                 system,
                 runtime,
             };
-            let r = scan::scan(&target)?;
+            let mut r = scan::scan(&target)?;
+            if files {
+                let t = trace::trace(&target)?;
+                eprintln!(
+                    "{} nixpkgs files, {} modules kept, {} module files dropped",
+                    t.files.len(),
+                    t.modules.len(),
+                    t.modules_dropped
+                );
+                r.files = Some(t);
+            }
             r.write(&out)?;
             eprintln!("{} packages -> {}", r.packages.len(), out.display());
             Ok(0)

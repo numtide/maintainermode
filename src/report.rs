@@ -23,6 +23,10 @@ pub struct Report {
     #[serde(default)]
     pub source: Source,
     pub packages: Vec<Found>,
+    /// Experimental, from `scan --files`. It stays on this machine: the upload
+    /// does not carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub files: Option<crate::trace::FileTrace>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -363,6 +367,7 @@ mod tests {
                 scanned_at: None,
             },
             packages,
+            files: None,
         }
     }
 

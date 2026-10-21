@@ -63,6 +63,20 @@ impl Target {
         }
     }
 
+    pub(crate) fn local_root(&self) -> Option<PathBuf> {
+        self.flake.as_ref().and(self.root())
+    }
+
+    /// The flake input that is nixpkgs: `--nixpkgs-input`, or the one the lock
+    /// file makes plain.
+    pub(crate) fn nixpkgs_input_name(&self, root: &Path) -> Option<String> {
+        if let Some(name) = &self.nixpkgs_input {
+            return Some(name.clone());
+        }
+        let lock = read_lock(root)?;
+        sole_nixpkgs(lock.get("nodes")?.as_object()?)
+    }
+
     pub fn nixpkgs_rev(&self) -> Option<String> {
         let root = self.root()?;
         if self.file.is_some() {
@@ -75,8 +89,7 @@ impl Target {
 /// The nixpkgs revision a flake pins. `input` names the lock entry when the
 /// flake does not call it `nixpkgs`.
 pub(crate) fn nixpkgs_rev_named(root: &Path, input: Option<&str>) -> Option<String> {
-    let text = std::fs::read_to_string(root.join("flake.lock")).ok()?;
-    let lock: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let lock = read_lock(root)?;
     let nodes = lock.get("nodes")?.as_object()?;
     let name = match input {
         Some(name) => name.to_string(),
@@ -89,6 +102,30 @@ pub(crate) fn nixpkgs_rev_named(root: &Path, input: Option<&str>) -> Option<Stri
         .get("rev")?
         .as_str()
         .map(str::to_string)
+}
+
+fn read_lock(root: &Path) -> Option<serde_json::Value> {
+    let text = std::fs::read_to_string(root.join("flake.lock")).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// The commit of `input` when the lock pins it to public nixpkgs: the
+/// `NixOS/nixpkgs` repository on GitHub. A fork or a local tree is `None`.
+pub(crate) fn locked_nixpkgs(root: &Path, input: &str) -> Option<String> {
+    locked_nixpkgs_in(&read_lock(root)?, input)
+}
+
+fn locked_nixpkgs_in(lock: &serde_json::Value, input: &str) -> Option<String> {
+    let nodes = lock.get("nodes")?.as_object()?;
+    let locked = nodes
+        .get(&follow(nodes, "root", input, 0)?)?
+        .get("locked")?;
+    let field = |k: &str| locked.get(k).and_then(|v| v.as_str());
+    let public = field("type") == Some("github")
+        && field("owner").is_some_and(|o| o.eq_ignore_ascii_case("nixos"))
+        && field("repo") == Some("nixpkgs");
+    let rev = field("rev")?;
+    (public && rev.len() == 40).then(|| rev.to_string())
 }
 
 /// `nixpkgs` when the root declares it, otherwise the only input whose name
@@ -444,6 +481,7 @@ pub fn scan(target: &Target) -> Result<Report> {
             scanned_at: Some(now),
         },
         packages,
+        files: None,
     })
 }
 
@@ -466,6 +504,24 @@ mod tests {
             Some("nixpkgs")
         );
         assert_eq!(follow(nodes, "root", "absent", 0), None);
+    }
+
+    #[test]
+    fn only_a_github_nixpkgs_pin_is_public() {
+        let rev = "7fd4004d0511991fff3a0524856a9be09e28c5f0";
+        let lock = |owner: &str, kind: &str| {
+            serde_json::json!({ "nodes": {
+                "root": { "inputs": { "nixpkgs": "nixpkgs" } },
+                "nixpkgs": { "locked": { "type": kind, "owner": owner, "repo": "nixpkgs", "rev": rev } }
+            }})
+        };
+        assert_eq!(
+            locked_nixpkgs_in(&lock("NixOS", "github"), "nixpkgs").as_deref(),
+            Some(rev)
+        );
+        assert_eq!(locked_nixpkgs_in(&lock("me", "github"), "nixpkgs"), None);
+        assert_eq!(locked_nixpkgs_in(&lock("NixOS", "path"), "nixpkgs"), None);
+        assert_eq!(locked_nixpkgs_in(&lock("NixOS", "github"), "other"), None);
     }
 
     #[test]
