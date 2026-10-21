@@ -3,11 +3,11 @@
 //! GitHub; Maintainer Mode posts nothing.
 
 use anyhow::{Context, Result, bail};
+use axum::Router;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::{IntoResponse, Response};
+use axum::http::HeaderMap;
+use axum::response::Response;
 use axum::routing::get;
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -58,9 +58,7 @@ const RELEASES: usize = 30;
 const TIMED_CAP: usize = 1024;
 
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/pr/:number", get(pr_page))
-        .route("/api/v1/prs/:number", get(api_pr))
+    Router::new().route("/pr/:number", get(pr_page))
 }
 
 pub(crate) fn github_url(n: u64) -> String {
@@ -1757,20 +1755,18 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     page.body(out).render(&app, viewer.as_deref())
 }
 
+pub(crate) fn not_in_data(n: u64) -> String {
+    format!(
+        "pull request #{n} is not in the synced data; see {}",
+        github_url(n)
+    )
+}
+
 /// The same data as the page, with nothing that depends on who asks.
-async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
+pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
     let s = app.snap();
-    let Some(pr) = s.pr_at.get(&n).map(|&i| &s.pr_data[i]) else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({
-                "error": format!("pull request #{n} is not in the synced data"),
-                "url": github_url(n),
-            })),
-        )
-            .into_response();
-    };
-    let (files, talk) = tokio::join!(files(&app, pr, false), talk(&app, pr, false));
+    let pr = s.pr_at.get(&n).map(|&i| &s.pr_data[i])?;
+    let (files, talk) = tokio::join!(files(app, pr, false), talk(app, pr, false));
     let h = app.health.read().unwrap().clone();
     let list = touched(&s, &app.index.read().unwrap(), &h, pr);
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
@@ -1787,7 +1783,7 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
         Ok(t) => (json!(*t), Value::Null),
         Err(e) => (Value::Null, json!(e)),
     };
-    Json(json!({
+    Some(json!({
         "number": pr.number,
         "title": pr.title,
         "url": pr.url,
@@ -1818,13 +1814,19 @@ async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
         "decision": decision,
         "review_on_github": format!("{}/files", github_url(n)),
     }))
-    .into_response()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ledger::tests::pr;
+    use axum::http::StatusCode;
+
+    async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
+        let path = [("number".to_string(), n.to_string())].into();
+        let e = crate::api::tool("pr").unwrap();
+        crate::api::reply(&app, &HeaderMap::new(), e, path, json!({})).await
+    }
 
     #[test]
     fn only_a_plain_pull_request_link_maps_to_our_page() {
@@ -2050,7 +2052,7 @@ mod tests {
         assert!(html.contains("href=\"https://github.com/NixOS/nixpkgs/pull/1\""));
         let (status, api) = body(api_pr(State(app), Path(1)).await).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
-        assert!(api.contains("not in the synced data"));
+        assert!(api.contains("not in the synced data") && api.contains("\"url\":"));
     }
 
     #[tokio::test]

@@ -63,9 +63,6 @@ pub fn routes() -> Router<Shared> {
         .route("/me/watch/maintained", post(watch_maintained))
         .route("/me/feed", post(new_feed))
         .route("/feed/:token", get(feed))
-        .route("/api/v1/packages/:attr", get(api_package))
-        .route("/api/v1/modules/*file", get(api_module))
-        .route("/api/v1/areas/*path", get(api_area))
         .route("/api/v1/find/*name", get(api_find))
 }
 
@@ -2484,34 +2481,22 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
     Some(subject_json(app, &Subject::Pkg(attr.clone()), extra))
 }
 
-async fn api_package(State(app): State<Shared>, Path(name): Path<String>) -> Response {
-    match package_value(&app, &name).await {
-        Some(v) => Json(v).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "not in the index"})),
-        )
-            .into_response(),
-    }
-}
-
-pub(crate) async fn module_value(app: &crate::web::App, file: &str) -> Option<Value> {
-    let m = app.index.read().unwrap().modules.get(file).cloned()?;
+/// `name` is a module file or `nixos/NAME`.
+pub(crate) async fn module_value(app: &crate::web::App, name: &str) -> Option<Value> {
+    let (file, m) = {
+        let index = app.index.read().unwrap();
+        let file = match Subject::resolve(&index, name) {
+            Some(Subject::Module(m)) => m,
+            _ => name.to_string(),
+        };
+        let m = index.modules.get(&file).cloned()?;
+        (file, m)
+    };
+    let file = file.as_str();
     let job = Hydra::test_job(module_name(file).trim_start_matches("nixos/"));
     let build = app.hydra.last(&job).await;
     let extra = json!({ "file": file, "module": m, "test": build.build(), "test_state": build.state(), "test_job": job });
     Some(subject_json(app, &Subject::Module(file.to_string()), extra))
-}
-
-async fn api_module(State(app): State<Shared>, Path(file): Path<String>) -> Response {
-    match module_value(&app, &file).await {
-        Some(v) => Json(v).into_response(),
-        None => (
-            StatusCode::NOT_FOUND,
-            Json(json!({"error": "not a NixOS module in the index"})),
-        )
-            .into_response(),
-    }
 }
 
 pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
@@ -2533,17 +2518,6 @@ pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
         &Subject::Area(path.to_string()),
         json!({ "contents": contents }),
     ))
-}
-
-async fn api_area(State(app): State<Shared>, Path(path): Path<String>) -> Response {
-    match area_value(&app, &path) {
-        Some(v) => Json(v).into_response(),
-        None => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({"error": "not a nixpkgs path"})),
-        )
-            .into_response(),
-    }
 }
 
 pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
@@ -2606,10 +2580,6 @@ pub(crate) fn search_value(app: &crate::web::App, q: &str) -> Value {
         search(&s, &index, q.trim())
     };
     json!({ "query": q, "results": subject_list(app, &hits) })
-}
-
-pub(crate) fn watching_value(app: &crate::web::App, login: &str) -> Value {
-    json!({ "login": login, "subscriptions": subject_list(app, &subscriptions(app, login)) })
 }
 
 /// Sends a name to the API of what it resolves to, so a client needs to know

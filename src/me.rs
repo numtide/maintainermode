@@ -39,7 +39,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
         || path.starts_with("/me/")
         || path == crate::notify::INBOX
         || path.starts_with("/needs/")
-        || path == "/api/v1/needs"
+        || crate::api::is_private(path)
         || path == "/login/cli"
         || path.starts_with("/api/v1/login")
         || (path == "/packages" && crate::web::cookie(req.headers(), "session").is_some());
@@ -53,7 +53,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-const SETTINGS: [(&str, &str); 10] = [
+pub(crate) const SETTINGS: [(&str, &str); 10] = [
     ("email", "Email"),
     ("followup", "Pull requests"),
     ("feed", "Feed"),

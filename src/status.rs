@@ -2,19 +2,12 @@
 //! change. Everything here is read from the database and the snapshot; the
 //! page asks no remote service.
 
-use axum::extract::State;
-use axum::routing::get;
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::fmt::Write;
 
 use crate::ui::kv;
-use crate::web::{App, Shared, ago, esc};
-
-pub fn routes() -> Router<Shared> {
-    Router::new().route("/api/v1/sync", get(api_sync))
-}
+use crate::web::{App, ago, esc};
 
 fn time(app: &App, key: &str) -> Option<DateTime<Utc>> {
     app.store.get_time(key).ok().flatten()
@@ -222,10 +215,6 @@ fn archive_row(a: &Value) -> String {
         ));
     }
     parts.join(" · ")
-}
-
-async fn api_sync(State(app): State<Shared>) -> Json<Value> {
-    Json(state(&app))
 }
 
 fn when(v: &Value) -> String {

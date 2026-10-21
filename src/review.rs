@@ -13,7 +13,7 @@ use crate::web::{Shared, entry_rows, octicon, review_bucket, waiting_rows, watch
 pub(crate) const PAGE: usize = 50;
 const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
-const TABS: [(&str, &str); 6] = [
+pub(crate) const TABS: [(&str, &str); 6] = [
     ("foryou", "For you"),
     ("unowned", "No maintainer"),
     ("firsttime", "First-timers"),
