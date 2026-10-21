@@ -137,7 +137,6 @@ struct Facts {
     watched: usize,
     queue: usize,
     reviewed: usize,
-    credited: usize,
     feed: bool,
     inbox: bool,
     system: bool,
@@ -179,7 +178,6 @@ impl Facts {
             watched: watched.len(),
             queue: crate::mine::for_you(app, &s, login).len(),
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
-            credited: s.ledger.credits_of(login).count(),
             feed: app.store.feed_token(login).ok().flatten().is_some(),
             inbox: true,
             system: app.store.package_set(login).ok().flatten().is_some()
@@ -246,14 +244,12 @@ fn checklist(f: &Facts) -> String {
         ),
     ));
     out.push_str(&step(
-        mark(f.credited > 0),
+        mark(f.reviewed > 0),
         "The review queue for you",
         &format!(
             "<a href=\"/review\">{} pull requests</a> touch your machines, or what you maintain, own, changed this year, tagged or watch. \
-             A review gets credit when it leads to a change, a reply or a merge within {} days. You have {} credited reviews.",
-            f.queue,
-            crate::ledger::MOVE_DAYS,
-            f.credited
+             You reviewed {} pull requests. <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Your reviews also put your own pull requests in the queues.</a>",
+            f.queue, f.reviewed
         ),
     ));
     let inbox = if f.inbox {
@@ -385,7 +381,6 @@ mod tests {
             watched: 0,
             queue: 0,
             reviewed: 0,
-            credited: 0,
             feed: false,
             inbox: false,
             system: false,

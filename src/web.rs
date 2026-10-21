@@ -373,7 +373,7 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
-fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
+ fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
     use crate::ui::{Kind, Tone, badge, item_row};
     let mut out = String::new();
     for e in entries {
@@ -400,9 +400,6 @@ fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
         );
         if !e.approved_by.is_empty() {
             let _ = write!(meta, " · approved by {}", people(&e.approved_by));
-        }
-        if !e.credited_by.is_empty() {
-            let _ = write!(meta, " · credited review by {}", people(&e.credited_by));
         }
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
@@ -731,7 +728,7 @@ pub fn load_health(store: &Store) -> crate::health::Health {
 
 const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
-/// The rules below say what this site shows and credits; how to work on
+/// The rules below say what this site shows; how to work on
 /// nixpkgs is nixpkgs' own guide.
 fn guide_box() -> String {
     let links = [

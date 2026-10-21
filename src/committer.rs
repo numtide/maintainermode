@@ -426,7 +426,7 @@ pub(crate) fn ready_tab(
         None,
         &format!(
             "<div class=\"Box-row f6 color-fg-muted\">Checks pass, there is no conflict, someone approved the current head, \
-             and a review on it got credit. Authors with more review credit come first.</div>{rows}"
+             and a review on it led to a change, a reply or a merge. Authors with more recent reviews of this kind come first.</div>{rows}"
         ),
     ));
     out.push_str(&pager("/review?tab=ready", next.as_deref()));
@@ -486,7 +486,7 @@ fn board_lists(b: &Board) -> [List<'_>; 4] {
         (
             "waiting",
             "Waiting longest",
-            "Checks pass, no known conflict, and the current head is approved. No credit is necessary. Oldest approval first.",
+            "Checks pass, no known conflict, and the current head is approved. Oldest approval first.",
             &b.waiting,
             "Nothing waits.",
         ),
