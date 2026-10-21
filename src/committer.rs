@@ -532,18 +532,38 @@ pub(crate) fn board_page(
     ))
 }
 
-fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec<Line<'a>> {
+/// The `section` values of `/review?tab=ready`: the board, and "yours"
+/// for a committer.
+#[cfg(test)]
+pub(crate) fn sections() -> Vec<&'static str> {
+    let mut out = vec!["yours"];
+    out.extend(board_lists(&Board::default()).map(|l| l.0));
+    out
+}
+
+/// The ready pull requests in a committer's areas, with why. Private:
+/// subscriptions count.
+pub(crate) fn yours_list<'a>(
+    app: &crate::web::App,
+    s: &'a Snapshot,
+    login: &str,
+) -> Vec<(&'a Entry, String)> {
     let mine = yours(app, s, login);
     s.queues
         .merge
         .iter()
         .filter(|e| e.author != login)
-        .filter_map(|e| {
-            mine(e).map(|why| Line {
-                why: esc(&why),
-                entry: e,
-                since: None,
-            })
+        .filter_map(|e| mine(e).map(|why| (e, why)))
+        .collect()
+}
+
+fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec<Line<'a>> {
+    yours_list(app, s, login)
+        .into_iter()
+        .map(|(entry, why)| Line {
+            why: esc(&why),
+            entry,
+            since: None,
         })
         .collect()
 }
@@ -573,6 +593,7 @@ fn yours_section(
 fn api_links() -> String {
     let links: Vec<String> = crate::api::SECTIONS
         .iter()
+        .filter(|s| **s != "yours")
         .map(|s| {
             format!("<a href=\"/api/v1/prs?queue=ready&amp;section={s}\"><code>{s}</code></a>")
         })

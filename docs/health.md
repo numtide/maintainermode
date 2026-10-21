@@ -22,7 +22,7 @@ merged in the synced window.
   chance of exploitation in the next 30 days. A package from PyPI,
   crates.io or npm also shows the [OSV](https://osv.dev) advisories for the
   exact version nixpkgs ships, unless a tracker advisory names the same CVE.
-- **The Package box:** what nixpkgs says about the package, as the index sweep read it. It shows the description and the long description as plain text. The sweep keeps the first 500 characters of the description and the first 2000 characters of the long description. It shows the homepage, the download page and the changelog. It shows each license with its SPDX id, and marks unfree licenses. It shows a short platform summary (how many, and Linux or Darwin) and `meta.badPlatforms`. It also shows `meta.mainProgram`, `meta.sourceProvenance` and the outputs. It shows whether the package is broken, insecure (with the text of `meta.knownVulnerabilities`) or unfree. It shows the position, with a link to the file and line at the index revision. It ends with the maintainers and teams. The sweep reads only what is already in `meta`, so it builds nothing. An index swept before this has no such data, and the box says so. `GET /api/v1/packages/<attr>` gives the same under `package.meta`.
+- **The Package box:** what nixpkgs says about the package, as the index sweep read it. It shows the description and the long description as plain text. The sweep keeps the first 500 characters of the description and the first 2000 characters of the long description. It shows the homepage, the download page and the changelog. It shows each license with its SPDX id, and marks unfree licenses. It shows a short platform summary (how many, and Linux or Darwin) and `meta.badPlatforms`. It also shows `meta.mainProgram`, `meta.sourceProvenance` and the outputs. It shows whether the package is broken, insecure (with the text of `meta.knownVulnerabilities`) or unfree. It shows the position, with a link to the file and line at the index revision. It ends with the maintainers and teams. The sweep reads only what is already in `meta`, so it builds nothing. An index swept before this has no such data, and the box says so. `GET /api/v1/packages/<name>` gives the same under `package.meta`.
 - **Version bumps:** an open pull request whose title is `<name>: <old> -> <new>` (or with `→`) is a version bump. Both `<old>` and `<new>` must contain a digit, so `lib.types: attrs -> attrsOf` is not a bump. Most come from r-ryantm. A `[Backport …]` prefix is allowed. The package page lists the open bumps of the package. The tab **Bumps** of `/review` (`/review?tab=bumps`) lists all open bumps, the oldest first, 50 on each page, with their checks, approvals, age and the newest upstream version. When you sign in, "what you maintain or watch" (`&filter=mine`) keeps only the bumps of the packages you maintain (directly or through a team), the packages you watch and the directories you watch. `GET /api/v1/prs?queue=bumps` gives the same; add `?filter=mine` with your session. Read [how nixpkgs reviews a package update](https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates) before you approve one.
 - **Packaging hygiene of a package:** cheap checks on what the index sweep
   reads, with no network and no build:
@@ -129,7 +129,7 @@ counts as open.
   master, and lists the tracker issues to close under "Tracker issues to
   close". `GET /api/v1/metrics` gives the list under
   `packages.tracker_issues_to_close`, with the attribute, the advisory, the
-  issue, the fix and the master version. `GET /api/v1/packages/<attr>` gives
+  issue, the fix and the master version. `GET /api/v1/packages/<name>` gives
   each advisory its `verdict`. Maintainer Mode never writes to GitHub: a
   person closes the issue.
 - **Needs you.** A machine report keeps the version of each package when the
@@ -198,7 +198,7 @@ comma-separated) or with the NixOS option
   this again before each channel. It runs apart from the pull request sync.
 - **The package page** has a "Channels" row: the version in master and in
   each channel. When master has a newer version, the row says which channels
-  are behind. `GET /api/v1/packages/<attr>` gives the same under `channels`.
+  are behind. `GET /api/v1/packages/<name>` gives the same under `channels`.
 - **Needs backport.** An advisory whose nixpkgs issue closed in the synced
   window counts as fixed in master. When a stable channel has an older
   version than master, that advisory shows "needs backport". It stays on the

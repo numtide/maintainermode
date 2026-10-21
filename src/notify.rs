@@ -228,6 +228,49 @@ pub(crate) struct InboxQuery {
     pub(crate) kind: Option<String>,
 }
 
+/// The events of `/inbox`, as JSON. Reading them marks nothing read.
+pub(crate) fn inbox_value(
+    app: &App,
+    login: &str,
+    kind: Option<&str>,
+    sub: Option<&str>,
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let kind = match kind.filter(|k| !k.is_empty()) {
+        None => None,
+        Some(k) => Some(Kind::parse(k).ok_or_else(|| format!("no kind {k}"))?),
+    };
+    let sub = sub.filter(|s| !s.is_empty());
+    let all = person_events(app, login);
+    let read = read_at(app, login);
+    let items: Vec<serde_json::Value> = all
+        .iter()
+        .filter(|e| sub.is_none_or(|s| e.subject == s))
+        .filter(|e| kind.is_none_or(|k| Kind::of(&e.id) == k))
+        .map(|e| {
+            serde_json::json!({
+                "id": e.id,
+                "kind": Kind::of(&e.id).key(),
+                "at": e.at,
+                "title": e.title,
+                "url": e.url,
+                "subject": e.subject,
+                "unread": unread(e, read),
+            })
+        })
+        .collect();
+    let mut out = crate::api::page(&items, limit, cursor)?;
+    out["login"] = serde_json::json!(login);
+    out["unread"] = serde_json::json!(unread_count(&all, read, &kinds(app, login)));
+    out["subjects"] = serde_json::json!(
+        all.iter()
+            .map(|e| e.subject.as_str())
+            .collect::<BTreeSet<_>>()
+    );
+    Ok(out)
+}
+
 /// `/inbox`. Opening it counts the unread events again.
 async fn inbox_page(
     State(app): State<Shared>,
