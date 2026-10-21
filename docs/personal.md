@@ -301,21 +301,37 @@ maintain" filter. The "I watch" filter shows each item with its flags, and a
 
 ## Review, for you
 
-`/review` is the one place to review. It has five tabs, and each tab shows its count:
+`/review` is the one place to review. It has six tabs, and each tab shows its count:
 
-| Tab            | Address               | What it lists                                                                            |
-| -------------- | --------------------- | ---------------------------------------------------------------------------------------- |
-| For you        | `/review?tab=foryou`  | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
-| No maintainer  | `/review?tab=unowned` | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
-| Bumps          | `/review?tab=bumps`   | open version bumps (see [health.md](health.md))                                          |
-| All            | `/review?tab=all`     | every pull request in the queues that is not ready to merge                              |
-| Ready to merge | `/review?tab=ready`   | the ready-to-merge queue, and the lists for committers (see below)                       |
+| Tab            | Address                 | What it lists                                                                            |
+| -------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
+| For you        | `/review?tab=foryou`    | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
+| No maintainer  | `/review?tab=unowned`   | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
+| First-timers   | `/review?tab=firsttime` | first contributions that no one has reviewed (see below)                                 |
+| Bumps          | `/review?tab=bumps`     | open version bumps (see [health.md](health.md))                                          |
+| All            | `/review?tab=all`       | every pull request in the queues that is not ready to merge                              |
+| Ready to merge | `/review?tab=ready`     | the ready-to-merge queue, and the lists for committers (see below)                       |
 
 Sign in, and `/review` opens on **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
 
 Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these tabs are not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
 The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your subscriptions are private. They count only when your own session or your own MCP token asks for your login. In all other cases only your public area counts. The API never reads your machine report, and it keeps the number order. See [api.md](api.md).
+
+### First-timers
+
+A first contribution that waits for a long time can lose a new contributor. Some wait for a year. This tab lists them, the oldest first. Each row shows how long the author has waited, for example "waiting 11 months".
+
+A pull request is on the tab when all of these are true:
+
+- It is open, and it is not a draft.
+- GitHub calls its author `FIRST_TIME_CONTRIBUTOR` or `FIRST_TIMER`, or it has the label `12.first-time contribution`.
+- The author is not a bot.
+- No one other than the author has reviewed it. A review from a bot does not count.
+
+Maintainer Mode does not store the comments of other people. Thus a pull request with a comment but no review stays on the tab. The author does not need a review record: this tab does not use the queue rules. The tab is visible when you are signed in and when you are signed out.
+
+The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. The MCP tool `prs` takes the same name. Paging is the same as on the other tabs.
 
 ## Your progress
 

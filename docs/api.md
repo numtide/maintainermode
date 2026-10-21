@@ -43,7 +43,7 @@ show twice or not at all.
 
 | Parameter | Meaning                                                                                                |
 | --------- | ------------------------------------------------------------------------------------------------------ |
-| `queue`   | `foryou`, `unowned`, `bumps`, `all` (the default) or `ready`                                           |
+| `queue`   | `foryou`, `unowned`, `firsttime`, `bumps`, `all` (the default) or `ready`                              |
 | `section` | with `queue=ready`: `ready` (the default), `maintainer_approved`, `security`, `backports` or `waiting` |
 | `login`   | whose queue, for `foryou` and `bumps`; for `foryou` only, the default is your session                  |
 | `limit`   | rows per page                                                                                          |
@@ -55,6 +55,9 @@ The queues:
   maintains, owns in `ci/OWNERS` or changed this year. It needs `login` or a
   session.
 - **`unowned`**: pull requests that need review, with no maintainer.
+- **`firsttime`**: first contributions with no review from another person,
+  the oldest first. See [personal.md](personal.md#first-timers). The author
+  does not need a review record.
 - **`bumps`**: all open version bumps, the oldest first. With `login`, only what
   that login maintains.
 - **`all`**: every pull request that needs review, the oldest first.
