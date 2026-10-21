@@ -311,6 +311,7 @@ fn sample() -> (Report, Upload) {
             found("curl", "8.11.1-acme-fix"),
             found("acme-billing", "2.4.0"),
         ],
+        files: None,
     };
     let mut list = PublicList {
         rev: rev.into(),
