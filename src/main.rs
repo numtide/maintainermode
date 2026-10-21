@@ -1163,6 +1163,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 system,
                 runtime,
                 ignore,
+                discovered: false,
             };
             target.choose_outputs()?;
             let mut r = scan::scan(&target)?;
