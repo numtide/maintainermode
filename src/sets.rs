@@ -1,12 +1,12 @@
 //! A person's named package sets: the nixpkgs attributes of their uploaded
 //! reports and of their scanned flakes. Only the owner reads a private set.
-//! A public flake set shows on the profile; no other page, number or API
-//! reads a set.
+//! A public flake set shows on the profile. Only the owner, signed in or
+//! through MCP, reads the other sets, on /packages and in /api/v1/sets.
 
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Form, State};
+use axum::extract::{DefaultBodyLimit, Form, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
-use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put};
+use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put, SetOutputs};
 use crate::ui::{Page, Section, Tab, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
 
@@ -37,6 +37,7 @@ pub fn routes() -> Router<Shared> {
             post(upload).layer(DefaultBodyLimit::max(MAX_REPORT_BYTES)),
         )
         .route("/api/v1/packages/index", get(public_index))
+        .route("/api/v1/sets", get(api_sets))
 }
 
 /// The public package list of one index revision, as JSON and as gzip.
@@ -286,6 +287,89 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         })),
     )
         .into_response()
+}
+
+/// The labels of a set, and the labels of each package, as the API gives
+/// them.
+pub(crate) fn outputs_value(o: &SetOutputs) -> (serde_json::Value, serde_json::Value) {
+    let of: serde_json::Map<String, serde_json::Value> =
+        o.of.keys()
+            .map(|a| (a.clone(), json!(o.labels_of(a).collect::<Vec<_>>())))
+            .collect();
+    (json!(o.labels), serde_json::Value::Object(of))
+}
+
+#[derive(Deserialize)]
+struct SetsQuery {
+    set: Option<String>,
+    output: Option<String>,
+}
+
+async fn api_sets(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    Query(q): Query<SetsQuery>,
+) -> Response {
+    let private = [(header::CACHE_CONTROL, "private, no-store")];
+    let Some(login) = app.viewer(&headers) else {
+        return (
+            StatusCode::UNAUTHORIZED,
+            private,
+            Json(json!({ "error": "sign in first" })),
+        )
+            .into_response();
+    };
+    match sets_value(&app, &login, q.set.as_deref(), q.output.as_deref()) {
+        Ok(v) => (private, Json(v)).into_response(),
+        Err(e) => (StatusCode::NOT_FOUND, private, Json(json!({ "error": e }))).into_response(),
+    }
+}
+
+/// The caller's sets, as `GET /api/v1/sets` and the MCP tool `sets` give
+/// them: one set with `set`, and only the packages of one output with
+/// `output`.
+pub(crate) fn sets_value(
+    app: &App,
+    login: &str,
+    set: Option<&str>,
+    output: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let sets = app.store.sets(login).unwrap_or_default();
+    if let Some(n) = set.filter(|n| !sets.iter().any(|s| s.name == *n)) {
+        return Err(format!("you have no set {n}"));
+    }
+    if output.is_some() && set.is_none() {
+        return Err("output needs set".into());
+    }
+    let mut list = Vec::new();
+    for s in sets.iter().filter(|s| set.is_none_or(|n| s.name == n)) {
+        let empty = SetOutputs::default();
+        let o = s.data.as_ref().map_or(&empty, |d| &d.outputs);
+        if let Some(l) = output.filter(|l| !o.labels.iter().any(|x| x == l)) {
+            return Err(format!("the set {} has no output {l}", s.name));
+        }
+        let packages: Vec<&String> = s
+            .data
+            .iter()
+            .flat_map(|d| &d.attrs)
+            .filter(|a| output.is_none_or(|l| o.labels_of(a).any(|x| x == l)))
+            .collect();
+        let (labels, of) = outputs_value(o);
+        list.push(json!({
+            "name": s.name,
+            "kind": kind(s),
+            "public": s.public,
+            "flake": s.flake.as_ref().map(|(r, o)| json!({ "reference": r, "output": o })),
+            "updated_at": s.data.as_ref().map(|d| d.uploaded_at),
+            "expires_at": s.data.as_ref().filter(|_| !s.rescan).map(|d| d.uploaded_at + Duration::days(RETENTION_DAYS)),
+            "nixpkgs_rev": s.data.as_ref().and_then(|d| d.nixpkgs_rev.clone()),
+            "dropped": s.data.as_ref().map_or(0, |d| d.dropped),
+            "packages": packages,
+            "outputs": labels,
+            "package_outputs": of,
+        }));
+    }
+    Ok(json!({ "login": login, "sets": list }))
 }
 
 /// The address of the machines filter for one set, or for all of them.
@@ -1157,7 +1241,7 @@ pub(crate) mod tests {
         let set = app.store.package_set("alice", "infra").unwrap().unwrap();
         assert_eq!(
             set.outputs,
-            crate::store::SetOutputs::default(),
+            SetOutputs::default(),
             "a new upload replaces them"
         );
         for bad in [
@@ -1288,6 +1372,48 @@ pub(crate) mod tests {
         assert!(unknown.contains("Packages of infra<") || unknown.contains("Packages of infra "));
         let other = page_on(&app, Some("plain"), Some("web-1")).await;
         assert!(!other.contains("on web-1") && !other.contains("Where it runs"));
+    }
+
+    #[tokio::test]
+    async fn the_api_gives_the_outputs_of_the_owner_only() {
+        let app = uploader(&["hello", "jq"]);
+        assert_eq!(post(&app, "t", with_hosts()).await, StatusCode::ACCEPTED);
+        let all = sets_value(&app, "alice", None, None).unwrap();
+        assert_eq!(all["sets"][0]["outputs"], json!(["web-1", "laptop"]));
+        assert_eq!(
+            all["sets"][0]["package_outputs"]["hello"],
+            json!(["web-1", "laptop"])
+        );
+        let web = sets_value(&app, "alice", Some("infra"), Some("web-1")).unwrap();
+        assert_eq!(web["sets"][0]["packages"], json!(["hello"]));
+        assert!(sets_value(&app, "alice", Some("infra"), Some("nope")).is_err());
+        assert!(sets_value(&app, "alice", None, Some("web-1")).is_err());
+        assert!(sets_value(&app, "alice", Some("nope"), None).is_err());
+        assert_eq!(
+            sets_value(&app, "bob", None, None).unwrap()["sets"],
+            json!([])
+        );
+        let r = api_sets(
+            State(app.clone()),
+            HeaderMap::new(),
+            Query(SetsQuery {
+                set: None,
+                output: None,
+            }),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        assert!(
+            !crate::profile::profile_value(&app, "alice")
+                .to_string()
+                .contains("web-1")
+        );
+        let mut body = with_hosts();
+        body["public_flake"] = json!({ "reference": "github:o/r", "output": "x" });
+        assert_eq!(post(&app, "t", body).await, StatusCode::ACCEPTED);
+        let v = crate::profile::profile_value(&app, "alice");
+        assert_eq!(v["flakes"][0]["outputs"], json!(["web-1", "laptop"]));
+        assert_eq!(v["flakes"][0]["package_outputs"]["jq"], json!(["laptop"]));
     }
 
     #[tokio::test]

@@ -233,6 +233,16 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool(
+            "sets",
+            "My package sets",
+            "The caller's package sets, as GET /api/v1/sets gives them: each set with its packages, its output labels (such as host names, from an upload with --with-outputs) and the outputs that hold each package. set picks one set; output, with set, keeps only the packages of that output.",
+            json!({
+                "set": s("a set name, like laptop"),
+                "output": s("an output label of that set, like web-1"),
+            }),
+            &[],
+        ),
+        tool(
             "watching",
             "What I watch",
             "The caller's subscriptions on Maintainer Mode, with their health flags.",
@@ -301,6 +311,12 @@ async fn call(
             }
         }
         "watching" => Ok(crate::catalog::watching_value(app, login)),
+        "sets" => crate::sets::sets_value(
+            app,
+            login,
+            args["set"].as_str().filter(|s| !s.is_empty()),
+            args["output"].as_str().filter(|s| !s.is_empty()),
+        ),
         "needs" => {
             let mood = crate::needs::Mood::parse(args["mood"].as_str()).unwrap_or_default();
             Ok(crate::needs::value(app, login, mood))
@@ -393,7 +409,7 @@ mod tests {
         opt_in(&app, "alice", "t");
         let (code, v) = post(&app, Some("t"), list).await;
         assert_eq!(code, StatusCode::OK);
-        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 9);
+        assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 10);
     }
 
     #[tokio::test]

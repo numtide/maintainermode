@@ -38,6 +38,10 @@ const ENDPOINTS: &[(&str, &str)] = &[
         "what waits for you, the most urgent first, with your session only: mood=all|mine|machines|review|maintain",
     ),
     (
+        "/api/v1/sets",
+        "your package sets and the output labels of each package, with your session only: set=, output= (with set)",
+    ),
+    (
         "/api/v1/packages/index",
         "the public package list of the current index: pname and version of each attribute, gzip",
     ),
