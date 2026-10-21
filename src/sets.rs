@@ -506,6 +506,7 @@ fn sample() -> (Report, Upload) {
     list.fill_pnames();
     let mut upload = report.strict(&list);
     upload.client = "maintainer-mode/VERSION".into();
+    upload.name = Some("laptop".into());
     (report, upload)
 }
 
@@ -538,12 +539,12 @@ fn shared(app: &App) -> String {
     format!(
         "<div class=\"Box-row\" id=\"shared\"><h3 class=\"f5 mb-2\">What leaves your machine</h3>\
          <p>An example. The scan of the machine <code>{name}</code> finds three packages:</p>\
-         <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent</li></ul>\
+         <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent. The set name <code>laptop</code> is what you type with <code>--name</code>.</li></ul>\
          <p>The tool then sends only this. No path, no store hash, no host name:</p>\
          <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{json}</pre></div>\
          <div class=\"Box-row\"><h3 class=\"f5 mb-2\">What the server keeps, and who sees it</h3><ul class=\"ml-3 mb-2\">\
-         <li>It keeps the names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision.</li>\
-         <li>Only you see it, when you sign in. It never shows on public pages or in public numbers.</li>\
+         <li>It keeps the set name, the package names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision.</li>\
+         <li>Only you see it, when you sign in. It never shows on public pages or in public numbers. Only a public flake that you mark with <code>--public-flake</code> shows on your profile.</li>\
          <li>The admin of {host} can read the server database.</li>\
          <li>The server deletes it {RETENTION_DAYS} days after the upload. <em>Delete my report</em> on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
          <p class=\"mb-0\"><strong>The risk.</strong> The report tells which public packages run on your machines, and their versions. \
@@ -564,7 +565,10 @@ fn steps(base: &str, token: Option<&str>) -> String {
         let pre = if cmd.is_empty() {
             String::new()
         } else {
-            format!("<pre class=\"p-2 mt-1 color-bg-subtle overflow-auto\">{}</pre>", esc(cmd))
+            format!(
+                "<pre class=\"p-2 mt-1 color-bg-subtle overflow-auto\">{}</pre>",
+                esc(cmd)
+            )
         };
         format!("<li class=\"mb-3\"><strong>{title}</strong> {body}{pre}</li>")
     };

@@ -47,12 +47,12 @@ The facts below are from iets 0.1.0 at commit `0fba531c064e`.
 
 What iets does not give, and what the prototype does instead:
 
-| Missing | Workaround in the prototype | Ask |
-| --- | --- | --- |
-| No flag on `eval` that names its cache entry. `--entry-to FILE` exists on `print-dev-env` only. | A new, empty `--cache-dir` per scan; it holds one entry. | `eval --entry-to FILE`, or `--read-set-to FILE`. |
-| `cache dump` is text for debugging, not a contract. A path with a space is ambiguous. | Parse from the right: the last two fields of a `file` line are size and hash. | `cache dump --json`. |
-| `eval --json` fails on a list that `map` made: `cannot convert a thunk to JSON`. Reproduce with a flake output `x = builtins.map (a: a + 1) [ 1 ];`. | `builtins.toJSON` in the expression and `--raw`. | Fix the bug. |
-| `cache paths` leaves out store paths, so it leaves out a flake input. | Use `cache dump`. | None. |
+| Missing                                                                                                                                              | Workaround in the prototype                                                   | Ask                                              |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------ |
+| No flag on `eval` that names its cache entry. `--entry-to FILE` exists on `print-dev-env` only.                                                      | A new, empty `--cache-dir` per scan; it holds one entry.                      | `eval --entry-to FILE`, or `--read-set-to FILE`. |
+| `cache dump` is text for debugging, not a contract. A path with a space is ambiguous.                                                                | Parse from the right: the last two fields of a `file` line are size and hash. | `cache dump --json`.                             |
+| `eval --json` fails on a list that `map` made: `cannot convert a thunk to JSON`. Reproduce with a flake output `x = builtins.map (a: a + 1) [ 1 ];`. | `builtins.toJSON` in the expression and `--raw`.                              | Fix the bug.                                     |
+| `cache paths` leaves out store paths, so it leaves out a flake input.                                                                                | Use `cache dump`.                                                             | None.                                            |
 
 ## What the scan records
 
@@ -133,12 +133,12 @@ The test host is a scratch flake on nixpkgs `7fd4004d0511`. It sets
 `boot.loader.grub.device`, `fileSystems."/"`, `system.stateVersion` and
 `services.nginx.enable = true`. A second host is the same without nginx.
 
-| | nginx host | host without nginx |
-| --- | --- | --- |
-| Hop 0 | 8 files | 7 files |
-| Hop 1 | 31 files | 24 files |
-| Fixed point (5 hops) | 45 files | 43 files |
-| Module paths in the trace | 2,465 | 2,465 |
+|                           | nginx host | host without nginx |
+| ------------------------- | ---------- | ------------------ |
+| Hop 0                     | 8 files    | 7 files            |
+| Hop 1                     | 31 files   | 24 files           |
+| Fixed point (5 hops)      | 45 files   | 43 files           |
+| Module paths in the trace | 2,465      | 2,465              |
 
 - The nginx host keeps two module files that the other host does not:
   `services/web-servers/nginx/default.nix` and `security/acme` (the nginx
@@ -174,17 +174,17 @@ them shows most of nixpkgs.
 
 Measured on the nginx host, after the module signal (1,683 paths):
 
-| Area | Paths |
-| --- | --- |
-| `pkgs/by-name/` | 627 |
-| `pkgs/development/` | 494 |
-| `pkgs/build-support/` | 109 |
-| `nixos/modules/` | 50 |
-| `lib/` | 43 |
-| `nixos/lib/` | 27 |
-| `pkgs/top-level/` | 18 |
-| `pkgs/stdenv/` | 15 |
-| `*.patch` | 285 |
+| Area                  | Paths |
+| --------------------- | ----- |
+| `pkgs/by-name/`       | 627   |
+| `pkgs/development/`   | 494   |
+| `pkgs/build-support/` | 109   |
+| `nixos/modules/`      | 50    |
+| `lib/`                | 43    |
+| `nixos/lib/`          | 27    |
+| `pkgs/top-level/`     | 18    |
+| `pkgs/stdenv/`        | 15    |
+| `*.patch`             | 285   |
 
 Compare the raw traces, before the module filter: the nginx host reads 4,101
 paths, and the host without nginx reads all but 14 of them. The 14 are the nginx
@@ -245,7 +245,7 @@ The upload stays `schema: 1`. It gets one optional field, `files`:
 {
   "schema": 1,
   "source": { "system": "x86_64-linux", "nixpkgs_rev": "7fd4…", "…": "…" },
-  "packages": [ "…" ],
+  "packages": ["…"],
   "omitted": { "unknown": 12 },
   "files": {
     "version": 1,
@@ -314,12 +314,12 @@ flake sets on profiles. File matching follows the same keys:
 
 Measured on the nginx host with iets 0.1.0, cold IR cache:
 
-| Step | Wall time | Peak memory |
-| --- | --- | --- |
-| `iets eval` of `toplevel.drvPath`, traced | 3.9–4.5 s | 0.86 GB |
-| The same, with the module signal (`src/trace.nix`) | 3.3–9.2 s | 0.87 GB |
-| The module signal alone with Nix 2.36 | 6.5–8.6 s | 0.63 GB |
-| `hello.drvPath`, traced | 1.7 s | 0.22 GB |
+| Step                                               | Wall time | Peak memory |
+| -------------------------------------------------- | --------- | ----------- |
+| `iets eval` of `toplevel.drvPath`, traced          | 3.9–4.5 s | 0.86 GB     |
+| The same, with the module signal (`src/trace.nix`) | 3.3–9.2 s | 0.87 GB     |
+| The module signal alone with Nix 2.36              | 6.5–8.6 s | 0.63 GB     |
+| `hello.drvPath`, traced                            | 1.7 s     | 0.22 GB     |
 
 - The read set of the nginx host has 5,261 observations. The cache entry and
   the dump are each below 1 MB.
