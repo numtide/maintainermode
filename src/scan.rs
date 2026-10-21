@@ -11,11 +11,13 @@ use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqA
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::eval::run_with;
-use crate::report::{Found, Report, SCHEMA, Source};
+use crate::eval::{private_dir, run_with, stream_with};
+use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
 
 const NIX: &str = "nix";
+const DISCOVER: &str = include_str!("discover.nix");
 
+#[derive(Clone)]
 pub struct Target {
     pub flake: Option<String>,
     pub file: Option<PathBuf>,
@@ -23,6 +25,13 @@ pub struct Target {
     pub nixpkgs_input: Option<String>,
     pub system: Option<String>,
     pub runtime: bool,
+    /// Outputs to leave out, as `--ignore` gives them: an attribute path, or
+    /// the start of one, such as `checks`.
+    pub ignore: Vec<String>,
+    /// The flake gave the outputs, not `--output`. Only then does an output
+    /// that fails get skipped: a named one that fails would make a smaller
+    /// report, and its upload would replace the whole set.
+    pub discovered: bool,
 }
 
 impl Target {
@@ -47,20 +56,97 @@ impl Target {
         }
     }
 
-    fn installables(&self) -> Vec<String> {
+    /// One nix call for each output: a name to show, and the arguments that
+    /// name it. They go one by one, so that an output which does not evaluate
+    /// on this machine costs its own closure only.
+    fn installables(&self) -> Vec<(String, Vec<String>)> {
         match (&self.file, &self.flake) {
             (Some(file), _) => {
-                let mut args = vec!["--file".into(), file.to_string_lossy().into_owned()];
-                args.extend(self.outputs.iter().cloned());
-                args
+                let path = file.to_string_lossy().into_owned();
+                let file_arg = |attr: Option<&String>| {
+                    let mut args = vec!["--file".to_string(), path.clone()];
+                    args.extend(attr.cloned());
+                    args
+                };
+                if self.outputs.is_empty() {
+                    return vec![(path.clone(), file_arg(None))];
+                }
+                self.outputs
+                    .iter()
+                    .map(|a| (a.clone(), file_arg(Some(a))))
+                    .collect()
             }
             (None, Some(flake)) => self
                 .outputs
                 .iter()
-                .map(|o| format!("{flake}#{o}"))
+                .map(|o| (o.clone(), vec![format!("{flake}#{o}")]))
                 .collect(),
             _ => Vec::new(),
         }
+    }
+
+    /// The outputs the scan reads. Without `--output`, a flake gives every
+    /// output worth reading: the packages, devShells and checks of this
+    /// system, and the systems that the configurations build. It evaluates
+    /// names only. `--ignore` then leaves outputs out, whether the flake gave
+    /// them or `--output` named them.
+    pub fn choose_outputs(&mut self) -> Result<()> {
+        let discovered = self.discover()?;
+        let before = self.outputs.len();
+        self.outputs.retain(|o| !ignored(o, &self.ignore));
+        let gone = before - self.outputs.len();
+        if gone > 0 {
+            eprintln!("{gone} {} ignored", outputs(gone));
+        }
+        // a file with no attribute reads the whole file, so here it must stop
+        if self.outputs.is_empty() && (self.flake.is_some() || gone > 0) {
+            bail!("--ignore leaves no output to read");
+        }
+        if let Some(flake) = discovered {
+            let n = self.outputs.len();
+            eprintln!("{n} {} to read in {flake}", outputs(n));
+        }
+        Ok(())
+    }
+
+    /// Asks the flake for its outputs, when `--output` named none. It answers
+    /// the flake it asked, and nothing when it asked nothing.
+    fn discover(&mut self) -> Result<Option<String>> {
+        if self.flake.is_none() || !self.outputs.is_empty() {
+            return Ok(None);
+        }
+        let flake = self.flake_ref()?;
+        let request = serde_json::json!({
+            "flake": flake,
+            "system": self.system.clone().unwrap_or_else(this_system),
+            "runtime": self.runtime,
+        });
+        let dir = private_dir("discover")?;
+        let answer = run_discover(&dir, &request);
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths: Vec<Vec<String>> =
+            serde_json::from_str(&answer?).context("parse the outputs of the flake")?;
+        self.outputs = paths.iter().map(|p| attr_path(p)).collect();
+        self.discovered = true;
+        if self.outputs.is_empty() {
+            bail!(
+                "{flake} has no package, devShell, check or configuration for this system; \
+                 name an output with --output"
+            );
+        }
+        Ok(Some(flake))
+    }
+
+    /// What `builtins.getFlake` takes: a local tree by absolute path, or the
+    /// flake reference as it was given.
+    fn flake_ref(&self) -> Result<String> {
+        let flake = self.flake.clone().unwrap_or_default();
+        let Some(root) = self.local_root() else {
+            return Ok(flake);
+        };
+        let root = std::fs::canonicalize(&root)
+            .with_context(|| format!("find the flake at {}", root.display()))?;
+        Ok(root.to_string_lossy().into_owned())
     }
 
     pub(crate) fn local_root(&self) -> Option<PathBuf> {
@@ -84,6 +170,64 @@ impl Target {
         }
         nixpkgs_rev_named(&root, self.nixpkgs_input.as_deref())
     }
+}
+
+/// Evaluates `discover.nix` against the request. The expression is plain nix:
+/// `builtins.getFlake` needs `--impure` for a local tree, and no evaluator
+/// other than nix promises it.
+fn run_discover(dir: &Path, request: &serde_json::Value) -> Result<String> {
+    std::fs::write(dir.join("input.json"), serde_json::to_vec(request)?)?;
+    let expr = dir.join("discover.nix");
+    std::fs::write(&expr, DISCOVER)?;
+    run_with(
+        NIX,
+        &[
+            "eval",
+            "--json",
+            "--impure",
+            "--file",
+            &expr.to_string_lossy(),
+        ],
+    )
+}
+
+/// The segments of an attribute path, joined the way an installable writes
+/// them: a name that is not plain, such as `me@box`, keeps its quotes.
+fn attr_path(segments: &[String]) -> String {
+    segments
+        .iter()
+        .map(|s| {
+            let plain = !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '\''));
+            if plain {
+                s.clone()
+            } else {
+                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// An output goes when `--ignore` names it, or names a path it sits under:
+/// `checks` leaves every check, `checks.x86_64-linux.vm` leaves that one. The
+/// paths compare segment by segment, so `checks.a` does not leave
+/// `checks."a.b"`, and the quotes around a name such as `me@box` are optional.
+fn ignored(output: &str, ignore: &[String]) -> bool {
+    let output = crate::trace::attr_path(output);
+    ignore
+        .iter()
+        .any(|i| output.starts_with(&crate::trace::attr_path(i)))
+}
+
+fn outputs(n: usize) -> &'static str {
+    if n == 1 { "output" } else { "outputs" }
+}
+
+/// The system of this machine, as nix names it.
+fn this_system() -> String {
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).replace("macos", "darwin")
 }
 
 /// The nixpkgs revision a flake pins. `input` names the lock entry when the
@@ -322,15 +466,16 @@ fn nix(args: &[String]) -> Result<String> {
     run_with(NIX, &refs)
 }
 
-fn derivation_closure(target: &Target) -> Result<Vec<(String, String)>> {
+/// Reads `nix derivation show -r` as it prints it. The closure of a system is
+/// hundreds of megabytes of JSON and a few thousand distinct packages: only
+/// the packages stay. Evaluation is enough; nothing is built.
+fn derivation_closure(installable: &[String], found: &mut Closure) -> Result<()> {
     let mut args: Vec<String> = vec!["derivation".into(), "show".into(), "-r".into()];
-    args.extend(target.installables());
-    closure_pairs(nix(&args)?.as_bytes())
-}
-
-/// The packages, as (pname, version), in the output of `nix derivation show -r`.
-pub(crate) fn closure_pairs(text: &[u8]) -> Result<Vec<(String, String)>> {
-    closure_pairs_at_most(text, usize::MAX)
+    args.extend_from_slice(installable);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    stream_with(NIX, &refs, |out| {
+        found.read(serde_json::Deserializer::from_reader(out))
+    })
 }
 
 /// Reads the closure in one pass and keeps only distinct packages; it stops
@@ -340,11 +485,7 @@ pub(crate) fn closure_pairs_at_most(text: &[u8], max: usize) -> Result<Vec<(Stri
         max,
         pairs: BTreeSet::new(),
     };
-    let mut de = serde_json::Deserializer::from_slice(text);
-    TopLevel(&mut found)
-        .deserialize(&mut de)
-        .and_then(|()| de.end())
-        .context("parse derivation show output")?;
+    found.read(serde_json::Deserializer::from_slice(text))?;
     Ok(found.pairs.into_iter().collect())
 }
 
@@ -354,6 +495,34 @@ struct Closure {
 }
 
 impl Closure {
+    /// Reads a map of derivations, from a file in memory or from the pipe of a
+    /// running nix, and adds its packages to the set.
+    fn read<'de, R: serde_json::de::Read<'de>>(
+        &mut self,
+        mut de: serde_json::Deserializer<R>,
+    ) -> Result<()> {
+        TopLevel(self)
+            .deserialize(&mut de)
+            .and_then(|()| de.end())
+            .context("parse derivation show output")
+    }
+
+    /// A built store path, which carries the name and nothing else.
+    fn add_path(&mut self, path: &str) {
+        let (name, version) = split_name(&strip_store_path(path));
+        if is_package(&name, &version, false) {
+            self.pairs.insert((name, version));
+        }
+    }
+
+    /// The set holds what the server takes, and no more.
+    fn room(&self) -> Result<()> {
+        if self.pairs.len() > self.max {
+            bail!("more than {} packages", self.max);
+        }
+        Ok(())
+    }
+
     fn add<E: de::Error>(&mut self, path: &str, drv: Derivation) -> Result<(), E> {
         let name = if drv.name.is_empty() {
             strip_store_path(path)
@@ -430,15 +599,62 @@ impl<'de> Visitor<'de> for Drvs<'_> {
 }
 
 /// Store paths, not derivations: the outputs must be built or substituted.
-fn runtime_closure(target: &Target) -> Result<Vec<(String, String)>> {
+fn runtime_closure(installable: &[String], found: &mut Closure) -> Result<()> {
     let mut args: Vec<String> = vec!["path-info".into(), "-r".into()];
-    args.extend(target.installables());
-    Ok(nix(&args)?
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| split_name(&strip_store_path(l)))
-        .filter(|(name, version)| is_package(name, version, false))
-        .collect())
+    args.extend_from_slice(installable);
+    for line in nix(&args)?.lines().filter(|l| !l.is_empty()) {
+        found.add_path(line);
+    }
+    found.room()
+}
+
+/// The packages of every output, as one set. Each output is its own nix call:
+/// one that does not evaluate on this machine is named and skipped, and the
+/// others still make a report. It fails only when no output could be read.
+fn closure_of(target: &Target) -> Result<Vec<(String, String)>> {
+    let installables = target.installables();
+    let mut found = Closure {
+        max: MAX_PACKAGES,
+        pairs: BTreeSet::new(),
+    };
+    let mut skipped = 0;
+    for (name, args) in &installables {
+        let before = found.pairs.len();
+        let read = if target.runtime {
+            runtime_closure(args, &mut found)
+        } else {
+            derivation_closure(args, &mut found)
+        };
+        match read {
+            // the cap is about the whole scan, so it stops it
+            Err(e) if found.pairs.len() > found.max => {
+                return Err(e.context("too many packages for a report; name fewer with --output"));
+            }
+            Err(e) if !target.discovered => {
+                return Err(e.context(format!("read {name}")));
+            }
+            Err(e) => {
+                skipped += 1;
+                eprintln!("skip {name}: {e:#}");
+            }
+            Ok(()) => eprintln!(
+                "{name}: {} packages, {} new",
+                found.pairs.len(),
+                found.pairs.len() - before
+            ),
+        }
+    }
+    if skipped > 0 {
+        eprintln!(
+            "{} of {} outputs read, {skipped} skipped",
+            installables.len() - skipped,
+            installables.len()
+        );
+    }
+    if skipped == installables.len() && skipped > 0 {
+        bail!("no output could be read");
+    }
+    Ok(found.pairs.into_iter().collect())
 }
 
 pub fn scan(target: &Target) -> Result<Report> {
@@ -446,21 +662,12 @@ pub fn scan(target: &Target) -> Result<Report> {
         bail!("name a flake with --flake or a file with --file");
     }
     if target.flake.is_some() && target.outputs.is_empty() {
-        bail!(
-            "name at least one flake output, like nixosConfigurations.<host>.config.system.build.toplevel"
-        );
+        bail!("no output to read; name one with --output");
     }
-    let mut pairs = if target.runtime {
-        runtime_closure(target)?
-    } else {
-        derivation_closure(target)?
-    };
+    let mut pairs = closure_of(target)?;
     pairs.retain(|(p, _)| !p.is_empty());
-    pairs.sort();
-    pairs.dedup();
-    let system = target.system.clone().unwrap_or_else(|| {
-        format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).replace("macos", "darwin")
-    });
+
+    let system = target.system.clone().unwrap_or_else(this_system);
     let packages = pairs
         .into_iter()
         .map(|(pname, version)| Found {
@@ -574,7 +781,7 @@ mod tests {
         });
         let new = serde_json::json!({ "derivations": drv, "version": 4 });
         for v in [drv, new] {
-            let pairs = closure_pairs(v.to_string().as_bytes()).unwrap();
+            let pairs = closure_pairs_at_most(v.to_string().as_bytes(), usize::MAX).unwrap();
             assert_eq!(pairs, vec![("zlib".to_string(), "1.3.1".to_string())]);
         }
     }
@@ -603,7 +810,7 @@ mod tests {
             ]
         );
         assert!(closure_pairs_at_most(drv.as_bytes(), 1).is_err());
-        assert!(closure_pairs(b"{} trailing").is_err());
+        assert!(closure_pairs_at_most(b"{} trailing", usize::MAX).is_err());
     }
 
     #[test]
@@ -615,6 +822,8 @@ mod tests {
             nixpkgs_input: None,
             system: None,
             runtime: false,
+            ignore: Vec::new(),
+            discovered: false,
         };
         assert_eq!(t(".").root(), Some(PathBuf::from(".")));
         assert_eq!(
@@ -622,6 +831,104 @@ mod tests {
             Some(PathBuf::from("/srv/tree"))
         );
         assert_eq!(t("github:o/r").root(), None);
-        assert_eq!(t(".").installables(), vec![".#x"]);
+        assert_eq!(
+            t(".").installables(),
+            vec![("x".to_string(), vec![".#x".to_string()])]
+        );
+    }
+
+    #[test]
+    fn a_discovered_name_that_is_not_plain_keeps_its_quotes() {
+        let path = |s: &[&str]| attr_path(&s.iter().map(|p| (*p).to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            path(&["packages", "x86_64-linux", "hello"]),
+            "packages.x86_64-linux.hello"
+        );
+        assert_eq!(
+            path(&["homeConfigurations", "me@box", "activationPackage"]),
+            "homeConfigurations.\"me@box\".activationPackage"
+        );
+        assert_eq!(path(&["checks", "a.b"]), "checks.\"a.b\"");
+    }
+
+    #[test]
+    fn ignore_leaves_one_output_or_every_output_under_a_path() {
+        let ignore = vec![
+            "checks".to_string(),
+            "packages.x86_64-linux.broken".to_string(),
+            "homeConfigurations.me@box".to_string(),
+        ];
+        assert!(ignored("checks.x86_64-linux.vm", &ignore));
+        assert!(ignored("checks", &ignore));
+        assert!(ignored("packages.x86_64-linux.broken", &ignore));
+        // the quotes of an installable are not part of the name
+        assert!(ignored(
+            "homeConfigurations.\"me@box\".activationPackage",
+            &ignore
+        ));
+        // a path is whole: checks does not leave checksummer
+        assert!(!ignored("checksummer.x86_64-linux.vm", &ignore));
+        assert!(!ignored("packages.x86_64-linux.broken-not", &ignore));
+        assert!(!ignored("packages.x86_64-linux.hello", &ignore));
+        assert!(!ignored("packages.x86_64-linux.hello", &[]));
+        assert!(!ignored("checks.\"a.b\"", &["packages.a".to_string()]));
+        assert!(!ignored("packages.\"a.b\"", &["packages.a".to_string()]));
+        assert!(ignored(
+            "packages.\"a.b\"",
+            &["packages.\"a.b\"".to_string()]
+        ));
+    }
+
+    #[test]
+    fn ignoring_every_attribute_of_a_file_does_not_read_the_whole_file() {
+        let mut t = Target {
+            flake: None,
+            file: Some(PathBuf::from("host.nix")),
+            outputs: vec!["top".into()],
+            nixpkgs_input: None,
+            system: None,
+            runtime: false,
+            ignore: vec!["top".into()],
+            discovered: false,
+        };
+        assert!(t.choose_outputs().is_err());
+    }
+
+    #[test]
+    fn every_output_is_its_own_call_and_a_file_without_an_attribute_is_one() {
+        let target = |outputs: Vec<String>| Target {
+            flake: None,
+            file: Some(PathBuf::from("host.nix")),
+            outputs,
+            nixpkgs_input: None,
+            system: None,
+            runtime: false,
+            ignore: Vec::new(),
+            discovered: false,
+        };
+        let calls = target(vec!["top".into(), "other".into()]).installables();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].0, "top");
+        assert_eq!(calls[0].1, vec!["--file", "host.nix", "top"]);
+        assert_eq!(calls[1].1, vec!["--file", "host.nix", "other"]);
+        let whole = target(Vec::new()).installables();
+        assert_eq!(whole.len(), 1);
+        assert_eq!(whole[0].1, vec!["--file", "host.nix"]);
+    }
+
+    #[test]
+    fn the_set_takes_store_paths_and_stops_past_the_cap() {
+        let mut found = Closure {
+            max: 1,
+            pairs: BTreeSet::new(),
+        };
+        found.add_path("/nix/store/2x905q8m3w6wj9kh1k2agzqx9x0ksapl-zlib-1.3.1");
+        // the same package twice is one entry: the set unions as it reads
+        found.add_path("/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-zlib-1.3.1");
+        found.add_path("/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-stdenv-linux");
+        assert_eq!(found.pairs.len(), 1);
+        assert!(found.room().is_ok());
+        found.add_path("/nix/store/cccccccccccccccccccccccccccccccc-curl-8.11.1");
+        assert!(found.room().is_err());
     }
 }

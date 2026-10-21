@@ -262,7 +262,8 @@ enum Command {
         flake: Option<String>,
         #[arg(long)]
         file: Option<PathBuf>,
-        /// A flake output or a file attribute; repeat for several
+        /// A flake output or a file attribute; repeat for several. Without
+        /// it, a flake gives every output worth reading
         #[arg(long = "output", alias = "attr")]
         outputs: Vec<String>,
         /// The lock entry or npins pin of nixpkgs, when it is not `nixpkgs`
@@ -273,6 +274,10 @@ enum Command {
         /// Read the built store paths instead of the derivations
         #[arg(long)]
         runtime: bool,
+        /// An output to leave out, or the start of one, such as `checks`;
+        /// repeat for several
+        #[arg(long = "ignore")]
+        ignore: Vec<String>,
         /// Experimental: also record the nixpkgs files that the outputs read,
         /// with iets. Local flakes only; the upload does not carry them
         #[arg(long)]
@@ -1146,17 +1151,21 @@ async fn run(cli: Cli) -> Result<i32> {
             nixpkgs_input,
             system,
             runtime,
+            ignore,
             files,
             out,
         } => {
-            let target = scan::Target {
+            let mut target = scan::Target {
                 flake,
                 file,
                 outputs,
                 nixpkgs_input,
                 system,
                 runtime,
+                ignore,
+                discovered: false,
             };
+            target.choose_outputs()?;
             let mut r = scan::scan(&target)?;
             if files {
                 let t = trace::trace(&target)?;
