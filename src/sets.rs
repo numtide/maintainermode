@@ -702,7 +702,7 @@ fn steps(base: &str, token: Option<&str>) -> String {
                 esc(cmd)
             )
         };
-        format!("<li class=\"mb-3\"><strong>{title}</strong> {body}{pre}</li>")
+        format!("<li class=\"mb-3 upload-step\"><strong>{title}</strong> {body}{pre}</li>")
     };
     let save = format!("mkdir -p ~/.config/maintainer-mode\n(umask 077; cat > {TOKEN_FILE})");
     let token_step = match token {
