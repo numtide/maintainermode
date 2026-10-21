@@ -352,6 +352,13 @@ section.Box > .Box-header {
 .gap-1 {
   gap: 4px;
 }
+.set-ref {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.Label.tap-label {
+  line-height: 22px;
+}
 .gap-2 {
   gap: 8px;
 }

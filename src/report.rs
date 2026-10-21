@@ -160,6 +160,20 @@ pub struct Upload {
     pub packages: Vec<Entry>,
     #[serde(default)]
     pub omitted: Omitted,
+    /// The set that the report replaces: only what the person passes with
+    /// `--name`, never a name from the scanned tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Only with `--public-flake`: the set shows on the public profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_flake: Option<PublicFlake>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublicFlake {
+    pub reference: String,
+    pub output: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -256,6 +270,8 @@ impl Report {
             },
             packages: kept.into_iter().collect(),
             omitted: Omitted { unknown },
+            name: None,
+            public_flake: None,
         }
     }
 }

@@ -1695,6 +1695,8 @@ struct Search {
     q: Option<String>,
     filter: Option<String>,
     after: Option<u64>,
+    /// One set of the machines filter.
+    set: Option<String>,
 }
 
 /// Signed out, the catalog of nixpkgs. Signed in, a filter bar on top:
@@ -1745,7 +1747,15 @@ async fn browse(
             Err(r) => r.into_response(),
         };
     }
-    let v = crate::mine::view(&app, &login, &interests, filter, &q, search.after);
+    let v = crate::mine::view(
+        &app,
+        &login,
+        &interests,
+        filter,
+        &q,
+        search.after,
+        search.set.as_deref(),
+    );
     page.sub(v.sub)
         .actions(v.actions)
         .body(format!("{step}{}", v.body))

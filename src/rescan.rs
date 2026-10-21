@@ -20,7 +20,7 @@ use tokio::io::AsyncReadExt;
 use tokio::time::Instant;
 
 use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
-use crate::store::{FlakeRef, PackageSet};
+use crate::store::{AddFlake, FlakeRef, MAX_SETS, PackageSet};
 use crate::web::{App, Shared, ago, esc, icon, octicon};
 
 const MAX_REFERENCE: usize = 256;
@@ -154,9 +154,7 @@ fn which(program: &str) -> Option<PathBuf> {
 }
 
 pub fn routes() -> Router<Shared> {
-    Router::new()
-        .route("/me/sets/flakes", post(add))
-        .route("/me/sets/flakes/delete", post(remove))
+    Router::new().route("/me/sets/flakes", post(add))
 }
 
 fn name_ok(s: &str, max: usize) -> bool {
@@ -708,17 +706,17 @@ async fn pass(app: &Arc<App>, cfg: &Config) -> Result<()> {
         app.store.log_rescan_run(&r.login)?;
         match scan(app, cfg, &r).await {
             Ok(set) => {
-                app.store.finish_flake_ref(r.id, Ok(&set))?;
+                app.store.finish_flake_ref(&r, Ok(&set))?;
                 tracing::info!(
                     "flake {} of {}: {} attributes",
-                    r.id,
+                    r.name,
                     r.login,
                     set.attrs.len()
                 );
             }
             Err(e) => {
-                app.store.finish_flake_ref(r.id, Err(&short(&e)))?;
-                tracing::info!("flake {} of {}: scan failed", r.id, r.login);
+                app.store.finish_flake_ref(&r, Err(&short(&e)))?;
+                tracing::info!("flake {} of {}: scan failed", r.name, r.login);
             }
         }
     }
@@ -748,59 +746,60 @@ pub async fn run(app: Arc<App>) {
 
 #[derive(Deserialize)]
 struct AddForm {
+    name: String,
     reference: String,
     output: String,
+    /// A checkbox: present means the set shows on the profile.
+    public: Option<String>,
 }
 
 async fn add(State(app): State<Shared>, headers: HeaderMap, Form(f): Form<AddForm>) -> Response {
     let Some(cfg) = &app.rescan else {
         return (
             StatusCode::FORBIDDEN,
-            "this server does not scan flakes; upload a report instead",
+            "this server does not scan flakes; scan the flake on your machine and upload it with --public-flake",
         )
             .into_response();
     };
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let (reference, output) = (f.reference.trim(), f.output.trim());
-    if let Err(e) = check_reference(reference).and_then(|()| check_output(output)) {
+    let (name, reference, output) = (f.name.trim(), f.reference.trim(), f.output.trim());
+    if let Err(e) = crate::sets::check_name(name)
+        .and_then(|()| check_reference(reference))
+        .and_then(|()| check_output(output))
+    {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
-    match app
-        .store
-        .add_flake_ref(&login, reference, output, cfg.max_flakes)
-    {
-        Ok(true) => Redirect::to("/packages?filter=machines#flakes").into_response(),
-        Ok(false) => (
+    match app.store.add_flake_ref(
+        &login,
+        name,
+        reference,
+        output,
+        f.public.is_some(),
+        cfg.max_flakes,
+    ) {
+        Ok(AddFlake::Added) => {
+            Redirect::to(&crate::sets::machines_href(Some(name))).into_response()
+        }
+        Ok(AddFlake::Taken) => (
+            StatusCode::CONFLICT,
+            format!("you have a set named {name}; choose another name"),
+        )
+            .into_response(),
+        Ok(AddFlake::Full) => (
             StatusCode::FORBIDDEN,
-            format!("at most {} flakes a person", cfg.max_flakes),
+            format!(
+                "at most {} flakes and {MAX_SETS} sets a person",
+                cfg.max_flakes
+            ),
         )
             .into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
 
-#[derive(Deserialize)]
-struct RemoveForm {
-    id: i64,
-}
-
-async fn remove(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Form(f): Form<RemoveForm>,
-) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    if let Err(e) = app.store.delete_flake_ref(&login, f.id) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    Redirect::to("/packages?filter=machines#flakes").into_response()
-}
-
-fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
+pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
     let again = r.last_at.is_none_or(|l| index_at.is_some_and(|i| l < i));
     let mut s = match (&r.error, r.last_at, r.scanned_at) {
         (Some(e), Some(at), _) => format!(
@@ -830,54 +829,58 @@ fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
     s
 }
 
-/// The flakes box of the machines filter of /packages.
+/// What `submit` takes to upload the owner's own scan of a public flake.
+pub const SUBMIT_FLAKE: &str =
+    "maintainer-mode submit --name NAME --public-flake github:OWNER/REPO#OUTPUT";
+
+/// The flakes box of the machines filter of /packages: the form that adds
+/// a flake for the server to scan, or why there is none.
 pub fn panel(app: &App, login: &str) -> String {
-    let refs = app.store.flake_refs(login).unwrap_or_default();
-    let index_at = app.store.get_time("index_at").ok().flatten();
+    let n = app.store.flake_refs(login).unwrap_or_default().len();
     let mut out = format!(
-        "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Public flakes that the server scans</h2></div>",
+        "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Public flakes</h2></div>",
         icon(octicon!("shield"))
     );
-    for r in &refs {
-        let _ = write!(
-            out,
-            "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\">\
-             <div class=\"flex-auto\"><code>{}#{}</code><div class=\"f6 color-fg-muted\">{}</div></div>\
-             <form method=\"post\" action=\"/me/sets/flakes/delete\"><input type=\"hidden\" name=\"id\" value=\"{}\">\
-             <button class=\"btn btn-sm\" type=\"submit\">Remove</button></form></div>",
-            esc(&r.reference),
-            esc(&r.output),
-            state(r, index_at),
-            r.id
-        );
-    }
+    let upload = format!(
+        "You can scan a public flake on your machine and upload it as a public set: \
+         <code class=\"set-ref\">{}</code>. It shows on your profile.",
+        esc(SUBMIT_FLAKE)
+    );
     match &app.rescan {
-        None => out.push_str(
-            "<div class=\"Box-row color-fg-muted\">This server does not scan flakes: the operator has not turned \
-             server rescans on. Scan on your machine and upload the report.</div>",
-        ),
-        Some(cfg) if refs.len() >= cfg.max_flakes => {
+        None => {
             let _ = write!(
                 out,
-                "<div class=\"Box-row color-fg-muted\">You have the most flakes a person can have here: {}.</div>",
+                "<div class=\"Box-row\"><p><strong>This server does not scan flakes.</strong> The operator has not turned \
+                 server rescans on.</p><p class=\"mb-0\">{upload}</p></div>"
+            );
+        }
+        Some(cfg) if n >= cfg.max_flakes => {
+            let _ = write!(
+                out,
+                "<div class=\"Box-row color-fg-muted\">The server scans the most flakes a person can have here: {}. {upload}</div>",
                 cfg.max_flakes
             );
         }
         Some(cfg) => {
             let _ = write!(
                 out,
-                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2\">\
+                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2 flex-items-center\">\
+                 <input class=\"form-control\" name=\"name\" required maxlength=\"{}\" pattern=\"[a-z0-9][a-z0-9._\\-]*\" \
+                 placeholder=\"name, such as web-1\" aria-label=\"set name\">\
                  <input class=\"form-control flex-auto\" name=\"reference\" required maxlength=\"{MAX_REFERENCE}\" \
                  placeholder=\"github:OWNER/REPO\" aria-label=\"flake reference\">\
                  <input class=\"form-control flex-auto\" name=\"output\" required maxlength=\"{MAX_OUTPUT_NAME}\" \
                  placeholder=\"nixosConfigurations.HOST.config.system.build.toplevel\" aria-label=\"flake output\">\
+                 <label class=\"f6\"><input type=\"checkbox\" name=\"public\" value=\"1\"> Show on my profile</label>\
                  <button class=\"btn btn-sm\" type=\"submit\">Add</button></form>\
                  <p class=\"f6 color-fg-muted mt-2 mb-0\">A public <code>github:OWNER/REPO</code>, <code>github:OWNER/REPO/BRANCH</code> \
                  or <code>https://</code> tarball, with a <code>flake.lock</code>. After each nixpkgs index, the server evaluates the \
                  output in a sandbox, with no build, and keeps only the nixpkgs attributes, as for an upload. \
                  At most {} flakes and {} scans a day for you. \
                  See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/rescan.md\">docs/rescan.md</a>.</p></div>",
-                cfg.max_flakes, cfg.per_day
+                crate::sets::MAX_NAME,
+                cfg.max_flakes,
+                cfg.per_day
             );
         }
     }
@@ -1044,8 +1047,10 @@ mod tests {
     async fn adding_a_flake_is_refused_while_rescans_are_off() {
         let app = crate::sets::tests::app(&["hello"]);
         let form = Form(AddForm {
+            name: "web".into(),
             reference: "github:o/r".into(),
             output: "packages.x86_64-linux.default".into(),
+            public: None,
         });
         let r = add(State(app.clone()), HeaderMap::new(), form).await;
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
@@ -1061,10 +1066,14 @@ mod tests {
     fn flakes_are_limited_and_due_once_per_index() {
         let app = crate::sets::tests::app(&["hello"]);
         let s = &app.store;
-        assert!(s.add_flake_ref("alice", "github:o/a", "x", 2).unwrap());
-        assert!(s.add_flake_ref("alice", "github:o/b", "x", 2).unwrap());
-        assert!(!s.add_flake_ref("alice", "github:o/c", "x", 2).unwrap());
-        assert!(s.add_flake_ref("bob", "github:o/c", "x", 2).unwrap());
+        let add = |login: &str, name: &str, r: &str| {
+            s.add_flake_ref(login, name, r, "x", false, 2).unwrap()
+        };
+        assert!(matches!(add("alice", "a", "github:o/a"), AddFlake::Added));
+        assert!(matches!(add("alice", "a", "github:o/b"), AddFlake::Taken));
+        assert!(matches!(add("alice", "b", "github:o/b"), AddFlake::Added));
+        assert!(matches!(add("alice", "c", "github:o/c"), AddFlake::Full));
+        assert!(matches!(add("bob", "c", "github:o/c"), AddFlake::Added));
         let before = Utc::now() - chrono::Duration::hours(1);
         let due = s.flake_refs_due(before, seen_since()).unwrap();
         assert_eq!(due.len(), 3);
@@ -1076,8 +1085,8 @@ mod tests {
             nixpkgs_rev: None,
             versions: Default::default(),
         };
-        s.finish_flake_ref(due[0].id, Ok(&set)).unwrap();
-        s.finish_flake_ref(due[1].id, Err("no flake.lock")).unwrap();
+        s.finish_flake_ref(&due[0], Ok(&set)).unwrap();
+        s.finish_flake_ref(&due[1], Err("no flake.lock")).unwrap();
         assert_eq!(s.flake_refs_due(before, seen_since()).unwrap().len(), 1);
         let later = Utc::now() + chrono::Duration::hours(1);
         assert_eq!(s.flake_refs_due(later, seen_since()).unwrap().len(), 3);
@@ -1091,7 +1100,7 @@ mod tests {
         assert_eq!(s.rescan_runs_total_since(before).unwrap(), 3);
         assert_eq!(s.purge_flake_results(later).unwrap(), 1);
         assert!(crate::sets::set_attrs(&app, &due[0].login).is_empty());
-        s.delete_flake_refs("alice").unwrap();
+        s.delete_package_sets("alice").unwrap();
         assert_eq!(s.flake_ref_counts().unwrap().0, 1);
     }
 
@@ -1099,8 +1108,12 @@ mod tests {
     fn an_owner_who_stays_away_stops_the_scans_and_loses_the_attributes() {
         let app = crate::sets::tests::app(&["hello"]);
         let s = &app.store;
-        assert!(s.add_flake_ref("alice", "github:o/a", "x", 2).unwrap());
-        let id = s.flake_refs("alice").unwrap()[0].id;
+        assert!(matches!(
+            s.add_flake_ref("alice", "a", "github:o/a", "x", false, 2)
+                .unwrap(),
+            AddFlake::Added
+        ));
+        let r = s.flake_refs("alice").unwrap().remove(0);
         let set = PackageSet {
             attrs: vec!["hello".into()],
             dropped: 0,
@@ -1109,7 +1122,7 @@ mod tests {
             nixpkgs_rev: None,
             versions: Default::default(),
         };
-        s.finish_flake_ref(id, Ok(&set)).unwrap();
+        s.finish_flake_ref(&r, Ok(&set)).unwrap();
         let after_visit = Utc::now() + chrono::Duration::hours(1);
         let index_at = after_visit + chrono::Duration::days(1);
         assert_eq!(s.flake_refs_due(index_at, seen_since()).unwrap().len(), 1);

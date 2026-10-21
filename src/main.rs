@@ -305,6 +305,14 @@ enum Command {
         /// A saved copy of /api/v1/packages/index, instead of a download
         #[arg(long)]
         index_file: Option<PathBuf>,
+        /// The set this report replaces, such as `laptop`; the server uses
+        /// `default` without it. Only this name goes, never the tree's.
+        #[arg(long)]
+        name: Option<String>,
+        /// Make the set public on your profile: the public flake that you
+        /// scanned, as REFERENCE#OUTPUT. Needs --name.
+        #[arg(long, requires = "name")]
+        public_flake: Option<String>,
     },
 }
 
@@ -368,19 +376,41 @@ async fn strict(
     Ok(report.strict(&list))
 }
 
+/// `REFERENCE#OUTPUT`, with the rules of a server rescan.
+fn public_flake(s: &str) -> Result<report::PublicFlake> {
+    let (reference, output) = s
+        .split_once('#')
+        .context("--public-flake is REFERENCE#OUTPUT, such as github:OWNER/REPO#nixosConfigurations.HOST.config.system.build.toplevel")?;
+    rescan::check_reference(reference)
+        .and_then(|()| rescan::check_output(output))
+        .map_err(|e| anyhow::anyhow!("--public-flake: {e}"))?;
+    Ok(report::PublicFlake {
+        reference: reference.into(),
+        output: output.into(),
+    })
+}
+
 async fn submit(
     server: &str,
     path: &std::path::Path,
     token_file: Option<PathBuf>,
     index_file: Option<&std::path::Path>,
+    name: Option<String>,
+    flake: Option<String>,
 ) -> Result<()> {
+    if let Some(n) = &name {
+        sets::check_name(n).map_err(|e| anyhow::anyhow!("--name: {e}"))?;
+    }
+    let flake = flake.as_deref().map(public_flake).transpose()?;
     let token = match std::env::var("MAINTAINER_MODE_UPLOAD_TOKEN") {
         Ok(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => read_secret(&token_file)?.context(
             "no upload token: set MAINTAINER_MODE_UPLOAD_TOKEN or --token-file; make one at <server>/me/settings#upload",
         )?,
     };
-    let report = strict(server, path, index_file).await?;
+    let mut report = strict(server, path, index_file).await?;
+    report.name = name;
+    report.public_flake = flake;
     let url = format!("{}/api/v1/reports", server.trim_end_matches('/'));
     let resp = github::http()
         .post(&url)
@@ -1163,12 +1193,16 @@ async fn run(cli: Cli) -> Result<i32> {
             report: path,
             token_file,
             index_file,
+            name,
+            public_flake,
         } => {
             submit(
                 to.as_deref().unwrap_or(&cli.server),
                 &path,
                 token_file,
                 index_file.as_deref(),
+                name,
+                public_flake,
             )
             .await?;
             Ok(0)

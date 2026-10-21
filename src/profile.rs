@@ -40,15 +40,17 @@ enum ProfileTab {
     Overview,
     Reviews,
     Maintains,
+    Flakes,
 }
 
 impl ProfileTab {
-    const ALL: [ProfileTab; 3] = [Self::Overview, Self::Reviews, Self::Maintains];
+    const ALL: [ProfileTab; 4] = [Self::Overview, Self::Reviews, Self::Maintains, Self::Flakes];
 
     fn parse(s: Option<&str>) -> Self {
         match s {
             Some("reviews" | "record") => Self::Reviews,
             Some("maintains") => Self::Maintains,
+            Some("flakes") => Self::Flakes,
             _ => Self::Overview,
         }
     }
@@ -58,6 +60,7 @@ impl ProfileTab {
             Self::Overview => "overview",
             Self::Reviews => "reviews",
             Self::Maintains => "maintains",
+            Self::Flakes => "flakes",
         }
     }
 
@@ -66,6 +69,7 @@ impl ProfileTab {
             Self::Overview => "Overview",
             Self::Reviews => "Reviews",
             Self::Maintains => "Maintains",
+            Self::Flakes => "Flakes",
         }
     }
 
@@ -78,11 +82,139 @@ impl ProfileTab {
     }
 }
 
-fn tabs(login: &str, current: ProfileTab) -> Vec<Tab> {
+/// The Flakes tab shows only when there is a public flake, or for its
+/// owner, who can add one.
+fn tabs(login: &str, current: ProfileTab, flakes: Option<usize>) -> Vec<Tab> {
     ProfileTab::ALL
         .iter()
-        .map(|t| Tab::new(t.href(login), t.label(), *t == current))
+        .filter_map(|t| {
+            let tab = Tab::new(t.href(login), t.label(), *t == current);
+            match t {
+                ProfileTab::Flakes => flakes.map(|n| tab.count(n)),
+                _ => Some(tab),
+            }
+        })
         .collect()
+}
+
+/// Packages of one public flake that the page lists; the JSON has all.
+const FLAKE_PACKAGES: usize = 200;
+
+/// A link to the source of a `github:` reference.
+fn flake_href(reference: &str) -> Option<String> {
+    let rest = reference.strip_prefix("github:")?;
+    let mut parts = rest.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    let mut url = format!("https://github.com/{owner}/{repo}");
+    if let Some(branch) = parts.next() {
+        let _ = write!(url, "/tree/{branch}");
+    }
+    Some(url)
+}
+
+/// The public flake sets of a login. A private set never comes here.
+pub(crate) fn flakes_value(app: &App, login: &str) -> Value {
+    let list: Vec<Value> = app
+        .store
+        .public_sets(login)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|s| {
+            let (reference, output) = s.flake?;
+            Some(json!({
+                "name": s.name,
+                "reference": reference,
+                "output": output,
+                "source": if s.rescan { "server_scan" } else { "upload" },
+                "updated_at": s.data.as_ref().map(|d| d.uploaded_at),
+                "nixpkgs_rev": s.data.as_ref().and_then(|d| d.nixpkgs_rev.clone()),
+                "packages": s.data.map(|d| d.attrs).unwrap_or_default(),
+            }))
+        })
+        .collect();
+    Value::Array(list)
+}
+
+fn flakes_body(app: &App, login: &str, own: bool) -> String {
+    let sets = app.store.public_sets(login).unwrap_or_default();
+    let mut out = String::new();
+    if own {
+        let off = if app.rescan.is_none() {
+            " This server does not scan flakes, so upload your own scan of a public flake: \
+             <code class=\"set-ref\">maintainer-mode submit --name NAME --public-flake REFERENCE#OUTPUT</code>."
+        } else {
+            ""
+        };
+        out.push_str(&note(&format!(
+            "Only the flakes that you mark \"Show on my profile\" show here. Your machine reports never do. \
+             Change them on <a href=\"{}#sets\">your packages</a>.{off}",
+            crate::mine::MACHINES
+        )));
+    }
+    if sets.is_empty() {
+        out.push_str(&empty(&format!("{} shows no public flake.", esc(login))));
+        return out;
+    }
+    for s in sets {
+        let Some((reference, output)) = &s.flake else {
+            continue;
+        };
+        let source = match (&s.data, s.rescan) {
+            (None, _) => "Not scanned yet.".to_string(),
+            (Some(d), true) => format!("Scanned by this server {} ago.", ago(d.uploaded_at)),
+            (Some(d), false) => format!(
+                "Uploaded {} ago from the scan of {}. The server checked the package names, not the flake.",
+                ago(d.uploaded_at),
+                esc(login)
+            ),
+        };
+        let shown = match flake_href(reference) {
+            Some(u) => format!(
+                "<a class=\"set-ref\" href=\"{}\"><code>{}</code></a>",
+                esc(&u),
+                esc(reference)
+            ),
+            None => format!("<code class=\"set-ref\">{}</code>", esc(reference)),
+        };
+        let attrs = s.data.map(|d| d.attrs).unwrap_or_default();
+        let mut list: String = attrs
+            .iter()
+            .take(FLAKE_PACKAGES)
+            .map(|a| {
+                format!(
+                    "<a class=\"Label tap-label\" href=\"/p/{}\">{}</a>",
+                    crate::github::urlencode(a),
+                    esc(a)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        if attrs.len() > FLAKE_PACKAGES {
+            let _ = write!(
+                list,
+                " <span class=\"color-fg-muted\">and {} more in <a href=\"/api/v1/people/{}\">the JSON</a></span>",
+                attrs.len() - FLAKE_PACKAGES,
+                crate::github::urlencode(login)
+            );
+        }
+        let body = format!(
+            "<div class=\"Box-row set-ref\">{shown} <span class=\"color-fg-muted\">#</span><code>{}</code>\
+             <div class=\"f6 color-fg-muted mt-1\">{source}</div></div>{}",
+            esc(output),
+            if list.is_empty() {
+                String::new()
+            } else {
+                format!("<div class=\"Box-row d-flex flex-wrap gap-1\">{list}</div>")
+            }
+        );
+        out.push_str(&section(
+            &format!("{} {}", icon(octicon!("package")), esc(&s.name)),
+            Some(attrs.len()),
+            None,
+            &body,
+        ));
+    }
+    out
 }
 
 async fn old_maintains(Path(login): Path<String>) -> Redirect {
@@ -307,6 +439,7 @@ pub(crate) fn profile_value(app: &App, login: &str) -> Value {
         "open_prs": open,
         "recent_prs": recent,
         "areas": areas,
+        "flakes": flakes_value(app, login),
     })
 }
 
@@ -629,6 +762,11 @@ async fn page(
         return (StatusCode::NOT_FOUND, page).into_response();
     }
     let tab = ProfileTab::parse(q.tab.as_deref());
+    let own = viewer
+        .as_deref()
+        .is_some_and(|v| v.eq_ignore_ascii_case(&login));
+    let public = app.store.public_sets(&login).unwrap_or_default().len();
+    let flakes = (public > 0 || own).then_some(public);
     let s = app.snap();
     let now = Utc::now();
     let f = facts(&app, &s, &login);
@@ -642,11 +780,12 @@ async fn page(
             format!("What {login} maintains"),
             crate::catalog::maintains_body(&app, &login),
         ),
+        ProfileTab::Flakes => (
+            format!("Public flakes of {login}"),
+            flakes_body(&app, &login, own),
+        ),
     };
     drop(s);
-    let own = viewer
-        .as_deref()
-        .is_some_and(|v| v.eq_ignore_ascii_case(&login));
     let mut actions = format!(
         "<a class=\"btn btn-sm\" href=\"https://github.com/{}\">{} GitHub</a>",
         crate::github::urlencode(&login),
@@ -662,7 +801,7 @@ async fn page(
     Page::new(Section::Other, title)
         .heading(format!("{}{}", avatar(&login), esc(&login)))
         .sub(header_facts(&login, &f))
-        .subnav(tabs(&login, tab))
+        .subnav(tabs(&login, tab, flakes))
         .actions(actions)
         .body(body)
         .render(&app, viewer.as_deref())
@@ -908,6 +1047,71 @@ mod own {
             !String::from_utf8(b.to_vec())
                 .unwrap()
                 .contains("Your private pages")
+        );
+    }
+
+    #[tokio::test]
+    async fn the_flakes_tab_shows_public_flakes_only() {
+        let app = crate::sets::tests::app(&[]);
+        let set = |attr: &str| crate::store::PackageSet {
+            attrs: vec![attr.into()],
+            dropped: 0,
+            uploaded_at: Utc::now(),
+            scanned_at: None,
+            nixpkgs_rev: None,
+            versions: Default::default(),
+        };
+        let s = &app.store;
+        s.put_package_set("alice", "secret-box", &set("private-thing"), None)
+            .unwrap();
+        let q = |tab: Option<&str>| {
+            Query(ProfileQuery {
+                tab: tab.map(String::from),
+                after: None,
+            })
+        };
+        let get = |h: HeaderMap, tab: Option<&'static str>| {
+            let app = app.clone();
+            async move {
+                let r = page(State(app), h, Path("alice".into()), q(tab)).await;
+                let b = axum::body::to_bytes(r.into_body(), usize::MAX)
+                    .await
+                    .unwrap();
+                String::from_utf8(b.to_vec()).unwrap()
+            }
+        };
+        let visitor = get(HeaderMap::new(), None).await;
+        assert!(!visitor.contains("tab=flakes"));
+        let visitor = get(HeaderMap::new(), Some("flakes")).await;
+        assert!(visitor.contains("alice shows no public flake."));
+        assert!(!visitor.contains("secret-box") && !visitor.contains("private-thing"));
+        let own = crate::notify::tests::signed_in(&app, "alice");
+        let h = get(own.clone(), Some("flakes")).await;
+        assert!(h.contains("aria-current=\"page\">Flakes <span class=\"Counter\">0</span>"));
+        assert!(h.contains("This server does not scan flakes"));
+        assert!(!h.contains("secret-box"));
+        s.put_package_set(
+            "alice",
+            "site",
+            &set("hello"),
+            Some(("github:o/r/main", "packages.x86_64-linux.default")),
+        )
+        .unwrap();
+        let h = get(HeaderMap::new(), Some("flakes")).await;
+        assert!(h.contains("href=\"https://github.com/o/r/tree/main\""));
+        assert!(h.contains("packages.x86_64-linux.default") && h.contains("href=\"/p/hello\""));
+        assert!(h.contains("The server checked the package names, not the flake."));
+        assert!(!h.contains("secret-box") && !h.contains("private-thing"));
+        assert!(
+            get(HeaderMap::new(), None)
+                .await
+                .contains(">Flakes <span class=\"Counter\">1</span>")
+        );
+        s.set_public("alice", "site", false).unwrap();
+        assert!(
+            !get(HeaderMap::new(), Some("flakes"))
+                .await
+                .contains("hello")
         );
     }
 }

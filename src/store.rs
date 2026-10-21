@@ -26,7 +26,8 @@ pub struct Session {
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        let conn = Connection::open(path).with_context(|| format!("open {}", path.display()))?;
+        let mut conn =
+            Connection::open(path).with_context(|| format!("open {}", path.display()))?;
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA busy_timeout = 5000;
@@ -76,32 +77,9 @@ impl Store {
                hash TEXT NOT NULL UNIQUE,
                created_at TEXT NOT NULL
              );
-             CREATE TABLE IF NOT EXISTS package_set (
-               login TEXT PRIMARY KEY,
-               attrs TEXT NOT NULL,
-               dropped INTEGER NOT NULL,
-               uploaded_at TEXT NOT NULL,
-               scanned_at TEXT,
-               nixpkgs_rev TEXT
-             );
              CREATE TABLE IF NOT EXISTS channel (
                key TEXT PRIMARY KEY,
                data TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS flake_ref (
-               id INTEGER PRIMARY KEY,
-               login TEXT NOT NULL,
-               reference TEXT NOT NULL,
-               output TEXT NOT NULL,
-               created_at TEXT NOT NULL,
-               seen_at TEXT NOT NULL,
-               last_at TEXT,
-               error TEXT,
-               attrs TEXT NOT NULL DEFAULT '[]',
-               dropped INTEGER NOT NULL DEFAULT 0,
-               scanned_at TEXT,
-               nixpkgs_rev TEXT,
-               UNIQUE (login, reference, output)
              );
              CREATE TABLE IF NOT EXISTS rescan_run (login TEXT NOT NULL, at TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS unsubscribe (
@@ -155,16 +133,7 @@ impl Store {
                PRIMARY KEY (login, id)
              );",
         )?;
-        let versions: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM pragma_table_info('package_set') WHERE name = 'versions'",
-            [],
-            |r| r.get(0),
-        )?;
-        if versions == 0 {
-            conn.execute_batch(
-                "ALTER TABLE package_set ADD COLUMN versions TEXT NOT NULL DEFAULT '{}'",
-            )?;
-        }
+        migrate_sets(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -578,8 +547,7 @@ impl Store {
     }
 }
 
-/// A person's package set from their latest report. Private: only the owner
-/// reads it, and no public number counts it.
+/// The data of one named set: an upload, or the last good scan of a flake.
 pub struct PackageSet {
     pub attrs: Vec<String>,
     pub dropped: usize,
@@ -589,6 +557,141 @@ pub struct PackageSet {
     /// attribute → the version the report gave, only where nixpkgs had
     /// that exact version at upload.
     pub versions: std::collections::BTreeMap<String, String>,
+}
+
+/// The name of the set of an upload with no name, and of the sets that
+/// existed before names.
+pub const DEFAULT_SET: &str = "default";
+
+/// One of the named sets of a person. Private unless `public` is set,
+/// which only a set with a public flake reference can be.
+pub struct NamedSet {
+    pub name: String,
+    /// `None` for a flake that the server has not scanned with success yet.
+    pub data: Option<PackageSet>,
+    /// The public flake reference and output of the set.
+    pub flake: Option<(String, String)>,
+    pub public: bool,
+    /// The server scans the flake after each nixpkgs index.
+    pub rescan: bool,
+}
+
+pub enum Put {
+    Stored,
+    /// The name belongs to a flake that the server scans.
+    Scanned,
+    /// The login has [`MAX_SETS`] other sets.
+    Full,
+}
+
+pub enum AddFlake {
+    Added,
+    /// The login has a set with this name.
+    Taken,
+    Full,
+}
+
+/// Sets a person can have, all kinds together.
+pub const MAX_SETS: usize = 20;
+
+const SET_TABLE: &str = "CREATE TABLE IF NOT EXISTS package_set (
+  login TEXT NOT NULL,
+  name TEXT NOT NULL,
+  attrs TEXT NOT NULL DEFAULT '[]',
+  dropped INTEGER NOT NULL DEFAULT 0,
+  uploaded_at TEXT,
+  scanned_at TEXT,
+  nixpkgs_rev TEXT,
+  versions TEXT NOT NULL DEFAULT '{}',
+  reference TEXT,
+  output TEXT,
+  public INTEGER NOT NULL DEFAULT 0,
+  rescan INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT,
+  seen_at TEXT,
+  last_at TEXT,
+  error TEXT,
+  PRIMARY KEY (login, name)
+);";
+
+fn has_table(conn: &Connection, table: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        [table, column],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
+/// Before names, a login had one uploaded set (`package_set`, keyed by
+/// login) and its server-scanned flakes (`flake_ref`). Both move to the
+/// one table of named sets: the upload as [`DEFAULT_SET`], each flake as
+/// `flake-<id>`.
+pub(crate) fn migrate_sets(conn: &mut Connection) -> Result<()> {
+    let tx = conn.transaction()?;
+    let old = has_table(&tx, "package_set")? && !has_column(&tx, "package_set", "name")?;
+    if old {
+        if !has_column(&tx, "package_set", "versions")? {
+            tx.execute_batch(
+                "ALTER TABLE package_set ADD COLUMN versions TEXT NOT NULL DEFAULT '{}'",
+            )?;
+        }
+        tx.execute_batch("ALTER TABLE package_set RENAME TO package_set_v1")?;
+    }
+    tx.execute_batch(SET_TABLE)?;
+    if old {
+        tx.execute(
+            "INSERT INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions)
+             SELECT login, ?1, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions FROM package_set_v1",
+            [DEFAULT_SET],
+        )?;
+        tx.execute_batch("DROP TABLE package_set_v1")?;
+    }
+    if has_table(&tx, "flake_ref")? {
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at,
+               nixpkgs_rev, reference, output, rescan, created_at, seen_at, last_at, error)
+             SELECT login, 'flake-' || id, attrs, dropped, scanned_at, scanned_at,
+               nixpkgs_rev, reference, output, 1, created_at, seen_at, last_at, error FROM flake_ref;
+             DROP TABLE flake_ref;",
+        )?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
+const SET_COLUMNS: &str = "name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public, rescan";
+
+fn set_row(r: &rusqlite::Row) -> rusqlite::Result<NamedSet> {
+    let uploaded = time_of(r.get(3)?);
+    let reference: Option<String> = r.get(7)?;
+    let output: Option<String> = r.get(8)?;
+    Ok(NamedSet {
+        name: r.get(0)?,
+        data: match uploaded {
+            Some(uploaded_at) => Some(PackageSet {
+                attrs: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or_default(),
+                dropped: r.get::<_, i64>(2)?.max(0) as usize,
+                uploaded_at,
+                scanned_at: r.get(4)?,
+                nixpkgs_rev: r.get(5)?,
+                versions: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
+            }),
+            None => None,
+        },
+        flake: reference.zip(output),
+        public: r.get(9)?,
+        rescan: r.get(10)?,
+    })
 }
 
 impl Store {
@@ -631,81 +734,145 @@ impl Store {
         Ok(())
     }
 
-    pub fn put_package_set(&self, login: &str, set: &PackageSet) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO package_set (login, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-             ON CONFLICT(login) DO UPDATE SET attrs = excluded.attrs, dropped = excluded.dropped,
+    /// An upload replaces the whole set of that name, the flake and the
+    /// public mark too: `flake` makes it a public flake, `None` a private
+    /// set.
+    pub fn put_package_set(
+        &self,
+        login: &str,
+        name: &str,
+        set: &PackageSet,
+        flake: Option<(&str, &str)>,
+    ) -> Result<Put> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let rescan: Option<bool> = tx
+            .query_row(
+                "SELECT rescan FROM package_set WHERE login = ?1 AND name = ?2",
+                [login, name],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match rescan {
+            Some(true) => return Ok(Put::Scanned),
+            Some(false) => {}
+            None => {
+                let n: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM package_set WHERE login = ?1",
+                    [login],
+                    |r| r.get(0),
+                )?;
+                if n as usize >= MAX_SETS {
+                    return Ok(Put::Full);
+                }
+            }
+        }
+        tx.execute(
+            "INSERT INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(login, name) DO UPDATE SET attrs = excluded.attrs, dropped = excluded.dropped,
                uploaded_at = excluded.uploaded_at, scanned_at = excluded.scanned_at,
-               nixpkgs_rev = excluded.nixpkgs_rev, versions = excluded.versions",
+               nixpkgs_rev = excluded.nixpkgs_rev, versions = excluded.versions,
+               reference = excluded.reference, output = excluded.output, public = excluded.public",
             params![
                 login,
+                name,
                 serde_json::to_string(&set.attrs)?,
                 set.dropped as i64,
                 set.uploaded_at.to_rfc3339(),
                 set.scanned_at,
                 set.nixpkgs_rev,
-                serde_json::to_string(&set.versions)?
+                serde_json::to_string(&set.versions)?,
+                flake.map(|f| f.0),
+                flake.map(|f| f.1),
+                flake.is_some(),
             ],
+        )?;
+        tx.commit()?;
+        Ok(Put::Stored)
+    }
+
+    /// The data of one set, if it has any.
+    pub fn package_set(&self, login: &str, name: &str) -> Result<Option<PackageSet>> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn
+            .query_row(
+                &format!("SELECT {SET_COLUMNS} FROM package_set WHERE login = ?1 AND name = ?2"),
+                [login, name],
+                set_row,
+            )
+            .optional()?
+            .and_then(|s| s.data))
+    }
+
+    /// All sets of a login, by name. Private: only for the owner.
+    pub fn sets(&self, login: &str) -> Result<Vec<NamedSet>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SET_COLUMNS} FROM package_set WHERE login = ?1 ORDER BY name"
+        ))?;
+        let rows = stmt.query_map([login], set_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The sets that the owner shows on their profile: public flakes only.
+    pub fn public_sets(&self, login: &str) -> Result<Vec<NamedSet>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {SET_COLUMNS} FROM package_set
+             WHERE login = ?1 AND public = 1 AND reference IS NOT NULL AND output IS NOT NULL
+             ORDER BY name"
+        ))?;
+        let rows = stmt.query_map([login], set_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Only a set with a flake reference can be public. Returns whether a
+    /// set changed.
+    pub fn set_public(&self, login: &str, name: &str, public: bool) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "UPDATE package_set SET public = ?3
+             WHERE login = ?1 AND name = ?2 AND reference IS NOT NULL AND output IS NOT NULL",
+            params![login, name, public],
+        )? > 0)
+    }
+
+    pub fn delete_package_set(&self, login: &str, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM package_set WHERE login = ?1 AND name = ?2",
+            [login, name],
         )?;
         Ok(())
     }
 
-    pub fn package_set(&self, login: &str) -> Result<Option<PackageSet>> {
-        let conn = self.conn.lock().unwrap();
-        let row = conn
-            .query_row(
-                "SELECT attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions FROM package_set WHERE login = ?1",
-                [login],
-                |r| {
-                    Ok((
-                        r.get::<_, String>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, String>(2)?,
-                        r.get::<_, Option<String>>(3)?,
-                        r.get::<_, Option<String>>(4)?,
-                        r.get::<_, String>(5)?,
-                    ))
-                },
-            )
-            .optional()?;
-        let Some((attrs, dropped, uploaded, scanned_at, nixpkgs_rev, versions)) = row else {
-            return Ok(None);
-        };
-        Ok(Some(PackageSet {
-            attrs: serde_json::from_str(&attrs)?,
-            dropped: dropped.max(0) as usize,
-            uploaded_at: DateTime::parse_from_rfc3339(&uploaded)?.with_timezone(&Utc),
-            scanned_at,
-            nixpkgs_rev,
-            versions: serde_json::from_str(&versions).unwrap_or_default(),
-        }))
-    }
-
-    pub fn delete_package_set(&self, login: &str) -> Result<()> {
+    pub fn delete_package_sets(&self, login: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM package_set WHERE login = ?1", [login])?;
         Ok(())
     }
 
-    /// Deletes every set with no upload since `before`; returns how many.
+    /// Deletes every uploaded set with no upload since `before`; returns
+    /// how many. A set of a scanned flake follows
+    /// [`Store::purge_flake_results`].
     pub fn purge_package_sets(&self, before: DateTime<Utc>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
-            "DELETE FROM package_set WHERE uploaded_at < ?1",
+            "DELETE FROM package_set WHERE rescan = 0 AND uploaded_at < ?1",
             [before.to_rfc3339()],
         )?)
     }
 }
 
-/// A public flake reference that the server scans again after each nixpkgs
-/// index. Private like the uploaded set: only the owner reads it.
+/// A named set whose public flake the server scans again after each
+/// nixpkgs index.
 pub struct FlakeRef {
-    pub id: i64,
     pub login: String,
+    pub name: String,
     pub reference: String,
     pub output: String,
+    pub public: bool,
     pub last_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
     pub attrs: Vec<String>,
@@ -723,77 +890,67 @@ fn time_of(s: Option<String>) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-const FLAKE_COLUMNS: &str =
-    "id, login, reference, output, last_at, error, attrs, dropped, scanned_at, nixpkgs_rev";
+const FLAKE_COLUMNS: &str = "login, name, reference, output, public, last_at, error, attrs, dropped, uploaded_at, nixpkgs_rev";
 
 fn flake_row(r: &rusqlite::Row) -> rusqlite::Result<FlakeRef> {
     Ok(FlakeRef {
-        id: r.get(0)?,
-        login: r.get(1)?,
+        login: r.get(0)?,
+        name: r.get(1)?,
         reference: r.get(2)?,
         output: r.get(3)?,
-        last_at: time_of(r.get(4)?),
-        error: r.get(5)?,
-        attrs: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
-        dropped: r.get::<_, i64>(7)?.max(0) as usize,
-        scanned_at: time_of(r.get(8)?),
-        nixpkgs_rev: r.get(9)?,
+        public: r.get(4)?,
+        last_at: time_of(r.get(5)?),
+        error: r.get(6)?,
+        attrs: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
+        dropped: r.get::<_, i64>(8)?.max(0) as usize,
+        scanned_at: time_of(r.get(9)?),
+        nixpkgs_rev: r.get(10)?,
     })
 }
 
 impl Store {
-    /// Refuses a reference beyond `max` for the login; returns whether the
-    /// login is within the limit.
+    /// Adds a flake for the server to scan, under a new name. At most
+    /// `max` such flakes and [`MAX_SETS`] sets for the login.
     pub fn add_flake_ref(
         &self,
         login: &str,
+        name: &str,
         reference: &str,
         output: &str,
+        public: bool,
         max: usize,
-    ) -> Result<bool> {
+    ) -> Result<AddFlake> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
-        let n: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM flake_ref WHERE login = ?1",
+        let (all, flakes): (i64, i64) = tx.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(rescan), 0) FROM package_set WHERE login = ?1",
             [login],
-            |r| r.get(0),
+            |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
-        if n as usize >= max {
-            return Ok(false);
+        if flakes as usize >= max || all as usize >= MAX_SETS {
+            return Ok(AddFlake::Full);
         }
         let now = Utc::now().to_rfc3339();
-        tx.execute(
-            "INSERT OR IGNORE INTO flake_ref (login, reference, output, created_at, seen_at)
-             VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![login, reference, output, now],
+        let added = tx.execute(
+            "INSERT OR IGNORE INTO package_set (login, name, reference, output, public, rescan, created_at, seen_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 1, ?6, ?6)",
+            params![login, name, reference, output, public, now],
         )?;
+        if added == 0 {
+            return Ok(AddFlake::Taken);
+        }
         tx.execute(
-            "UPDATE flake_ref SET seen_at = ?2 WHERE login = ?1",
+            "UPDATE package_set SET seen_at = ?2 WHERE login = ?1 AND rescan = 1",
             params![login, now],
         )?;
         tx.commit()?;
-        Ok(true)
-    }
-
-    pub fn delete_flake_ref(&self, login: &str, id: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM flake_ref WHERE login = ?1 AND id = ?2",
-            params![login, id],
-        )?;
-        Ok(())
-    }
-
-    pub fn delete_flake_refs(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM flake_ref WHERE login = ?1", [login])?;
-        Ok(())
+        Ok(AddFlake::Added)
     }
 
     pub fn flake_refs(&self, login: &str) -> Result<Vec<FlakeRef>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {FLAKE_COLUMNS} FROM flake_ref WHERE login = ?1 ORDER BY id"
+            "SELECT {FLAKE_COLUMNS} FROM package_set WHERE login = ?1 AND rescan = 1 ORDER BY name"
         ))?;
         let rows = stmt.query_map([login], flake_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -803,7 +960,7 @@ impl Store {
     pub fn touch_flake_refs(&self, login: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE flake_ref SET seen_at = ?2 WHERE login = ?1",
+            "UPDATE package_set SET seen_at = ?2 WHERE login = ?1 AND rescan = 1",
             params![login, Utc::now().to_rfc3339()],
         )?;
         Ok(())
@@ -818,24 +975,31 @@ impl Store {
     ) -> Result<Vec<FlakeRef>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {FLAKE_COLUMNS} FROM flake_ref
-             WHERE (last_at IS NULL OR last_at < ?1) AND seen_at >= ?2
-             ORDER BY last_at IS NOT NULL, last_at, id"
+            "SELECT {FLAKE_COLUMNS} FROM package_set
+             WHERE rescan = 1 AND (last_at IS NULL OR last_at < ?1) AND seen_at >= ?2
+             ORDER BY last_at IS NOT NULL, last_at, created_at, login, name"
         ))?;
         let rows = stmt.query_map([since.to_rfc3339(), seen_since.to_rfc3339()], flake_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
-    /// A failure keeps the attributes of the last good scan.
-    pub fn finish_flake_ref(&self, id: i64, result: Result<&PackageSet, &str>) -> Result<()> {
+    /// A failure keeps the attributes of the last good scan. A set that the
+    /// owner deleted or gave another flake during the scan stays as it is.
+    pub fn finish_flake_ref(&self, r: &FlakeRef, result: Result<&PackageSet, &str>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
+        let key = "login = ?1 AND name = ?2 AND reference = ?3 AND output = ?4 AND rescan = 1";
         match result {
             Ok(set) => conn.execute(
-                "UPDATE flake_ref SET last_at = ?2, error = NULL, attrs = ?3, dropped = ?4,
-                   scanned_at = ?5, nixpkgs_rev = ?6 WHERE id = ?1",
+                &format!(
+                    "UPDATE package_set SET last_at = ?5, error = NULL, attrs = ?6, dropped = ?7,
+                       uploaded_at = ?8, scanned_at = ?8, nixpkgs_rev = ?9, versions = '{{}}' WHERE {key}"
+                ),
                 params![
-                    id,
+                    r.login,
+                    r.name,
+                    r.reference,
+                    r.output,
                     now,
                     serde_json::to_string(&set.attrs)?,
                     set.dropped as i64,
@@ -844,8 +1008,8 @@ impl Store {
                 ],
             )?,
             Err(e) => conn.execute(
-                "UPDATE flake_ref SET last_at = ?2, error = ?3 WHERE id = ?1",
-                params![id, now, e],
+                &format!("UPDATE package_set SET last_at = ?5, error = ?6 WHERE {key}"),
+                params![r.login, r.name, r.reference, r.output, now, e],
             )?,
         };
         Ok(())
@@ -857,8 +1021,9 @@ impl Store {
     pub fn purge_flake_results(&self, before: DateTime<Utc>) -> Result<usize> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.execute(
-            "UPDATE flake_ref SET attrs = '[]', dropped = 0, scanned_at = NULL, nixpkgs_rev = NULL
-             WHERE scanned_at IS NOT NULL AND (scanned_at < ?1 OR seen_at < ?1)",
+            "UPDATE package_set SET attrs = '[]', dropped = 0, uploaded_at = NULL, scanned_at = NULL,
+               nixpkgs_rev = NULL, versions = '{}'
+             WHERE rescan = 1 AND uploaded_at IS NOT NULL AND (uploaded_at < ?1 OR seen_at < ?1)",
             [before.to_rfc3339()],
         )?)
     }
@@ -901,7 +1066,7 @@ impl Store {
     pub fn flake_ref_counts(&self) -> Result<(usize, usize, Option<DateTime<Utc>>)> {
         let conn = self.conn.lock().unwrap();
         let (n, failing, last): (i64, i64, Option<String>) = conn.query_row(
-            "SELECT COUNT(*), COUNT(error), MAX(last_at) FROM flake_ref",
+            "SELECT COUNT(*), COUNT(error), MAX(last_at) FROM package_set WHERE rescan = 1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
@@ -1314,5 +1479,45 @@ mod tests {
         let m = s.members().unwrap();
         assert_eq!(m[0].committed, vec!["pkgs/b"]);
         assert_eq!(m[0].tags, vec!["pkgs/c"]);
+    }
+
+    #[test]
+    fn the_old_sets_move_to_named_sets() {
+        let dir = std::env::temp_dir().join(format!("mm-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("db.sqlite");
+        let _ = std::fs::remove_file(&path);
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE package_set (login TEXT PRIMARY KEY, attrs TEXT NOT NULL, dropped INTEGER NOT NULL,
+                   uploaded_at TEXT NOT NULL, scanned_at TEXT, nixpkgs_rev TEXT);
+                 INSERT INTO package_set VALUES ('alice', '[\"hello\"]', 2, '2026-10-01T00:00:00+00:00', NULL, 'abc');
+                 CREATE TABLE flake_ref (id INTEGER PRIMARY KEY, login TEXT NOT NULL, reference TEXT NOT NULL,
+                   output TEXT NOT NULL, created_at TEXT NOT NULL, seen_at TEXT NOT NULL, last_at TEXT, error TEXT,
+                   attrs TEXT NOT NULL DEFAULT '[]', dropped INTEGER NOT NULL DEFAULT 0, scanned_at TEXT,
+                   nixpkgs_rev TEXT, UNIQUE (login, reference, output));
+                 INSERT INTO flake_ref (id, login, reference, output, created_at, seen_at, attrs, scanned_at)
+                   VALUES (7, 'alice', 'github:o/r', 'x', '2026-10-01T00:00:00+00:00', '2026-10-01T00:00:00+00:00',
+                   '[\"jq\"]', '2026-10-02T00:00:00+00:00');",
+            )
+            .unwrap();
+        }
+        for _ in 0..2 {
+            let s = Store::open(&path).unwrap();
+            let sets = s.sets("alice").unwrap();
+            let names: Vec<&str> = sets.iter().map(|x| x.name.as_str()).collect();
+            assert_eq!(names, [DEFAULT_SET, "flake-7"]);
+            let d = sets[0].data.as_ref().unwrap();
+            assert_eq!((d.attrs.clone(), d.dropped), (vec!["hello".to_string()], 2));
+            assert!(d.versions.is_empty() && !sets[0].public && sets[0].flake.is_none());
+            assert!(sets[1].rescan && !sets[1].public);
+            assert_eq!(sets[1].data.as_ref().unwrap().attrs, ["jq"]);
+            assert_eq!(s.flake_refs("alice").unwrap()[0].reference, "github:o/r");
+        }
+        let c = Connection::open(&path).unwrap();
+        assert!(!has_table(&c, "flake_ref").unwrap() && !has_table(&c, "package_set_v1").unwrap());
+        drop(c);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
