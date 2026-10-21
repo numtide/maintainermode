@@ -440,6 +440,9 @@ What each command does:
   pins in `flake.lock` or in `npins/sources.json`. `--nixpkgs-input` names
   the pin. It does not evaluate nixpkgs. It writes the full report to
   `maintainer-mode-scan.json`. This file stays on your machine.
+  `--files` is experimental: it also records the nixpkgs files that the
+  outputs read, with iets. The upload does not carry them yet. See
+  [`docs/file-matching.md`](file-matching.md).
 - **`export`** downloads the public package list of `--server` from
   `GET /api/v1/packages/index`. `--index-file` reads a saved copy instead.
   Then it writes the strict report. Read it before you send it.
