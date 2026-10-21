@@ -7,9 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use crate::area::Index;
 use crate::catalog::{Flags, Subject};
 use crate::health::Health;
-use crate::welcome::MAINTAINERS_README;
 use crate::ui::{empty, item_row};
 use crate::web::{App, Snapshot, ago, esc};
+use crate::welcome::MAINTAINERS_README;
 
 /// Older open items are stuck, not a place to start.
 pub(crate) const RECENT_DAYS: i64 = 60;
@@ -49,7 +49,10 @@ pub(crate) fn picks(s: &Snapshot, index: &Index, h: &Health, now: DateTime<Utc>)
         };
         if !p.maintainers.is_empty()
             || !p.teams.is_empty()
-            || !p.file.as_deref().is_some_and(|f| f.starts_with("pkgs/by-name/"))
+            || !p
+                .file
+                .as_deref()
+                .is_some_and(|f| f.starts_with("pkgs/by-name/"))
             || p.facts.as_ref().is_some_and(|f| f.broken || f.insecure)
             || index.by_pname.get(&p.pname).is_some_and(|a| a != attr)
         {
@@ -212,7 +215,11 @@ mod tests {
         for (attr, file, m) in [
             ("tiny", "pkgs/by-name/ti/tiny/package.nix", &[][..]),
             ("old", "pkgs/by-name/ol/old/package.nix", &[][..]),
-            ("glibc", "pkgs/development/libraries/glibc/default.nix", &[][..]),
+            (
+                "glibc",
+                "pkgs/development/libraries/glibc/default.nix",
+                &[][..],
+            ),
             ("kept", "pkgs/by-name/ke/kept/package.nix", &["alice"][..]),
             ("busy", "pkgs/by-name/bu/busy/package.nix", &[][..]),
             ("bump", "pkgs/by-name/bu/bump/package.nix", &[][..]),

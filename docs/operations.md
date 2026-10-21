@@ -108,10 +108,10 @@ To see when a secret changed, run `journalctl -u maintainer-mode-credentials -u 
 
 ## What we took, and under which licence
 
-| Package                                                              | Version | Licence | Used for                                                                                            |
-| -------------------------------------------------------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------- |
-| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, trimmed to the classes in `src/` and to the light and dark themes                |
-| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | 16px SVG icons, sent as one hidden sprite on each page                                              |
+| Package                                                              | Version | Licence | Used for                                                                             |
+| -------------------------------------------------------------------- | ------- | ------- | ------------------------------------------------------------------------------------ |
+| [`@primer/css`](https://www.npmjs.com/package/@primer/css)           | 22.3.2  | MIT     | `dist/primer.css`, trimmed to the classes in `src/` and to the light and dark themes |
+| [`@primer/octicons`](https://www.npmjs.com/package/@primer/octicons) | 19.40.0 | MIT     | 16px SVG icons, sent as one hidden sprite on each page                               |
 
 Both are fixed-output fetches of the npm tarballs, pinned by their sha512
 (`nix/primer.nix`), and their licence files ship with the assets. The pages

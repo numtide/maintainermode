@@ -373,7 +373,7 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
- fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
+fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
     use crate::ui::{Kind, Tone, badge, item_row};
     let mut out = String::new();
     for e in entries {

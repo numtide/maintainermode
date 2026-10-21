@@ -24,10 +24,13 @@ let
     let
       inherit (system) options config;
       special = system._module.specialArgs or { };
-      margs = system._module.args // special // {
-        inherit config options lib;
-        modulesPath = prefix + "nixos/modules";
-      };
+      margs =
+        system._module.args
+        // special
+        // {
+          inherit config options lib;
+          modulesPath = prefix + "nixos/modules";
+        };
       base = special // {
         inherit config options lib;
         _class = "nixos";
@@ -74,7 +77,13 @@ let
             in
             if c.success && c.value then walk p v.content else [ ]
           )
-        else if builtins.isAttrs v && builtins.elem (v._type or null) [ "override" "order" ] then
+        else if
+          builtins.isAttrs v
+          && builtins.elem (v._type or null) [
+            "override"
+            "order"
+          ]
+        then
           walk p v.content
         else if builtins.isAttrs v && (v._type or null) == "merge" then
           lib.concatMap (walk p) v.contents
@@ -101,12 +110,8 @@ let
         let
           files = (lib.getAttrFromPath d.p options).files;
         in
-        if isModuleFile d.file then
-          builtins.elem d.file files
-        else
-          lib.any (f: !(isModuleFile f)) files;
-      declared =
-        d: map rel (builtins.filter inNixpkgs (lib.getAttrFromPath d.p options).declarations);
+        if isModuleFile d.file then builtins.elem d.file files else lib.any (f: !(isModuleFile f)) files;
+      declared = d: map rel (builtins.filter inNixpkgs (lib.getAttrFromPath d.p options).declarations);
 
       own = builtins.filter (m: !(isModuleFile m.file)) (
         lib.concatMap (load "<config>") system._module.args.modules
@@ -123,9 +128,7 @@ let
         else
           let
             defs = builtins.filter confirmed (defined (lib.concatMap loadRel frontier));
-            new = builtins.filter (f: !(builtins.elem f seen)) (
-              lib.unique (lib.concatMap declared defs)
-            );
+            new = builtins.filter (f: !(builtins.elem f seen)) (lib.unique (lib.concatMap declared defs));
           in
           grow (n + 1) (seen ++ new) new;
       all = grow 0 hop0 hop0;
