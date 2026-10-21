@@ -172,6 +172,8 @@ The Hydra flag shows only a build that a package page read in the last hour. The
 
 **Pick a set.** The box "Your sets" shows a button for each set, with its count. "All sets" shows all of them together; this is the default. A set button adds `&set=<name>`, such as `/packages?filter=machines&set=laptop`. The list then shows only the packages of that set. An unknown name shows all sets. Each set has one row with its name, its kind, its counts, its upload time and its expiry date. Each row has a "Delete" button. A public flake set also has "Make private" or "Show on my profile".
 
+**Where it runs.** A set that you send with `--with-outputs` (see [My package set](#my-package-set)) knows which output holds each package. Each row of that set then says where the package runs, such as "on web-1, laptop and 2 more". It shows at most three labels. Each label links to the filter of that output. When you pick that set, the line "Where it runs" shows a link for each output, with its count. An output link adds `&output=<label>`, such as `/packages?filter=machines&set=infra&output=web-1`. The list then shows only the packages of that output. `output` works only with `set`. An unknown label shows the whole set.
+
 The home page uses the same order. Its section "Your packages that need you" shows the rows of Mine that need attention. It links to `/packages?filter=mine`.
 
 **Old addresses.** These addresses redirect:
@@ -401,10 +403,19 @@ Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you
 when one of them gets an advisory or a new upstream release. Facts about
 nixpkgs are public; facts about your machines are not.
 
-You can have up to 20 sets. Each set has a name that you choose, such as
-`laptop` or `web-1`. A name has 1 to 32 characters: `a-z`, `0-9`, `-`, `_`
-and `.`. It starts with a letter or a digit. A set is private, except a
-public flake set that you show on your profile.
+**What a set is.** A set is the packages of one upload: all the outputs
+that one `scan` read, together. A new upload replaces the whole set of that
+name. The useful default is one set for each flake, or for each team that
+you work for. Send it with `--with-outputs`, and each package of the set
+also says which outputs hold it: the host names and the other outputs of
+the flake. Then one set answers "which hosts run this package". One set for
+each host is still possible: scan one output with `--output` and send it
+with its own `--name`.
+
+You can have up to 50 sets. Each set has a name that you choose, such as
+`infra`, `laptop` or `web-1`. A name has 1 to 32 characters: `a-z`, `0-9`,
+`-`, `_` and `.`. It starts with a letter or a digit. A set is private,
+except a public flake set that you show on your profile.
 
 You evaluate your own tree on your own machine. By default, the server never
 evaluates it. `/me/settings#upload` shows these steps with your server's
@@ -447,12 +458,13 @@ address:
 
    ```sh
    maintainer-mode export
-   maintainer-mode submit --name home
+   maintainer-mode submit --name infra
    ```
 
-   Use one name for each flake, such as `home`. Without `--name`, the set is
-   `default`.
-   For another server, add `--server https://<server>` to each command.
+   Use one name for each flake, such as `infra`. Without `--name`, the set
+   is `default`. Add `--with-outputs` to `export` and `submit` to send the
+   host names too (see [Output labels](#output-labels)). For another server,
+   add `--server https://<server>` to each command.
 
 What each command does:
 
@@ -479,13 +491,18 @@ packages.x86_64-linux.broken` leaves that one. Repeat it for several. It
   It reads the nixpkgs revision that the tree
   pins in `flake.lock` or in `npins/sources.json`. `--nixpkgs-input` names
   the pin. It does not evaluate nixpkgs. It writes the full report to
-  `maintainer-mode-scan.json`. This file stays on your machine.
+  `maintainer-mode-scan.json`. This file stays on your machine. For each
+  package, it also records the outputs that hold it and up to four of its
+  derivations (store paths with `--runtime`). For each output, it records a
+  label and the nix arguments that name it. These never leave your machine
+  without `--with-outputs`, and the paths and the arguments never leave it.
   `--files` is experimental: it also records the nixpkgs files that the
   outputs read, with iets. The upload does not carry them yet. See
   [`docs/file-matching.md`](file-matching.md).
 - **`export`** downloads the public package list of `--server` from
   `GET /api/v1/packages/index`. `--index-file` reads a saved copy instead.
   Then it writes the strict report. Read it before you send it.
+  `--with-outputs` adds the output labels; see [Output labels](#output-labels).
 - **`login`** asks `--server` for a code, then waits while you confirm it
   on `/login/cli`. You must be signed in on the site. Then it saves the new
   upload token. Confirm only a code that your own terminal shows: a person
@@ -497,7 +514,17 @@ packages.x86_64-linux.broken` leaves that one. Repeat it for several. It
   of `--token-file`, or from the file that `login` saved. `--name` gives the
   name of the set. `--public-flake
 REFERENCE#OUTPUT` makes it a public flake set; see
-  [Public flake sets](#public-flake-sets).
+  [Public flake sets](#public-flake-sets). `--with-outputs` works as for
+  `export`.
+- **`why PNAME`** tells why your outputs hold a package. It reads
+  `maintainer-mode-scan.json` (`--report` names another file), finds the
+  outputs that hold the package, and runs
+  `nix why-depends --derivation <output> <derivation of the package>` for
+  each one. `--output LABEL` keeps one output. It prints the chain of
+  dependencies of each output. It runs on your machine only and sends
+  nothing. Run it in the directory of the scan: it uses the flake reference
+  as the scan got it, such as `.`. If the tree changed after the scan, scan
+  again.
 
 To save the list for an offline export:
 
@@ -531,6 +558,8 @@ also tries the name in lower case and `python3Packages.<name>`.
 - `name`: only when you give `--name`.
 - `public_flake.reference` and `public_flake.output`: only when you give
   `--public-flake`.
+- `outputs`, and `outputs` in each kept entry: only when you give
+  `--with-outputs`. See below.
 
 The name of the scanned tree never leaves your machine. The client never
 takes the set name from the tree, the host or the scan. It sends only the
@@ -540,7 +569,9 @@ name. The local report uses schema 1.
 `/me/settings#shared` shows an example. It runs a made-up closure through the
 same filter as `submit`. `openssl 3.0.15` goes with its version.
 `curl 8.11.1-acme-fix` goes with `"version": null` and `"modified": true`.
-`acme-billing` and the name of the machine do not go. The section also says
+`acme-billing` and the name of the tree do not go. The host names `web-1`
+and `laptop` go only with `--with-outputs`: the section shows that report
+too, with its risk. The section also says
 what the server keeps and who sees it. It also states the risk: the report
 tells which public packages run on your machines and their versions, so a
 person who reads it can find the known advisories that can affect you.
@@ -571,7 +602,7 @@ restart of the server forgets all codes.
 | 202  | stored; the answer gives the kept and dropped counts           |
 | 400  | not a strict report; the error names the problem               |
 | 401  | no token, or an unknown token                                  |
-| 409  | the name is a flake that the server scans, or you have 20 sets |
+| 409  | the name is a flake that the server scans, or you have 50 sets |
 | 413  | more than 16 MiB, or more than 50,000 packages                 |
 | 503  | the nixpkgs index is not built yet                             |
 
@@ -590,16 +621,20 @@ restart of the server forgets all codes.
   with its flake and its public mark.
 - It keeps the name, the attributes, the time of the upload, the time of
   the scan and the nixpkgs revision. For a public flake set, it also keeps
-  the reference and the output. It keeps nothing else from the report.
+  the reference and the output. With `--with-outputs`, it also keeps the
+  output labels and the outputs of each attribute. It keeps nothing else
+  from the report.
 - **Lifetime.** Each set expires 90 days after its own last upload. The
   background loop deletes it. "Delete" on the row of a set deletes that set
   at once.
 - **Access.** Only the owner sees the "On my machines" filter and the
   "on your machines" marks. There is no admin view. No public page, count or
   API uses a private set. The private endpoints `/api/v1/sets` and
-  `/api/v1/mine` and their MCP tools give your sets to you only (see
-  [api.md](api.md#private-endpoints)). A public flake set shows only on the
-  profile and in `GET /api/v1/people/<login>`.
+  `/api/v1/mine` and their MCP tools `my_sets` and `my_packages` give your
+  sets, with their output labels, to you only (see
+  [api.md](api.md#private-endpoints)). A public flake set shows only on the profile and in
+  `GET /api/v1/people/<login>`, with its output labels: the outputs of a
+  public flake are public.
 
 **Old data.** Before names, a person had one uploaded set and a list of
 scanned flakes. The upload became the set `default`, because `submit`
@@ -609,12 +644,77 @@ without `--name` still sends to it. Each scanned flake became the set
 **The list.** The "On my machines" filter of `/packages` shows the packages of all your sets, or of the set
 that you pick. Each row has the health flags of a package page:
 advisories, a newer upstream release, a failed Hydra build, open pull requests and open issues.
+A set with output labels also says where each package runs, and filters
+by output (see [Your packages](#your-packages)).
 The rows that need attention come first. The packages of all sets together also come
 first in Mine, on the home page, in Needs you and in For you on `/review`.
 
 **Alerts.** Your private Atom feed (see above) also gets, for each package in
 your set, a new advisory and a new upstream release. It does not get the pull
 requests and issues of the set, because a closure has thousands of packages.
+
+### Output labels
+
+`--with-outputs` on `export` or `submit` sends the label of each output that
+the scan read, and the outputs of each kept entry. It is off by default.
+
+| Output                                                   | Label               |
+| -------------------------------------------------------- | ------------------- |
+| `nixosConfigurations.web-1.config.system.build.toplevel` | `web-1`             |
+| `darwinConfigurations.mac.config.system.build.toplevel`  | `mac`               |
+| `homeConfigurations."me@box".activationPackage`          | `me@box`            |
+| `devShells.x86_64-linux.default`                         | `devShells.default` |
+| `packages.x86_64-linux.hello`                            | `packages.hello`    |
+| an attribute of `--file`                                 | the attribute       |
+| a whole `--file`                                         | the file name       |
+
+A label has 1 to 64 characters: `a-z`, `A-Z`, `0-9`, `-`, `_`, `.`, `@` and
+`+`. The scan changes any other character to `_`. Two outputs with the same
+label are one output. The report gets one more field at the top, and one in
+each entry: the numbers of its outputs in that list.
+
+```json
+{
+  "outputs": ["web-1", "laptop"],
+  "packages": [
+    {
+      "attr": "openssl",
+      "pname": "openssl",
+      "version": "3.0.15",
+      "outputs": [0, 1]
+    },
+    {
+      "attr": "curl",
+      "pname": "curl",
+      "version": null,
+      "modified": true,
+      "outputs": [0]
+    }
+  ]
+}
+```
+
+**The risk.** Your host names then leave your machine. A host name can tell
+the name of a customer, a project or a place. Use `--with-outputs` only when
+you can share these names with the server. `/me/settings#shared` shows the
+same example. The paths and the nix arguments of the outputs never leave
+your machine.
+
+The server refuses more than 256 labels, a label that does not follow the
+rules, a label that is there two times, and an entry that points to no
+label. It keeps the labels and the outputs of each kept attribute with the
+set. They follow the set: the same owner, the same lifetime and the same
+delete. A new upload without `--with-outputs` removes them.
+
+The Needs you items about advisories on your machines name the outputs that
+run the package, such as "On web-1, laptop.", in place of "On your
+machines.". Their JSON in `GET /api/v1/needs` has `outputs`: a list of
+`{ "set", "output" }`.
+
+`GET /api/v1/sets` and the MCP tool `my_sets` give the labels of each set,
+and the labels of each package. `GET /api/v1/mine` and the MCP tool
+`my_packages` take `set` and `output`, as the page does. See
+[api.md](api.md#get-apiv1sets).
 
 ### Public flake sets
 

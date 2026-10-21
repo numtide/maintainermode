@@ -557,6 +557,29 @@ pub struct PackageSet {
     /// attribute → the version the report gave, only where nixpkgs had
     /// that exact version at upload.
     pub versions: std::collections::BTreeMap<String, String>,
+    /// Only from an upload with `--with-outputs`.
+    pub outputs: SetOutputs,
+}
+
+/// The outputs of a set, such as its hosts, and the outputs that hold each
+/// attribute.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SetOutputs {
+    pub labels: Vec<String>,
+    /// attribute → indices in `labels`
+    pub of: std::collections::BTreeMap<String, Vec<usize>>,
+}
+
+impl SetOutputs {
+    /// The labels of the outputs that hold `attr`.
+    pub fn labels_of(&self, attr: &str) -> impl Iterator<Item = &str> {
+        self.of
+            .get(attr)
+            .into_iter()
+            .flatten()
+            .filter_map(|i| self.labels.get(*i))
+            .map(String::as_str)
+    }
 }
 
 /// The name of the set of an upload with no name, and of the sets that
@@ -592,7 +615,7 @@ pub enum AddFlake {
 }
 
 /// Sets a person can have, all kinds together.
-pub const MAX_SETS: usize = 20;
+pub const MAX_SETS: usize = 50;
 
 const SET_TABLE: &str = "CREATE TABLE IF NOT EXISTS package_set (
   login TEXT NOT NULL,
@@ -611,6 +634,7 @@ const SET_TABLE: &str = "CREATE TABLE IF NOT EXISTS package_set (
   seen_at TEXT,
   last_at TEXT,
   error TEXT,
+  outputs TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (login, name)
 );";
 
@@ -648,6 +672,9 @@ pub(crate) fn migrate_sets(conn: &mut Connection) -> Result<()> {
         tx.execute_batch("ALTER TABLE package_set RENAME TO package_set_v1")?;
     }
     tx.execute_batch(SET_TABLE)?;
+    if !has_column(&tx, "package_set", "outputs")? {
+        tx.execute_batch("ALTER TABLE package_set ADD COLUMN outputs TEXT NOT NULL DEFAULT '{}'")?;
+    }
     if old {
         tx.execute(
             "INSERT INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions)
@@ -669,7 +696,7 @@ pub(crate) fn migrate_sets(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-const SET_COLUMNS: &str = "name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public, rescan";
+const SET_COLUMNS: &str = "name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public, rescan, outputs";
 
 fn set_row(r: &rusqlite::Row) -> rusqlite::Result<NamedSet> {
     let uploaded = time_of(r.get(3)?);
@@ -685,6 +712,7 @@ fn set_row(r: &rusqlite::Row) -> rusqlite::Result<NamedSet> {
                 scanned_at: r.get(4)?,
                 nixpkgs_rev: r.get(5)?,
                 versions: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
+                outputs: serde_json::from_str(&r.get::<_, String>(11)?).unwrap_or_default(),
             }),
             None => None,
         },
@@ -768,12 +796,13 @@ impl Store {
             }
         }
         tx.execute(
-            "INSERT INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            "INSERT INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, versions, reference, output, public, outputs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(login, name) DO UPDATE SET attrs = excluded.attrs, dropped = excluded.dropped,
                uploaded_at = excluded.uploaded_at, scanned_at = excluded.scanned_at,
                nixpkgs_rev = excluded.nixpkgs_rev, versions = excluded.versions,
-               reference = excluded.reference, output = excluded.output, public = excluded.public",
+               reference = excluded.reference, output = excluded.output, public = excluded.public,
+               outputs = excluded.outputs",
             params![
                 login,
                 name,
@@ -786,6 +815,7 @@ impl Store {
                 flake.map(|f| f.0),
                 flake.map(|f| f.1),
                 flake.is_some(),
+                serde_json::to_string(&set.outputs)?,
             ],
         )?;
         tx.commit()?;

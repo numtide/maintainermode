@@ -125,6 +125,8 @@ pub(crate) struct Item {
     pub(crate) at: Option<DateTime<Utc>>,
     /// More links: the advisory, or the merge box and the contributor guide.
     pub(crate) more: Vec<(String, String)>,
+    /// The (set, output label) pairs that run the package of an advisory.
+    pub(crate) hosts: Vec<(String, String)>,
     rank: (u8, i64, String),
 }
 
@@ -306,7 +308,18 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
     } else {
         String::new()
     };
-    let mut detail = format!("On your machines.{}{}", top.note, fix_hint(i, attr));
+    let hosts = i
+        .interests
+        .hosts
+        .get(&Subject::Pkg(attr.to_string()).key())
+        .cloned()
+        .unwrap_or_default();
+    let mut detail = format!(
+        "{}.{}{}",
+        where_it_runs(&hosts),
+        top.note,
+        fix_hint(i, attr)
+    );
     if why.maintain {
         detail.push_str(" You maintain it.");
     }
@@ -328,12 +341,34 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         labels,
         at: None,
         more,
+        hosts,
         rank: (
             top.band.map_or(9, |b| 9 - b as u8),
             -((top.epss.unwrap_or(0.0) * 10_000.0) as i64),
             attr.to_string(),
         ),
     })
+}
+
+/// "On your machines", or the outputs that run the package: "On web-1,
+/// laptop and 2 more".
+fn where_it_runs(hosts: &[(String, String)]) -> String {
+    const SHOWN: usize = 3;
+    if hosts.is_empty() {
+        return "On your machines".into();
+    }
+    let mut names: Vec<&str> = Vec::new();
+    for (_, l) in hosts {
+        if !names.contains(&l.as_str()) {
+            names.push(l);
+        }
+    }
+    let more = names.len().saturating_sub(SHOWN);
+    let mut out = format!("On {}", names[..names.len().min(SHOWN)].join(", "));
+    if more > 0 {
+        let _ = write!(out, " and {more} more");
+    }
+    out
 }
 
 /// The fixed version is not in the tracker data; an open pull request on
@@ -395,6 +430,7 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         labels,
         at: None,
         more: vec![],
+        hosts: Vec::new(),
         rank: (
             crate::mine::order(why, true).0,
             i64::from(!failed),
@@ -493,6 +529,7 @@ fn due(i: &Inputs, pr: &Pr) -> Option<Item> {
         labels,
         at: Some(at),
         more,
+        hosts: Vec::new(),
         rank: (0, at.timestamp(), format!("{n:012}")),
     })
 }
@@ -511,6 +548,7 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
         labels,
         at: Some(at),
         more: vec![],
+        hosts: Vec::new(),
         rank: (0, at.timestamp(), format!("{n:012}")),
     };
     let acted = last_act(pr);
@@ -716,6 +754,7 @@ fn review(i: &Inputs) -> Vec<Item> {
                 labels,
                 at: Some(e.created_at),
                 more: vec![],
+                hosts: Vec::new(),
                 rank: (0, pos as i64, String::new()),
             })
         })
@@ -1083,6 +1122,7 @@ pub(crate) fn value(app: &App, login: &str, mood: Mood) -> serde_json::Value {
                 "at": it.at,
                 "link": it.more.first().map(|(href, _)| href),
                 "links": it.more.iter().map(|(href, text)| json!({ "href": href, "text": text })).collect::<Vec<_>>(),
+                "outputs": it.hosts.iter().map(|(set, output)| json!({ "set": set, "output": output })).collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -1186,6 +1226,7 @@ mod tests {
         h: Health,
         machines: Vec<String>,
         versions: HashMap<String, String>,
+        hosts: HashMap<String, Vec<(String, String)>>,
         failed: HashSet<String>,
         plans: Plans,
     }
@@ -1217,6 +1258,7 @@ mod tests {
                 machines: vec!["curl".into(), "hello".into()],
                 failed: HashSet::new(),
                 versions: HashMap::new(),
+                hosts: HashMap::new(),
                 plans: Plans::none(false),
             }
         }
@@ -1255,6 +1297,7 @@ mod tests {
         fn items(&self) -> Vec<Item> {
             let mut interests = Interests::build(&self.index, "alice", &self.machines, &[], true);
             interests.versions = self.versions.clone();
+            interests.hosts = self.hosts.clone();
             collect(&Inputs {
                 login: "alice",
                 s: &self.s,
@@ -1317,6 +1360,28 @@ mod tests {
         assert!(hello.labels.iter().any(|(_, l)| l == "EPSS 40%"));
         assert_eq!(hello.moods, [Mood::Machines, Mood::Maintain]);
         assert_eq!(keys(&items), ["adv:curl", "adv:hello"]);
+        assert!(items[0].detail.starts_with("On your machines."));
+
+        let at = |s: &str, l: &str| (s.to_string(), l.to_string());
+        w.hosts.insert(
+            Subject::Pkg("curl".into()).key(),
+            vec![
+                at("infra", "web-1"),
+                at("infra", "web-2"),
+                at("home", "laptop"),
+                at("other", "web-1"),
+                at("infra", "db"),
+            ],
+        );
+        let items = w.items();
+        let curl = find(&items, "adv:curl");
+        assert!(
+            curl.detail
+                .starts_with("On web-1, web-2, laptop and 1 more."),
+            "{}",
+            curl.detail
+        );
+        assert_eq!(curl.hosts.len(), 5);
     }
 
     #[test]

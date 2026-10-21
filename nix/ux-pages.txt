@@ -56,6 +56,8 @@ signed-in /inbox
 signed-in /packages?filter=mine
 signed-in /packages?filter=machines
 signed-in /packages?filter=machines&set=laptop
+signed-in /packages?filter=machines&set=infra
+signed-in /packages?filter=machines&set=infra&output=web-1
 signed-in /packages?filter=maintain
 signed-in /packages?filter=watch
 signed-in /packages?filter=all
@@ -94,6 +96,7 @@ skip /api/v1/prs
 skip /api/v1/prs/:number
 skip /api/v1/people/:login
 skip /api/v1/needs
+skip /api/v1/sets
 skip /api/v1/packages/index
 skip /api/v1/packages/:name
 skip /api/v1/mine

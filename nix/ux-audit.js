@@ -299,6 +299,24 @@ function seedSql() {
     },
   };
   const set = ["curl", "openssl", "hello", "ripgrep", "unbound"];
+  // a long label and more hosts than a row shows
+  const infraOutputs = {
+    labels: [
+      "web-1",
+      "web-2",
+      "web-3",
+      "build-box-in-the-basement-with-a-long-name",
+      "me@laptop",
+      "devShells.default",
+    ],
+    of: {
+      curl: [0, 1, 2, 3, 4],
+      openssl: [0, 1, 2],
+      unbound: [0, 3],
+      hello: [5],
+      ripgrep: [4, 5],
+    },
+  };
   const q = (v) => `'${JSON.stringify(v).replace(/'/g, "''")}'`;
   const now = new Date().toISOString();
   const daysAgo = (d) => new Date(Date.now() - d * 86400000).toISOString();
@@ -397,6 +415,7 @@ function seedSql() {
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'laptop', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'web-1', ${q(set.slice(0, 2))}, 0, '${daysAgo(3)}', '${daysAgo(3)}', '${index.rev}');`,
+    `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, outputs) VALUES ('${SEED_LOGIN}', 'infra', ${q(set)}, 2, '${daysAgo(2)}', '${daysAgo(2)}', '${index.rev}', ${q(infraOutputs)});`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, reference, output, public) VALUES ('${SEED_LOGIN}', 'website', ${q(set.slice(1))}, 1, '${daysAgo(1)}', '${daysAgo(1)}', '${index.rev}', 'github:numtide/maintainermode/main', 'nixosConfigurations.a-rather-long-host-name.config.system.build.toplevel', 1);`,
     ...prs.map(
       (p) =>

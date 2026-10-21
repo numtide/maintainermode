@@ -19,7 +19,7 @@ removed, not redirected.
 | `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             | `person`         |
 | `GET /api/v1/needs`                           | what waits for you (private)                                     | `needs`          |
 | `GET /api/v1/mine`                            | your packages, as the filters of `/packages` (private)           | `my_packages`    |
-| `GET /api/v1/sets`                            | your named package sets (private)                                | `my_sets`        |
+| `GET /api/v1/sets`                            | your named package sets and their output labels (private)        | `my_sets`        |
 | `GET /api/v1/inbox`                           | your inbox (private)                                             | `inbox`          |
 | `GET /api/v1/progress`                        | your progress, your goal and your badges (private)               | `progress`       |
 | `GET /api/v1/search`                          | packages, modules and areas that match a name                    | `search`         |
@@ -57,17 +57,18 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_MCP_TOKEN" 'https://<host>/api/v
 
 - **`/api/v1/mine`**: the rows of `/packages?filter=<filter>`. `filter` is
   `mine` (the default), `machines`, `maintain` or `watch`. `set` keeps one of
-  your sets, with `filter=machines`. An unknown set is an error. `q` keeps
-  the names that hold the text. Each row has `key`, `name`, `version`,
-  `machine_version` (the version that your report gave), `why` (`machine`,
-  `maintain` and `watch`), `via_team` and `flags`. The answer also has
-  `sets` (the names of your sets) and `counts` (the rows of each filter).
-  `filter=all` is the public catalog: use `/api/v1/search`.
-- **`/api/v1/sets`**: each of your sets, private and public, with `name`,
-  `source` (`upload`, `flake_upload` or `server_scan`), `public`,
-  `reference`, `output`, `uploaded_at`, `scanned_at`, `expires_at`,
-  `nixpkgs_rev`, `dropped`, `packages` and `scan` (the last server scan, or
-  `null`).
+  your sets, with `filter=machines`. `output`, with `set`, keeps the
+  packages of one output label of that set, as `&output=<label>` does on the
+  page. An unknown set or output is an error. `q` keeps the names that hold
+  the text. Each row has `key`, `name`, `version`, `machine_version` (the
+  version that your report gave), `why` (`machine`, `maintain` and `watch`),
+  `via_team`, `flags` and `outputs` (the `set` and the `output` label of
+  each output that holds it). The answer also has `sets` (the names of your
+  sets) and `counts` (the rows of each filter). `filter=all` is the public
+  catalog: use `/api/v1/search`.
+- **`/api/v1/sets`**: each of your sets, private and public, with their
+  packages and their output labels (see
+  [`GET /api/v1/sets`](#get-apiv1sets)).
 - **`/api/v1/inbox`**: the events of `/inbox`, the newest first. `kind` is
   `mine`, `pr`, `issue`, `advisory` or `release`. `sub` keeps one subject,
   such as `pkg:hello`. Each event has `unread`. The answer also has `unread`
@@ -139,8 +140,9 @@ It gives the public data of one login. It is the data of the profile page
   with the number of pull requests for each;
 - `flakes`: the public flake sets that the login shows on its profile. Each
   has `name`, `reference`, `output`, `source` (`upload` or `server_scan`),
-  `updated_at`, `nixpkgs_rev` and `packages` (the nixpkgs attributes). A
-  private set is never in it;
+  `updated_at`, `nixpkgs_rev`, `packages` (the nixpkgs attributes),
+  `outputs` (the output labels, empty without `--with-outputs`) and
+  `package_outputs` (attribute → its labels). A private set is never in it;
 - `person`: the ledger summary, and whether its pull requests are in the
   queues (see [Ledger fields](#ledger-fields));
 - `dossier`: its review record;
@@ -214,7 +216,7 @@ does not change `plans` and `events`.
       "key": "adv:curl",
       "cause": "advisory",
       "title": "curl: NIXPKGS-2026-1",
-      "detail": "On your machines. Upstream has 8.10.0.",
+      "detail": "On web-1, laptop. Upstream has 8.10.0.",
       "href": "/p/curl",
       "action": "Open the package",
       "fingerprint": "3f2a9c0d1b7e4a55",
@@ -227,6 +229,10 @@ does not change `plans` and `events`.
           "href": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
           "text": "NIXPKGS-2026-1"
         }
+      ],
+      "outputs": [
+        { "set": "infra", "output": "web-1" },
+        { "set": "infra", "output": "laptop" }
       ]
     }
   ],
@@ -280,6 +286,55 @@ does not change `plans` and `events`.
 - `events`: the events of your own pull requests in the last 30 days, newest
   first. The `id` starts with `mine-<number>-` and ends with `review-<id>`,
   `merged`, `closed` or `due-<date>`.
+- `items[].outputs`: for an advisory, the set and the output label of each
+  output that runs the package. It is empty for a set without
+  [output labels](personal.md#output-labels), and for the other causes.
+
+## `GET /api/v1/sets`
+
+It gives your package sets, as the "On my machines" filter of `/packages`
+shows them (see [My package set](personal.md#my-package-set)). It is a
+[private endpoint](#private-endpoints). The MCP tool `my_sets` gives the same
+answer.
+
+`set` keeps one set. `output`, with `set`, keeps only the packages of that
+output, as `&set=<name>&output=<label>` does on the page. An unknown set or
+output, or `output` without `set`, is a 404 with an `error`.
+
+```json
+{
+  "login": "alice",
+  "sets": [
+    {
+      "name": "infra",
+      "source": "upload",
+      "public": false,
+      "reference": null,
+      "output": null,
+      "updated_at": "2026-10-20T08:00:00Z",
+      "scanned_at": "2026-10-20T07:58:00Z",
+      "expires_at": "2027-01-18T08:00:00Z",
+      "nixpkgs_rev": "5f2c9e148a3b",
+      "dropped": 1,
+      "packages": ["curl", "openssl"],
+      "outputs": ["web-1", "laptop"],
+      "package_outputs": { "curl": ["web-1"], "openssl": ["web-1", "laptop"] },
+      "scan": null
+    }
+  ]
+}
+```
+
+- `source`: `upload`, `flake_upload` or `server_scan`.
+- `reference` and `output`: the flake reference and the flake output of a
+  public flake set, or `null`.
+- `updated_at`: the time of the last upload or the last good scan.
+  `scanned_at`: the time of the scan on your machine.
+- `expires_at`: `null` for a flake that the server scans.
+- `outputs` and `package_outputs`: the output labels of the set, and the
+  labels of each package. They are empty without `--with-outputs`.
+- `scan`: the state of the last server scan (`last_at`, `scanned_at` and
+  `error`), or `null`.
 
 ## `GET /api/v1/packages/index`
 
@@ -327,9 +382,10 @@ raw answer. For a private endpoint, put your MCP token in
 | `maintainer-mode export`              | `/api/v1/packages/index`                            |
 | `maintainer-mode submit`              | `/api/v1/packages/index` and `POST /api/v1/reports` |
 | `maintainer-mode login`               | `POST /api/v1/login` and `POST /api/v1/login/poll`  |
+| `maintainer-mode why <pname>`         | none: it reads the local report and runs nix        |
 
 `prs` takes `--section`, `--login`, `--limit` and `--cursor`. `mine` takes
-`--filter`, `--set`, `--query`, `--limit` and `--cursor`. `needs` takes
+`--filter`, `--set`, `--output`, `--query`, `--limit` and `--cursor`. `needs` takes
 `--mood`. `prs` and `mine` print the next cursor on stderr. `get` always
 prints the JSON.
 
