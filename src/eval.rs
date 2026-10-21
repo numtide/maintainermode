@@ -24,8 +24,14 @@ pub fn evaluator() -> &'static str {
 }
 
 pub fn run_with(program: &str, args: &[&str]) -> Result<String> {
+    let mut all = vec!["--extra-experimental-features", FEATURES];
+    all.extend_from_slice(args);
+    run_plain(program, &all)
+}
+
+/// For a native iets command, which takes no Nix flag before its name.
+pub fn run_plain(program: &str, args: &[&str]) -> Result<String> {
     let out = Command::new(program)
-        .args(["--extra-experimental-features", FEATURES])
         .args(args)
         .output()
         .with_context(|| format!("run {program}"))?;
