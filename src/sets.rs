@@ -594,9 +594,10 @@ fn steps(base: &str, token: Option<&str>) -> String {
         token_step,
         step(
             "Read the packages of your machine.",
-            "Run it in the repository of your NixOS configuration, and replace HOST. Repeat <code>--output</code> for more machines. \
-             It reads the closure on your machine and writes <code>maintainer-mode-scan.json</code>, which stays there.",
-            "maintainer-mode scan --flake . --output nixosConfigurations.HOST.config.system.build.toplevel",
+            "Run it in the repository of your NixOS configuration. It reads every output of the flake that this machine can evaluate \
+             \u{2014} your machines, your packages and your devShells \u{2014} and writes <code>maintainer-mode-scan.json</code>, which stays there. \
+             For one of them only, name it with <code>--output nixosConfigurations.HOST.config.system.build.toplevel</code>.",
+            "maintainer-mode scan --flake .",
         ),
         step(
             "Send them.",

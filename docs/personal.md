@@ -428,8 +428,14 @@ address:
    Paste the token, then push Enter and Ctrl-D. You can also put the token in
    `MAINTAINER_MODE_UPLOAD_TOKEN`.
 
-3. In the repository of your NixOS configuration, read the packages of a
-   machine. Repeat `--output` for more machines:
+3. In the repository of your NixOS configuration, read its packages:
+
+   ```sh
+   maintainer-mode scan --flake .
+   ```
+
+   It reads every output of the flake worth reading. For one machine only,
+   name it:
 
    ```sh
    maintainer-mode scan --flake . --output nixosConfigurations.<host>.config.system.build.toplevel
@@ -451,6 +457,18 @@ What each command does:
   `nix derivation show -r`. `--runtime` reads the built store paths with
   `nix path-info -r` instead. Each output is read on its own: one that does
   not evaluate here is named and skipped, and the rest still make a report.
+  Without `--output`, a flake gives every output worth reading on this
+  machine: `packages`, `devShells` and `checks` of this system, the
+  `config.system.build.toplevel` of each `nixosConfigurations` and
+  `darwinConfigurations`, and the `activationPackage` of each
+  `homeConfigurations`. `legacyPackages` is never read: it is all of nixpkgs.
+  `--ignore` leaves an output out, and takes an attribute path or the start
+  of one: `--ignore checks` leaves every check, `--ignore
+packages.x86_64-linux.broken` leaves that one. Repeat it for several. It
+  works on the outputs `--output` names too. `--runtime` leaves the devShells
+  out by itself: a shell has no store path to read, because `mkShell` refuses
+  to build one. A check that this machine never built is skipped like any
+  other output that it cannot read.
   It reads the nixpkgs revision that the tree
   pins in `flake.lock` or in `npins/sources.json`. `--nixpkgs-input` names
   the pin. It does not evaluate nixpkgs. It writes the full report to
