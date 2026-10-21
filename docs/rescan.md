@@ -2,9 +2,17 @@
 
 Status: done, off by default.
 
-A person can register a public flake reference and an output on the "On my machines" filter of `/packages`.
-After each nixpkgs index, the server evaluates that output again. It stores
-the result as the person's set, with the same rules as an uploaded report.
+A person can register a public flake reference and an output, with a set
+name, on the "On my machines" filter of `/packages`. After each nixpkgs
+index, the server evaluates that output again. It stores the result in the
+set of that name, with the same rules as an uploaded report. The person can
+show the set on their profile.
+
+When the operator does not turn rescans on, the panel says so. The person
+can then scan the public flake on their own machine and upload it with
+`maintainer-mode submit --name NAME --public-flake REFERENCE#OUTPUT`. The
+server applies the reference check of step 1 to that reference too. Only a
+reference that passes it can make a public set.
 
 This feature evaluates code that a third party wrote. Read this page before
 you turn it on.
@@ -140,6 +148,7 @@ reach its DNS resolver and its other servers.
 | Limit                         | Default  | Option                     |
 | ----------------------------- | -------- | -------------------------- |
 | flakes a person can register  | 3        | `rescan.maxFlakes`         |
+| sets a person can have        | 20       | all kinds together         |
 | scans a person gets in 24 h   | 4        | `rescan.scansPerDay`       |
 | scans in 24 h, all people     | 100      | `rescan.scansPerDayTotal`  |
 | wall clock of one scan        | 900 s    | `rescan.timeout`           |
@@ -182,11 +191,18 @@ and of the temporary directory of the service.
 
 ## What the server keeps
 
-For each flake: the reference, the output, the time of the last visit of the
-owner to `/packages`, the time of the last scan, the reason of the last
-failure, and from the last good scan the nixpkgs attributes, the count of
-dropped entries, the time of the scan and the nixpkgs revision of the lock
-file. Only the owner sees it. "Delete my report" deletes the flakes too.
+For each flake: the set name, the reference, the output, the public mark,
+the time of the last visit of the owner to `/packages`, the time of the last
+scan, the reason of the last failure, and from the last good scan the
+nixpkgs attributes, the count of dropped entries, the time of the scan and
+the nixpkgs revision of the lock file. Only the owner sees it, unless the
+owner shows the set on their profile. Then everybody sees its name, its
+reference, its output, its packages and the time of the last good scan.
+The reason of a failure stays private. "Delete" on the row of the set
+deletes the flake.
+
+A flake that the server scans keeps its name. An upload to that name gets
+the answer 409.
 
 An upload expires 90 days after the last action of its owner. A scan needs
 no action, so the server applies the rule to the visits of the owner:

@@ -86,6 +86,10 @@ It gives the public data of one login. It is the data of the profile page
   most 20, the newest first;
 - `areas`: the directories its pull requests of the last year change most,
   with the number of pull requests for each;
+- `flakes`: the public flake sets that the login shows on its profile. Each
+  has `name`, `reference`, `output`, `source` (`upload` or `server_scan`),
+  `updated_at`, `nixpkgs_rev` and `packages` (the nixpkgs attributes). A
+  private set is never in it;
 - `person`: the ledger summary, and whether its pull requests are in the
   queues (see [Ledger fields](#ledger-fields));
 - `dossier`: its review record;

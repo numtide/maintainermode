@@ -26,15 +26,15 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 
 ### The items
 
-| Order | Cause                                                                                                                                                                                                                                        | It opens         |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| 1     | An advisory on a package of your latest machine report that can affect your version (see [Affected versions](health.md#affected-versions)). The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it. | the package page |
-| 2     | The deadline of a [follow-up plan](#your-pull-requests) that you chose passed, and nobody reviewed your open pull request.                                                                                                                   | the pull request |
-| 3     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                                                                                                               | the pull request |
-| 4     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                                  | the pull request |
-| 5     | Your open pull request has had no review for 7 days or more, and you chose no plan for it. The item uses the built-in default plan (see [Your pull requests](#your-pull-requests)).                                                          | the pull request |
-| 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                            | the pull request |
-| 7     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                                         | the package page |
+| Order | Cause                                                                                                                                                                                                                              | It opens         |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| 1     | An advisory on a package of one of your sets that can affect your version (see [Affected versions](health.md#affected-versions)). The CVSS score is 7 or more, the EPSS chance is 10% or more, or CISA says that attackers use it. | the package page |
+| 2     | The deadline of a [follow-up plan](#your-pull-requests) that you chose passed, and nobody reviewed your open pull request.                                                                                                         | the pull request |
+| 3     | Your open pull request got a review, a change request or a review comment from another person after your last push or comment.                                                                                                     | the pull request |
+| 4     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                        | the pull request |
+| 5     | Your open pull request has had no review for 7 days or more, and you chose no plan for it. The item uses the built-in default plan (see [Your pull requests](#your-pull-requests)).                                                | the pull request |
+| 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                  | the pull request |
+| 7     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                               | the package page |
 
 In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 
@@ -157,7 +157,7 @@ Signed out, `/packages` shows the catalog of nixpkgs: a search box and the direc
 | Filter         | Address                     | What it shows                                                                |
 | -------------- | --------------------------- | ---------------------------------------------------------------------------- |
 | Mine           | `/packages?filter=mine`     | all of the rows below, in one order (the default)                            |
-| On my machines | `/packages?filter=machines` | the packages of your latest machine report and of your scanned flakes        |
+| On my machines | `/packages?filter=machines` | the packages of your sets: your machine reports and your flakes              |
 | I maintain     | `/packages?filter=maintain` | what nixpkgs names you as a maintainer of, and "Watch everything I maintain" |
 | I watch        | `/packages?filter=watch`    | what you watch, a form to watch more, and a "Stop watching" button on each   |
 | All of nixpkgs | `/packages?filter=all`      | the catalog, as a visitor sees it                                            |
@@ -168,7 +168,9 @@ A search with no filter, such as the search box of the home page, goes to All of
 
 The Hydra flag shows only a build that a package page read in the last hour. The list itself never asks Hydra.
 
-**No machine report yet.** Then the bar shows the step "Upload the packages of your machines" in place of the machines filter. It links to `/me/settings#upload`. When you have a report, the machines filter shows the time of the latest report, the button "Delete my report", the list and the panel of public flakes (see below).
+**No machine report yet.** Then the bar shows the step "Upload the packages of your machines" in place of the machines filter. It links to `/me/settings#upload`. When you have a set, the machines filter shows the box "Your sets", the list and the panel of public flakes (see below).
+
+**Pick a set.** The box "Your sets" shows a button for each set, with its count. "All sets" shows all of them together; this is the default. A set button adds `&set=<name>`, such as `/packages?filter=machines&set=laptop`. The list then shows only the packages of that set. An unknown name shows all sets. Each set has one row with its name, its kind, its counts, its upload time and its expiry date. Each row has a "Delete" button. A public flake set also has "Make private" or "Show on my profile".
 
 The home page uses the same order. Its section "Your packages that need you" shows the rows of Mine that need attention. It links to `/packages?filter=mine`.
 
@@ -204,11 +206,15 @@ The page shows facts only. It has no score and no ranking.
 | `/u/<login>`               | Overview: the open pull requests, the merged or closed pull requests of the last 60 days, and the directories of the recent pull requests |
 | `/u/<login>?tab=reviews`   | the review record                                                                                                                         |
 | `/u/<login>?tab=maintains` | what nixpkgs names the login as a maintainer of                                                                                           |
+| `/u/<login>?tab=flakes`    | the public flakes of the login, with their reference, output and packages (see [Public flake sets](#public-flake-sets))                   |
 
 The Overview tab shows the review state, the age and the checks of each open
 pull request. Pull requests with no review for 7 days or more come first: a
 review helps there. When you look at your own profile, a link goes to your
 private pages under `/me`. The profile itself shows no private data.
+
+The Flakes tab shows only when the login has a public flake set. The owner
+always sees it, with a note on how to add one.
 
 ## Settings
 
@@ -392,8 +398,13 @@ Addresses that you saved before this change are pending. Confirm them again to g
 ## My package set
 
 Tell Maintainer Mode which nixpkgs packages you run, and your feed tells you
-when one of them gets an advisory or a new upstream release. The set is
-private. Facts about nixpkgs are public; facts about your machines are not.
+when one of them gets an advisory or a new upstream release. Facts about
+nixpkgs are public; facts about your machines are not.
+
+You can have up to 20 sets. Each set has a name that you choose, such as
+`laptop` or `web-1`. A name has 1 to 32 characters: `a-z`, `0-9`, `-`, `_`
+and `.`. It starts with a letter or a digit. A set is private, except a
+public flake set that you show on your profile.
 
 You evaluate your own tree on your own machine. By default, the server never
 evaluates it. `/me/settings#upload` shows these steps with your server's
@@ -428,8 +439,10 @@ address:
 
    ```sh
    maintainer-mode --server https://<server> export
-   maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token
+   maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token --name laptop
    ```
+
+   Use one name for each machine. Without `--name`, the set is `default`.
 
 What each command does:
 
@@ -449,7 +462,9 @@ What each command does:
 - **`submit`** does the same as `export`, with the list of `--to`. Then it
   sends the strict report to `POST /api/v1/reports`. It reads the upload
   token from `MAINTAINER_MODE_UPLOAD_TOKEN`, or from the file of
-  `--token-file`.
+  `--token-file`. `--name` gives the name of the set. `--public-flake
+REFERENCE#OUTPUT` makes it a public flake set; see
+  [Public flake sets](#public-flake-sets).
 
 To save the list for an offline export:
 
@@ -480,9 +495,14 @@ also tries the name in lower case and `python3Packages.<name>`.
 - For each kept entry: `attr`, `pname`, `version` and, if it applies,
   `modified`.
 - `omitted.unknown`: the number of dropped names.
+- `name`: only when you give `--name`.
+- `public_flake.reference` and `public_flake.output`: only when you give
+  `--public-flake`.
 
-The name of the scanned tree never leaves your machine. The client sends no
-path, no store hash and no private name. The local report uses schema 1.
+The name of the scanned tree never leaves your machine. The client never
+takes the set name from the tree, the host or the scan. It sends only the
+name that you type. The client sends no path, no store hash and no private
+name. The local report uses schema 1.
 
 `/me/settings#shared` shows an example. It runs a made-up closure through the
 same filter as `submit`. `openssl 3.0.15` goes with its version.
@@ -505,45 +525,92 @@ revokes it.
 
 **What the server does with a report.**
 
-| Code | Meaning                                              |
-| ---- | ---------------------------------------------------- |
-| 202  | stored; the answer gives the kept and dropped counts |
-| 400  | not a strict report; the error names the problem     |
-| 401  | no token, or an unknown token                        |
-| 413  | more than 16 MiB, or more than 50,000 packages       |
-| 503  | the nixpkgs index is not built yet                   |
+| Code | Meaning                                                        |
+| ---- | -------------------------------------------------------------- |
+| 202  | stored; the answer gives the kept and dropped counts           |
+| 400  | not a strict report; the error names the problem               |
+| 401  | no token, or an unknown token                                  |
+| 409  | the name is a flake that the server scans, or you have 20 sets |
+| 413  | more than 16 MiB, or more than 50,000 packages                 |
+| 503  | the nixpkgs index is not built yet                             |
 
 - It refuses a report with a field outside the strict schema, such as a
   tree name.
+- It refuses a set name that does not follow the name rules.
+- It refuses a `public_flake` whose reference does not pass the
+  public-reference check of [rescan.md](rescan.md#what-the-server-does).
 - It refuses a version that its index does not have for that attribute. The
   entry must then have `"version": null` and `"modified": true`.
 - It refuses a pname that is not the pname of its index for that attribute.
 - It drops an attribute that its index does not have, and counts it. The
   index can change between the download of the list and the upload. A
   broken or hostile client cannot store a private name.
-- It keeps one set per login: a new report replaces the old one.
-- It keeps the attributes, the time of the upload, the time of the scan and
-  the nixpkgs revision. It keeps nothing else from the report.
-- **Lifetime.** A set expires 90 days after its last upload. The background
-  loop deletes it. "Delete my report" in the "On my machines" filter deletes it at once.
+- It keeps one set per name: a new report replaces the set of that name,
+  with its flake and its public mark.
+- It keeps the name, the attributes, the time of the upload, the time of
+  the scan and the nixpkgs revision. For a public flake set, it also keeps
+  the reference and the output. It keeps nothing else from the report.
+- **Lifetime.** Each set expires 90 days after its own last upload. The
+  background loop deletes it. "Delete" on the row of a set deletes that set
+  at once.
 - **Access.** Only the owner sees the "On my machines" filter and the
   "on your machines" marks. There is no admin view. No public page, count or
-  API uses an uploaded set.
+  API uses a private set. A public flake set shows only on the profile and
+  in `GET /api/v1/people/<login>`.
 
-**The list.** The "On my machines" filter of `/packages` shows the packages of your latest report and of your
-scanned flakes. Each row has the health flags of a package page:
+**Old data.** Before names, a person had one uploaded set and a list of
+scanned flakes. The upload became the set `default`, because `submit`
+without `--name` still sends to it. Each scanned flake became the set
+`flake-<number>`. Both stay private.
+
+**The list.** The "On my machines" filter of `/packages` shows the packages of all your sets, or of the set
+that you pick. Each row has the health flags of a package page:
 advisories, a newer upstream release, a failed Hydra build, open pull requests and open issues.
-The rows that need attention come first. These packages also come first in Mine,
-on the home page and in For you on `/review`.
+The rows that need attention come first. The packages of all sets together also come
+first in Mine, on the home page, in Needs you and in For you on `/review`.
 
 **Alerts.** Your private Atom feed (see above) also gets, for each package in
 your set, a new advisory and a new upstream release. It does not get the pull
 requests and issues of the set, because a closure has thousands of packages.
 
+### Public flake sets
+
+A public flake set shows on your profile, in the Flakes tab, with its name,
+its flake reference, its output and its packages. Other people can see
+which nixpkgs packages a public NixOS configuration or package uses. Your
+machine reports never show there.
+
+Only a set with a flake reference that passes the public-reference check
+can be public: `github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an
+`https://` tarball on a public host. See
+[rescan.md](rescan.md#what-the-server-does). There are two ways to make one:
+
+- **Upload your own scan.** This works on every server. Scan the public
+  flake on your machine, then send it with a name and the reference:
+
+  ```sh
+  maintainer-mode scan --flake github:OWNER/REPO --output nixosConfigurations.HOST.config.system.build.toplevel
+  maintainer-mode submit --to https://<server> --token-file ~/.config/maintainer-mode/upload-token \
+    --name web-1 --public-flake github:OWNER/REPO#nixosConfigurations.HOST.config.system.build.toplevel
+  ```
+
+  The client and the server check the reference. The server checks the
+  package names as for each upload. It does not evaluate the flake, so the
+  profile says "The server checked the package names, not the flake".
+
+- **Let the server scan it.** This works only when the operator turns
+  server rescans on. Give a name, the reference and the output in the
+  panel "Public flakes", and tick "Show on my profile". When rescans are
+  off, the panel says so and shows the upload command above.
+
+"Make private" removes a set from your profile and keeps it in your list.
+"Show on my profile" makes it public again. A new upload without
+`--public-flake` makes the set private and removes its reference.
+
 **A public flake, scanned by the server.** This is off by default. When the
-operator turns it on, the "On my machines" filter has a form for a public flake reference
-(`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an `https://` tarball)
-and an output. After each nixpkgs index, the server scans the output again.
+operator turns it on, the "On my machines" filter has a form for a name, a
+public flake reference (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or
+an `https://` tarball) and an output. After each nixpkgs index, the server scans the output again.
 It keeps the result with the rules of an upload: the same public-list filter, the
 same index filter and the same 90-day rule. The server stops the scans of a
 person who has not opened `/packages` signed in for 90 days.
