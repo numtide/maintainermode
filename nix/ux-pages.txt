@@ -94,7 +94,14 @@ skip /api/v1/prs/:number
 skip /api/v1/people/:login
 skip /api/v1/needs
 skip /api/v1/packages/index
-skip /api/v1/packages/:attr
+skip /api/v1/packages/:name
+skip /api/v1/mine
+skip /api/v1/sets
+skip /api/v1/inbox
+skip /api/v1/progress
+skip /api/v1/search
+skip /api/v1/first
+skip /api/v1/need-help
 skip /api/v1/modules/*file
 skip /api/v1/areas/*path
 skip /api/v1/find/*name

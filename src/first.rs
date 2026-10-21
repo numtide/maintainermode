@@ -111,6 +111,38 @@ pub(crate) fn picks(s: &Snapshot, index: &Index, h: &Health, now: DateTime<Utc>)
 
 const SHOWN: usize = 8;
 
+/// Every pick, for the API and the MCP tool.
+pub(crate) fn rows(app: &App) -> Vec<serde_json::Value> {
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    picks(&s, &index, &h, Utc::now())
+        .into_iter()
+        .map(|p| {
+            let (kind, number, title, url) = match p.task {
+                Task::Review { number, title } => (
+                    "review",
+                    number,
+                    title,
+                    format!("https://github.com/NixOS/nixpkgs/pull/{number}"),
+                ),
+                Task::Fix { number, title } => (
+                    "fix",
+                    number,
+                    title,
+                    format!("https://github.com/NixOS/nixpkgs/issues/{number}"),
+                ),
+            };
+            serde_json::json!({
+                "attr": p.attr,
+                "flags": p.flags.json(),
+                "task": { "kind": kind, "number": number, "title": title, "url": url },
+                "at": p.at,
+            })
+        })
+        .collect()
+}
+
 /// The home page section.
 pub(crate) fn section(app: &App) -> String {
     let s = app.snap();

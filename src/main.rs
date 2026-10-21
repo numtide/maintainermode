@@ -226,8 +226,8 @@ enum Command {
         )]
         db: PathBuf,
     },
-    /// Open pull requests in one queue: foryou (needs --login), unowned, firsttime,
-    /// bumps, all, or ready
+    /// Open pull requests in one queue: foryou (needs --login or MAINTAINER_MODE_MCP_TOKEN), unowned,
+    /// firsttime, bumps, all, or ready
     Prs {
         #[arg(long, default_value = "all", value_parser = api::QUEUES)]
         queue: String,
@@ -250,6 +250,41 @@ enum Command {
     Show { name: String },
     /// The packages and NixOS modules a login maintains
     Maintains { login: String },
+    /// One pull request: its state, its checks and what it touches
+    Pr { number: u64 },
+    /// Packages, NixOS modules and paths that match a name
+    Search { query: String },
+    /// Small packages with no maintainer and a recent task, for a first
+    /// contribution
+    First {
+        #[arg(long, default_value_t = api::LIMIT)]
+        limit: usize,
+    },
+    /// What needs you, the most urgent first; needs MAINTAINER_MODE_MCP_TOKEN
+    Needs {
+        #[arg(long, value_parser = api::MOODS)]
+        mood: Option<String>,
+    },
+    /// Your packages, as the filters of /packages; needs
+    /// MAINTAINER_MODE_MCP_TOKEN
+    Mine {
+        #[arg(long, default_value = "mine", value_parser = api::FILTERS)]
+        filter: String,
+        /// With --filter machines: one of your sets
+        #[arg(long)]
+        set: Option<String>,
+        /// Keep the names that hold this text
+        #[arg(long)]
+        query: Option<String>,
+        #[arg(long, default_value_t = api::LIMIT)]
+        limit: usize,
+        /// The next_cursor of the page before
+        #[arg(long)]
+        cursor: Option<String>,
+    },
+    /// Print the JSON of any GET endpoint, such as /api/v1/sets; a private
+    /// one needs MAINTAINER_MODE_MCP_TOKEN
+    Get { path: String },
     /// The state of nixpkgs, month by month
     Metrics {
         #[arg(long, default_value_t = 12)]
@@ -635,10 +670,34 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
     }
 }
 
+/// The private endpoints take the MCP token as a bearer token.
 async fn fetch(server: &str, path: &str) -> Result<Value> {
     let url = format!("{}{path}", server.trim_end_matches('/'));
-    let resp = github::http().get(&url).send().await?.error_for_status()?;
+    let mut req = github::http().get(&url);
+    if let Some(t) = std::env::var("MAINTAINER_MODE_MCP_TOKEN")
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+    {
+        req = req.bearer_auth(t.trim());
+    }
+    let resp = req.send().await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let v: Value = resp.json().await.unwrap_or_default();
+        bail!(
+            "{url}: {status}: {}",
+            v["error"].as_str().unwrap_or("no message")
+        );
+    }
     Ok(resp.json().await?)
+}
+
+fn query(pairs: &[(&str, Option<&str>)]) -> String {
+    let q: Vec<String> = pairs
+        .iter()
+        .filter_map(|(k, v)| v.map(|v| format!("{k}={}", github::urlencode(v))))
+        .collect();
+    q.join("&")
 }
 
 /// Stdout closed by the reader, as `| head` does: not a failure.
@@ -948,9 +1007,6 @@ async fn run(cli: Cli) -> Result<i32> {
             limit,
             cursor,
         } => {
-            if queue == "foryou" && login.is_none() {
-                bail!("--queue foryou needs --login");
-            }
             let mut path = format!("/api/v1/prs?queue={queue}&limit={limit}");
             for (k, v) in [("section", section), ("login", login), ("cursor", cursor)] {
                 if let Some(v) = v {
@@ -992,6 +1048,129 @@ async fn run(cli: Cli) -> Result<i32> {
                     r["pr_title"].as_str().unwrap_or("")
                 );
             }
+            Ok(0)
+        }
+        Command::Pr { number } => {
+            let v = fetch(&cli.server, &format!("/api/v1/prs/{number}")).await?;
+            if cli.json {
+                out!("{v}");
+                return Ok(0);
+            }
+            out!(
+                "#{} {}\n  by {}  {}  base {}  checks {}  queue {}",
+                v["number"],
+                v["title"].as_str().unwrap_or(""),
+                v["author"].as_str().unwrap_or(""),
+                v["state"].as_str().unwrap_or(""),
+                v["base"].as_str().unwrap_or(""),
+                v["ci"].as_str().unwrap_or("-"),
+                v["queue"]["queue"].as_str().unwrap_or("-")
+            );
+            for t in v["touches"].as_array().into_iter().flatten() {
+                out!("  touches {}", t["name"].as_str().unwrap_or(""));
+            }
+            out!("  {}", v["url"].as_str().unwrap_or(""));
+            Ok(0)
+        }
+        Command::Search { query: q } => {
+            let path = format!("/api/v1/search?{}", query(&[("q", Some(&q))]));
+            let v = fetch(&cli.server, &path).await?;
+            if cli.json {
+                out!("{v}");
+                return Ok(0);
+            }
+            for r in v["results"].as_array().into_iter().flatten() {
+                out!(
+                    "{:<40} risk {}",
+                    r["key"].as_str().unwrap_or(""),
+                    r["flags"]["risk"]
+                );
+            }
+            Ok(0)
+        }
+        Command::First { limit } => {
+            let v = fetch(&cli.server, &format!("/api/v1/first?limit={limit}")).await?;
+            if cli.json {
+                out!("{v}");
+                return Ok(0);
+            }
+            for p in v["items"].as_array().into_iter().flatten() {
+                let t = &p["task"];
+                out!(
+                    "{:<30} {:<6} #{:<7} {}",
+                    p["attr"].as_str().unwrap_or(""),
+                    t["kind"].as_str().unwrap_or(""),
+                    t["number"],
+                    t["title"].as_str().unwrap_or("")
+                );
+            }
+            Ok(0)
+        }
+        Command::Needs { mood } => {
+            let path = format!("/api/v1/needs?{}", query(&[("mood", mood.as_deref())]));
+            let v = fetch(&cli.server, &path).await?;
+            if cli.json {
+                out!("{v}");
+                return Ok(0);
+            }
+            for i in v["items"].as_array().into_iter().flatten() {
+                out!(
+                    "{:<9} {}  {}",
+                    i["cause"].as_str().unwrap_or(""),
+                    i["title"].as_str().unwrap_or(""),
+                    i["href"].as_str().unwrap_or("")
+                );
+            }
+            Ok(0)
+        }
+        Command::Mine {
+            filter,
+            set,
+            query: q,
+            limit,
+            cursor,
+        } => {
+            let path = format!(
+                "/api/v1/mine?limit={limit}&{}",
+                query(&[
+                    ("filter", Some(&filter)),
+                    ("set", set.as_deref()),
+                    ("q", q.as_deref()),
+                    ("cursor", cursor.as_deref()),
+                ])
+            );
+            let v = fetch(&cli.server, &path).await?;
+            if cli.json {
+                out!("{v}");
+                return Ok(0);
+            }
+            for r in v["items"].as_array().into_iter().flatten() {
+                let why: Vec<&str> = r["why"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                out!(
+                    "{:<40} {:<24} risk {}",
+                    r["key"].as_str().unwrap_or(""),
+                    why.join(","),
+                    r["flags"]["risk"]
+                );
+            }
+            if let Some(c) = v["next_cursor"].as_str() {
+                eprintln!("{} in all; next page: --cursor {c}", v["total"]);
+            }
+            Ok(0)
+        }
+        Command::Get { path } => {
+            let path = if path.starts_with("/api/") {
+                path
+            } else {
+                format!("/api/v1/{}", path.trim_start_matches('/'))
+            };
+            let v = fetch(&cli.server, &path).await?;
+            out!("{v}");
             Ok(0)
         }
         Command::Metrics { months } => {
