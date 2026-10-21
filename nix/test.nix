@@ -43,7 +43,10 @@ pkgs.testers.runNixOSTest {
           };
           private = mk "our-private-daemon" "1.0" [ (mk "hello" "2.12" [ ]) (mk "requests" "2.32" [ ]) ];
         in
-        { top = mk "system" "1" [ private ]; }
+        {
+          top = mk "system" "1" [ private ];
+          other = mk "box" "1" [ (mk "hello" "2.12" [ ]) ];
+        }
       '';
       environment.etc."scan/index.json".text = builtins.toJSON {
         rev = "test";
@@ -311,7 +314,19 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"attr\": \"python3Packages.requests\"' /tmp/scan/report.json && grep -q '\"modified\": true' /tmp/scan/report.json")
     machine.succeed("grep -q '\"version\": \"2.12\"' /tmp/scan/report.json && grep -q '\"index_rev\": \"test\"' /tmp/scan/report.json")
     machine.succeed("grep -q '\"unknown\": 2' /tmp/scan/report.json")
-    machine.fail("grep -q -e our-private-daemon -e host.nix -e '\"2.32\"' -e '\"name\"' /tmp/scan/report.json")
+    machine.fail("grep -q -e our-private-daemon -e host.nix -e '\"2.32\"' -e '\"name\"' -e '\"outputs\"' /tmp/scan/report.json")
+    # two outputs: the local report keeps the outputs and the derivations;
+    # only --with-outputs sends the labels, and never a store path
+    machine.succeed("cd /tmp/scan && maintainer-mode scan --file host.nix --attr top --attr other --out multi.json")
+    machine.succeed("grep -q '\"label\": \"other\"' /tmp/scan/multi.json && grep -q '/nix/store/.*-hello-2.12.drv' /tmp/scan/multi.json")
+    machine.succeed("cd /tmp/scan && maintainer-mode export --index-file index.json --report multi.json --with-outputs --out multi-report.json")
+    machine.succeed("tr -d ' \\n' < /tmp/scan/multi-report.json > /tmp/mr && grep -q '\"outputs\":\\[\"top\",\"other\"\\]' /tmp/mr && grep -q '\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"2.12\",\"outputs\":\\[0,1\\]' /tmp/mr")
+    machine.fail("grep -q -e /nix/store -e host.nix -e installable /tmp/scan/multi-report.json")
+    machine.succeed("cd /tmp/scan && maintainer-mode export --index-file index.json --report multi.json --out multi-plain.json && ! grep -q outputs /tmp/scan/multi-plain.json")
+    # why runs nix here, from each output to the derivation of the package
+    machine.succeed("cd /tmp/scan && maintainer-mode why hello --report multi.json > /tmp/why.out && grep -q 'top holds hello-2.12' /tmp/why.out && grep -q 'other holds hello-2.12' /tmp/why.out && grep -q 'our-private-daemon-1.0.drv' /tmp/why.out")
+    machine.succeed("cd /tmp/scan && maintainer-mode why hello --report multi.json --output other > /tmp/why2.out && ! grep -q 'top holds' /tmp/why2.out")
+    machine.fail("cd /tmp/scan && maintainer-mode why hello --report multi.json --output nope")
     machine.fail("cd /tmp/scan && maintainer-mode submit --to http://127.0.0.1:8790")
     machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=nope maintainer-mode submit --to http://127.0.0.1:8790")
     machine.succeed("test -f /var/lib/maintainer-mode/maintainer-mode.sqlite")
@@ -457,6 +472,9 @@ pkgs.testers.runNixOSTest {
     machine.fail("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 --name site --public-flake https://127.0.0.1/x.tar.gz#x")
     machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 --name site --public-flake github:o/r#packages.x86_64-linux.default > /tmp/submit2.json && grep -q '\"public\":true' /tmp/submit2.json")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/u/alice?tab=flakes' -o /tmp/u-flakes && grep -q 'github:o/r' /tmp/u-flakes && ! grep -q '>default<' /tmp/u-flakes")
+    # a set with output labels, sent with --with-outputs
+    machine.succeed("cd /tmp/scan && MAINTAINER_MODE_UPLOAD_TOKEN=vmtoken maintainer-mode submit --to http://127.0.0.1:8790 --report multi.json --name infra --with-outputs > /tmp/submit3.json && grep -q '\"outputs\":2' /tmp/submit3.json")
+    machine.succeed("curl -s -o /tmp/r22 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"name\":\"bad\",\"outputs\":[\"a b\"],\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r22.code && grep -q 400 /tmp/r22.code && grep -q 'output label' /tmp/r22")
     # a follow-up plan on a pull request of alice: only she sees the form
     signed_in("/pr/575334", "/tmp/s-pr")
     machine.succeed("grep -q 'Your follow-up plan' /tmp/s-pr && grep -q 'action=\"/me/followup\"' /tmp/s-pr && grep -q 'Your default plan applies' /tmp/s-pr")
@@ -479,6 +497,16 @@ pkgs.testers.runNixOSTest {
     signed_in("/packages?filter=machines", "/tmp/s-pk-machines2")
     machine.succeed("grep -q 'Your sets' /tmp/s-pk-machines2 && grep -q 'set=site' /tmp/s-pk-machines2 && grep -q 'action=\"/me/sets/delete\"' /tmp/s-pk-machines2 && grep -q 'id=\"flakes\"' /tmp/s-pk-machines2")
     machine.succeed("curl -sf -o /tmp/pub2 http://127.0.0.1:8790/packages && ! grep -q -e 'on your machines' -e 'filter=' /tmp/pub2")
+    # each row of the set says where it runs; output= keeps one output
+    signed_in("/packages?filter=machines&set=infra", "/tmp/s-infra")
+    machine.succeed("grep -q 'Where it runs' /tmp/s-infra && grep -q 'set=infra&amp;output=other\">other</a>' /tmp/s-infra")
+    signed_in("/packages?filter=machines&set=infra&output=other", "/tmp/s-infra-other")
+    machine.succeed("grep -q 'Packages of infra on other' /tmp/s-infra-other && grep -q 'href=\"/p/hello\"' /tmp/s-infra-other && ! grep -q 'href=\"/p/[^\"]*requests\"' /tmp/s-infra-other")
+    signed_in("/packages?filter=machines&set=infra&output=top", "/tmp/s-infra-top")
+    machine.succeed("grep -q 'href=\"/p/[^\"]*requests\"' /tmp/s-infra-top")
+    signed_in("/api/v1/sets?set=infra&output=other", "/tmp/s-sets.json")
+    machine.succeed("grep -q '\"packages\":\\[\"hello\"\\]' /tmp/s-sets.json && grep -q '\"outputs\":\\[\"top\",\"other\"\\]' /tmp/s-sets.json")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/api/v1/sets > /tmp/r23 && grep -q 401 /tmp/r23")
     machine.succeed("curl -s -o /tmp/r20 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"packages\":[{\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"1.2.3-acme-fix\"}]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r20.code && grep -q 400 /tmp/r20.code && grep -q 'does not have version 1.2.3-acme-fix' /tmp/r20")
     machine.succeed("curl -s -o /tmp/r21 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"source\":{\"name\":\"/home/me/tree\"},\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r21.code && grep -q 400 /tmp/r21.code && grep -q 'unknown field' /tmp/r21")
   '';
