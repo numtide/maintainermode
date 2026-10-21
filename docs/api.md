@@ -15,6 +15,7 @@ removed, not redirected.
 | `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
 | `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
 | `GET /api/v1/needs`                           | what waits for you, with your session only (private)             |
+| `GET /api/v1/sets`                            | your package sets and their outputs, with your session only      |
 | `GET /api/v1/packages/<attr>`                 | one package: health, issues and pull requests                    |
 | `GET /api/v1/modules/<file>`                  | one NixOS module                                                 |
 | `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
@@ -88,8 +89,9 @@ It gives the public data of one login. It is the data of the profile page
   with the number of pull requests for each;
 - `flakes`: the public flake sets that the login shows on its profile. Each
   has `name`, `reference`, `output`, `source` (`upload` or `server_scan`),
-  `updated_at`, `nixpkgs_rev` and `packages` (the nixpkgs attributes). A
-  private set is never in it;
+  `updated_at`, `nixpkgs_rev`, `packages` (the nixpkgs attributes),
+  `outputs` (the output labels, empty without `--with-outputs`) and
+  `package_outputs` (attribute → its labels). A private set is never in it;
 - `person`: the ledger summary, and whether its pull requests are in the
   queues (see [Ledger fields](#ledger-fields));
 - `dossier`: its review record;
@@ -164,7 +166,7 @@ does not change `plans` and `events`.
       "key": "adv:curl",
       "cause": "advisory",
       "title": "curl: NIXPKGS-2026-1",
-      "detail": "On your machines. Upstream has 8.10.0.",
+      "detail": "On web-1, laptop. Upstream has 8.10.0.",
       "href": "/p/curl",
       "action": "Open the package",
       "fingerprint": "3f2a9c0d1b7e4a55",
@@ -177,6 +179,10 @@ does not change `plans` and `events`.
           "href": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
           "text": "NIXPKGS-2026-1"
         }
+      ],
+      "outputs": [
+        { "set": "infra", "output": "web-1" },
+        { "set": "infra", "output": "laptop" }
       ]
     }
   ],
@@ -230,6 +236,47 @@ does not change `plans` and `events`.
 - `events`: the events of your own pull requests in the last 30 days, newest
   first. The `id` starts with `mine-<number>-` and ends with `review-<id>`,
   `merged`, `closed` or `due-<date>`.
+- `items[].outputs`: for an advisory, the set and the output label of each
+  output that runs the package. It is empty for a set without
+  [output labels](personal.md#output-labels), and for the other causes.
+
+## `GET /api/v1/sets`
+
+It gives your package sets, as the "On my machines" filter of `/packages`
+shows them (see [My package set](personal.md#my-package-set)). It reads your
+session cookie only. Without a session, the answer is 401. The answer always
+has `Cache-Control: private, no-store`. The MCP tool `sets` gives the same
+answer.
+
+`set` keeps one set. `output`, with `set`, keeps only the packages of that
+output, as `&set=<name>&output=<label>` does on the page. An unknown set or
+output, or `output` without `set`, is a 404 with an `error`.
+
+```json
+{
+  "login": "alice",
+  "sets": [
+    {
+      "name": "infra",
+      "kind": "upload",
+      "public": false,
+      "flake": null,
+      "updated_at": "2026-10-20T08:00:00Z",
+      "expires_at": "2027-01-18T08:00:00Z",
+      "nixpkgs_rev": "5f2c9e148a3b",
+      "dropped": 1,
+      "packages": ["curl", "openssl"],
+      "outputs": ["web-1", "laptop"],
+      "package_outputs": { "curl": ["web-1"], "openssl": ["web-1", "laptop"] }
+    }
+  ]
+}
+```
+
+- `kind`: `upload`, `flake upload` or `server scan`.
+- `flake`: `{ "reference", "output" }` of a public flake set, or `null`.
+- `expires_at`: `null` for a flake that the server scans.
+- `outputs` and `package_outputs`: empty without `--with-outputs`.
 
 ## `GET /api/v1/packages/index`
 
@@ -268,6 +315,7 @@ raw answer.
 | `maintainer-mode metrics`             | `/api/v1/metrics`                                   |
 | `maintainer-mode export`              | `/api/v1/packages/index`                            |
 | `maintainer-mode submit`              | `/api/v1/packages/index` and `POST /api/v1/reports` |
+| `maintainer-mode why <pname>`         | none: it reads the local report and runs nix        |
 
 `prs` takes `--section`, `--login`, `--limit` and `--cursor`. It prints the
 next cursor on stderr.
