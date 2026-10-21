@@ -11,11 +11,13 @@ use serde::de::{self, DeserializeSeed, Deserializer, IgnoredAny, MapAccess, SeqA
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::eval::{run_with, stream_with};
+use crate::eval::{private_dir, run_with, stream_with};
 use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
 
 const NIX: &str = "nix";
+const DISCOVER: &str = include_str!("discover.nix");
 
+#[derive(Clone)]
 pub struct Target {
     pub flake: Option<String>,
     pub file: Option<PathBuf>,
@@ -23,6 +25,9 @@ pub struct Target {
     pub nixpkgs_input: Option<String>,
     pub system: Option<String>,
     pub runtime: bool,
+    /// Outputs to leave out, as `--ignore` gives them: an attribute path, or
+    /// the start of one, such as `checks`.
+    pub ignore: Vec<String>,
 }
 
 impl Target {
@@ -76,6 +81,68 @@ impl Target {
         }
     }
 
+    /// The outputs the scan reads. Without `--output`, a flake gives every
+    /// output worth reading: the packages, devShells and checks of this
+    /// system, and the systems that the configurations build. It evaluates
+    /// names only. `--ignore` then leaves outputs out, whether the flake gave
+    /// them or `--output` named them.
+    pub fn choose_outputs(&mut self) -> Result<()> {
+        let discovered = self.discover()?;
+        let before = self.outputs.len();
+        self.outputs.retain(|o| !ignored(o, &self.ignore));
+        let gone = before - self.outputs.len();
+        if gone > 0 {
+            eprintln!("{gone} {} ignored", outputs(gone));
+        }
+        if self.outputs.is_empty() && self.flake.is_some() {
+            bail!("--ignore leaves no output to read");
+        }
+        if let Some(flake) = discovered {
+            let n = self.outputs.len();
+            eprintln!("{n} {} to read in {flake}", outputs(n));
+        }
+        Ok(())
+    }
+
+    /// Asks the flake for its outputs, when `--output` named none. It answers
+    /// the flake it asked, and nothing when it asked nothing.
+    fn discover(&mut self) -> Result<Option<String>> {
+        if self.flake.is_none() || !self.outputs.is_empty() {
+            return Ok(None);
+        }
+        let flake = self.flake_ref()?;
+        let request = serde_json::json!({
+            "flake": flake,
+            "system": self.system.clone().unwrap_or_else(this_system),
+            "runtime": self.runtime,
+        });
+        let dir = private_dir("discover")?;
+        let answer = run_discover(&dir, &request);
+        let _ = std::fs::remove_dir_all(&dir);
+        let paths: Vec<Vec<String>> =
+            serde_json::from_str(&answer?).context("parse the outputs of the flake")?;
+        self.outputs = paths.iter().map(|p| attr_path(p)).collect();
+        if self.outputs.is_empty() {
+            bail!(
+                "{flake} has no package, devShell, check or configuration for this system; \
+                 name an output with --output"
+            );
+        }
+        Ok(Some(flake))
+    }
+
+    /// What `builtins.getFlake` takes: a local tree by absolute path, or the
+    /// flake reference as it was given.
+    fn flake_ref(&self) -> Result<String> {
+        let flake = self.flake.clone().unwrap_or_default();
+        let Some(root) = self.local_root() else {
+            return Ok(flake);
+        };
+        let root = std::fs::canonicalize(&root)
+            .with_context(|| format!("find the flake at {}", root.display()))?;
+        Ok(root.to_string_lossy().into_owned())
+    }
+
     pub(crate) fn local_root(&self) -> Option<PathBuf> {
         self.flake.as_ref().and(self.root())
     }
@@ -97,6 +164,66 @@ impl Target {
         }
         nixpkgs_rev_named(&root, self.nixpkgs_input.as_deref())
     }
+}
+
+/// Evaluates `discover.nix` against the request. The expression is plain nix:
+/// `builtins.getFlake` needs `--impure` for a local tree, and no evaluator
+/// other than nix promises it.
+fn run_discover(dir: &Path, request: &serde_json::Value) -> Result<String> {
+    std::fs::write(dir.join("input.json"), serde_json::to_vec(request)?)?;
+    let expr = dir.join("discover.nix");
+    std::fs::write(&expr, DISCOVER)?;
+    run_with(
+        NIX,
+        &[
+            "eval",
+            "--json",
+            "--impure",
+            "--file",
+            &expr.to_string_lossy(),
+        ],
+    )
+}
+
+/// The segments of an attribute path, joined the way an installable writes
+/// them: a name that is not plain, such as `me@box`, keeps its quotes.
+fn attr_path(segments: &[String]) -> String {
+    segments
+        .iter()
+        .map(|s| {
+            let plain = !s.is_empty()
+                && s.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '\''));
+            if plain {
+                s.clone()
+            } else {
+                format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+/// An output goes when `--ignore` names it, or names a path it sits under:
+/// `checks` leaves every check, `checks.x86_64-linux.vm` leaves that one. The
+/// quotes an installable needs around a name such as `me@box` are not part of
+/// the name, so they count for neither side.
+fn ignored(output: &str, ignore: &[String]) -> bool {
+    let bare = |s: &str| s.replace(['"', '\\'], "");
+    let output = bare(output);
+    ignore.iter().any(|i| {
+        let i = bare(i);
+        output == i || output.starts_with(&format!("{i}."))
+    })
+}
+
+fn outputs(n: usize) -> &'static str {
+    if n == 1 { "output" } else { "outputs" }
+}
+
+/// The system of this machine, as nix names it.
+fn this_system() -> String {
+    format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).replace("macos", "darwin")
 }
 
 /// The nixpkgs revision a flake pins. `input` names the lock entry when the
@@ -528,16 +655,12 @@ pub fn scan(target: &Target) -> Result<Report> {
         bail!("name a flake with --flake or a file with --file");
     }
     if target.flake.is_some() && target.outputs.is_empty() {
-        bail!(
-            "name at least one flake output, like nixosConfigurations.<host>.config.system.build.toplevel"
-        );
+        bail!("no output to read; Target::discover fills them in, or name one with --output");
     }
     let mut pairs = closure_of(target)?;
     pairs.retain(|(p, _)| !p.is_empty());
 
-    let system = target.system.clone().unwrap_or_else(|| {
-        format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS).replace("macos", "darwin")
-    });
+    let system = target.system.clone().unwrap_or_else(this_system);
     let packages = pairs
         .into_iter()
         .map(|(pname, version)| Found {
@@ -692,6 +815,7 @@ mod tests {
             nixpkgs_input: None,
             system: None,
             runtime: false,
+            ignore: Vec::new(),
         };
         assert_eq!(t(".").root(), Some(PathBuf::from(".")));
         assert_eq!(
@@ -706,6 +830,42 @@ mod tests {
     }
 
     #[test]
+    fn a_discovered_name_that_is_not_plain_keeps_its_quotes() {
+        let path = |s: &[&str]| attr_path(&s.iter().map(|p| (*p).to_string()).collect::<Vec<_>>());
+        assert_eq!(
+            path(&["packages", "x86_64-linux", "hello"]),
+            "packages.x86_64-linux.hello"
+        );
+        assert_eq!(
+            path(&["homeConfigurations", "me@box", "activationPackage"]),
+            "homeConfigurations.\"me@box\".activationPackage"
+        );
+        assert_eq!(path(&["checks", "a.b"]), "checks.\"a.b\"");
+    }
+
+    #[test]
+    fn ignore_leaves_one_output_or_every_output_under_a_path() {
+        let ignore = vec![
+            "checks".to_string(),
+            "packages.x86_64-linux.broken".to_string(),
+            "homeConfigurations.me@box".to_string(),
+        ];
+        assert!(ignored("checks.x86_64-linux.vm", &ignore));
+        assert!(ignored("checks", &ignore));
+        assert!(ignored("packages.x86_64-linux.broken", &ignore));
+        // the quotes of an installable are not part of the name
+        assert!(ignored(
+            "homeConfigurations.\"me@box\".activationPackage",
+            &ignore
+        ));
+        // a path is whole: checks does not leave checksummer
+        assert!(!ignored("checksummer.x86_64-linux.vm", &ignore));
+        assert!(!ignored("packages.x86_64-linux.broken-not", &ignore));
+        assert!(!ignored("packages.x86_64-linux.hello", &ignore));
+        assert!(!ignored("packages.x86_64-linux.hello", &[]));
+    }
+
+    #[test]
     fn every_output_is_its_own_call_and_a_file_without_an_attribute_is_one() {
         let target = |outputs: Vec<String>| Target {
             flake: None,
@@ -714,6 +874,7 @@ mod tests {
             nixpkgs_input: None,
             system: None,
             runtime: false,
+            ignore: Vec::new(),
         };
         let calls = target(vec!["top".into(), "other".into()]).installables();
         assert_eq!(calls.len(), 2);
