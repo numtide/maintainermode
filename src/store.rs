@@ -615,7 +615,7 @@ pub enum AddFlake {
 }
 
 /// Sets a person can have, all kinds together.
-pub const MAX_SETS: usize = 20;
+pub const MAX_SETS: usize = 50;
 
 const SET_TABLE: &str = "CREATE TABLE IF NOT EXISTS package_set (
   login TEXT NOT NULL,

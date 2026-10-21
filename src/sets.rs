@@ -733,9 +733,11 @@ fn steps(base: &str, token: Option<&str>) -> String {
             "Send them.",
             "The tool downloads the public package list of the server, keeps only those names, and sends a version only when nixpkgs has it. \
              <code>export</code> prints the exact report that <code>submit</code> sends. Read it first. \
-             Give each machine its own set with <code>--name</code>, such as <code>--name laptop</code>. A new upload replaces the set of that name.",
+             Give each flake its own set with <code>--name</code>, such as <code>--name infra</code>. A new upload replaces the set of that name. \
+             Add <code>--with-outputs</code> to both commands to see which host runs each package. It also sends your host names: \
+             <a href=\"/me/settings#with-outputs\">read the risk</a> first.",
             &format!(
-                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE} --name laptop"
+                "maintainer-mode --server {base} export\nmaintainer-mode submit --to {base} --token-file {TOKEN_FILE} --name infra"
             ),
         ),
     ]
