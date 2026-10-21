@@ -17,7 +17,7 @@ use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
 use crate::mine::MACHINES;
-use crate::report::{Found, MAX_PACKAGES, PublicList, Report, Source, Upload};
+use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
 use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put};
 use crate::ui::{Page, Section, Tab, section};
 use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
@@ -223,6 +223,10 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         Ok(r) => r,
         Err(e) => return refuse(StatusCode::BAD_REQUEST, &e),
     };
+    let outputs = match report.outputs_of(&attrs) {
+        Ok(r) => r,
+        Err(e) => return refuse(StatusCode::BAD_REQUEST, &e),
+    };
     let dropped = stale + report.omitted.unknown;
     let versions = report
         .packages
@@ -232,6 +236,7 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
         .collect();
     let set = PackageSet {
         versions,
+        outputs,
         attrs: attrs.into_iter().collect(),
         dropped,
         uploaded_at: Utc::now(),
@@ -276,6 +281,7 @@ async fn upload(State(app): State<Shared>, headers: HeaderMap, body: Bytes) -> R
             "public": flake.is_some(),
             "kept": set.attrs.len(),
             "dropped": dropped,
+            "outputs": set.outputs.labels.len(),
             "expires_at": set.uploaded_at + Duration::days(RETENTION_DAYS),
         })),
     )
@@ -470,11 +476,13 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
 
 /// A made-up closure through the real filter, so the sample cannot drift
 /// from what `submit` sends.
-fn sample() -> (Report, Upload) {
-    let found = |pname: &str, version: &str| Found {
+fn sample() -> (Report, Upload, Upload) {
+    let found = |pname: &str, version: &str, outputs: &[usize]| Found {
         pname: pname.into(),
         version: version.into(),
-        attr: None,
+        outputs: outputs.to_vec(),
+        paths: vec![format!("/nix/store/{:032}-{pname}-{version}.drv", 0)],
+        ..Default::default()
     };
     let rev = "5f2c9e148a3b";
     let at = "2026-10-20T08:00:00Z";
@@ -489,11 +497,20 @@ fn sample() -> (Report, Upload) {
             scanned_at: Some(at.into()),
         },
         packages: vec![
-            found("openssl", "3.0.15"),
-            found("curl", "8.11.1-acme-fix"),
-            found("acme-billing", "2.4.0"),
+            found("openssl", "3.0.15", &[0, 1]),
+            found("curl", "8.11.1-acme-fix", &[0]),
+            found("acme-billing", "2.4.0", &[0]),
         ],
         files: None,
+        outputs: ["web-1", "laptop"]
+            .iter()
+            .map(|h| ScanOutput {
+                label: h.to_string(),
+                installable: vec![format!(
+                    "/home/me/acme-prod#nixosConfigurations.{h}.config.system.build.toplevel"
+                )],
+            })
+            .collect(),
     };
     let mut list = PublicList {
         rev: rev.into(),
@@ -504,15 +521,19 @@ fn sample() -> (Report, Upload) {
         pnames: Default::default(),
     };
     list.fill_pnames();
-    let mut upload = report.strict(&list);
-    upload.client = "maintainer-mode/VERSION".into();
-    upload.name = Some("laptop".into());
-    (report, upload)
+    let name = |mut u: Upload| {
+        u.client = "maintainer-mode/VERSION".into();
+        u.name = Some("infra".into());
+        u
+    };
+    let upload = name(report.strict(&list));
+    let with = name(report.strict_with(&list, true));
+    (report, upload, with)
 }
 
 /// What leaves the machine, what the server keeps and who sees it.
 fn shared(app: &App) -> String {
-    let (report, upload) = sample();
+    let (report, upload, with) = sample();
     let fate = |f: &Found| match upload.packages.iter().find(|e| e.pname == f.pname) {
         Some(e) if !e.modified => "sent with its version, because nixpkgs has this version",
         Some(_) => "sent without its version, marked <code>modified</code>",
@@ -531,6 +552,13 @@ fn shared(app: &App) -> String {
         })
         .collect();
     let json = serde_json::to_string_pretty(&upload).unwrap_or_default();
+    let with_json = serde_json::to_string_pretty(&with).unwrap_or_default();
+    let hosts = with
+        .outputs
+        .iter()
+        .map(|h| format!("<code>{}</code>", esc(h)))
+        .collect::<Vec<_>>()
+        .join(" and ");
     let host = app
         .public_url
         .split_once("://")
@@ -538,12 +566,22 @@ fn shared(app: &App) -> String {
         .trim_end_matches('/');
     format!(
         "<div class=\"Box-row\" id=\"shared\"><h3 class=\"f5 mb-2\">What leaves your machine</h3>\
-         <p>An example. The scan of the machine <code>{name}</code> finds three packages:</p>\
-         <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent. The set name <code>laptop</code> is what you type with <code>--name</code>.</li></ul>\
+         <p>An example. The scan of the flake <code>{name}</code> reads two machines, {hosts}, and finds three packages:</p>\
+         <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent. The set name <code>infra</code> is what you type with <code>--name</code>.</li>\
+         <li>the machine names {hosts}: sent only with <code>--with-outputs</code>.</li>\
+         <li>the store paths: kept in the local file for <code>maintainer-mode why</code>, never sent.</li></ul>\
          <p>The tool then sends only this. No path, no store hash, no host name:</p>\
-         <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{json}</pre></div>\
+         <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{json}</pre>\
+         <h4 class=\"f5 mb-2\" id=\"with-outputs\">With <code>--with-outputs</code></h4>\
+         <p>The report also tells which machine runs each package. Then the page can say \"on web-1, laptop\" and filter by machine. \
+         It sends the label of each output: the name of each NixOS, nix-darwin or Home Manager configuration, \
+         and the attribute path of each package, devShell and check. Each package gets the numbers of its outputs:</p>\
+         <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{with_json}</pre>\
+         <p class=\"mb-0\"><strong>The risk.</strong> Your host names then leave your machine. A host name can tell the name of a customer, \
+         a project or a place. Use <code>--with-outputs</code> only when you can share these names.</p></div>\
          <div class=\"Box-row\"><h3 class=\"f5 mb-2\">What the server keeps, and who sees it</h3><ul class=\"ml-3 mb-2\">\
-         <li>It keeps the set name, the package names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision.</li>\
+         <li>It keeps the set name, the package names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision. \
+         With <code>--with-outputs</code>, it also keeps the output labels and which package each one holds.</li>\
          <li>Only you see it, when you sign in. It never shows on public pages or in public numbers. Only a public flake that you mark with <code>--public-flake</code> shows on your profile.</li>\
          <li>The admin of {host} can read the server database.</li>\
          <li>The server deletes it {RETENTION_DAYS} days after the upload. <em>Delete my report</em> on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
@@ -551,6 +589,7 @@ fn shared(app: &App) -> String {
          A person who reads it can find the known advisories that can affect you. \
          Send only machines that you can share at that level.</p></div>",
         name = esc(&report.source.name),
+        with_json = esc(&with_json),
         json = esc(&json),
         host = esc(host),
     )
@@ -740,12 +779,16 @@ pub(crate) mod tests {
 
     #[test]
     fn the_sample_shows_each_rule_of_the_strict_filter() {
-        let (_, upload) = sample();
+        let (_, upload, with) = sample();
         let json = serde_json::to_string(&upload).unwrap();
-        assert!(json.contains(r#""attr":"openssl","pname":"openssl","version":"3.0.15""#));
+        assert!(json.contains(r#""attr":"openssl","pname":"openssl","version":"3.0.15"}"#));
         assert!(json.contains(r#""attr":"curl","pname":"curl","version":null,"modified":true"#));
-        assert!(!json.contains("acme"));
+        assert!(!json.contains("acme") && !json.contains("web-1"));
         assert_eq!(upload.omitted.unknown, 1);
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains(r#""outputs":["web-1","laptop"]"#));
+        assert!(json.contains(r#""version":"3.0.15","outputs":[0,1]"#));
+        assert!(!json.contains("/nix/store") && !json.contains("/home/me"));
     }
 
     #[test]
@@ -975,6 +1018,7 @@ pub(crate) mod tests {
             scanned_at: None,
             nixpkgs_rev: None,
             versions: Default::default(),
+            outputs: Default::default(),
         }
     }
 
@@ -1072,6 +1116,60 @@ pub(crate) mod tests {
         assert_eq!(set_attrs(&app, "alice"), ["jq"]);
         s.delete_package_sets("alice").unwrap();
         assert!(s.sets("alice").unwrap().is_empty());
+    }
+
+    fn with_hosts() -> serde_json::Value {
+        json!({
+            "schema": crate::report::SCHEMA,
+            "name": "infra",
+            "outputs": ["web-1", "laptop"],
+            "packages": [
+                { "attr": "hello", "pname": "hello", "version": "1.0", "outputs": [0, 1] },
+                { "attr": "jq", "pname": "jq", "version": "1.0", "outputs": [1] },
+                { "attr": "gone", "pname": "gone", "version": "1.0", "outputs": [0] },
+            ],
+        })
+    }
+
+    #[tokio::test]
+    async fn an_upload_keeps_the_outputs_of_each_package() {
+        let app = uploader(&["hello", "jq"]);
+        assert_eq!(post(&app, "t", with_hosts()).await, StatusCode::ACCEPTED);
+        let set = app.store.package_set("alice", "infra").unwrap().unwrap();
+        assert_eq!(set.outputs.labels, ["web-1", "laptop"]);
+        assert_eq!(
+            set.outputs.labels_of("hello").collect::<Vec<_>>(),
+            ["web-1", "laptop"]
+        );
+        assert_eq!(set.outputs.labels_of("jq").collect::<Vec<_>>(), ["laptop"]);
+        assert!(!set.outputs.of.contains_key("gone"));
+        assert_eq!(
+            post(&app, "t", named("infra", &["hello"])).await,
+            StatusCode::ACCEPTED
+        );
+        let set = app.store.package_set("alice", "infra").unwrap().unwrap();
+        assert_eq!(
+            set.outputs,
+            crate::store::SetOutputs::default(),
+            "a new upload replaces them"
+        );
+        for bad in [
+            json!(["web-1"]),
+            json!(["web-1", "web-1"]),
+            json!(["web 1", "laptop"]),
+            json!(["web-1", "<b>"]),
+        ] {
+            let mut body = with_hosts();
+            body["outputs"] = bad;
+            assert_eq!(post(&app, "t", body).await, StatusCode::BAD_REQUEST);
+        }
+        let mut body = with_hosts();
+        body["outputs"] = json!(
+            (0..=crate::report::MAX_OUTPUTS)
+                .map(|i| format!("h{i}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(post(&app, "t", body).await, StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

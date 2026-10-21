@@ -1060,6 +1060,7 @@ mod own {
             scanned_at: None,
             nixpkgs_rev: None,
             versions: Default::default(),
+            outputs: Default::default(),
         };
         let s = &app.store;
         s.put_package_set("alice", "secret-box", &set("private-thing"), None)
