@@ -133,17 +133,20 @@ impl Store {
                PRIMARY KEY (login, id)
              );
              CREATE TABLE IF NOT EXISTS hydra_state (
-               attr TEXT PRIMARY KEY,
+               jobset TEXT NOT NULL,
+               attr TEXT NOT NULL,
                build INTEGER,
                state TEXT,
-               checked_at TEXT NOT NULL
+               checked_at TEXT NOT NULL,
+               PRIMARY KEY (jobset, attr)
              );
              CREATE TABLE IF NOT EXISTS hydra_change (
+               jobset TEXT NOT NULL,
                attr TEXT NOT NULL,
                build INTEGER NOT NULL,
                state TEXT NOT NULL,
                at TEXT NOT NULL,
-               PRIMARY KEY (attr, build)
+               PRIMARY KEY (jobset, attr, build)
              );",
         )?;
         migrate_sets(&mut conn)?;
@@ -1457,6 +1460,7 @@ impl Store {
 
     pub fn put_hydra_state(
         &self,
+        jobset: &str,
         attr: &str,
         build: u64,
         state: crate::builds::State,
@@ -1466,14 +1470,14 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         tx.execute(
-            "INSERT INTO hydra_state (attr, build, state, checked_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(attr) DO UPDATE SET build = ?2, state = ?3, checked_at = ?4",
-            params![attr, build as i64, state.key(), now.to_rfc3339()],
+            "INSERT INTO hydra_state (jobset, attr, build, state, checked_at) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(jobset, attr) DO UPDATE SET build = ?3, state = ?4, checked_at = ?5",
+            params![jobset, attr, build as i64, state.key(), now.to_rfc3339()],
         )?;
         if let Some(c) = change {
             tx.execute(
-                "INSERT OR IGNORE INTO hydra_change (attr, build, state, at) VALUES (?1, ?2, ?3, ?4)",
-                params![c.attr, c.build as i64, c.state.key(), c.at.to_rfc3339()],
+                "INSERT OR IGNORE INTO hydra_change (jobset, attr, build, state, at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![c.jobset, c.attr, c.build as i64, c.state.key(), c.at.to_rfc3339()],
             )?;
         }
         tx.commit()?;
@@ -1481,46 +1485,55 @@ impl Store {
     }
 
     /// The sweep asked, and Hydra had no build that tells the state.
-    pub fn hydra_checked(&self, attr: &str, now: DateTime<Utc>) -> Result<()> {
+    pub fn hydra_checked(&self, jobset: &str, attr: &str, now: DateTime<Utc>) -> Result<()> {
         self.conn.lock().unwrap().execute(
-            "INSERT INTO hydra_state (attr, checked_at) VALUES (?1, ?2)
-             ON CONFLICT(attr) DO UPDATE SET checked_at = ?2",
-            params![attr, now.to_rfc3339()],
+            "INSERT INTO hydra_state (jobset, attr, checked_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(jobset, attr) DO UPDATE SET checked_at = ?3",
+            params![jobset, attr, now.to_rfc3339()],
         )?;
         Ok(())
     }
 
-    pub fn hydra_states(&self) -> Result<Vec<(String, u64, crate::builds::State)>> {
+    pub fn hydra_states(&self) -> Result<Vec<(String, String, u64, crate::builds::State)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT attr, build, state FROM hydra_state WHERE build IS NOT NULL AND state IS NOT NULL",
+            "SELECT jobset, attr, build, state FROM hydra_state WHERE build IS NOT NULL AND state IS NOT NULL",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
+                r.get::<_, String>(3)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (attr, build, state) = row?;
+            let (jobset, attr, build, state) = row?;
             if let Some(s) = crate::builds::State::parse(&state) {
-                out.push((attr, build as u64, s));
+                out.push((jobset, attr, build as u64, s));
             }
         }
         Ok(out)
     }
 
-    pub fn hydra_checked_at(&self) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
+    pub fn hydra_checked_at(
+        &self,
+    ) -> Result<std::collections::HashMap<(String, String), DateTime<Utc>>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT attr, checked_at FROM hydra_state")?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut stmt = conn.prepare("SELECT jobset, attr, checked_at FROM hydra_state")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
         let mut out = std::collections::HashMap::new();
         for row in rows {
-            let (attr, at) = row?;
+            let (jobset, attr, at) = row?;
             if let Ok(t) = DateTime::parse_from_rfc3339(&at) {
-                out.insert(attr, t.with_timezone(&Utc));
+                out.insert((jobset, attr), t.with_timezone(&Utc));
             }
         }
         Ok(out)
@@ -1530,19 +1543,20 @@ impl Store {
     pub fn hydra_changes(&self, since: DateTime<Utc>) -> Result<Vec<crate::builds::Change>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT attr, build, state, at FROM hydra_change WHERE at >= ?1 ORDER BY at DESC, build DESC",
+            "SELECT jobset, attr, build, state, at FROM hydra_change WHERE at >= ?1 ORDER BY at DESC, build DESC",
         )?;
         let rows = stmt.query_map([since.to_rfc3339()], |r| {
             Ok((
                 r.get::<_, String>(0)?,
-                r.get::<_, i64>(1)?,
-                r.get::<_, String>(2)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, i64>(2)?,
                 r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
             ))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (attr, build, state, at) = row?;
+            let (jobset, attr, build, state, at) = row?;
             let (Some(state), Ok(at)) = (
                 crate::builds::State::parse(&state),
                 DateTime::parse_from_rfc3339(&at),
@@ -1550,6 +1564,7 @@ impl Store {
                 continue;
             };
             out.push(crate::builds::Change {
+                jobset,
                 attr,
                 build: build as u64,
                 state,

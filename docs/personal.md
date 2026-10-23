@@ -34,7 +34,7 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 | 4     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                        | the pull request |
 | 5     | Your open pull request has had no review for 7 days or more, and you chose no plan for it. The item uses the built-in default plan (see [Your pull requests](#your-pull-requests)).                                                | the pull request |
 | 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                  | the pull request |
-| 7     | A package you maintain has a newer upstream release, or its last Hydra build or a dependency of it failed ([the build watch](health.md#the-build-watch)).                                                                          | the package page |
+| 7     | A package you maintain has a newer upstream release, or its last Hydra build on master or a channel, or a dependency of it, failed ([the build watch](health.md#the-build-watch)).                                                 | the package page |
 
 In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 

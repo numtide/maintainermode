@@ -818,11 +818,57 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
     )
 }
 
+/// The last build of a package on master and on each channel's jobset.
+async fn channel_builds(
+    app: &crate::web::App,
+    attr: &str,
+) -> Vec<(crate::builds::Jobset, String, Last)> {
+    let jobsets = app.hydra.builds.jobsets();
+    futures_util::future::join_all(jobsets.iter().map(|j| async {
+        let job = j.path(attr);
+        let last = app.hydra.last(&job).await;
+        (j.clone(), job, last)
+    }))
+    .await
+}
+
+/// The last builds as a strip of cells, the oldest first, and how many
+/// passed.
+fn history_strip(job: &str, h: &[crate::builds::Past]) -> String {
+    if h.len() < 2 {
+        return String::new();
+    }
+    let (ok, told) = crate::builds::passed(h);
+    let cells: String = h
+        .iter()
+        .rev()
+        .map(|p| {
+            let class = match p.state {
+                Some("passes") => "ok",
+                None => "skip",
+                Some(_) => "bad",
+            };
+            let when =
+                p.at.map(|t| format!(", queued {} ago", ago(t)))
+                    .unwrap_or_default();
+            format!(
+                "<span class=\"build-cell build-{class}\" title=\"{}{when}\"></span>",
+                p.status
+            )
+        })
+        .collect();
+    format!(
+        "<div class=\"mt-1\"><a class=\"build-strip\" href=\"{}\" aria-label=\"{ok} of {told} of the last builds passed: open the job on Hydra\">{cells}</a> \
+         <span class=\"f6 color-fg-muted text-nowrap\">{ok} of {told} passed</span></div>",
+        esc(&Hydra::job_url(job))
+    )
+}
+
 fn build_row(label: &str, job: &str, last: &Last) -> String {
     let link = format!("<a href=\"{}\">{}</a>", esc(&Hydra::job_url(job)), esc(job));
     let body = match last {
         Last::Build(b) => format!(
-            "<a href=\"{}\" class=\"{}\">{}</a> <span class=\"color-fg-muted\">{}</span>",
+            "<a href=\"{}\" class=\"{}\">{}</a> <span class=\"color-fg-muted\">{}</span>{}",
             b.url(),
             if b.ok {
                 "color-fg-success"
@@ -830,7 +876,9 @@ fn build_row(label: &str, job: &str, last: &Last) -> String {
                 "color-fg-danger"
             },
             b.status,
-            b.at.map(|t| format!("{} ago", ago(t))).unwrap_or_default()
+            b.at.map(|t| format!("queued {} ago", ago(t)))
+                .unwrap_or_default(),
+            history_strip(job, &b.history)
         ),
         Last::Missing => {
             format!("<span class=\"color-fg-muted\">no finished build of {link}</span>")
@@ -1384,8 +1432,7 @@ async fn package_page(
         return Redirect::to(&format!("/p/{attr}")).into_response();
     }
     let subject = Subject::Pkg(attr.clone());
-    let job = Hydra::package_job(&attr);
-    let build = app.hydra.last(&job).await;
+    let builds = channel_builds(&app, &attr).await;
     let next = crate::needs::here(&app, &headers, &subject.key());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
@@ -1452,7 +1499,14 @@ async fn package_page(
     health.push_str(&kv("Version", &version));
     let ch = app.channels.read().unwrap().clone();
     health.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
-    health.push_str(&build_row("Hydra", &job, &build));
+    for (j, job, build) in &builds {
+        let label = if *j == crate::builds::Jobset::master() {
+            "Hydra".to_string()
+        } else {
+            format!("Hydra, {}", j.label())
+        };
+        health.push_str(&build_row(&label, job, build));
+    }
     health.push_str(&kv(
         "Advisories",
         &advisories_html(
@@ -2400,8 +2454,19 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
         let a = index.resolve(name)?;
         (a.to_string(), index.pkgs.get(a).cloned())
     };
-    let job = Hydra::package_job(&attr);
-    let build = app.hydra.last(&job).await;
+    let builds = channel_builds(app, &attr).await;
+    let (_, job, build) = builds[0].clone();
+    let hydra_channels: Vec<Value> = builds
+        .iter()
+        .map(|(j, job, last)| {
+            json!({
+                "channel": j.label(), "jobset": j.key(), "job": job,
+                "state": last.state(), "build": last.build(),
+                "passed": last.build().map(|b| crate::builds::passed(&b.history).0),
+                "counted": last.build().map(|b| crate::builds::passed(&b.history).1),
+            })
+        })
+        .collect();
     let master = p.as_ref().map(|p| p.version.clone()).unwrap_or_default();
     let (advisories, osv, channels, backport) = {
         let s = app.snap();
@@ -2482,6 +2547,7 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
     };
     let extra = json!({
         "attr": attr, "package": p, "hydra": build.build(), "hydra_state": build.state(), "hydra_job": job,
+        "hydra_channels": hydra_channels,
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
         "channels": channels, "needs_backport": backport, "version_bumps": bumps,
     });
@@ -3246,5 +3312,38 @@ pub(crate) mod tests {
             assert!(row.contains(link), "{row}");
             assert!(!row.contains("a<b>"), "{row}");
         }
+    }
+
+    #[test]
+    fn the_build_history_shows_the_oldest_first_and_counts_the_builds_that_tell() {
+        let past = |id, code| crate::builds::Past {
+            id,
+            status: crate::health::status_word(code),
+            state: crate::builds::State::of(code).map(crate::builds::State::key),
+            at: None,
+        };
+        let b = crate::health::Build {
+            id: 4,
+            ok: false,
+            status: "failed",
+            at: None,
+            history: vec![past(4, 1), past(3, 4), past(2, 0), past(1, 0)],
+        };
+        let row = build_row(
+            "Hydra, nixos-26.05",
+            "nixos/release-26.05/nixpkgs.a.x86_64-linux",
+            &Last::Build(b.clone()),
+        );
+        assert!(row.contains("2 of 3 passed"), "{row}");
+        let cells: Vec<&str> = row
+            .match_indices("build-cell build-")
+            .map(|(i, _)| &row[i + 17..i + 20])
+            .collect();
+        assert_eq!(cells, ["ok\"", "ok\"", "ski", "bad"]);
+        let one = crate::health::Build {
+            history: vec![past(4, 1)],
+            ..b
+        };
+        assert!(!build_row("Hydra", "j", &Last::Build(one)).contains("build-strip"));
     }
 }

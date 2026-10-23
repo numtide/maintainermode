@@ -584,6 +584,8 @@ pub struct Build {
     pub status: &'static str,
     /// When Hydra queued the build: the API gives no finish time.
     pub at: Option<DateTime<Utc>>,
+    /// The last [`crate::builds::HISTORY`] finished builds, the newest first.
+    pub history: Vec<crate::builds::Past>,
 }
 
 impl Build {
@@ -592,7 +594,7 @@ impl Build {
     }
 }
 
-fn status_word(code: i64) -> &'static str {
+pub(crate) fn status_word(code: i64) -> &'static str {
     match code {
         0 => "succeeded",
         1 => "failed",
@@ -783,7 +785,7 @@ impl Hydra {
         let url = format!(
             "{}/api/latestbuilds?nr={}&project={project}&jobset={jobset}&job={}",
             self.base,
-            crate::builds::JOB_ROWS,
+            crate::builds::HISTORY,
             crate::github::urlencode(name)
         );
         let Ok(resp) = self.http.get(url).send().await else {
@@ -802,14 +804,13 @@ impl Hydra {
             return Last::Missing;
         };
         let code = r.buildstatus.unwrap_or(1);
-        if project == "nixpkgs" && jobset == "unstable" {
-            self.builds.saw(name, r.id, code);
-        }
+        self.builds.saw(job, r.id, code);
         Last::Build(Build {
             id: r.id,
             ok: code == 0,
             status: status_word(code),
             at: r.timestamp.and_then(|t| DateTime::from_timestamp(t, 0)),
+            history: crate::builds::history(&rows),
         })
     }
 }

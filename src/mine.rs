@@ -295,7 +295,7 @@ impl Interests {
             .map(|(sub, why, via)| {
                 let mut flags = Flags::of(s, index, h, sub);
                 if let (Some(hy), Subject::Pkg(a)) = (hydra, sub) {
-                    flags.build_failed = hy.builds.state(a).is_some_and(|s| s.red())
+                    flags.build_failed = hy.builds.red_on(a).is_some()
                         || matches!(
                             hy.known(&Hydra::package_job(a)),
                             Some(Last::Build(b)) if !b.ok
