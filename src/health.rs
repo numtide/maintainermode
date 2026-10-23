@@ -804,7 +804,9 @@ impl Hydra {
             return Last::Missing;
         };
         let code = r.buildstatus.unwrap_or(1);
-        self.builds.saw(job, r.id, code);
+        if crate::builds::recent(r.timestamp, Utc::now()) {
+            self.builds.saw(job, r.id, code);
+        }
         Last::Build(Build {
             id: r.id,
             ok: code == 0,

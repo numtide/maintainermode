@@ -819,17 +819,66 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
 }
 
 /// The last build of a package on master and on each channel's jobset.
+/// The last build of a package on master and on each channel's jobset,
+/// and whether the job is one Hydra no longer builds.
 async fn channel_builds(
     app: &crate::web::App,
     attr: &str,
-) -> Vec<(crate::builds::Jobset, String, Last)> {
+) -> Vec<(crate::builds::Jobset, String, Last, bool)> {
     let jobsets = app.hydra.builds.jobsets();
-    futures_util::future::join_all(jobsets.iter().map(|j| async {
+    let got = futures_util::future::join_all(jobsets.iter().map(|j| async {
         let job = j.path(attr);
         let last = app.hydra.last(&job).await;
         (j.clone(), job, last)
     }))
-    .await
+    .await;
+    let now = chrono::Utc::now();
+    got.into_iter()
+        .map(|(j, job, last)| {
+            let version = version_in(app, &j, attr);
+            let dead = last
+                .build()
+                .is_some_and(|b| crate::builds::dead(&b.history, version.as_deref(), now));
+            (j, job, last, dead)
+        })
+        .collect()
+}
+
+/// The version of `attr` in the nixpkgs that a jobset builds: master's
+/// index, or the channel's.
+fn version_in(app: &crate::web::App, j: &crate::builds::Jobset, attr: &str) -> Option<String> {
+    if j.key() == crate::builds::Jobset::master().key() {
+        return app
+            .index
+            .read()
+            .unwrap()
+            .pkgs
+            .get(attr)
+            .map(|p| p.version.clone());
+    }
+    app.channels
+        .read()
+        .unwrap()
+        .list
+        .iter()
+        .find(|c| crate::builds::Jobset::of_channel(&c.name).is_some_and(|x| x.key() == j.key()))
+        .and_then(|c| c.versions.get(attr).cloned())
+}
+
+fn dead_row(label: &str, job: &str, last: &Last) -> String {
+    let since = last
+        .build()
+        .and_then(|b| b.history.iter().filter_map(|p| p.at).max())
+        .map(|t| t.format("%B %Y").to_string())
+        .unwrap_or_default();
+    kv(
+        label,
+        &format!(
+            "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
+            esc(&Hydra::job_url(job)),
+            esc(job)
+        ),
+    )
 }
 
 /// The last builds as a strip of cells, the oldest first, and how many
@@ -1499,13 +1548,17 @@ async fn package_page(
     health.push_str(&kv("Version", &version));
     let ch = app.channels.read().unwrap().clone();
     health.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
-    for (j, job, build) in &builds {
-        let label = if *j == crate::builds::Jobset::master() {
+    for (j, job, build, dead) in &builds {
+        let label = if j.key() == crate::builds::Jobset::master().key() {
             "Hydra".to_string()
         } else {
             format!("Hydra, {}", j.label())
         };
-        health.push_str(&build_row(&label, job, build));
+        health.push_str(&if *dead {
+            dead_row(&label, job, build)
+        } else {
+            build_row(&label, job, build)
+        });
     }
     health.push_str(&kv(
         "Advisories",
@@ -2455,13 +2508,13 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
         (a.to_string(), index.pkgs.get(a).cloned())
     };
     let builds = channel_builds(app, &attr).await;
-    let (_, job, build) = builds[0].clone();
+    let (_, job, build, _) = builds[0].clone();
     let hydra_channels: Vec<Value> = builds
         .iter()
-        .map(|(j, job, last)| {
+        .map(|(j, job, last, dead)| {
             json!({
                 "channel": j.label(), "jobset": j.key(), "job": job,
-                "state": last.state(), "build": last.build(),
+                "state": last.state(), "build": last.build(), "dead_job": dead,
                 "passed": last.build().map(|b| crate::builds::passed(&b.history).0),
                 "counted": last.build().map(|b| crate::builds::passed(&b.history).1),
             })
@@ -3321,6 +3374,7 @@ pub(crate) mod tests {
             status: crate::health::status_word(code),
             state: crate::builds::State::of(code).map(crate::builds::State::key),
             at: None,
+            name: None,
         };
         let b = crate::health::Build {
             id: 4,

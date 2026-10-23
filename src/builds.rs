@@ -164,6 +164,8 @@ pub struct Row {
     pub job: String,
     pub buildstatus: Option<i64>,
     pub timestamp: Option<i64>,
+    #[serde(default)]
+    pub nixname: Option<String>,
 }
 
 /// One build of a job's history, the newest first.
@@ -176,6 +178,8 @@ pub struct Past {
     pub state: Option<&'static str>,
     /// When Hydra queued it.
     pub at: Option<DateTime<Utc>>,
+    /// Like `python3.14-tornado-6.5.8`.
+    pub name: Option<String>,
 }
 
 pub(crate) fn history(rows: &[Row]) -> Vec<Past> {
@@ -187,9 +191,41 @@ pub(crate) fn history(rows: &[Row]) -> Vec<Past> {
                 status: crate::health::status_word(code),
                 state: State::of(code).map(State::key),
                 at: r.timestamp.and_then(|t| DateTime::from_timestamp(t, 0)),
+                name: r.nixname.clone(),
             })
         })
         .collect()
+}
+
+/// nixpkgs rebuilds nearly everything every few weeks, so a job with no
+/// build in this time is a name that Hydra no longer builds, like
+/// `python3Packages.tornado`, last built in 2016.
+const STALE: Duration = Duration::days(180);
+
+/// A build queued within [`STALE`]; a build with no time counts as recent.
+pub fn recent(queued: Option<i64>, now: DateTime<Utc>) -> bool {
+    queued
+        .and_then(|t| DateTime::from_timestamp(t, 0))
+        .is_none_or(|t| now - t < STALE)
+}
+
+/// A job that Hydra no longer builds: nothing recent, and no build of the
+/// version that nixpkgs has now, when that version is known.
+pub fn dead(h: &[Past], version: Option<&str>, now: DateTime<Utc>) -> bool {
+    let Some(newest) = h.iter().filter_map(|p| p.at).max() else {
+        return false;
+    };
+    if now - newest < STALE {
+        return false;
+    }
+    match version.filter(|v| !v.is_empty()) {
+        Some(v) => {
+            let tail = format!("-{v}");
+            !h.iter()
+                .any(|p| p.name.as_deref().is_some_and(|n| n.ends_with(&tail)))
+        }
+        None => true,
+    }
 }
 
 /// The builds that passed, and the builds that tell: aborted and
@@ -312,6 +348,22 @@ impl Builds {
             "feed_every_seconds": TICK.as_secs() * u64::from(FEED_EVERY),
             "sweep_per_minute": 60 / TICK.as_secs(),
         })
+    }
+
+    /// No build tells the state any more, or only a dead job's old builds
+    /// do.
+    fn forget(
+        &self,
+        store: &crate::store::Store,
+        jobset: &str,
+        attr: &str,
+        now: DateTime<Utc>,
+    ) -> Result<()> {
+        self.states
+            .write()
+            .unwrap()
+            .remove(&(jobset.to_string(), attr.to_string()));
+        store.forget_hydra_state(jobset, attr, now)
     }
 
     /// Records a build of a tracked package. Gives the change, if the state
@@ -470,7 +522,7 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
     };
     app.hydra.builds.stats.lock().unwrap().sweep_requests += 1;
     let rows = fetch(http, &latest_url(base, j, Some(&j.job(attr)), JOB_ROWS)).await?;
-    match telling(&rows) {
+    match telling(&rows).filter(|r| recent(r.timestamp, now)) {
         Some(r) => {
             app.hydra.builds.record(
                 &app.store,
@@ -481,7 +533,7 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
                 now,
             );
         }
-        None => app.store.hydra_checked(&j.key(), attr, now)?,
+        None => app.hydra.builds.forget(&app.store, &j.key(), attr, now)?,
     }
     Ok(true)
 }
@@ -617,6 +669,7 @@ mod tests {
             job: job.into(),
             buildstatus: Some(code),
             timestamp: None,
+            nixname: None,
         }
     }
 
@@ -762,6 +815,34 @@ mod tests {
     }
 
     #[test]
+    fn a_job_with_only_old_builds_of_another_version_is_dead() {
+        let now = Utc::now();
+        let at = |days: i64| Some((now - Duration::days(days)).timestamp());
+        let past = |name: &str, days| {
+            history(&[Row {
+                timestamp: at(days),
+                nixname: Some(name.into()),
+                ..row(1, "a", 0)
+            }])
+        };
+        let tornado = past("python3.4-tornado-4.2.1", 3900);
+        assert!(dead(&tornado, Some("6.5.8"), now));
+        assert!(dead(&tornado, None, now));
+        assert!(
+            !dead(&past("python3.14-tornado-6.5.8", 3900), Some("6.5.8"), now),
+            "an old build of the current version"
+        );
+        assert!(
+            !dead(&past("python3.4-tornado-4.2.1", 30), Some("6.5.8"), now),
+            "a recent build: the channel can lag"
+        );
+        assert!(!dead(&[], Some("1"), now));
+        assert!(recent(at(30), now));
+        assert!(!recent(at(200), now));
+        assert!(recent(None, now));
+    }
+
+    #[test]
     fn the_history_counts_the_builds_that_tell() {
         let h = history(&[
             row(5, "a", 0),
@@ -883,6 +964,27 @@ mod tests {
         assert_eq!(
             app.hydra.builds.red_on("hello"),
             Some((State::Fails, "nixos-26.05".into()))
+        );
+
+        let (base, _) = hydra(vec![
+            r#"[{"id":40,"job":"nixpkgs.hello.x86_64-linux","buildstatus":1,"timestamp":1454105416}]"#,
+        ])
+        .await;
+        app.store
+            .hydra_checked(STABLE, "hello", Utc::now() - Duration::days(2))
+            .unwrap();
+        assert!(sweep_one(&app, &http, &base).await.unwrap());
+        assert_eq!(
+            app.hydra.builds.state(STABLE, "hello"),
+            None,
+            "a build from 2016 is a dead job: it forgets the state"
+        );
+        assert!(
+            app.store
+                .hydra_states()
+                .unwrap()
+                .iter()
+                .all(|s| s.0 != STABLE)
         );
 
         app.hydra

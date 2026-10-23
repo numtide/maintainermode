@@ -63,7 +63,9 @@ The page asks `/api/latestbuilds?nr=30&project=…&jobset=…&job=…`: one requ
 
 A channel of another system, like `nixpkgs-26.05-darwin`, has no row.
 
-**The build history.** Each row shows the last 30 finished builds of the job as a strip, the oldest on the left. Green passed, red failed, grey was aborted or cancelled. Hover a cell for its status and time. The strip links to the job on Hydra. "N of M passed" counts the builds that were not aborted or cancelled. The JSON API gives `hydra_channels`: for each channel, `channel`, `jobset`, `job`, `state`, `build` (with `history`, the newest first), `passed` and `counted`.
+**The build history.** Each row shows the last 30 finished builds of the job as a strip, the oldest on the left. Green passed, red failed, grey was aborted or cancelled. Hover a cell for its status and time. The strip links to the job on Hydra. "N of M passed" counts the builds that were not aborted or cancelled. The JSON API gives `hydra_channels`: for each channel, `channel`, `jobset`, `job`, `state`, `build` (with `history`, the newest first), `passed`, `counted` and `dead_job`.
+
+**A job that Hydra no longer builds.** The page uses the attribute name as the job name. For an alias, Hydra may build the package under another name: `python3Packages.tornado` is built as `python314Packages.tornado`, and the job `python3Packages.tornado` last built in 2016. A job is dead when its newest build is more than 180 days old and no build in its history has the version that nixpkgs has now. Then the row says that Hydra stopped building the job, and shows no state and no strip. nixpkgs rebuilds nearly every package every few weeks, so a live job always has a recent build.
 
 ### The build watch
 
@@ -72,7 +74,7 @@ The server also follows the x86_64-linux builds of each package that someone mai
 - **The feed.** Every 5 minutes, the server asks `/api/latestbuilds` for the last 200 finished builds of `nixpkgs/unstable` on x86_64-linux, about 50 KB. When none of the 200 builds were seen before, it asks once more for 1,000.
 - **The sweep.** One job at a time, at most 10 requests a minute, the server asks for the last 3 builds of each tracked package in each jobset. It asks for a package only when no build of it in that jobset was seen for 24 hours.
 
-The feed sorts the builds by id, not by finish time. So a late build of a mass rebuild can fall out of the feed. The sweep finds it within a day. A build that a page view reads also counts.
+The feed sorts the builds by id, not by finish time. So a late build of a mass rebuild can fall out of the feed. The sweep finds it within a day. A build that a page view reads also counts. The watch ignores a build queued more than 180 days ago: when only such builds remain, it forgets the state of the package in that jobset.
 
 The feed is for master only. Without a job, `latestbuilds` can be very slow on some jobsets: on `nixos/trunk-combined`, one request took 642 seconds on 2026-10-23. Nothing tells in advance which jobsets are slow like that. So the channel jobsets get the sweep only, which always names a job.
 
