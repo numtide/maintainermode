@@ -325,8 +325,13 @@
     input.addEventListener("focus", function () {
       if (input.value.trim().length >= 2) ask();
     });
+    // Without this, a press held longer than a tap blurs the input, the list
+    // closes, and the click never reaches the link.
+    list.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+    });
     input.addEventListener("blur", function () {
-      setTimeout(close, 150);
+      close();
       asked = "";
     });
     input.addEventListener("keydown", function (e) {
