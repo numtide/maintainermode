@@ -32,6 +32,10 @@ pub struct Channel {
     /// attribute → version.
     #[serde(default)]
     pub versions: HashMap<String, String>,
+    /// attribute → output path, for the packages that someone maintains or
+    /// watches only: computing one instantiates the package.
+    #[serde(default)]
+    pub out_paths: HashMap<String, String>,
 }
 
 impl Channel {
@@ -305,10 +309,12 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
     let http = crate::github::http();
     let (name, rev) = resolve(&http, key).await?;
     let current = app.channels.read().unwrap().clone();
+    let tracked = app.hydra.builds.tracked();
+    let paths_missing = |c: &Channel| c.out_paths.is_empty() && !tracked.is_empty();
     if current
         .list
         .iter()
-        .any(|c| c.key == key && c.name == name && c.rev == rev)
+        .any(|c| c.key == key && c.name == name && c.rev == rev && !paths_missing(c))
     {
         return Ok(false);
     }
@@ -317,13 +323,23 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
     crate::area::download(&http, &rev, &dir).await?;
     let sets = app.index_sets.clone();
     let d = dir.clone();
-    let versions = tokio::task::spawn_blocking(move || sweep(&d, &sets)).await?;
+    let attrs: Vec<String> = tracked.iter().cloned().collect();
+    let swept = tokio::task::spawn_blocking(move || {
+        let versions = sweep(&d, &sets)?;
+        let paths = crate::builds::out_paths(&d, &attrs).unwrap_or_else(|e| {
+            tracing::warn!("output paths: {e:#}");
+            HashMap::new()
+        });
+        anyhow::Ok((versions, paths))
+    })
+    .await?;
     let _ = std::fs::remove_dir_all(&dir);
-    let versions = versions.with_context(|| format!("sweep {name}"))?;
+    let (versions, out_paths) = swept.with_context(|| format!("sweep {name}"))?;
     tracing::info!(
-        "swept channel {name} at {}: {} attributes in {:.1}s",
+        "swept channel {name} at {}: {} attributes, {} output paths in {:.1}s",
         &rev[..12],
         versions.len(),
+        out_paths.len(),
         started.elapsed().as_secs_f64()
     );
     let channel = Channel {
@@ -332,6 +348,7 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
         rev,
         read_at: Some(Utc::now()),
         versions,
+        out_paths,
     };
     app.store.put_channel(&channel)?;
     let list = current
@@ -490,6 +507,7 @@ mod tests {
             rev: "r".into(),
             read_at: None,
             versions: [("cups".to_string(), v.to_string())].into(),
+            out_paths: Default::default(),
         };
         let c = Channels {
             list: vec![

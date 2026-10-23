@@ -259,6 +259,8 @@ pub struct Builds {
     tracked: RwLock<Arc<HashSet<String>>>,
     pending: Mutex<Vec<(String, String, u64, i64)>>,
     stats: Mutex<Stats>,
+    /// output path → whether cache.nixos.org has it, and when asked.
+    cache: RwLock<HashMap<String, (bool, DateTime<Utc>)>>,
 }
 
 impl Default for Builds {
@@ -269,6 +271,7 @@ impl Default for Builds {
             tracked: Default::default(),
             pending: Default::default(),
             stats: Default::default(),
+            cache: Default::default(),
         }
     }
 }
@@ -280,10 +283,20 @@ struct Stats {
     sweep_requests: u64,
     failed_requests: u64,
     changes: u64,
+    cache_requests: u64,
     feed_at: Option<DateTime<Utc>>,
 }
 
 impl Builds {
+    pub fn tracked(&self) -> Arc<HashSet<String>> {
+        self.tracked.read().unwrap().clone()
+    }
+
+    /// Whether cache.nixos.org has the path, when the server asked.
+    pub fn cached(&self, path: &str) -> Option<bool> {
+        self.cache.read().unwrap().get(path).map(|(ok, _)| *ok)
+    }
+
     pub fn jobsets(&self) -> Arc<Vec<Jobset>> {
         self.jobsets.read().unwrap().clone()
     }
@@ -344,6 +357,8 @@ impl Builds {
             "sweep_requests": s.sweep_requests,
             "failed_requests": s.failed_requests,
             "changes": s.changes,
+            "cache_requests": s.cache_requests,
+            "cache_known": self.cache.read().unwrap().len(),
             "feed_at": s.feed_at,
             "feed_every_seconds": TICK.as_secs() * u64::from(FEED_EVERY),
             "sweep_per_minute": 60 / TICK.as_secs(),
@@ -538,6 +553,128 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
     Ok(true)
 }
 
+const CACHE: &str = "https://cache.nixos.org";
+/// A path that is there stays there; a missing one is asked again later.
+const CACHE_AGAIN: Duration = Duration::hours(1);
+/// cache.nixos.org is a CDN: 5 small requests a tick are 50 a minute.
+const CACHE_PER_TICK: usize = 5;
+
+/// `toJSON` and not a JSON attribute set: the iets evaluator does not
+/// force nested values when it prints JSON.
+const OUT_PATHS_EXPR: &str = r#"
+let
+  input = builtins.fromJSON (builtins.readFile ./input.json);
+  pkgs = import input.path {
+    inherit (input) system;
+    overlays = [ ];
+    config = {
+      allowUnfree = true;
+      allowBroken = true;
+      allowInsecurePredicate = _: true;
+    };
+  };
+  lib = pkgs.lib;
+  path =
+    attr:
+    let
+      v = builtins.tryEval (
+        let
+          p = lib.attrByPath (lib.splitString "." attr) null pkgs;
+        in
+        if lib.isDerivation p then builtins.seq p.outPath p.outPath else null
+      );
+    in
+    if v.success then v.value else null;
+in
+builtins.toJSON (
+  lib.filterAttrs (_: v: v != null) (
+    lib.listToAttrs (
+      map (a: {
+        name = a;
+        value = path a;
+      }) input.attrs
+    )
+  )
+)
+"#;
+
+/// The output path of each of `attrs` in the nixpkgs at `dir`, under the
+/// sweep lock. A few hundred attributes take seconds.
+pub fn out_paths(dir: &std::path::Path, attrs: &[String]) -> Result<HashMap<String, String>> {
+    if attrs.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let _one = crate::eval::SWEEP.lock().unwrap_or_else(|e| e.into_inner());
+    let input = serde_json::json!({
+        "path": dir.to_string_lossy(),
+        "system": SYSTEM,
+        "attrs": attrs,
+    });
+    let text = crate::eval::eval_with_input("outpaths", OUT_PATHS_EXPR, &input)?;
+    let json: String = serde_json::from_str(&text)?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+/// `/nix/store/<hash>-name` gives `<hash>`.
+fn store_hash(path: &str) -> Option<&str> {
+    let h = path.strip_prefix("/nix/store/")?.get(..32)?;
+    h.bytes().all(|b| b.is_ascii_alphanumeric()).then_some(h)
+}
+
+/// The output paths of the tracked packages on each channel, the ones not
+/// asked yet first.
+fn cache_due(app: &App, now: DateTime<Utc>) -> Vec<String> {
+    let tracked = app.hydra.builds.tracked();
+    let cache = app.hydra.builds.cache.read().unwrap();
+    let mut due: Vec<(Option<DateTime<Utc>>, String)> = app
+        .channels
+        .read()
+        .unwrap()
+        .list
+        .iter()
+        .flat_map(|c| c.out_paths.iter())
+        .filter(|(a, _)| tracked.contains(*a))
+        .filter_map(|(_, p)| match cache.get(p) {
+            None => Some((None, p.clone())),
+            Some((false, at)) if now - *at >= CACHE_AGAIN => Some((Some(*at), p.clone())),
+            _ => None,
+        })
+        .collect();
+    due.sort();
+    due.dedup();
+    due.into_iter()
+        .map(|(_, p)| p)
+        .take(CACHE_PER_TICK)
+        .collect()
+}
+
+async fn cache_some(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
+    let now = Utc::now();
+    for path in cache_due(app, now) {
+        let Some(hash) = store_hash(&path) else {
+            continue;
+        };
+        app.hydra.builds.stats.lock().unwrap().cache_requests += 1;
+        let status = http
+            .head(format!("{base}/{hash}.narinfo"))
+            .send()
+            .await?
+            .status();
+        let ok = match status.as_u16() {
+            200 => true,
+            404 => false,
+            _ => anyhow::bail!("cache.nixos.org answered {status}"),
+        };
+        app.hydra
+            .builds
+            .cache
+            .write()
+            .unwrap()
+            .insert(path, (ok, now));
+    }
+    Ok(())
+}
+
 fn flush(app: &App) {
     let pending = std::mem::take(&mut *app.hydra.builds.pending.lock().unwrap());
     let now = Utc::now();
@@ -567,10 +704,10 @@ fn refresh(app: &App) {
 }
 
 pub async fn run(app: Arc<App>) {
-    run_with(app, crate::health::HYDRA.to_string()).await
+    run_with(app, crate::health::HYDRA.to_string(), CACHE.to_string()).await
 }
 
-async fn run_with(app: Arc<App>, base: String) {
+async fn run_with(app: Arc<App>, base: String, cache: String) {
     let http = reqwest::Client::builder()
         .user_agent(crate::health::HYDRA_AGENT)
         .timeout(StdDuration::from_secs(30))
@@ -601,6 +738,10 @@ async fn run_with(app: Arc<App>, base: String) {
         if let Err(e) = result {
             app.hydra.builds.stats.lock().unwrap().failed_requests += 1;
             tracing::warn!("hydra builds: {e:#}");
+        }
+        if let Err(e) = cache_some(&app, &http, &cache).await {
+            app.hydra.builds.stats.lock().unwrap().failed_requests += 1;
+            tracing::warn!("binary cache: {e:#}");
         }
         tick = tick.wrapping_add(1);
         tokio::time::sleep(TICK).await;
@@ -1003,5 +1144,118 @@ mod tests {
             None,
             "a page view saw it fixed"
         );
+    }
+
+    #[test]
+    fn a_store_path_gives_its_hash() {
+        assert_eq!(
+            store_hash("/nix/store/pa6rydwgjxxmmvdxap7qk9c85h8jbimy-hello-2.12.3"),
+            Some("pa6rydwgjxxmmvdxap7qk9c85h8jbimy")
+        );
+        assert_eq!(store_hash("/nix/store/short"), None);
+        assert_eq!(store_hash("/tmp/pa6rydwgjxxmmvdxap7qk9c85h8jbimy-x"), None);
+    }
+
+    /// A cache stand-in: 200 for the paths of `present`, 404 for others.
+    async fn cache(present: &'static str) -> (String, Arc<Mutex<Vec<String>>>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let a = asked.clone();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let line = String::from_utf8_lossy(&buf[..n])
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let status = if line.contains(present) {
+                    "200 OK"
+                } else {
+                    "404 Not Found"
+                };
+                a.lock().unwrap().push(line);
+                let _ = s
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        (base, asked)
+    }
+
+    #[tokio::test]
+    async fn the_cache_check_asks_each_path_once_and_a_missing_one_again_later() {
+        let app = crate::sets::tests::app(&[]);
+        let built = "/nix/store/pa6rydwgjxxmmvdxap7qk9c85h8jbimy-hello-2.12.3";
+        let missing = "/nix/store/32h5slqkza0zwjz2ycvkpwm391vzz68p-python3.14-tornado-6.5.8";
+        *app.hydra.builds.tracked.write().unwrap() = Arc::new(
+            ["hello", "python3Packages.tornado"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+        *app.channels.write().unwrap() = Arc::new(crate::channels::Channels {
+            list: vec![crate::channels::Channel {
+                key: "nixos-unstable".into(),
+                name: "nixos-unstable".into(),
+                rev: "a".repeat(40),
+                out_paths: [
+                    ("hello".to_string(), built.to_string()),
+                    ("python3Packages.tornado".to_string(), missing.to_string()),
+                    (
+                        "untracked".to_string(),
+                        "/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-u".to_string(),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                ..Default::default()
+            }],
+        });
+        let (base, asked) = cache("pa6rydwgjxxmmvdxap7qk9c85h8jbimy").await;
+        let http = reqwest::Client::new();
+        cache_some(&app, &http, &base).await.unwrap();
+        assert_eq!(app.hydra.builds.cached(built), Some(true));
+        assert_eq!(app.hydra.builds.cached(missing), Some(false));
+        let lines = asked.lock().unwrap().clone();
+        assert_eq!(lines.len(), 2, "the untracked path is not asked: {lines:?}");
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.starts_with("HEAD /") && l.contains(".narinfo"))
+        );
+        cache_some(&app, &http, &base).await.unwrap();
+        assert_eq!(
+            asked.lock().unwrap().len(),
+            2,
+            "nothing is due within the hour"
+        );
+        app.hydra
+            .builds
+            .cache
+            .write()
+            .unwrap()
+            .get_mut(missing)
+            .unwrap()
+            .1 -= Duration::hours(2);
+        cache_some(&app, &http, &base).await.unwrap();
+        let lines = asked.lock().unwrap().clone();
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].contains("32h5slqkza0zwjz2ycvkpwm391vzz68p"));
+        let rows = crate::catalog::binary_cache(&app, "hello");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].channel.as_str(), rows[0].cached),
+            ("nixos-unstable", Some(true))
+        );
+        assert!(crate::catalog::binary_cache(&app, "jq").is_empty());
     }
 }

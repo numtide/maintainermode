@@ -474,7 +474,7 @@ pub(crate) fn body(app: &App) -> String {
         "Hydra build watch",
         &format!(
             "{} packages that someone maintains or watches · the feed of finished builds every {} ({} requests, {} rows, last {}) · \
-             one job at a time, {} a minute, each job once a day ({} requests) · {} failed requests · {} state changes since the start",
+             one job at a time, {} a minute, each job once a day ({} requests) · {} failed requests · {} state changes since the start · {} cache.nixos.org requests, {} paths known",
             b["tracked"],
             minutes(b["feed_every_seconds"].as_i64().unwrap_or(300)),
             b["feed_requests"],
@@ -483,7 +483,9 @@ pub(crate) fn body(app: &App) -> String {
             b["sweep_per_minute"],
             b["sweep_requests"],
             b["failed_requests"],
-            b["changes"]
+            b["changes"],
+            b["cache_requests"],
+            b["cache_known"]
         ),
     ));
     let r = &v["rescans"];
