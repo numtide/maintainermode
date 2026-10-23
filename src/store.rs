@@ -1494,6 +1494,15 @@ impl Store {
         Ok(())
     }
 
+    pub fn forget_hydra_state(&self, jobset: &str, attr: &str, now: DateTime<Utc>) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO hydra_state (jobset, attr, checked_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(jobset, attr) DO UPDATE SET build = NULL, state = NULL, checked_at = ?3",
+            params![jobset, attr, now.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
     pub fn hydra_states(&self) -> Result<Vec<(String, String, u64, crate::builds::State)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
