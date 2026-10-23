@@ -2178,6 +2178,8 @@ pub(crate) fn person_events(app: &crate::web::App, login: &str) -> Vec<Event> {
             list.push(e);
         }
     }
+    let builds = crate::builds::interests(&index, login, &subs);
+    list.extend(crate::builds::events(app, &builds, since));
     let plans = crate::followup::Plans::of(app, login, s.committers.is(login));
     list.extend(crate::followup::events(
         &s.pr_data,

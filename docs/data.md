@@ -70,7 +70,10 @@ its known limits.
 - **Health** comes from two daily bulk reads, kept in the database:
   repology's list of projects outdated in `nix_unstable`, at one request a
   second, and every issue of the security tracker. Hydra is asked per page
-  view and the answer is kept an hour. The health sources run in their own
+  view and the answer is kept an hour. The
+  [build watch](health.md#the-build-watch) has its own task: a feed of
+  finished builds every 5 minutes, and a sweep of at most 10 jobs a minute.
+  The health sources run in their own
   task, every 10 minutes. A slow source does not delay the pull request and
   issue sync.
 - **Advisory detail.** For each CVE that the tracker names:

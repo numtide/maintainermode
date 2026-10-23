@@ -153,6 +153,7 @@ pub(crate) fn state(app: &App) -> Value {
         },
         "notifications": notifications(app, sync_every),
         "hydra": app.hydra.stats(),
+        "hydra_builds": app.hydra.builds.stats(),
         "rescans": rescans(app),
         "email": email(app),
         "tokens": {
@@ -466,6 +467,23 @@ pub(crate) fn body(app: &App) -> String {
             "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
              {} jobs kept · {} page views not asked since the start",
             hy["concurrent"], hy["per_minute"], hy["cached"], hy["not_asked"]
+        ),
+    ));
+    let b = &v["hydra_builds"];
+    out.push_str(&kv(
+        "Hydra build watch",
+        &format!(
+            "{} packages that someone maintains or watches · the feed of finished builds every {} ({} requests, {} rows, last {}) · \
+             one job at a time, {} a minute, each job once a day ({} requests) · {} failed requests · {} state changes since the start",
+            b["tracked"],
+            minutes(b["feed_every_seconds"].as_i64().unwrap_or(300)),
+            b["feed_requests"],
+            b["feed_rows"],
+            when(&b["feed_at"]),
+            b["sweep_per_minute"],
+            b["sweep_requests"],
+            b["failed_requests"],
+            b["changes"]
         ),
     ));
     let r = &v["rescans"];

@@ -25,7 +25,9 @@ const TRACKER: &str = "https://tracker.security.nixos.org/api/v1/issues";
 const TRACKER_PAGES: usize = 400;
 /// The tracker answers 429 after about 30 quick pages.
 const TRACKER_PAUSE: Duration = Duration::from_millis(2500);
-const HYDRA: &str = "https://hydra.nixos.org";
+pub(crate) const HYDRA: &str = "https://hydra.nixos.org";
+/// So that the Hydra admins know who asks, and how to reach them.
+pub(crate) const HYDRA_AGENT: &str = "maintainer-mode (+https://maintainermode.org)";
 const HYDRA_TTL: Duration = Duration::from_secs(3600);
 /// A failed request is asked again sooner than an answer.
 const HYDRA_RETRY: Duration = Duration::from_secs(300);
@@ -580,6 +582,7 @@ pub struct Build {
     pub ok: bool,
     /// Hydra's words for `buildstatus`.
     pub status: &'static str,
+    /// When Hydra queued the build: the API gives no finish time.
     pub at: Option<DateTime<Utc>>,
 }
 
@@ -671,6 +674,7 @@ pub struct Hydra {
     window: Mutex<Window>,
     per_minute: u32,
     not_asked: AtomicU64,
+    pub builds: crate::builds::Builds,
 }
 
 impl Default for Hydra {
@@ -683,7 +687,7 @@ impl Hydra {
     fn new(base: &str, concurrent: usize, per_minute: u32) -> Self {
         Self {
             http: reqwest::Client::builder()
-                .user_agent("maintainer-mode")
+                .user_agent(HYDRA_AGENT)
                 .timeout(Duration::from_secs(5))
                 .build()
                 .expect("http client"),
@@ -696,6 +700,7 @@ impl Hydra {
             }),
             per_minute,
             not_asked: AtomicU64::new(0),
+            builds: Default::default(),
         }
     }
 
@@ -767,14 +772,21 @@ impl Hydra {
         last
     }
 
+    /// `latest-finished` would be one request too, but it gives the last
+    /// successful build, so a failing job looked green.
     async fn ask(&self, job: &str) -> Last {
-        let Ok(resp) = self
-            .http
-            .get(format!("{}/job/{job}/latest-finished", self.base))
-            .header("Accept", "application/json")
-            .send()
-            .await
+        let mut parts = job.splitn(3, '/');
+        let (Some(project), Some(jobset), Some(name)) = (parts.next(), parts.next(), parts.next())
         else {
+            return Last::Missing;
+        };
+        let url = format!(
+            "{}/api/latestbuilds?nr={}&project={project}&jobset={jobset}&job={}",
+            self.base,
+            crate::builds::JOB_ROWS,
+            crate::github::urlencode(name)
+        );
+        let Ok(resp) = self.http.get(url).send().await else {
             return Last::NoAnswer;
         };
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
@@ -783,22 +795,22 @@ impl Hydra {
         if !resp.status().is_success() {
             return Last::NoAnswer;
         }
-        resp.json::<Value>()
-            .await
-            .ok()
-            .and_then(|v| {
-                let code = v["buildstatus"].as_i64()?;
-                Some(Build {
-                    id: v["id"].as_u64()?,
-                    ok: code == 0,
-                    status: status_word(code),
-                    at: v["stoptime"]
-                        .as_i64()
-                        .or(v["timestamp"].as_i64())
-                        .and_then(|t| DateTime::from_timestamp(t, 0)),
-                })
-            })
-            .map_or(Last::Missing, Last::Build)
+        let Ok(rows) = resp.json::<Vec<crate::builds::Row>>().await else {
+            return Last::NoAnswer;
+        };
+        let Some(r) = crate::builds::telling(&rows).or(rows.first()) else {
+            return Last::Missing;
+        };
+        let code = r.buildstatus.unwrap_or(1);
+        if project == "nixpkgs" && jobset == "unstable" {
+            self.builds.saw(name, r.id, code);
+        }
+        Last::Build(Build {
+            id: r.id,
+            ok: code == 0,
+            status: status_word(code),
+            at: r.timestamp.and_then(|t| DateTime::from_timestamp(t, 0)),
+        })
     }
 }
 
@@ -927,8 +939,8 @@ mod tests {
     async fn a_missing_job_is_kept_and_not_asked_again() {
         let (base, hits) = not_found_server().await;
         let hydra = Hydra::new(&base, 4, 30);
-        assert!(matches!(hydra.last("a").await, Last::Missing));
-        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert!(matches!(hydra.last("p/s/a").await, Last::Missing));
+        assert!(matches!(hydra.last("p/s/a").await, Last::Missing));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
@@ -936,9 +948,9 @@ mod tests {
     async fn over_the_minute_cap_nothing_is_sent() {
         let (base, hits) = not_found_server().await;
         let hydra = Hydra::new(&base, 4, 1);
-        assert!(matches!(hydra.last("a").await, Last::Missing));
-        assert!(matches!(hydra.last("b").await, Last::NotAsked));
-        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert!(matches!(hydra.last("p/s/a").await, Last::Missing));
+        assert!(matches!(hydra.last("p/s/b").await, Last::NotAsked));
+        assert!(matches!(hydra.last("p/s/a").await, Last::Missing));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_eq!(hydra.stats()["not_asked"], 1);
         assert_eq!(hydra.stats()["cached"], 1);
@@ -949,9 +961,9 @@ mod tests {
         let (base, hits) = not_found_server().await;
         let hydra = Hydra::new(&base, 1, 30);
         let held = hydra.running.try_acquire().unwrap();
-        assert!(matches!(hydra.last("a").await, Last::NotAsked));
+        assert!(matches!(hydra.last("p/s/a").await, Last::NotAsked));
         drop(held);
-        assert!(matches!(hydra.last("a").await, Last::Missing));
+        assert!(matches!(hydra.last("p/s/a").await, Last::Missing));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
@@ -961,8 +973,8 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().unwrap());
         drop(listener);
         let hydra = Hydra::new(&base, 4, 1);
-        assert!(matches!(hydra.last("a").await, Last::NoAnswer));
-        assert!(matches!(hydra.last("a").await, Last::NoAnswer));
+        assert!(matches!(hydra.last("p/s/a").await, Last::NoAnswer));
+        assert!(matches!(hydra.last("p/s/a").await, Last::NoAnswer));
         assert_eq!(hydra.stats()["not_asked"], 0);
         assert_eq!(Last::NoAnswer.ttl(), HYDRA_RETRY);
     }

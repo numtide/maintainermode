@@ -5,6 +5,7 @@ mod archive;
 mod area;
 mod assets;
 mod attrs;
+mod builds;
 mod bumps;
 mod catalog;
 mod channels;
@@ -1021,6 +1022,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::spawn(background(app.clone(), sync_every, cli.history_since));
             tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
             tokio::spawn(channels::run(app.clone()));
+            tokio::spawn(builds::run(app.clone()));
             match bot_token {
                 Some(t) => {
                     tokio::spawn(events::poll(app.events.clone(), t.clone()));
