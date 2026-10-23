@@ -131,6 +131,19 @@ impl Store {
                id TEXT NOT NULL,
                at TEXT NOT NULL,
                PRIMARY KEY (login, id)
+             );
+             CREATE TABLE IF NOT EXISTS hydra_state (
+               attr TEXT PRIMARY KEY,
+               build INTEGER,
+               state TEXT,
+               checked_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS hydra_change (
+               attr TEXT NOT NULL,
+               build INTEGER NOT NULL,
+               state TEXT NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (attr, build)
              );",
         )?;
         migrate_sets(&mut conn)?;
@@ -1430,6 +1443,129 @@ impl Store {
             "INSERT OR IGNORE INTO mail_once (login, id, at) VALUES (?1, ?2, ?3)",
             params![login, id, now.to_rfc3339()],
         )? == 1)
+    }
+
+    /// Everyone who signed in, chose a setting or watches something.
+    pub fn logins(&self) -> Result<Vec<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT login FROM session UNION SELECT login FROM setting UNION SELECT login FROM watch",
+        )?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn put_hydra_state(
+        &self,
+        attr: &str,
+        build: u64,
+        state: crate::builds::State,
+        now: DateTime<Utc>,
+        change: Option<&crate::builds::Change>,
+    ) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO hydra_state (attr, build, state, checked_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(attr) DO UPDATE SET build = ?2, state = ?3, checked_at = ?4",
+            params![attr, build as i64, state.key(), now.to_rfc3339()],
+        )?;
+        if let Some(c) = change {
+            tx.execute(
+                "INSERT OR IGNORE INTO hydra_change (attr, build, state, at) VALUES (?1, ?2, ?3, ?4)",
+                params![c.attr, c.build as i64, c.state.key(), c.at.to_rfc3339()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The sweep asked, and Hydra had no build that tells the state.
+    pub fn hydra_checked(&self, attr: &str, now: DateTime<Utc>) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO hydra_state (attr, checked_at) VALUES (?1, ?2)
+             ON CONFLICT(attr) DO UPDATE SET checked_at = ?2",
+            params![attr, now.to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn hydra_states(&self) -> Result<Vec<(String, u64, crate::builds::State)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT attr, build, state FROM hydra_state WHERE build IS NOT NULL AND state IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (attr, build, state) = row?;
+            if let Some(s) = crate::builds::State::parse(&state) {
+                out.push((attr, build as u64, s));
+            }
+        }
+        Ok(out)
+    }
+
+    pub fn hydra_checked_at(&self) -> Result<std::collections::HashMap<String, DateTime<Utc>>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT attr, checked_at FROM hydra_state")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (attr, at) = row?;
+            if let Ok(t) = DateTime::parse_from_rfc3339(&at) {
+                out.insert(attr, t.with_timezone(&Utc));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Newest first.
+    pub fn hydra_changes(&self, since: DateTime<Utc>) -> Result<Vec<crate::builds::Change>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT attr, build, state, at FROM hydra_change WHERE at >= ?1 ORDER BY at DESC, build DESC",
+        )?;
+        let rows = stmt.query_map([since.to_rfc3339()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (attr, build, state, at) = row?;
+            let (Some(state), Ok(at)) = (
+                crate::builds::State::parse(&state),
+                DateTime::parse_from_rfc3339(&at),
+            ) else {
+                continue;
+            };
+            out.push(crate::builds::Change {
+                attr,
+                build: build as u64,
+                state,
+                at: at.with_timezone(&Utc),
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn purge_hydra(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let b = before.to_rfc3339();
+        Ok(
+            conn.execute("DELETE FROM hydra_change WHERE at < ?1", [&b])?
+                + conn.execute("DELETE FROM hydra_state WHERE checked_at < ?1", [&b])?,
+        )
     }
 }
 

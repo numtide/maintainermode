@@ -41,6 +41,11 @@ const TEST_AT: &str = "test_mail_at";
 const CONFIRMED: &str = "digest_confirmed";
 const CONFIRM_HOURS: i64 = 24;
 const MINE_OFF: &str = "notify_mine_off";
+/// The kinds the form showed when the person saved; a kind added later
+/// is on until they choose.
+const KNOWN: &str = "notify_kinds_known";
+/// The kinds before [`KNOWN`] was saved.
+const FIRST_KINDS: &str = "pr,issue,advisory,release";
 const MINE_NOW: &str = "notify_mine_now";
 const NOW_PER_DAY: usize = 20;
 
@@ -65,15 +70,17 @@ pub enum Kind {
     Issue,
     Advisory,
     Release,
+    Build,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 5] = [
+    pub const ALL: [Kind; 6] = [
         Kind::Mine,
         Kind::PullRequest,
         Kind::Issue,
         Kind::Advisory,
         Kind::Release,
+        Kind::Build,
     ];
 
     /// From the id that `catalog::events`, `catalog::set_events` and
@@ -84,6 +91,7 @@ impl Kind {
             "issue" => Kind::Issue,
             "advisory" => Kind::Advisory,
             "upstream" => Kind::Release,
+            "hydra" => Kind::Build,
             _ => Kind::PullRequest,
         }
     }
@@ -95,6 +103,7 @@ impl Kind {
             Kind::Issue => "issue",
             Kind::Advisory => "advisory",
             Kind::Release => "release",
+            Kind::Build => "build",
         }
     }
 
@@ -109,6 +118,7 @@ impl Kind {
             Kind::Issue => "Issues",
             Kind::Advisory => "Advisories",
             Kind::Release => "Releases",
+            Kind::Build => "Hydra builds",
         }
     }
 
@@ -119,6 +129,7 @@ impl Kind {
             Kind::Issue => icon(octicon!("issue-opened")),
             Kind::Advisory => icon(octicon!("shield")),
             Kind::Release => icon(octicon!("tag")),
+            Kind::Build => icon(octicon!("tools")),
         }
     }
 }
@@ -129,11 +140,21 @@ impl Kind {
 pub fn kinds(app: &App, login: &str) -> Vec<Kind> {
     let mut out: Vec<Kind> = match app.store.setting(login, KINDS).ok().flatten() {
         None => Kind::ALL.to_vec(),
-        Some(v) => v
-            .split(',')
-            .filter_map(Kind::parse)
-            .filter(|k| *k != Kind::Mine)
-            .collect(),
+        Some(v) => {
+            let known = app.store.setting(login, KNOWN).ok().flatten();
+            let known = known.as_deref().unwrap_or(FIRST_KINDS);
+            let mut chosen: Vec<Kind> = v
+                .split(',')
+                .filter_map(Kind::parse)
+                .filter(|k| *k != Kind::Mine)
+                .collect();
+            chosen.extend(
+                Kind::ALL
+                    .into_iter()
+                    .filter(|k| *k != Kind::Mine && !known.split(',').any(|x| x == k.key())),
+            );
+            chosen
+        }
     };
     let off = app.store.setting(login, MINE_OFF).ok().flatten();
     out.retain(|k| *k != Kind::Mine);
@@ -531,6 +552,8 @@ struct NotifyForm {
     #[serde(default)]
     k_release: Option<String>,
     #[serde(default)]
+    k_build: Option<String>,
+    #[serde(default)]
     email: Option<String>,
 }
 
@@ -542,6 +565,7 @@ impl NotifyForm {
             (Kind::Issue, &self.k_issue),
             (Kind::Advisory, &self.k_advisory),
             (Kind::Release, &self.k_release),
+            (Kind::Build, &self.k_build),
         ]
         .into_iter()
         .filter(|(_, v)| v.as_deref() == Some("1"))
@@ -582,6 +606,14 @@ async fn save_notify(
     let saved = app
         .store
         .set_setting(&login, KINDS, &keys.join(","))
+        .and_then(|_| {
+            let all: Vec<&str> = Kind::ALL
+                .into_iter()
+                .filter(|k| *k != Kind::Mine)
+                .map(Kind::key)
+                .collect();
+            app.store.set_setting(&login, KNOWN, &all.join(","))
+        })
         .and_then(|_| app.store.set_setting(&login, MINE_OFF, mine_off))
         .and_then(|_| app.store.set_setting(&login, MINE_NOW, &now_value));
     if let Err(e) = saved {
@@ -1555,6 +1587,7 @@ pub(crate) mod tests {
             k_issue: Some("1".into()),
             k_advisory: None,
             k_release: None,
+            k_build: None,
             email: Some("alice@example.org".into()),
         };
         let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
@@ -1590,6 +1623,7 @@ pub(crate) mod tests {
                 k_issue: None,
                 k_advisory: None,
                 k_release: None,
+                k_build: None,
                 email: Some(email.into()),
             };
             save_notify(State(app.clone()), h.clone(), Form(form))
@@ -1741,6 +1775,7 @@ pub(crate) mod tests {
             k_issue: None,
             k_advisory: None,
             k_release: None,
+            k_build: None,
             email: Some("alice@example.org".into()),
         };
         let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
@@ -1771,7 +1806,8 @@ pub(crate) mod tests {
         app.store.set_setting("alice", KINDS, "pr,issue").unwrap();
         assert_eq!(
             kinds(&app, "alice"),
-            [Kind::Mine, Kind::PullRequest, Kind::Issue]
+            [Kind::Mine, Kind::PullRequest, Kind::Issue, Kind::Build],
+            "a kind added after the choice is on"
         );
         let h = signed_in(&app, "alice");
         let form = |mine: bool, now: bool| NotifyForm {
@@ -1781,6 +1817,7 @@ pub(crate) mod tests {
             k_issue: None,
             k_advisory: Some("1".into()),
             k_release: None,
+            k_build: None,
             email: None,
         };
         save_notify(State(app.clone()), h.clone(), Form(form(false, false))).await;

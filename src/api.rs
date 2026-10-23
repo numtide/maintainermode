@@ -30,7 +30,7 @@ pub(crate) const SECTIONS: [&str; 6] = [
 ];
 pub(crate) const MOODS: [&str; 5] = ["all", "mine", "machines", "review", "maintain"];
 pub(crate) const FILTERS: [&str; 4] = ["mine", "machines", "maintain", "watch"];
-const KINDS: [&str; 5] = ["mine", "pr", "issue", "advisory", "release"];
+const KINDS: [&str; 6] = ["mine", "pr", "issue", "advisory", "release", "build"];
 
 #[derive(Clone, Copy)]
 pub(crate) enum Type {
@@ -483,6 +483,7 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/inbox?kind=issue", By(&["/api/v1/inbox?kind=issue"])),
     ("/inbox?kind=advisory", By(&["/api/v1/inbox?kind=advisory"])),
     ("/inbox?kind=release", By(&["/api/v1/inbox?kind=release"])),
+    ("/inbox?kind=build", By(&["/api/v1/inbox?kind=build"])),
     ("/me/progress", By(&["/api/v1/progress"])),
     (
         "/me/settings",
@@ -1231,6 +1232,12 @@ mod tests {
                 .filter(|r| !r.starts_with("/api/") && !skips.contains(r)),
         );
         v
+    }
+
+    #[test]
+    fn the_inbox_kinds_of_the_api_are_those_of_the_site() {
+        let site: Vec<&str> = crate::notify::Kind::ALL.iter().map(|k| k.key()).collect();
+        assert_eq!(KINDS.to_vec(), site);
     }
 
     #[test]

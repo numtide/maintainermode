@@ -14,9 +14,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
 use crate::area::Index;
+use crate::builds::State as BuildState;
 use crate::catalog::Subject;
 use crate::followup::{Plans, others, verb};
-use crate::health::{Health, Hydra, Last};
+use crate::health::Health;
 use crate::mine::{Interests, Why};
 use crate::model::Pr;
 use crate::severity::Band;
@@ -160,8 +161,8 @@ pub(crate) struct Inputs<'a> {
     pub(crate) index: &'a Index,
     pub(crate) h: &'a Health,
     pub(crate) interests: &'a Interests,
-    /// Attributes whose last Hydra build failed, as far as the cache knows.
-    pub(crate) failed: &'a HashSet<String>,
+    /// Attributes whose last Hydra build is red, from the build watch.
+    pub(crate) failed: &'a HashMap<String, BuildState>,
     pub(crate) plans: &'a Plans,
     pub(crate) now: DateTime<Utc>,
 }
@@ -395,15 +396,21 @@ fn fix_hint(i: &Inputs, attr: &str) -> String {
 
 fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
     let up = crate::catalog::upstream(i.s, i.index, i.h, attr);
-    let failed = i.failed.contains(attr);
+    let red = i.failed.get(attr).copied();
+    let failed = red.is_some();
     if up.is_none() && !failed {
         return None;
     }
     let mut labels = Vec::new();
     let mut detail = String::from("You maintain it.");
     if failed {
-        labels.push((Tone::Danger, "Hydra build fails".into()));
-        detail.push_str(" The last Hydra build failed.");
+        if red == Some(BuildState::DependencyFails) {
+            labels.push((Tone::Danger, "a dependency fails on Hydra".into()));
+            detail.push_str(" On Hydra, a dependency of its last build failed.");
+        } else {
+            labels.push((Tone::Danger, "Hydra build fails".into()));
+            detail.push_str(" The last Hydra build failed.");
+        }
     }
     if let Some(v) = up {
         labels.push((Tone::Attention, format!("{v} available")));
@@ -425,7 +432,7 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         } else {
             "Update it".into()
         },
-        fingerprint: fingerprint(&[up.unwrap_or(""), if failed { "failed" } else { "" }]),
+        fingerprint: fingerprint(&[up.unwrap_or(""), red.map_or("", BuildState::key)]),
         moods: vec![Mood::Maintain],
         labels,
         at: None,
@@ -800,19 +807,16 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
     let plans = Plans::of(app, login, s.committers.is(login));
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let failed: HashSet<String> = interests
-        .items
-        .values()
-        .filter(|(_, w, _)| w.maintain)
-        .filter_map(|(sub, ..)| match sub {
-            Subject::Pkg(a) => Some(a),
-            _ => None,
-        })
-        .filter(
-            |a| matches!(app.hydra.known(&Hydra::package_job(a)), Some(Last::Build(b)) if !b.ok),
-        )
-        .cloned()
-        .collect();
+    let failed = app.hydra.builds.red(
+        interests
+            .items
+            .values()
+            .filter(|(_, w, _)| w.maintain)
+            .filter_map(|(sub, ..)| match sub {
+                Subject::Pkg(a) => Some(a.clone()),
+                _ => None,
+            }),
+    );
     f(&Inputs {
         login,
         s: &s,
@@ -1227,7 +1231,7 @@ mod tests {
         machines: Vec<String>,
         versions: HashMap<String, String>,
         hosts: HashMap<String, Vec<(String, String)>>,
-        failed: HashSet<String>,
+        failed: HashMap<String, BuildState>,
         plans: Plans,
     }
 
@@ -1256,7 +1260,7 @@ mod tests {
                 index,
                 h: Health::default(),
                 machines: vec!["curl".into(), "hello".into()],
-                failed: HashSet::new(),
+                failed: HashMap::new(),
                 versions: HashMap::new(),
                 hosts: HashMap::new(),
                 plans: Plans::none(false),
@@ -1611,11 +1615,14 @@ mod tests {
     fn a_maintained_package_with_a_release_or_a_failed_build_is_an_item() {
         let mut w = World::new();
         w.h.upstream.insert("jq".into(), "2.0".into());
-        w.failed.insert("hello".into());
-        w.failed.insert("curl".into());
+        w.failed.insert("hello".into(), BuildState::Fails);
+        w.failed.insert("curl".into(), BuildState::DependencyFails);
+        w.failed.insert("jq".into(), BuildState::DependencyFails);
         let items = w.items();
         assert_eq!(keys(&items), ["pkg:hello", "pkg:jq"]);
-        assert!(find(&items, "pkg:jq").labels[0].1.contains("2.0 available"));
+        let jq = &find(&items, "pkg:jq").labels;
+        assert!(jq.iter().any(|l| l.1.contains("2.0 available")));
+        assert!(jq.iter().any(|l| l.1 == "a dependency fails on Hydra"));
         assert_eq!(find(&items, "pkg:hello").action, "Look at the build");
         assert!(items.iter().all(|i| i.moods == [Mood::Maintain]));
     }

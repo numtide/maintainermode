@@ -70,7 +70,7 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_MCP_TOKEN" 'https://<host>/api/v
   packages and their output labels (see
   [`GET /api/v1/sets`](#get-apiv1sets)).
 - **`/api/v1/inbox`**: the events of `/inbox`, the newest first. `kind` is
-  `mine`, `pr`, `issue`, `advisory` or `release`. `sub` keeps one subject,
+  `mine`, `pr`, `issue`, `advisory`, `release` or `build`. `sub` keeps one subject,
   such as `pkg:hello`. Each event has `unread`. The answer also has `unread`
   (the count in the header) and `subjects`. A read marks nothing read.
 - **`/api/v1/progress`**: the data of `/me/progress`: `reviews_week`,

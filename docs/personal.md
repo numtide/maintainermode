@@ -34,7 +34,7 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 | 4     | Your open pull request is blocked: its checks fail, it has a merge conflict, or it has an approval on its last commit for 3 days or more and is not merged.                                                                        | the pull request |
 | 5     | Your open pull request has had no review for 7 days or more, and you chose no plan for it. The item uses the built-in default plan (see [Your pull requests](#your-pull-requests)).                                                | the pull request |
 | 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                  | the pull request |
-| 7     | A package you maintain has a newer upstream release, or its last Hydra build failed.                                                                                                                                               | the package page |
+| 7     | A package you maintain has a newer upstream release, or its last Hydra build or a dependency of it failed ([the build watch](health.md#the-build-watch)).                                                                          | the package page |
 
 In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 
@@ -43,7 +43,7 @@ The server uses only data that it already has. These signals are not in the list
 - A review request to you: the synced pull requests do not keep review requests.
 - A comment outside a review: the server keeps only the comments of the author.
 - The fixed version of an advisory, when neither its ranges nor its title give it. The item then shows an open pull request on the package and the newest upstream release, when they are known.
-- A failed Hydra build that no page asked for in the last hour: the list never asks Hydra.
+- A failed Hydra build on a system other than x86_64-linux: [the build watch](health.md#the-build-watch) follows x86_64-linux only.
 
 ### Moods
 
@@ -166,7 +166,7 @@ A search with no filter, such as the search box of the home page, goes to All of
 
 **The order.** Mine puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". It also shows its health flags. Each filter shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
 
-The Hydra flag shows only a build that a package page read in the last hour. The list itself never asks Hydra.
+The Hydra flag comes from [the build watch](health.md#the-build-watch), or from a package page that read a failed build in the last hour. The list itself never asks Hydra.
 
 **No machine report yet.** Then the bar shows the step "Upload the packages of your machines" in place of the machines filter. It links to `/me/settings#upload`. When you have a set, the machines filter shows the box "Your sets", the list and the panel of public flakes (see below).
 
@@ -357,9 +357,16 @@ The page counts the synced data only: the last 60 days and every open pull reque
 **The inbox.** `/inbox` shows the events of your Atom feed: what
 happened in the last 30 days to your own pull requests, to what you watch
 and to your package set. The newest event comes first. Filter the list by
-kind (your pull requests, pull request, issue, advisory, release) or by
-subscription. "Mark all read" marks every event as read. Only you see your
-inbox.
+kind (your pull requests, pull request, issue, advisory, release, Hydra
+build) or by subscription. "Mark all read" marks every event as read. Only
+you see your inbox.
+
+**Hydra builds.** When the Hydra build of a package that you maintain or
+watch turns red or green again, you get an event. See
+[the build watch](health.md#the-build-watch).
+
+**A new kind is on.** A kind that Maintainer Mode adds after you saved your
+choice is on until you turn it off.
 
 **The unread count.** The header shows the number of unread events. The
 server counts them after each sync pass, and when you open the inbox.
