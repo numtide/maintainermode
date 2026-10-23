@@ -16,28 +16,35 @@ use crate::web::Shared;
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
+const KEYS_JS: &str = include_str!("keys.js");
 /// One line per icon: the name, a tab, then the inside of its `<svg>`.
 const ICONS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/icons.tsv"));
 
 struct Asset {
     path: String,
     body: &'static str,
+    mime: &'static str,
 }
 
-fn asset(name: &str, body: &'static str) -> Asset {
+fn asset(name: &str, ext: &str, mime: &'static str, body: &'static str) -> Asset {
     let hash: String = sha2::Sha256::digest(body.as_bytes())
         .iter()
         .take(6)
         .map(|b| format!("{b:02x}"))
         .collect();
     Asset {
-        path: format!("{name}.{hash}.css"),
+        path: format!("{name}.{hash}.{ext}"),
         body,
+        mime,
     }
 }
 
-static PRIMER: LazyLock<Asset> = LazyLock::new(|| asset("primer", PRIMER_CSS));
-static CLUB: LazyLock<Asset> = LazyLock::new(|| asset("club", CLUB_CSS));
+const CSS: &str = "text/css; charset=utf-8";
+
+static PRIMER: LazyLock<Asset> = LazyLock::new(|| asset("primer", "css", CSS, PRIMER_CSS));
+static CLUB: LazyLock<Asset> = LazyLock::new(|| asset("club", "css", CSS, CLUB_CSS));
+static KEYS: LazyLock<Asset> =
+    LazyLock::new(|| asset("keys", "js", "text/javascript; charset=utf-8", KEYS_JS));
 
 /// The `<link>` tags of the two style sheets.
 pub(crate) fn stylesheets() -> String {
@@ -47,6 +54,11 @@ pub(crate) fn stylesheets() -> String {
     )
 }
 
+/// The keyboard shortcuts of every page.
+pub(crate) fn scripts() -> String {
+    format!("<script src=\"/static/{}\" defer></script>", KEYS.path)
+}
+
 pub(crate) fn routes() -> Router<Shared> {
     Router::new().route("/static/:file", get(stylesheet))
 }
@@ -54,10 +66,13 @@ pub(crate) fn routes() -> Router<Shared> {
 /// A name carries the hash of its content, so a browser may keep it for
 /// a year: new content gets a new name.
 async fn stylesheet(Path(file): Path<String>) -> Response {
-    match [&*PRIMER, &*CLUB].into_iter().find(|a| a.path == file) {
+    match [&*PRIMER, &*CLUB, &*KEYS]
+        .into_iter()
+        .find(|a| a.path == file)
+    {
         Some(a) => (
             [
-                (header::CONTENT_TYPE, "text/css; charset=utf-8"),
+                (header::CONTENT_TYPE, a.mime),
                 (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
             ],
             a.body,
@@ -207,7 +222,10 @@ mod tests {
 
     #[test]
     fn a_stylesheet_name_changes_with_its_content() {
-        assert_ne!(asset("x", "a").path, asset("x", "b").path);
+        assert_ne!(
+            asset("x", "css", CSS, "a").path,
+            asset("x", "css", CSS, "b").path
+        );
         assert!(stylesheets().contains(&format!("/static/{}", CLUB.path)));
     }
 

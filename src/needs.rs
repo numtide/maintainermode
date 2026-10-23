@@ -856,11 +856,7 @@ pub(crate) fn mood_cookie(app: &App, mood: Mood) -> String {
     crate::web::set_cookie(app, MOOD_COOKIE, mood.key(), 365 * 86400)
 }
 
-/// Keys of the list and of the pages reached from it. It reads only the
-/// marks it finds, and skips keys typed into a field.
-const KEYS: &str = r#"<script>(function(){var L=[].slice.call(document.querySelectorAll(".needs-item")),i=-1;function sel(n){if(!L.length)return false;i=Math.max(0,Math.min(L.length-1,n));L.forEach(function(e,k){e.classList.toggle("needs-sel",k===i)});L[i].focus();return true}document.addEventListener("keydown",function(e){if(e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;var t=e.target,k=e.key,a=null,f=null;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;if(k==="Enter"&&t&&t.closest&&t.closest("a,button,summary"))return;if(k==="j"){if(!sel(i+1))return}else if(k==="k"){if(!sel(i<0?0:i-1))return}else if(k==="o"||k==="Enter"){a=i>=0?L[i].querySelector("a.needs-open"):null;if(!a)return;location.href=a.href}else if(k==="n"){a=document.querySelector("a[data-needs-next]");if(!a)return;location.href=a.href}else if(k==="s"){f=i>=0?L[i].querySelector("form.needs-snooze"):document.querySelector("form.needs-snooze-here");if(!f)return;f.submit()}else return;e.preventDefault()})})();</script>"#;
-
-const HINT: &str = "<span class=\"needs-keys f6 color-fg-muted\">Keys: <kbd>j</kbd> <kbd>k</kbd> <kbd>o</kbd> <kbd>n</kbd> <kbd>s</kbd></span>";
+const HINT: &str = "<span class=\"needs-keys f6 color-fg-muted\">Keys: <kbd>j</kbd> <kbd>k</kbd> <kbd>o</kbd> <kbd>n</kbd> <kbd>e</kbd> · <kbd>?</kbd> all keys</span>";
 
 fn cause_icon(c: Cause) -> (&'static str, &'static str, &'static str) {
     match c {
@@ -883,7 +879,7 @@ fn snooze_form(it: &Item, mood: Mood, then: &str, class: &str, label: &str) -> S
         "<form method=\"post\" action=\"/needs/snooze\" class=\"{class}\">\
          <input type=\"hidden\" name=\"key\" value=\"{}\"><input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
          <input type=\"hidden\" name=\"mood\" value=\"{}\"><input type=\"hidden\" name=\"then\" value=\"{then}\">\
-         <button class=\"btn btn-sm\" type=\"submit\" title=\"Hide it until it changes\">{label}</button></form>",
+         <button class=\"btn btn-sm\" type=\"submit\" title=\"Hide it until it changes\" data-hotkey=\"e\" data-hotkey-label=\"Snooze: hide it until it changes\">{label}</button></form>",
         esc(&it.key),
         esc(&it.fingerprint),
         mood.key()
@@ -970,7 +966,7 @@ fn render(shown: &[Item], mood: Mood, done: usize) -> String {
         String::new()
     } else {
         format!(
-            "<a class=\"btn btn-sm btn-primary ml-2\" data-needs-next href=\"/needs/next?mood={}\">Start</a>",
+            "<a class=\"btn btn-sm btn-primary ml-2\" data-needs-next href=\"/needs/next?mood={}\" data-hotkey=\"n\" data-hotkey-label=\"Start: the first item of Needs you\">Start</a>",
             mood.key()
         )
     };
@@ -996,7 +992,7 @@ fn render(shown: &[Item], mood: Mood, done: usize) -> String {
     );
     format!(
         "<div id=\"needs\">{}<section class=\"Box mb-4\"><div class=\"Box-header d-flex flex-items-center\">\
-         <h2 class=\"Box-title flex-auto\">{} Needs you <span class=\"Counter\">{}</span></h2>{start}</div>{body}{foot}</section>{KEYS}</div>",
+         <h2 class=\"Box-title flex-auto\">{} Needs you <span class=\"Counter\">{}</span></h2>{start}</div>{body}{foot}</section></div>",
         chips(&counts, mood),
         icon(octicon!("checklist")),
         list.len(),
@@ -1031,14 +1027,13 @@ pub fn next_link(app: &App, login: &str, mood: Mood, current_key: &str) -> Optio
     }
     let _ = write!(
         out,
-        "<a class=\"btn btn-sm\" data-needs-next href=\"/needs/next?mood={}&amp;from={}\" title=\"The next item of Needs you\">Next {}</a>",
+        "<a class=\"btn btn-sm\" data-needs-next data-hotkey=\"n\" href=\"/needs/next?mood={}&amp;from={}\" title=\"The next item of Needs you\">Next {}</a>",
         mood.key(),
         crate::github::urlencode(current_key),
         icon(octicon!("arrow-right"))
     );
     out.push_str(HINT);
     out.push_str("</span>");
-    out.push_str(KEYS);
     Some(out)
 }
 

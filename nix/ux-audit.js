@@ -744,6 +744,95 @@ function slug(s) {
   return `${base}-${h}`;
 }
 
+// The shortcuts of src/keys.js, pressed on a desktop page. A failed step
+// is a high issue: a keyboard user is stuck.
+async function checkKeys(ctx, base, state, issues, outDir) {
+  const shot = (name) =>
+    page.screenshot({
+      path: path.join(outDir, "shots", `keys-${name}--${state}.png`),
+    });
+  const page = await ctx.newPage();
+  let failed = 0;
+  const fail = (step, detail) => {
+    failed++;
+    issues.add("high", "keyboard", step, state, detail, "1280x900 light");
+  };
+  const at = () => new URL(page.url()).pathname;
+  try {
+    await page.goto(`${base}/`, { waitUntil: "load" });
+    await page.keyboard.press("/");
+    if (
+      !(await page.evaluate(() =>
+        document.activeElement?.matches("[data-search]"),
+      ))
+    )
+      fail("/", "/ does not focus the search box");
+    await page.keyboard.type("hel");
+    try {
+      await page.waitForSelector(".suggest:not([hidden]) li", {
+        timeout: 3000,
+      });
+      await page.keyboard.press("ArrowDown");
+      await shot("suggest");
+      await page.keyboard.press("Enter");
+      await page.waitForURL((u) => u.pathname !== "/", { timeout: 3000 });
+      if (!/^\/(p|m|a|u|pr|search)\b/.test(at()))
+        fail("/", `the first suggestion opens ${at()}`);
+    } catch (e) {
+      fail("/", `no suggestion to open: ${e.message.split("\n")[0]}`);
+    }
+    for (const [keys, want] of [
+      [["g", "r"], "/review"],
+      [["g", "p"], "/packages"],
+      [["g", "s"], "/state"],
+      [["g", "h"], "/"],
+    ]) {
+      for (const k of keys) await page.keyboard.press(k);
+      await page
+        .waitForURL((u) => u.pathname === want, { timeout: 3000 })
+        .catch(() => {});
+      if (at() !== want)
+        fail(want, `${keys.join(" ")} opens ${at()}, not ${want}`);
+    }
+    await page.goto(`${base}/review?tab=all`, { waitUntil: "load" });
+    await page.keyboard.press("j");
+    const href = await page.evaluate(() =>
+      document.querySelector(".key-sel a.Link--primary")?.getAttribute("href"),
+    );
+    if (!href) fail("/review?tab=all", "j selects no row");
+    else {
+      await page.keyboard.press("o");
+      await page
+        .waitForURL((u) => u.pathname === new URL(href, base).pathname, {
+          timeout: 3000,
+        })
+        .catch(() => {});
+      if (at() !== new URL(href, base).pathname)
+        fail("/review?tab=all", `o opens ${at()}, not ${href}`);
+    }
+    await page.keyboard.press("Shift+?");
+    if (
+      !(await page.evaluate(
+        () => !!document.querySelector("dialog.keys-help[open]"),
+      ))
+    )
+      fail(at(), "? shows no list of shortcuts");
+    else await shot("help");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Tab");
+    if (
+      !(await page.evaluate(() =>
+        document.activeElement?.matches(".skip-link"),
+      ))
+    )
+      fail(at(), "the first Tab does not reach Skip to content");
+  } catch (e) {
+    fail("keys", e.message.split("\n")[0]);
+  } finally {
+    await page.close();
+    log(`keyboard ${state}: ${failed} of 9 steps fail`);
+  }
+}
 class Issues {
   constructor() {
     this.map = new Map();
@@ -1224,6 +1313,25 @@ async function main() {
     };
     if (session && !o.onlyPublic)
       linkCtx["signed-in"] = await ctxFor("signed-in", desktop, "light");
+    if (!o.pages) {
+      await checkKeys(
+        linkCtx["signed-out"],
+        base,
+        "signed-out",
+        issues,
+        outDir,
+      );
+      if (linkCtx["signed-in"]) {
+        if (local) local.ensureSession();
+        await checkKeys(
+          linkCtx["signed-in"],
+          base,
+          "signed-in",
+          issues,
+          outDir,
+        );
+      }
+    }
     const links = await checkLinks(
       found,
       (s) => linkCtx[s] || linkCtx["signed-out"],
