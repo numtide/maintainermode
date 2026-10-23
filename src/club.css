@@ -45,7 +45,7 @@ html[data-color-mode][data-light-theme][data-dark-theme] {
 }
 
 /* @primer/css 22 ships tokens, utilities, Header, btn and Counter, but no
-   longer Box, Label, UnderlineNav, Subhead or flash. These rebuild the few we
+   longer Box, Label, Subhead or flash. These rebuild the few we
    use on Primer's own tokens, so both color modes follow. */
 body {
   font-family:
@@ -78,32 +78,140 @@ a:hover {
   font-weight: 600;
 }
 
-.UnderlineNav {
-  border-bottom: 1px solid var(--borderColor-muted);
-  overflow-x: auto;
+.site-header {
+  gap: 8px 16px;
+  padding: 8px 16px;
+  flex-wrap: wrap;
 }
-.UnderlineNav-body {
-  display: flex;
+.site-brand {
   gap: 8px;
+  font-size: 16px;
+  white-space: nowrap;
+}
+.site-beta {
+  margin-left: -8px;
+  padding: 0 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: oklch(0.85 0.1 85);
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+.site-beta:hover {
+  text-decoration: none;
+  color: #fff;
+}
+.site-nav ul {
+  display: flex;
+  gap: 4px;
   margin: 0;
   padding: 0;
+  list-style: none;
 }
-.UnderlineNav-item {
+.site-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 12px 8px;
-  color: var(--fgColor-default);
-  border-bottom: 2px solid transparent;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: oklch(0.85 0.02 264);
   white-space: nowrap;
 }
-.UnderlineNav-item:hover {
+.site-tab:hover {
   text-decoration: none;
-  border-bottom-color: var(--borderColor-muted);
+  color: #fff;
+  background: oklch(1 0 0 / 0.08);
 }
-.UnderlineNav-item[aria-current] {
+.site-tab[aria-current] {
+  color: #fff;
   font-weight: 600;
-  border-bottom-color: var(--underlineNav-borderColor-active);
+  background: oklch(1 0 0 / 0.12);
+}
+.site-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 240px;
+  max-width: 480px;
+  margin-left: auto;
+}
+.site-search > .octicon {
+  position: absolute;
+  left: 8px;
+  color: oklch(0.8 0.02 264);
+  pointer-events: none;
+}
+.site-q {
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 32px 4px 30px;
+  font: inherit;
+  color: #fff;
+  background: oklch(1 0 0 / 0.08);
+  border: 1px solid oklch(1 0 0 / 0.2);
+  border-radius: 6px;
+}
+.site-q::placeholder {
+  color: oklch(0.8 0.02 264);
+}
+.site-q:focus {
+  background: oklch(1 0 0 / 0.14);
+  outline: 2px solid var(--focus-outlineColor, oklch(0.75 0.12 240));
+  outline-offset: -1px;
+}
+.site-kbd {
+  position: absolute;
+  right: 8px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 16px;
+  color: oklch(0.8 0.02 264);
+  border: 1px solid oklch(1 0 0 / 0.3);
+  border-radius: 4px;
+  pointer-events: none;
+}
+.site-q:focus + .site-kbd {
+  display: none;
+}
+.site-search-link {
+  display: none;
+}
+.site-menu {
+  display: flex;
+  align-items: center;
+}
+/* Below 1012px the tabs drop their icons; on a phone they take a second
+   row and the search box becomes an icon that opens /search. */
+@media (max-width: 1011px) {
+  .site-tab .octicon {
+    display: none;
+  }
+}
+@media (max-width: 767px) {
+  .site-header {
+    padding: 8px 12px 4px;
+  }
+  .site-search {
+    display: none;
+  }
+  .site-search-link {
+    display: inline-flex;
+    margin-left: auto;
+  }
+  .site-nav {
+    order: 10;
+    flex-basis: 100%;
+    margin: 0 -4px;
+    overflow-x: auto;
+  }
+}
+@media (max-width: 420px) {
+  .site-name {
+    display: none;
+  }
+  .site-beta {
+    margin-left: -12px;
+  }
 }
 
 .Subhead {
@@ -301,10 +409,6 @@ a:hover {
   padding-bottom: 8px;
   border-bottom: 1px solid var(--borderColor-muted);
 }
-.flux {
-  background: var(--bgColor-attention-muted);
-  border-bottom: 1px solid var(--borderColor-attention-emphasis);
-}
 
 .page-head {
   display: flex;
@@ -445,15 +549,6 @@ section.Box > .Box-header {
   border-top: 1px solid var(--borderColor-muted);
 }
 
-/* Four tabs must fit a 390px phone. */
-@media (max-width: 420px) {
-  .UnderlineNav-item .octicon {
-    display: none;
-  }
-  .UnderlineNav-body {
-    gap: 4px;
-  }
-}
 .text-nowrap {
   white-space: nowrap;
 }
@@ -576,4 +671,22 @@ section.Box > .Box-header {
 .build-skip {
   background: var(--bgColor-neutral-muted);
   box-shadow: inset 0 0 0 1px var(--borderColor-default);
+}
+.site-brand,
+.site-search-link {
+  min-width: 32px;
+  justify-content: center;
+}
+.site-beta {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+.search-inline {
+  display: none;
+}
+@media (max-width: 767px) {
+  .search-inline {
+    display: flex;
+  }
 }

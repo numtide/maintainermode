@@ -79,6 +79,8 @@ pub(crate) struct Page {
     pub heading: String,
     /// No page header: the body brings its own `h1`.
     pub bare: bool,
+    /// The words in the search box of the header.
+    pub query: String,
 }
 
 impl Page {
@@ -120,6 +122,11 @@ impl Page {
         self
     }
 
+    pub(crate) fn query(mut self, q: &str) -> Self {
+        self.query = q.to_string();
+        self
+    }
+
     pub(crate) fn bare(mut self) -> Self {
         self.bare = true;
         self
@@ -146,7 +153,7 @@ fn nav(current: Section) -> String {
         };
         let _ = write!(
             out,
-            "<li class=\"d-inline-flex\"><a class=\"UnderlineNav-item\" href=\"{href}\"{cur}>{}<span>{label}</span></a></li>",
+            "<li><a class=\"site-tab\" href=\"{href}\"{cur}>{}<span>{label}</span></a></li>",
             icon(svg)
         );
     }
@@ -251,6 +258,26 @@ const MENU: [(Personal, &str, &str, &str); 4] = [
     ),
 ];
 
+const ISSUES: &str = "https://github.com/numtide/maintainermode/issues";
+
+/// `/` focuses the visible box marked `data-search`, as on GitHub. On a
+/// phone the header has no box, so it opens `/search`, which has one.
+const SEARCH_KEY: &str = r#"<script>(function(){function box(){return[].find.call(document.querySelectorAll("input[data-search]"),function(x){return x.offsetParent})}document.addEventListener("keydown",function(e){if(e.key!=="/"||e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;e.preventDefault();var i=box();if(i){i.focus();i.select()}else location.href="/search"});if(location.pathname==="/search")document.addEventListener("DOMContentLoaded",function(){var i=box();if(i&&!i.value)i.focus()})})()</script>"#;
+
+pub(crate) const SEARCH_PLACEHOLDER: &str = "Search packages, modules, @people, #PRs, CVEs";
+
+fn search_box(q: &str) -> String {
+    format!(
+        "<form class=\"site-search\" role=\"search\" method=\"get\" action=\"/search\">{}\
+         <input class=\"site-q\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{SEARCH_PLACEHOLDER}\" aria-label=\"Search\" aria-keyshortcuts=\"/\" autocomplete=\"off\" data-search>\
+         <kbd class=\"site-kbd\" aria-hidden=\"true\">/</kbd></form>\
+         <a class=\"Header-link site-search-link\" href=\"/search\" aria-label=\"Search\">{}</a>{SEARCH_KEY}",
+        icon(octicon!("search")),
+        esc(q),
+        icon(octicon!("search")),
+    )
+}
+
 fn updated(app: &App) -> String {
     match app.store.get_time("last_sync").ok().flatten() {
         Some(t) => {
@@ -285,7 +312,8 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     let menu = menu(app, viewer, p.section);
     let nav = nav(p.section);
     let subnav = subnav(&p.subnav);
-    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &head, &subnav, &p.body]);
+    let search = search_box(&p.query);
+    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &search, &head, &subnav, &p.body]);
     let css = crate::assets::stylesheets();
     format!(
         r#"<!doctype html>
@@ -297,14 +325,16 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 {css}
 </head>
 <body class="color-bg-default color-fg-default">
-{sprite}<header class="Header">
-  <div class="Header-item Header-item--full"><a class="Header-link f4 d-flex flex-items-center" href="/">{club} <span class="ml-2">Maintainer Mode</span></a></div>
-  <div class="Header-item mr-0">{menu}</div>
+{sprite}<header class="Header site-header">
+  <a class="Header-link site-brand" href="/" aria-label="Maintainer Mode, home">{club}<span class="site-name">Maintainer Mode</span></a>
+  <a class="site-beta" href="{ISSUES}" title="Work in progress: pages, numbers and links can change or break. Tell us what is wrong or missing.">beta</a>
+  <nav class="site-nav" aria-label="Main"><ul>{nav}</ul></nav>
+  {search}
+  <div class="site-menu">{menu}</div>
 </header>
-<div class="flux px-3 py-1 f6" role="note"><strong>Work in progress.</strong> Maintainer Mode changes every day: pages, numbers and links can change or break. <a href="https://github.com/numtide/maintainermode/issues">Tell us what is wrong or missing</a>.</div>
-<nav class="UnderlineNav px-3" aria-label="Main"><ul class="UnderlineNav-body list-style-none">{nav}</ul></nav>
 <main class="container-lg px-3 py-4">{head}{subnav}{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
+  <strong>Work in progress.</strong> Maintainer Mode changes every day: pages, numbers and links can change or break. <a href="{ISSUES}">Tell us what is wrong or missing</a>.<br>
   Data from the last {window} days · {updated} · <a href="/state?tab=status">Data status</a> · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/state?tab=rules#the-rules">the rules</a> · <a href="/api/v1">API</a><br>
   A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>

@@ -37,7 +37,9 @@ public /state?tab=docs&doc=ingest
 public /state?tab=docs&doc=rescan
 public /state?tab=status
 public /packages
-public /packages?q=zzzz-nothing-matches
+both /search
+both /search?q=zzzz-nothing-matches
+both /search?q=hel
 both /p/${attr}
 public /p/unbound
 public /m/${module}

@@ -167,16 +167,20 @@ async fn me_pages_show_their_parts() {
     assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
     assert!(a.body.contains("you maintain"));
     let a = site.get("/packages?q=hel", Some(SID)).await;
-    assert!(a.body.contains("aria-current=\"page\">All of nixpkgs"));
+    assert_eq!(a.location.as_deref(), Some("/search?q=hel"));
+    let a = site.get("/search?q=hel", Some(SID)).await;
+    assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    assert!(a.body.contains("value=\"hel\""));
+    let a = site.get("/search?q=%40alice", None).await;
+    assert_eq!(a.location.as_deref(), Some("/u/alice"));
+    let a = site.get("/search?q=%23123", None).await;
+    assert_eq!(a.location.as_deref(), Some("/pr/123"));
     let a = site.get("/packages", None).await;
     assert!(!a.body.contains("filter="), "a visitor sees no filter bar");
     assert!(!a.body.contains("Upload the packages"));
     let a = site.get("/inbox", Some(SID)).await;
     assert!(a.body.contains("<a href=\"/inbox\" aria-current=\"page\">"));
-    assert!(
-        !a.body
-            .contains("UnderlineNav-item\" href=\"/\" aria-current")
-    );
+    assert!(!a.body.contains("site-tab\" href=\"/\" aria-current"));
     let a = site.get("/me/inbox", Some(SID)).await;
     assert_eq!(a.location.as_deref(), Some("/inbox"));
     let a = site.get("/me/settings", Some(SID)).await;

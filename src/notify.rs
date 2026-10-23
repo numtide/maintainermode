@@ -1396,7 +1396,7 @@ pub(crate) mod tests {
         let html = String::from_utf8(b.to_vec()).unwrap();
         assert!(html.contains("href=\"/inbox?kind=advisory\" aria-current=\"page\""));
         assert!(html.contains("<a href=\"/inbox\" aria-current=\"page\">"));
-        assert!(!html.contains("UnderlineNav-item\" href=\"/\" aria-current"));
+        assert!(!html.contains("site-tab\" href=\"/\" aria-current"));
         assert_eq!(app.inbox.get("alice"), 0);
         app.inbox.set("alice", 3);
         assert_eq!(app.inbox.get("alice"), 3);

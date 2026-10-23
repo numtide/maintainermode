@@ -214,14 +214,17 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         path: "/api/v1/search",
-        about: "Packages, NixOS modules and areas of the tree that match a name, with their health flags.",
+        about: "What the search box of the site finds: packages, NixOS modules and areas of the tree with their health flags, maintainers, pull requests whose title has the words, and advisories with that id. `page` is the page the site opens at once, if any.",
         params: &[need(
             "q",
             Type::Text,
-            "an attribute, a package name, nixos/NAME, a module file or a path",
+            "an attribute, a package name, nixos/NAME, a module file, a path, @login, #NUMBER, words of a pull request title, or a CVE, GHSA or NIXPKGS id",
         )],
         private: false,
-        mcp: By(("search", "Search packages, modules and areas")),
+        mcp: By((
+            "search",
+            "Search packages, modules, areas, people, pull requests and advisories",
+        )),
         cli: By("search"),
     },
     Endpoint {
@@ -443,6 +446,8 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/state?tab=status", By(&["/api/v1/sync"])),
     ("/packages", By(&["/api/v1/search", "/api/v1/mine"])),
     ("/packages?q=", By(&["/api/v1/search?q=<name>"])),
+    ("/search", By(&["/api/v1/search"])),
+    ("/search?q=", By(&["/api/v1/search?q=<words>"])),
     ("/packages?filter=mine", By(&["/api/v1/mine?filter=mine"])),
     (
         "/packages?filter=machines",
@@ -808,7 +813,7 @@ pub(crate) async fn answer(
         "/api/v1/progress" => {
             json!({ "login": me, "progress": crate::progress::of(app, me, true) })
         }
-        "/api/v1/search" => crate::catalog::search_value(app, &text(&a.q)),
+        "/api/v1/search" => crate::search::value(app, &text(&a.q)),
         "/api/v1/first" => paged(&crate::first::rows(app))?,
         "/api/v1/need-help" => {
             let rows: Vec<Value> = crate::home::need_help(app)
