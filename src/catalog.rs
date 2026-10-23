@@ -865,6 +865,52 @@ fn version_in(app: &crate::web::App, j: &crate::builds::Jobset, attr: &str) -> O
         .and_then(|c| c.versions.get(attr).cloned())
 }
 
+pub(crate) struct CacheRow {
+    pub(crate) channel: String,
+    pub(crate) rev: String,
+    pub(crate) path: String,
+    /// None until the server asked cache.nixos.org.
+    pub(crate) cached: Option<bool>,
+}
+
+/// Whether each channel's output of `attr` is in cache.nixos.org. The
+/// path does not depend on the attribute name, so it works for an alias
+/// too. Only packages that someone maintains or watches have a path.
+pub(crate) fn binary_cache(app: &crate::web::App, attr: &str) -> Vec<CacheRow> {
+    let channels = app.channels.read().unwrap().clone();
+    channels
+        .list
+        .iter()
+        .filter_map(|c| {
+            let path = c.out_paths.get(attr)?;
+            Some(CacheRow {
+                channel: c.label().to_string(),
+                rev: c.rev.clone(),
+                path: path.clone(),
+                cached: app.hydra.builds.cached(path),
+            })
+        })
+        .collect()
+}
+
+fn cache_html(rows: &[CacheRow]) -> String {
+    rows.iter()
+        .map(|c| {
+            let (class, word) = match c.cached {
+                Some(true) => ("color-fg-success", "built"),
+                Some(false) => ("color-fg-attention", "not in the cache"),
+                None => ("color-fg-muted", "not asked yet"),
+            };
+            format!(
+                "{} <span class=\"{class}\" title=\"{}\">{word}</span>",
+                esc(&c.channel),
+                esc(&c.path)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn dead_row(label: &str, job: &str, last: &Last) -> String {
     let since = last
         .build()
@@ -1559,6 +1605,10 @@ async fn package_page(
         } else {
             build_row(&label, job, build)
         });
+    }
+    let cache = binary_cache(&app, &attr);
+    if !cache.is_empty() {
+        health.push_str(&kv("Binary cache", &cache_html(&cache)));
     }
     health.push_str(&kv(
         "Advisories",
@@ -2601,6 +2651,9 @@ pub(crate) async fn package_value(app: &crate::web::App, name: &str) -> Option<V
     let extra = json!({
         "attr": attr, "package": p, "hydra": build.build(), "hydra_state": build.state(), "hydra_job": job,
         "hydra_channels": hydra_channels,
+        "binary_cache": binary_cache(app, &attr).iter().map(|c| json!({
+            "channel": c.channel, "rev": c.rev, "out_path": c.path, "cached": c.cached,
+        })).collect::<Vec<_>>(),
         "advisories": advisories, "osv": osv, "packaging_gaps": hygiene,
         "channels": channels, "needs_backport": backport, "version_bumps": bumps,
     });
@@ -2977,6 +3030,7 @@ pub(crate) mod tests {
             rev: "r".into(),
             read_at: None,
             versions: [("cups".to_string(), "2.4.19".to_string())].into(),
+            out_paths: Default::default(),
         };
         let ch = Channels { list: vec![stable] };
         let html = |master: &str| {
@@ -3061,6 +3115,7 @@ pub(crate) mod tests {
             rev: format!("rev-{name}"),
             read_at: None,
             versions: [("unbound".to_string(), v.to_string())].into(),
+            out_paths: Default::default(),
         };
         let ch = Channels {
             list: vec![
