@@ -215,11 +215,18 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/search",
         about: "What the search box of the site finds: packages, NixOS modules and areas of the tree with their health flags, maintainers, pull requests whose title has the words, and advisories with that id. `page` is the page the site opens at once, if any.",
-        params: &[need(
-            "q",
-            Type::Text,
-            "an attribute, a package name, nixos/NAME, a module file, a path, @login, #NUMBER, words of a pull request title, or a CVE, GHSA or NIXPKGS id",
-        )],
+        params: &[
+            need(
+                "q",
+                Type::Text,
+                "an attribute, a package name, nixos/NAME, a module file, a path, @login, #NUMBER, words of a pull request title, or a CVE, GHSA or NIXPKGS id",
+            ),
+            opt(
+                "limit",
+                Type::Int,
+                "at most this many of each kind; the search box asks for 5",
+            ),
+        ],
         private: false,
         mcp: By((
             "search",
@@ -813,7 +820,7 @@ pub(crate) async fn answer(
         "/api/v1/progress" => {
             json!({ "login": me, "progress": crate::progress::of(app, me, true) })
         }
-        "/api/v1/search" => crate::search::value(app, &text(&a.q)),
+        "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit),
         "/api/v1/first" => paged(&crate::first::rows(app))?,
         "/api/v1/need-help" => {
             let rows: Vec<Value> = crate::home::need_help(app)

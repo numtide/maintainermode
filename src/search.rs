@@ -345,20 +345,36 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
     out
 }
 
-/// The hits of `/search`, as JSON. A query that `/search` would send to a
-/// page also names that page.
-pub(crate) fn value(app: &App, q: &str) -> Value {
+/// The hits of `/search`, as JSON, at most `limit` of each kind. A query
+/// that `/search` would send to a page also names that page.
+pub(crate) fn value(app: &App, q: &str, limit: Option<usize>) -> Value {
     let q = q.trim();
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
-    let (hits, page) = {
+    let (mut hits, page) = {
         let index = app.index.read().unwrap();
         (find(&s, &index, &h, q), jump(&s, &index, q))
     };
+    if let Some(n) = limit {
+        hits.subjects.truncate(n);
+        hits.people.truncate(n);
+        hits.prs.truncate(n);
+        hits.advisories.truncate(n);
+    }
+    let mut results = crate::catalog::subject_list(app, &hits.subjects);
+    for (r, sub) in results.iter_mut().zip(&hits.subjects) {
+        let (kind, url) = match sub {
+            Subject::Pkg(a) => ("pkg", format!("/p/{a}")),
+            Subject::Module(f) => ("module", format!("/m/{f}")),
+            Subject::Area(p) => ("area", format!("/a/{p}")),
+        };
+        r["kind"] = json!(kind);
+        r["url"] = json!(url);
+    }
     json!({
         "query": q,
         "page": page,
-        "results": crate::catalog::subject_list(app, &hits.subjects),
+        "results": results,
         "people": hits.people.iter().map(|l| json!({"login": l, "url": format!("/u/{l}")})).collect::<Vec<_>>(),
         "pull_requests": hits.prs.iter().map(|p| json!({
             "number": p.number, "title": p.title, "state": p.state, "draft": p.draft, "url": format!("/pr/{}", p.number),

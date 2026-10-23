@@ -578,12 +578,14 @@ section.Box > .Box-header {
   display: none;
 }
 .needs-item:focus,
-.needs-item.needs-sel {
+.key-sel {
   outline: 2px solid var(--focus-outlineColor);
   outline-offset: -2px;
   background: var(--bgColor-accent-muted);
 }
-.needs-keys kbd {
+.needs-keys kbd,
+.keys-hint kbd,
+.keys-help kbd {
   display: inline-block;
   padding: 0 4px;
   font: 11px var(--fontStack-monospace);
@@ -593,7 +595,8 @@ section.Box > .Box-header {
 }
 /* Keys need a keyboard: a phone shows no hint. */
 @media (max-width: 543px) {
-  .needs-keys {
+  .needs-keys,
+  .keys-hint {
     display: none;
   }
 }
@@ -689,4 +692,100 @@ section.Box > .Box-header {
   .search-inline {
     display: flex;
   }
+}
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 100;
+  padding: 8px 12px;
+  color: var(--fgColor-default);
+  background: var(--bgColor-default);
+  border: 2px solid var(--focus-outlineColor);
+  border-radius: 6px;
+}
+.skip-link:focus {
+  top: 8px;
+}
+main:focus {
+  outline: none;
+}
+.keys-help {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  padding: 16px 24px;
+  color: var(--fgColor-default);
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: 1px solid var(--borderColor-default);
+  border-radius: 12px;
+  box-shadow: var(--shadow-floating-large, var(--shadow-floating-small));
+}
+.keys-help::backdrop {
+  background: oklch(0 0 0 / 0.4);
+}
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.keys-help h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.keys-help h3 {
+  margin: 16px 0 4px;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  text-transform: uppercase;
+}
+.keys-help dl {
+  display: grid;
+  grid-template-columns: 9em 1fr;
+  gap: 4px 16px;
+  margin: 0;
+}
+.keys-help dd {
+  margin: 0;
+}
+.suggest {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  background: var(--overlay-bgColor, var(--bgColor-default));
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  box-shadow: var(--shadow-floating-small);
+}
+.suggest a {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 6px 12px;
+  color: var(--fgColor-default);
+  font-weight: 400;
+}
+.suggest a:hover,
+.suggest [aria-selected="true"] a {
+  text-decoration: none;
+  background: var(--bgColor-accent-muted);
+}
+.suggest-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggest-kind {
+  flex: none;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+.search-inline {
+  position: relative;
 }

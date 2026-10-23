@@ -338,15 +338,17 @@ output, or `output` without `set`, is a 404 with an `error`.
 
 ## `GET /api/v1/search`
 
-It gives what the search box of the site finds for `q`.
+It gives what the search box of the site finds for `q`. With `limit`, it
+gives at most that many of each kind; the suggestions of the box ask for 5.
 
 - `page`: the page that the site opens at once, or `null`. It is set for a
   name with a page, `@login`, `#NUMBER` or a link to a pull request.
-- `results`: packages, NixOS modules and areas, each with `key`, `name` and
+- `results`: packages, NixOS modules and areas, each with `key`, `name`,
+  `kind` (`pkg`, `module` or `area`), `url` and
   `flags`.
 - `people`: maintainers whose login holds the text, each with `login` and
   `url`.
-- `pull_requests`: synced pull requests whose title holds the text (3
+- `pull_requests`: synced pull requests whose title has the text at the start of a word (3
   characters or more). Open ones come first. Each has `number`, `title`,
   `state`, `draft` and `url`.
 - `advisories`: advisories with that id: a security tracker code

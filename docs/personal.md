@@ -71,7 +71,7 @@ The footer of the list shows how many items left the list since you signed in, f
 
 ### Keys
 
-On the list and on the pages that "Next" opens, you can use these keys:
+On the list and on the pages that "Next" opens, you can use these keys, with [the keys of every page](health.md#keyboard-shortcuts):
 
 | Key          | What it does             |
 | ------------ | ------------------------ |
@@ -79,7 +79,7 @@ On the list and on the pages that "Next" opens, you can use these keys:
 | `k`          | select the previous item |
 | `o` or Enter | open the selected item   |
 | `n`          | open the next item       |
-| `s`          | snooze the selected item |
+| `e`          | snooze the selected item |
 
 The keys do nothing while you type in a field. Everything also works without JavaScript.
 

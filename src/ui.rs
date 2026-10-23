@@ -260,10 +260,6 @@ const MENU: [(Personal, &str, &str, &str); 4] = [
 
 const ISSUES: &str = "https://github.com/numtide/maintainermode/issues";
 
-/// `/` focuses the visible box marked `data-search`, as on GitHub. On a
-/// phone the header has no box, so it opens `/search`, which has one.
-const SEARCH_KEY: &str = r#"<script>(function(){function box(){return[].find.call(document.querySelectorAll("input[data-search]"),function(x){return x.offsetParent})}document.addEventListener("keydown",function(e){if(e.key!=="/"||e.ctrlKey||e.metaKey||e.altKey||e.defaultPrevented)return;var t=e.target;if(t&&(t.isContentEditable||/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)))return;e.preventDefault();var i=box();if(i){i.focus();i.select()}else location.href="/search"});if(location.pathname==="/search")document.addEventListener("DOMContentLoaded",function(){var i=box();if(i&&!i.value)i.focus()})})()</script>"#;
-
 pub(crate) const SEARCH_PLACEHOLDER: &str = "Search packages, modules, @people, #PRs, CVEs";
 
 fn search_box(q: &str) -> String {
@@ -271,7 +267,7 @@ fn search_box(q: &str) -> String {
         "<form class=\"site-search\" role=\"search\" method=\"get\" action=\"/search\">{}\
          <input class=\"site-q\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{SEARCH_PLACEHOLDER}\" aria-label=\"Search\" aria-keyshortcuts=\"/\" autocomplete=\"off\" data-search>\
          <kbd class=\"site-kbd\" aria-hidden=\"true\">/</kbd></form>\
-         <a class=\"Header-link site-search-link\" href=\"/search\" aria-label=\"Search\">{}</a>{SEARCH_KEY}",
+         <a class=\"Header-link site-search-link\" href=\"/search\" aria-label=\"Search\">{}</a>",
         icon(octicon!("search")),
         esc(q),
         icon(octicon!("search")),
@@ -315,31 +311,34 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
     let search = search_box(&p.query);
     let sprite = crate::assets::sprite(&[&club, &menu, &nav, &search, &head, &subnav, &p.body]);
     let css = crate::assets::stylesheets();
+    let js = crate::assets::scripts();
     format!(
-        r#"<!doctype html>
+        r##"<!doctype html>
 <html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
 {css}
+{js}
 </head>
 <body class="color-bg-default color-fg-default">
-{sprite}<header class="Header site-header">
+{sprite}<a class="skip-link" href="#main">Skip to content</a>
+<header class="Header site-header">
   <a class="Header-link site-brand" href="/" aria-label="Maintainer Mode, home">{club}<span class="site-name">Maintainer Mode</span></a>
   <a class="site-beta" href="{ISSUES}" title="Work in progress: pages, numbers and links can change or break. Tell us what is wrong or missing.">beta</a>
   <nav class="site-nav" aria-label="Main"><ul>{nav}</ul></nav>
   {search}
   <div class="site-menu">{menu}</div>
 </header>
-<main class="container-lg px-3 py-4">{head}{subnav}{body}</main>
+<main id="main" class="container-lg px-3 py-4" tabindex="-1">{head}{subnav}{body}</main>
 <footer class="container-lg px-3 py-4 f6 color-fg-muted border-top">
-  <strong>Work in progress.</strong> Maintainer Mode changes every day: pages, numbers and links can change or break. <a href="{ISSUES}">Tell us what is wrong or missing</a>.<br>
+  <strong>Work in progress.</strong> Maintainer Mode changes every day: pages, numbers and links can change or break. <a href="{ISSUES}">Tell us what is wrong or missing</a>.<span class="keys-hint"> Press <kbd>?</kbd> for keyboard shortcuts.</span><br>
   Data from the last {window} days · {updated} · <a href="/state?tab=status">Data status</a> · <a href="{CONTRIBUTING}">nixpkgs contributor guide</a> · <a href="/state?tab=rules#the-rules">the rules</a> · <a href="/api/v1">API</a><br>
   A personal tool for nixpkgs maintenance, run in public. Not an official NixOS project, and not made by or affiliated with GitHub. Styled with Primer and Octicons (MIT), in the NixOS brand colors.{nvd}
 </footer>
 </body>
-</html>"#,
+</html>"##,
         body = p.body,
         window = crate::ledger::WINDOW_DAYS,
         updated = updated(app),

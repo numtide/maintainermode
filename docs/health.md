@@ -93,8 +93,12 @@ The first build that the server sees only sets the state. A newer build with ano
 
 ## Search
 
-Each page has a search box in its header. Press <kbd>/</kbd> on any page to
+Each page has a search box in its header. Press `/` or `s` on any page to
 go to it. On a phone, the box is an icon that opens `/search`.
+
+From 2 characters, the box shows up to 5 suggestions of each kind, and
+"All results". The up and down arrows, or Ctrl+N and Ctrl+P, select one.
+Enter opens it. Esc closes the list, then leaves the box.
 
 A query that names one page opens that page at once:
 
@@ -110,13 +114,35 @@ Other text opens `/search?q=<text>`. It lists, in this order:
 
 - packages, NixOS modules and busy directories whose name holds the text;
 - maintainers whose login holds the text;
-- synced pull requests whose title holds the text (3 characters or more),
+- synced pull requests whose title has the text at the start of a word (3 characters or more),
   open ones first;
 - advisories with that id: a tracker code (`NIXPKGS-…`), a CVE or an OSV id
   (`GHSA-…`), with the packages that they affect. Words never match an
   advisory.
 
 `/api/v1/search` and the MCP tool `search` give the same lists.
+
+## Keyboard shortcuts
+
+The keys follow GitHub. Press `?` on any page to see the keys of that page.
+The keys do nothing while you type in a field.
+
+| Key            | What it does                                      |
+| -------------- | ------------------------------------------------- |
+| `/` or `s`     | go to the search box                              |
+| `g h`          | go to Home                                        |
+| `g r`          | go to Review                                      |
+| `g p`          | go to Packages                                    |
+| `g s`          | go to nixpkgs (`/state`)                          |
+| `g n` or `g i` | go to the inbox                                   |
+| `j` / `k`      | select the next row / the row before, in any list |
+| `o` or Enter   | open the selected row                             |
+| Esc            | close the list of keys or clear the selection     |
+| `?`            | show the keys of the page                         |
+
+Some pages add keys, such as `n` and `e` of
+[Needs you](personal.md#keys). The first Tab of a page goes to "Skip to
+content".
 
 ## The risk score
 
