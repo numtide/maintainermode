@@ -781,6 +781,25 @@ async function checkKeys(ctx, base, state, issues, outDir) {
     } catch (e) {
       fail("/", `no suggestion to open: ${e.message.split("\n")[0]}`);
     }
+    try {
+      await page.goto(`${base}/`, { waitUntil: "load" });
+      await page.keyboard.press("/");
+      await page.keyboard.type("hel");
+      const li = await page.waitForSelector(".suggest:not([hidden]) li a", {
+        timeout: 3000,
+      });
+      const box = await li.boundingBox();
+      await page.mouse.move(box.x + 8, box.y + box.height / 2);
+      await page.mouse.down();
+      await page.waitForTimeout(400);
+      await page.mouse.up();
+      await page.waitForURL((u) => u.pathname !== "/", { timeout: 3000 });
+    } catch (e) {
+      fail(
+        "/",
+        `a slow click on a suggestion opens nothing: ${e.message.split("\n")[0]}`,
+      );
+    }
     for (const [keys, want] of [
       [["g", "r"], "/review"],
       [["g", "p"], "/packages"],
@@ -830,7 +849,7 @@ async function checkKeys(ctx, base, state, issues, outDir) {
     fail("keys", e.message.split("\n")[0]);
   } finally {
     await page.close();
-    log(`keyboard ${state}: ${failed} of 9 steps fail`);
+    log(`keyboard ${state}: ${failed} of 10 steps fail`);
   }
 }
 class Issues {
