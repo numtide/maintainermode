@@ -46,6 +46,7 @@ mod rescan;
 mod review;
 mod scan;
 mod score;
+mod search;
 mod secret;
 mod sets;
 mod severity;
@@ -1230,6 +1231,30 @@ async fn run(cli: Cli) -> Result<i32> {
                     "{:<40} risk {}",
                     r["key"].as_str().unwrap_or(""),
                     r["flags"]["risk"]
+                );
+            }
+            for p in v["people"].as_array().into_iter().flatten() {
+                out!("@{}", p["login"].as_str().unwrap_or(""));
+            }
+            for p in v["pull_requests"].as_array().into_iter().flatten() {
+                out!(
+                    "#{:<8} {:<7} {}",
+                    p["number"],
+                    p["state"].as_str().unwrap_or(""),
+                    p["title"].as_str().unwrap_or("")
+                );
+            }
+            for a in v["advisories"].as_array().into_iter().flatten() {
+                let pkgs: Vec<&str> = a["packages"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|p| p.as_str())
+                    .collect();
+                out!(
+                    "{:<24} affects {}",
+                    a["id"].as_str().unwrap_or(""),
+                    pkgs.join(", ")
                 );
             }
             Ok(0)

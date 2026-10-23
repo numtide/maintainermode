@@ -5,7 +5,7 @@ What a package, module or area page shows, and where each fact comes from.
 ## Packages, modules and areas
 
 Every package, NixOS module and nixpkgs path has a page: `/p/<attr>`,
-`/m/<module file>` and `/a/<path>`. `/packages` searches them. Each page shows
+`/m/<module file>` and `/a/<path>`. [Search](#search) finds them. Each page shows
 health first, then the open issues and pull requests, then the ones closed or
 merged in the synced window.
 
@@ -90,6 +90,33 @@ The state of a package is one of these:
 | any other                    | fails              |
 
 The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox, the Atom feed and the email digest of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". For a channel, the title ends with its name, such as "Hydra build fails on nixos-26.05". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
+
+## Search
+
+Each page has a search box in its header. Press <kbd>/</kbd> on any page to
+go to it. On a phone, the box is an icon that opens `/search`.
+
+A query that names one page opens that page at once:
+
+| You type                                  | It opens           |
+| ----------------------------------------- | ------------------ |
+| an attribute or a package name            | `/p/<attr>`        |
+| `nixos/<name>` or a module file           | `/m/<module file>` |
+| a nixpkgs path                            | `/a/<path>`        |
+| `@login`                                  | `/u/<login>`       |
+| `#123`, `123` or a link to a pull request | `/pr/123`          |
+
+Other text opens `/search?q=<text>`. It lists, in this order:
+
+- packages, NixOS modules and busy directories whose name holds the text;
+- maintainers whose login holds the text;
+- synced pull requests whose title holds the text (3 characters or more),
+  open ones first;
+- advisories with that id: a tracker code (`NIXPKGS-…`), a CVE or an OSV id
+  (`GHSA-…`), with the packages that they affect. Words never match an
+  advisory.
+
+`/api/v1/search` and the MCP tool `search` give the same lists.
 
 ## The risk score
 

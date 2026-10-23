@@ -107,7 +107,7 @@ pub(crate) fn valid_login(l: &str) -> bool {
 
 /// A directory only when something lives under it, so a typo still lists
 /// what contains it.
-fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
+pub(crate) fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
     match Subject::resolve(index, q)? {
         Subject::Area(p)
             if !s.open_by_dir.contains_key(&p)
@@ -1744,7 +1744,7 @@ fn contents(index: &Index, s: &Snapshot, h: &Health, path: &str) -> Vec<(Subject
     v
 }
 
-fn subject_rows(rows: &[(Subject, Flags)]) -> String {
+pub(crate) fn subject_rows(rows: &[(Subject, Flags)]) -> String {
     let mut out = String::new();
     for (sub, f) in rows.iter().take(LIST) {
         out.push_str(&subject_row(sub, f, "", ""));
@@ -1856,7 +1856,8 @@ struct Search {
 }
 
 /// Signed out, the catalog of nixpkgs. Signed in, a filter bar on top:
-/// what is yours, ranked, or all of nixpkgs.
+/// what is yours, ranked, or all of nixpkgs. A search of all of nixpkgs
+/// goes to `/search`, so old links keep working.
 async fn browse(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -1865,17 +1866,18 @@ async fn browse(
     use crate::mine::{Filter, Interests};
     let viewer = app.viewer(&headers);
     let q = search.q.unwrap_or_default().trim().to_string();
-    let Some(login) = viewer else {
-        return match catalog_body(&app, &q, false) {
-            Ok(body) => Page::new(Section::Packages, "Packages, modules and directories")
-                .icon(octicon!("package"))
-                .sub(CATALOG_SUB)
-                .body(body)
-                .render(&app, None),
-            Err(r) => r.into_response(),
-        };
-    };
     let filter = Filter::parse(search.filter.as_deref(), !q.is_empty());
+    if !q.is_empty() && (viewer.is_none() || filter == Filter::All) {
+        let to = format!("/search?q={}", crate::github::urlencode(&q));
+        return Redirect::to(&to).into_response();
+    }
+    let Some(login) = viewer else {
+        return Page::new(Section::Packages, "Packages, modules and directories")
+            .icon(octicon!("package"))
+            .sub(CATALOG_SUB)
+            .body(catalog_body(&app, false))
+            .render(&app, None);
+    };
     let interests = Interests::of(&app, &login);
     let all = {
         let index = app.index.read().unwrap();
@@ -1895,13 +1897,10 @@ async fn browse(
     .icon(octicon!("package"))
     .subnav(tabs);
     if filter == Filter::All {
-        return match catalog_body(&app, &q, true) {
-            Ok(body) => page
-                .sub(CATALOG_SUB)
-                .body(format!("{step}{body}"))
-                .render(&app, Some(&login)),
-            Err(r) => r.into_response(),
-        };
+        return page
+            .sub(CATALOG_SUB)
+            .body(format!("{step}{}", catalog_body(&app, true)))
+            .render(&app, Some(&login));
     }
     let v = crate::mine::view(
         &app,
@@ -1923,37 +1922,20 @@ async fn browse(
 
 const CATALOG_SUB: &str = "Each one has a page with its health, issues and pull requests. Watch the ones that are important to you.";
 
-/// The catalog: a search box, then the directories or the hits. A name
-/// that resolves, or `@login`, answers with a redirect.
-fn catalog_body(app: &crate::web::App, q: &str, signed_in: bool) -> Result<String, Redirect> {
+/// The catalog: the directories. The search box of the header finds the
+/// rest.
+fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
     let s = app.snap();
-    if let Some(login) = q.strip_prefix('@').filter(|l| valid_login(l)) {
-        return Err(Redirect::to(&format!("/u/{login}")));
-    }
-    let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    if let Some(href) = exact(&s, &index, q) {
-        return Err(Redirect::to(&href));
-    }
-    let mut out = format!(
-        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">{}\
-         <input class=\"form-control flex-auto\" name=\"q\" value=\"{}\" placeholder=\"hello, nixos/nginx, pkgs/development/python-modules, @login\" aria-label=\"search\"{}>\
-         <button class=\"btn\" type=\"submit\">{} Search</button></form>",
-        if signed_in {
-            "<input type=\"hidden\" name=\"filter\" value=\"all\">"
-        } else {
-            ""
-        },
-        esc(q),
-        if signed_in { "" } else { " autofocus" },
-        icon(octicon!("search"))
+    let mut out = String::from(
+        "<p class=\"color-fg-muted\">Use the search box at the top, or press <kbd>/</kbd>, to find a package, a module or a person.</p>",
     );
     if signed_in {
         out.push_str("<p><a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>");
     } else {
         out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>");
     }
-    if q.is_empty() {
+    {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();
         areas.extend(
             index
@@ -1984,26 +1966,13 @@ fn catalog_body(app: &crate::web::App, q: &str, signed_in: bool) -> Result<Strin
             })
             .collect();
         out.push_str(&crate::ui::section("Directories", None, None, &list));
-        return Ok(out);
     }
-    let rows: Vec<(Subject, Flags)> = search(&s, &index, q)
-        .into_iter()
-        .map(|sub| {
-            let f = Flags::of(&s, &index, &h, &sub);
-            (sub, f)
-        })
-        .collect();
-    if rows.is_empty() {
-        out.push_str("<div class=\"blankslate\"><p>Nothing matches.</p></div>");
-    } else {
-        let _ = write!(out, "<div class=\"Box\">{}</div>", subject_rows(&rows));
-    }
-    Ok(out)
+    out
 }
 
 /// What a name resolves to first, then packages, modules and busy
 /// directories whose name contains it.
-fn search(s: &Snapshot, index: &Index, q: &str) -> Vec<Subject> {
+pub(crate) fn search(s: &Snapshot, index: &Index, q: &str) -> Vec<Subject> {
     let ql = q.to_lowercase();
     let mut hits: Vec<Subject> = Vec::new();
     if let Some(sub) = Subject::resolve(index, q) {
@@ -2739,7 +2708,7 @@ pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
     })
 }
 
-fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {
+pub(crate) fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
@@ -2749,16 +2718,6 @@ fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {
             json!({ "key": sub.key(), "name": sub.label(), "flags": Flags::of(&s, &index, &h, sub).json() })
         })
         .collect()
-}
-
-/// The hits of `/packages?q=`, as JSON.
-pub(crate) fn search_value(app: &crate::web::App, q: &str) -> Value {
-    let hits = {
-        let s = app.snap();
-        let index = app.index.read().unwrap();
-        search(&s, &index, q.trim())
-    };
-    json!({ "query": q, "results": subject_list(app, &hits) })
 }
 
 /// Sends a name to the API of what it resolves to, so a client needs to know

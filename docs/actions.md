@@ -101,7 +101,7 @@ JSON-RPC 2.0 over the Streamable HTTP transport of the MCP specification
 
 | Tool             | Returns                                                                        |
 | ---------------- | ------------------------------------------------------------------------------ |
-| `search`         | packages, modules and areas that match a name, as `/api/v1/search`             |
+| `search`         | packages, modules, areas, people, PRs and advisories, as `/api/v1/search`      |
 | `package`        | one package, as `/api/v1/packages/<name>`                                      |
 | `module`         | one NixOS module, as `/api/v1/modules/<file>`; `nixos/<name>` also works       |
 | `area`           | one path of the tree, as `/api/v1/areas/<path>`                                |

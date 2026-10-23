@@ -241,6 +241,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::nixpkgs::routes())
         .merge(crate::api::routes())
         .merge(crate::catalog::routes())
+        .merge(crate::search::routes())
         .merge(crate::profile::routes())
         .merge(crate::actions::routes())
         .merge(crate::sets::routes())

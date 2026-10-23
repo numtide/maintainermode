@@ -16,7 +16,7 @@ Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are
 
 On these pages, no tab is current. The menu marks the current page.
 
-Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has three tabs: **Overview**, **Reviews** and **Maintains**. The Reviews tab shows the last reviews of the person and the result of each. It shows no score and no rank. Search for `@login` on `/packages` to open it.
+Only you see `/inbox` and the pages under `/me`. The server sends each answer there with `Cache-Control: private, no-store`. It does the same for `/packages` when you are signed in. `/u/<login>` is public, and it is the same for every viewer. It has three tabs: **Overview**, **Reviews** and **Maintains**. The Reviews tab shows the last reviews of the person and the result of each. It shows no score and no rank. Type `@login` in the search box at the top to open it.
 
 ## Needs you
 
@@ -152,7 +152,7 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 ## Your packages
 
-Signed out, `/packages` shows the catalog of nixpkgs: a search box and the directories. Signed in, it shows a filter bar on top. Each filter shows its count. The search box filters the list of the current filter.
+Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows a filter bar on top. Each filter shows its count. The "filter by name" box filters the list of the current filter.
 
 | Filter         | Address                     | What it shows                                                                |
 | -------------- | --------------------------- | ---------------------------------------------------------------------------- |
@@ -162,7 +162,7 @@ Signed out, `/packages` shows the catalog of nixpkgs: a search box and the direc
 | I watch        | `/packages?filter=watch`    | what you watch, a form to watch more, and a "Stop watching" button on each   |
 | All of nixpkgs | `/packages?filter=all`      | the catalog, as a visitor sees it                                            |
 
-A search with no filter, such as the search box of the home page, goes to All of nixpkgs.
+`/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
 
 **The order.** Mine puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". It also shows its health flags. Each filter shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
 

@@ -54,15 +54,6 @@ fn subject_rows(rows: &[(Subject, Flags)]) -> String {
         .collect()
 }
 
-fn search_box() -> String {
-    format!(
-        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-4\">\
-         <input class=\"form-control flex-auto\" name=\"q\" placeholder=\"a package, nixos/MODULE, a path or @login\" aria-label=\"search\">\
-         <button class=\"btn\" type=\"submit\">{} Search</button></form>",
-        icon(octicon!("search"))
-    )
-}
-
 /// Packages with an open advisory in master, the highest risk first.
 pub(crate) fn need_help(app: &App) -> Vec<(Subject, Flags)> {
     let s = app.snap();
@@ -94,7 +85,6 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     if out.is_empty() {
         out.push_str("<h1 class=\"sr-only\">Maintainer Mode</h1>");
     }
-    out.push_str(&search_box());
     let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).collect();
     out.push_str(&section(
         "Pull requests with no maintainer",

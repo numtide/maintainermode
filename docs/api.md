@@ -22,7 +22,7 @@ removed, not redirected.
 | `GET /api/v1/sets`                            | your named package sets and their output labels (private)        | `my_sets`        |
 | `GET /api/v1/inbox`                           | your inbox (private)                                             | `inbox`          |
 | `GET /api/v1/progress`                        | your progress, your goal and your badges (private)               | `progress`       |
-| `GET /api/v1/search`                          | packages, modules and areas that match a name                    | `search`         |
+| `GET /api/v1/search`                          | what the search box finds: packages, people, PRs, advisories     | `search`         |
 | `GET /api/v1/first`                           | packages for a first contribution, paged                         | `first_packages` |
 | `GET /api/v1/need-help`                       | packages with an open advisory, the highest risk first, paged    | `need_help`      |
 | `GET /api/v1/packages/<name>`                 | one package: health, issues and pull requests                    | `package`        |
@@ -335,6 +335,23 @@ output, or `output` without `set`, is a 404 with an `error`.
   labels of each package. They are empty without `--with-outputs`.
 - `scan`: the state of the last server scan (`last_at`, `scanned_at` and
   `error`), or `null`.
+
+## `GET /api/v1/search`
+
+It gives what the search box of the site finds for `q`.
+
+- `page`: the page that the site opens at once, or `null`. It is set for a
+  name with a page, `@login`, `#NUMBER` or a link to a pull request.
+- `results`: packages, NixOS modules and areas, each with `key`, `name` and
+  `flags`.
+- `people`: maintainers whose login holds the text, each with `login` and
+  `url`.
+- `pull_requests`: synced pull requests whose title holds the text (3
+  characters or more). Open ones come first. Each has `number`, `title`,
+  `state`, `draft` and `url`.
+- `advisories`: advisories with that id: a security tracker code
+  (`NIXPKGS-…`), a CVE or an OSV id (`GHSA-…`). Each has `id`, `title`,
+  `url` and `packages`. Words never match an advisory.
 
 ## `GET /api/v1/packages/index`
 
