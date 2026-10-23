@@ -51,16 +51,30 @@ merged in the synced window.
 
 Maintainer Mode asks Hydra for the last build when someone opens a package or module page. To protect hydra.nixos.org, it sends at most 4 requests at a time and at most 30 requests a minute. Over that limit, the page shows "not asked yet" and sends no request. An answer stays one hour. A job with no finished build also stays one hour. A request that fails stays five minutes. `/state?tab=status` shows the limits and how many page views were not asked. The JSON API gives `hydra_state` (`test_state` for a module): `build`, `no finished build`, `no answer` or `not asked yet`.
 
-The page asks `/api/latestbuilds?nr=3&project=…&jobset=…&job=…`. It shows the newest of these builds that was not aborted or cancelled. The time is the time Hydra queued the build: the API gives no finish time.
+The page asks `/api/latestbuilds?nr=30&project=…&jobset=…&job=…`: one request of about 6 KB for each jobset. It shows the newest of these builds that was not aborted or cancelled. The time is the time Hydra queued the build: the API gives no finish time.
+
+**The channels.** A package page shows one Hydra row for master and one for each channel that the server follows (see [operations.md](operations.md)). Each channel has its jobset:
+
+| Channel                                      | Hydra jobset                | Job of `hello`               |
+| -------------------------------------------- | --------------------------- | ---------------------------- |
+| master, `nixos-unstable`, `nixpkgs-unstable` | `nixpkgs/unstable`          | `hello.x86_64-linux`         |
+| `nixos-YY.MM`                                | `nixos/release-YY.MM`       | `nixpkgs.hello.x86_64-linux` |
+| `nixos-YY.MM-small`                          | `nixos/release-YY.MM-small` | `nixpkgs.hello.x86_64-linux` |
+
+A channel of another system, like `nixpkgs-26.05-darwin`, has no row.
+
+**The build history.** Each row shows the last 30 finished builds of the job as a strip, the oldest on the left. Green passed, red failed, grey was aborted or cancelled. Hover a cell for its status and time. The strip links to the job on Hydra. "N of M passed" counts the builds that were not aborted or cancelled. The JSON API gives `hydra_channels`: for each channel, `channel`, `jobset`, `job`, `state`, `build` (with `history`, the newest first), `passed` and `counted`.
 
 ### The build watch
 
-The server also follows the x86_64-linux builds of `nixpkgs/unstable` for each package that someone maintains or watches. "Someone" is a person who signed in, saved a setting or watches a package. Two sources keep the state, and both are small for hydra.nixos.org:
+The server also follows the x86_64-linux builds of each package that someone maintains or watches, on master and on each channel of the table above. "Someone" is a person who signed in, saved a setting or watches a package. Two sources keep the state, and both are small for hydra.nixos.org:
 
 - **The feed.** Every 5 minutes, the server asks `/api/latestbuilds` for the last 200 finished builds of `nixpkgs/unstable` on x86_64-linux, about 50 KB. When none of the 200 builds were seen before, it asks once more for 1,000.
-- **The sweep.** One job at a time, at most 10 requests a minute, the server asks for the last 3 builds of each tracked package. It asks for a package only when no build of it was seen for 24 hours.
+- **The sweep.** One job at a time, at most 10 requests a minute, the server asks for the last 3 builds of each tracked package in each jobset. It asks for a package only when no build of it in that jobset was seen for 24 hours.
 
 The feed sorts the builds by id, not by finish time. So a late build of a mass rebuild can fall out of the feed. The sweep finds it within a day. A build that a page view reads also counts.
+
+The feed is for master only. Without a job, `latestbuilds` can be very slow on some jobsets: on `nixos/trunk-combined`, one request took 642 seconds on 2026-10-23. Nothing tells in advance which jobsets are slow like that. So the channel jobsets get the sweep only, which always names a job.
 
 The state of a package is one of these:
 
@@ -71,7 +85,7 @@ The state of a package is one of these:
 | 3, 4, 9 (aborted, cancelled) | no change          |
 | any other                    | fails              |
 
-The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox, the Atom feed and the email digest of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
+The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox, the Atom feed and the email digest of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". For a channel, the title ends with its name, such as "Hydra build fails on nixos-26.05". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
 
 ## The risk score
 

@@ -1,15 +1,18 @@
-//! The Hydra build state of the packages that people maintain or watch,
-//! and its changes, which become inbox events.
+//! The Hydra build state of the packages that people maintain or watch, on
+//! master and on each active channel, and its changes, which become inbox
+//! events.
 //!
 //! Two sources, both small for hydra.nixos.org: a feed of the latest
 //! finished builds of `nixpkgs/unstable`, asked every 5 minutes, and a
 //! slow sweep that asks one job at a time. The feed is sorted by build id,
 //! not by finish time, so a late build of a mass rebuild can fall out of
-//! it; the sweep finds it within a day.
+//! it; the sweep finds it within a day. The feed is for master only:
+//! `latestbuilds` without a job on `nixos/trunk-combined` took 642 s on
+//! 2026-10-23, and nothing tells which jobsets are slow like that.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration as StdDuration;
@@ -28,7 +31,9 @@ const TICK: StdDuration = StdDuration::from_secs(6);
 const SWEEP_AFTER: Duration = Duration::hours(24);
 const TRACK_EVERY: u32 = 600;
 /// Three, so that a cancelled last build still shows the one before it.
-pub(crate) const JOB_ROWS: usize = 3;
+const JOB_ROWS: usize = 3;
+/// The builds a page shows: one request, about 6 KB.
+pub(crate) const HISTORY: usize = 30;
 const KEEP_DAYS: i64 = 45;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +73,90 @@ impl State {
     }
 }
 
+/// The Hydra jobset that builds the packages of a channel.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Jobset {
+    pub project: String,
+    pub name: String,
+    /// The job of `hello` is `nixpkgs.hello.x86_64-linux` in a NixOS
+    /// release jobset.
+    prefix: &'static str,
+}
+
+impl Jobset {
+    pub fn master() -> Jobset {
+        Jobset {
+            project: "nixpkgs".into(),
+            name: "unstable".into(),
+            prefix: "",
+        }
+    }
+
+    /// The unstable channels follow master; a channel of another system,
+    /// like `nixpkgs-26.05-darwin`, has none.
+    pub fn of_channel(channel: &str) -> Option<Jobset> {
+        if matches!(
+            channel,
+            "nixos-unstable" | "nixos-unstable-small" | "nixpkgs-unstable"
+        ) {
+            return Some(Jobset::master());
+        }
+        let rest = channel.strip_prefix("nixos-")?;
+        let version = rest.strip_suffix("-small").unwrap_or(rest);
+        let (y, m) = version.split_once('.')?;
+        let digits = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit());
+        (digits(y) && digits(m)).then(|| Jobset {
+            project: "nixos".into(),
+            name: format!("release-{rest}"),
+            prefix: "nixpkgs.",
+        })
+    }
+
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.project, self.name)
+    }
+
+    pub fn job(&self, attr: &str) -> String {
+        format!("{}{attr}.{SYSTEM}", self.prefix)
+    }
+
+    /// What [`crate::health::Hydra::last`] takes.
+    pub fn path(&self, attr: &str) -> String {
+        format!("{}/{}", self.key(), self.job(attr))
+    }
+
+    /// `hello.x86_64-linux` gives `hello`; another system gives nothing.
+    pub fn attr_of<'a>(&self, job: &'a str) -> Option<&'a str> {
+        job.strip_prefix(self.prefix)?
+            .strip_suffix(SYSTEM)?
+            .strip_suffix('.')
+    }
+
+    pub fn label(&self) -> String {
+        label(&self.key())
+    }
+}
+
+/// `nixos/release-26.05` is `nixos-26.05`; master is `unstable`.
+pub fn label(key: &str) -> String {
+    match key.strip_prefix("nixos/release-") {
+        Some(v) => format!("nixos-{v}"),
+        None if key == "nixpkgs/unstable" => "unstable".into(),
+        None => key.into(),
+    }
+}
+
+/// Master first, then the jobset of each configured channel, once each.
+pub fn jobsets(channels: &crate::channels::Channels) -> Vec<Jobset> {
+    let mut out = vec![Jobset::master()];
+    for c in &channels.list {
+        if let Some(j) = Jobset::of_channel(&c.name).filter(|j| !out.contains(j)) {
+            out.push(j);
+        }
+    }
+    out
+}
+
 /// One finished build, as `/api/latestbuilds` gives it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct Row {
@@ -77,27 +166,79 @@ pub struct Row {
     pub timestamp: Option<i64>,
 }
 
+/// One build of a job's history, the newest first.
+#[derive(Debug, Clone, Serialize)]
+pub struct Past {
+    pub id: u64,
+    /// Hydra's words for `buildstatus`.
+    pub status: &'static str,
+    /// None for an aborted or cancelled build.
+    pub state: Option<&'static str>,
+    /// When Hydra queued it.
+    pub at: Option<DateTime<Utc>>,
+}
+
+pub(crate) fn history(rows: &[Row]) -> Vec<Past> {
+    rows.iter()
+        .filter_map(|r| {
+            let code = r.buildstatus?;
+            Some(Past {
+                id: r.id,
+                status: crate::health::status_word(code),
+                state: State::of(code).map(State::key),
+                at: r.timestamp.and_then(|t| DateTime::from_timestamp(t, 0)),
+            })
+        })
+        .collect()
+}
+
+/// The builds that passed, and the builds that tell: aborted and
+/// cancelled ones do not count.
+pub fn passed(h: &[Past]) -> (usize, usize) {
+    let told: Vec<&Past> = h.iter().filter(|p| p.state.is_some()).collect();
+    let ok = told
+        .iter()
+        .filter(|p| p.state == Some(State::Passes.key()))
+        .count();
+    (ok, told.len())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Change {
+    pub jobset: String,
     pub attr: String,
     pub build: u64,
     pub state: State,
     pub at: DateTime<Utc>,
 }
 
-/// The state of each tracked package, in memory, and the builds that page
-/// views learned, kept until the background task stores them.
-#[derive(Default)]
+type Key = (String, String);
+
+/// The state of each tracked package on each jobset, in memory, and the
+/// builds that page views learned, kept until the background task stores
+/// them.
 pub struct Builds {
-    states: RwLock<HashMap<String, (u64, State)>>,
+    states: RwLock<HashMap<Key, (u64, State)>>,
+    jobsets: RwLock<Arc<Vec<Jobset>>>,
     tracked: RwLock<Arc<HashSet<String>>>,
-    pending: Mutex<Vec<(String, u64, i64)>>,
+    pending: Mutex<Vec<(String, String, u64, i64)>>,
     stats: Mutex<Stats>,
 }
 
-#[derive(Default, Clone, serde::Serialize)]
+impl Default for Builds {
+    fn default() -> Self {
+        Builds {
+            states: Default::default(),
+            jobsets: RwLock::new(Arc::new(vec![Jobset::master()])),
+            tracked: Default::default(),
+            pending: Default::default(),
+            stats: Default::default(),
+        }
+    }
+}
+
+#[derive(Default, Clone)]
 struct Stats {
-    tracked: usize,
     feed_requests: u64,
     feed_rows: u64,
     sweep_requests: u64,
@@ -107,39 +248,61 @@ struct Stats {
 }
 
 impl Builds {
-    pub fn state(&self, attr: &str) -> Option<State> {
-        self.states.read().unwrap().get(attr).map(|(_, s)| *s)
+    pub fn jobsets(&self) -> Arc<Vec<Jobset>> {
+        self.jobsets.read().unwrap().clone()
     }
 
-    /// The tracked packages whose last build is red.
-    pub fn red(&self, attrs: impl IntoIterator<Item = String>) -> HashMap<String, State> {
+    pub fn state(&self, jobset: &str, attr: &str) -> Option<State> {
+        self.states
+            .read()
+            .unwrap()
+            .get(&(jobset.to_string(), attr.to_string()))
+            .map(|(_, s)| *s)
+    }
+
+    /// The first jobset, in the order of [`jobsets`], where the last build
+    /// of `attr` is red, with its state.
+    pub fn red_on(&self, attr: &str) -> Option<(State, String)> {
         let states = self.states.read().unwrap();
+        self.jobsets().iter().find_map(|j| {
+            let s = states.get(&(j.key(), attr.to_string()))?.1;
+            s.red().then(|| (s, j.label()))
+        })
+    }
+
+    pub fn red(&self, attrs: impl IntoIterator<Item = String>) -> HashMap<String, (State, String)> {
         attrs
             .into_iter()
-            .filter_map(|a| {
-                let s = states.get(&a)?.1;
-                s.red().then_some((a, s))
-            })
+            .filter_map(|a| self.red_on(&a).map(|r| (a, r)))
             .collect()
     }
 
-    /// A page view learned a build; the background task stores it.
-    pub fn saw(&self, job: &str, id: u64, code: i64) {
-        let Some(attr) = attr_of(job) else { return };
+    /// A page view learned a build of `project/jobset/job`; the background
+    /// task stores it.
+    pub fn saw(&self, path: &str, id: u64, code: i64) {
+        let mut parts = path.splitn(3, '/');
+        let (Some(p), Some(n), Some(job)) = (parts.next(), parts.next(), parts.next()) else {
+            return;
+        };
+        let jobsets = self.jobsets();
+        let Some(j) = jobsets.iter().find(|j| j.project == p && j.name == n) else {
+            return;
+        };
+        let Some(attr) = j.attr_of(job) else { return };
         if !self.tracked.read().unwrap().contains(attr) {
             return;
         }
-        let mut p = self.pending.lock().unwrap();
-        if p.len() < 1000 {
-            p.push((attr.to_string(), id, code));
+        let mut pending = self.pending.lock().unwrap();
+        if pending.len() < 1000 {
+            pending.push((j.key(), attr.to_string(), id, code));
         }
     }
 
     pub fn stats(&self) -> serde_json::Value {
-        let mut s = self.stats.lock().unwrap().clone();
-        s.tracked = self.tracked.read().unwrap().len();
+        let s = self.stats.lock().unwrap().clone();
         serde_json::json!({
-            "tracked": s.tracked,
+            "tracked": self.tracked.read().unwrap().len(),
+            "jobsets": self.jobsets().iter().map(Jobset::key).collect::<Vec<_>>(),
             "feed_requests": s.feed_requests,
             "feed_rows": s.feed_rows,
             "sweep_requests": s.sweep_requests,
@@ -156,47 +319,40 @@ impl Builds {
     fn record(
         &self,
         store: &crate::store::Store,
+        jobset: &str,
         attr: &str,
         id: u64,
         code: i64,
         now: DateTime<Utc>,
     ) -> Option<Change> {
-        let state = State::of(code);
-        let before = self.states.read().unwrap().get(attr).copied();
+        let key = (jobset.to_string(), attr.to_string());
+        let before = self.states.read().unwrap().get(&key).copied();
         if before.is_some_and(|(b, _)| b > id) {
             return None;
         }
-        let Some(state) = state else {
-            let _ = store.hydra_checked(attr, now);
+        let Some(state) = State::of(code) else {
+            let _ = store.hydra_checked(jobset, attr, now);
             return None;
         };
         let change = before
             .filter(|(b, s)| *b < id && *s != state)
             .map(|_| Change {
+                jobset: jobset.to_string(),
                 attr: attr.to_string(),
                 build: id,
                 state,
                 at: now,
             });
-        if let Err(e) = store.put_hydra_state(attr, id, state, now, change.as_ref()) {
-            tracing::warn!("hydra state {attr}: {e:#}");
+        if let Err(e) = store.put_hydra_state(jobset, attr, id, state, now, change.as_ref()) {
+            tracing::warn!("hydra state {jobset} {attr}: {e:#}");
             return None;
         }
-        self.states
-            .write()
-            .unwrap()
-            .insert(attr.to_string(), (id, state));
+        self.states.write().unwrap().insert(key, (id, state));
         if change.is_some() {
             self.stats.lock().unwrap().changes += 1;
         }
         change
     }
-}
-
-/// `hello.x86_64-linux` gives `hello`; another system gives nothing.
-pub(crate) fn attr_of(job: &str) -> Option<&str> {
-    let job = job.rsplit_once('/').map_or(job, |(_, j)| j);
-    job.strip_suffix(SYSTEM)?.strip_suffix('.')
 }
 
 /// The packages that someone who uses the site maintains or watches.
@@ -222,10 +378,13 @@ fn tracked(app: &App) -> HashSet<String> {
     out
 }
 
-fn latest_url(base: &str, job: Option<&str>, rows: usize) -> String {
-    let mut url = format!("{base}/api/latestbuilds?nr={rows}&project=nixpkgs&jobset=unstable");
+pub(crate) fn latest_url(base: &str, j: &Jobset, job: Option<&str>, rows: usize) -> String {
+    let mut url = format!(
+        "{base}/api/latestbuilds?nr={rows}&project={}&jobset={}",
+        j.project, j.name
+    );
     match job {
-        Some(j) => url.push_str(&format!("&job={}", crate::github::urlencode(j))),
+        Some(job) => url.push_str(&format!("&job={}", crate::github::urlencode(job))),
         None => url.push_str(&format!("&system={SYSTEM}")),
     }
     url
@@ -256,28 +415,30 @@ fn fresh(rows: &[Row], seen_max: u64) -> (Vec<&Row>, bool) {
 }
 
 async fn feed(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
+    let master = Jobset::master();
     let seen_max: u64 = app
         .store
         .get("hydra_feed_max")?
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let mut rows = fetch(http, &latest_url(base, None, FEED_ROWS)).await?;
+    let mut rows = fetch(http, &latest_url(base, &master, None, FEED_ROWS)).await?;
     let mut requests = 1;
     if !fresh(&rows, seen_max).1 {
-        rows = fetch(http, &latest_url(base, None, FEED_ROWS_MORE)).await?;
+        rows = fetch(http, &latest_url(base, &master, None, FEED_ROWS_MORE)).await?;
         requests += 1;
     }
     let tracked = app.hydra.builds.tracked.read().unwrap().clone();
     let now = Utc::now();
-    let (new, _) = fresh(&rows, seen_max);
-    let mut sorted = new;
-    sorted.sort_by_key(|r| r.id);
-    for r in &sorted {
-        let (Some(attr), Some(code)) = (attr_of(&r.job), r.buildstatus) else {
+    let (mut new, _) = fresh(&rows, seen_max);
+    new.sort_by_key(|r| r.id);
+    for r in &new {
+        let (Some(attr), Some(code)) = (master.attr_of(&r.job), r.buildstatus) else {
             continue;
         };
         if tracked.contains(attr) {
-            app.hydra.builds.record(&app.store, attr, r.id, code, now);
+            app.hydra
+                .builds
+                .record(&app.store, &master.key(), attr, r.id, code, now);
         }
     }
     if let Some(max) = rows.iter().map(|r| r.id).max().filter(|m| *m > seen_max) {
@@ -292,25 +453,35 @@ async fn feed(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
 
 async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool> {
     let tracked = app.hydra.builds.tracked.read().unwrap().clone();
+    let jobsets = app.hydra.builds.jobsets();
     let now = Utc::now();
     let checked = app.store.hydra_checked_at()?;
-    let due = tracked
+    let due = jobsets
         .iter()
-        .filter(|a| checked.get(*a).is_none_or(|t| now - *t >= SWEEP_AFTER))
-        .min_by_key(|a| (checked.get(*a).copied(), (*a).clone()));
-    let Some(attr) = due.cloned() else {
+        .flat_map(|j| tracked.iter().map(move |a| (j, a)))
+        .map(|(j, a)| {
+            let at = checked.get(&(j.key(), a.clone())).copied();
+            (at, j, a)
+        })
+        .filter(|(at, ..)| at.is_none_or(|t| now - t >= SWEEP_AFTER))
+        .min_by(|x, y| (x.0, x.2, x.1.key()).cmp(&(y.0, y.2, y.1.key())));
+    let Some((_, j, attr)) = due else {
         return Ok(false);
     };
     app.hydra.builds.stats.lock().unwrap().sweep_requests += 1;
-    let job = format!("{attr}.{SYSTEM}");
-    let rows = fetch(http, &latest_url(base, Some(&job), JOB_ROWS)).await?;
+    let rows = fetch(http, &latest_url(base, j, Some(&j.job(attr)), JOB_ROWS)).await?;
     match telling(&rows) {
         Some(r) => {
-            app.hydra
-                .builds
-                .record(&app.store, &attr, r.id, r.buildstatus.unwrap_or(1), now);
+            app.hydra.builds.record(
+                &app.store,
+                &j.key(),
+                attr,
+                r.id,
+                r.buildstatus.unwrap_or(1),
+                now,
+            );
         }
-        None => app.store.hydra_checked(&attr, now)?,
+        None => app.store.hydra_checked(&j.key(), attr, now)?,
     }
     Ok(true)
 }
@@ -318,8 +489,10 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
 fn flush(app: &App) {
     let pending = std::mem::take(&mut *app.hydra.builds.pending.lock().unwrap());
     let now = Utc::now();
-    for (attr, id, code) in pending {
-        app.hydra.builds.record(&app.store, &attr, id, code, now);
+    for (jobset, attr, id, code) in pending {
+        app.hydra
+            .builds
+            .record(&app.store, &jobset, &attr, id, code, now);
     }
 }
 
@@ -327,12 +500,18 @@ fn load(app: &App) {
     match app.store.hydra_states() {
         Ok(list) => {
             let mut states = app.hydra.builds.states.write().unwrap();
-            for (attr, build, state) in list {
-                states.insert(attr, (build, state));
+            for (jobset, attr, build, state) in list {
+                states.insert((jobset, attr), (build, state));
             }
         }
         Err(e) => tracing::warn!("hydra states: {e:#}"),
     }
+}
+
+/// The channels resolve after the start, so the jobsets follow them.
+fn refresh(app: &App) {
+    let j = jobsets(&app.channels.read().unwrap());
+    *app.hydra.builds.jobsets.write().unwrap() = Arc::new(j);
 }
 
 pub async fn run(app: Arc<App>) {
@@ -349,6 +528,7 @@ async fn run_with(app: Arc<App>, base: String) {
     let mut tick: u32 = 0;
     loop {
         if tick.is_multiple_of(TRACK_EVERY) {
+            refresh(&app);
             let a = app.clone();
             if let Ok(t) = tokio::task::spawn_blocking(move || tracked(&a)).await {
                 *app.hydra.builds.tracked.write().unwrap() = Arc::new(t);
@@ -375,11 +555,16 @@ async fn run_with(app: Arc<App>, base: String) {
     }
 }
 
-fn title(state: State) -> &'static str {
-    match state {
+fn title(c: &Change) -> String {
+    let what = match c.state {
         State::Passes => "Hydra build fixed",
         State::Fails => "Hydra build fails",
         State::DependencyFails => "Hydra build fails: a dependency fails",
+    };
+    if c.jobset == Jobset::master().key() {
+        what.into()
+    } else {
+        format!("{what} on {}", label(&c.jobset))
     }
 }
 
@@ -392,8 +577,8 @@ pub(crate) fn events(app: &App, attrs: &BTreeSet<String>, since: DateTime<Utc>) 
         .filter(|c| attrs.contains(&c.attr))
         .map(|c| Event {
             at: c.at,
-            id: format!("hydra-{}-{}", c.attr, c.build),
-            title: title(c.state).to_string(),
+            id: format!("hydra-{}-{}-{}", label(&c.jobset), c.attr, c.build),
+            title: title(&c),
             url: format!("{}/build/{}", crate::health::HYDRA, c.build),
             subject: c.attr,
         })
@@ -419,8 +604,20 @@ mod tests {
     use super::*;
     use crate::store::Store;
 
+    const MASTER: &str = "nixpkgs/unstable";
+    const STABLE: &str = "nixos/release-26.05";
+
     fn store() -> Store {
         Store::open(std::path::Path::new(":memory:")).unwrap()
+    }
+
+    fn row(id: u64, job: &str, code: i64) -> Row {
+        Row {
+            id,
+            job: job.into(),
+            buildstatus: Some(code),
+            timestamp: None,
+        }
     }
 
     #[test]
@@ -438,14 +635,42 @@ mod tests {
     }
 
     #[test]
-    fn a_job_gives_its_attribute_on_this_system_only() {
-        assert_eq!(attr_of("hello.x86_64-linux"), Some("hello"));
+    fn each_channel_has_its_jobset_and_job_names() {
+        let unstable = Jobset::of_channel("nixos-unstable").unwrap();
+        assert_eq!(unstable, Jobset::master());
         assert_eq!(
-            attr_of("nixpkgs/unstable/python3Packages.foo.x86_64-linux"),
+            unstable.path("hello"),
+            "nixpkgs/unstable/hello.x86_64-linux"
+        );
+        let stable = Jobset::of_channel("nixos-26.05").unwrap();
+        assert_eq!(stable.key(), STABLE);
+        assert_eq!(stable.job("hello"), "nixpkgs.hello.x86_64-linux");
+        assert_eq!(stable.label(), "nixos-26.05");
+        assert_eq!(stable.attr_of("nixpkgs.hello.x86_64-linux"), Some("hello"));
+        assert_eq!(stable.attr_of("hello.x86_64-linux"), None);
+        assert_eq!(
+            Jobset::of_channel("nixos-26.05-small").unwrap().key(),
+            "nixos/release-26.05-small"
+        );
+        for other in ["nixpkgs-26.05-darwin", "nixos-26.5", "stable", ""] {
+            assert_eq!(Jobset::of_channel(other), None, "{other}");
+        }
+        assert_eq!(
+            unstable.attr_of("python3Packages.foo.x86_64-linux"),
             Some("python3Packages.foo")
         );
-        assert_eq!(attr_of("hello.aarch64-linux"), None);
-        assert_eq!(attr_of("unstable"), None);
+        assert_eq!(unstable.attr_of("hello.aarch64-linux"), None);
+        let ch = crate::channels::Channels {
+            list: ["nixos-unstable", "nixos-26.05", "", "nixos-26.05"]
+                .iter()
+                .map(|n| crate::channels::Channel {
+                    name: n.to_string(),
+                    ..Default::default()
+                })
+                .collect(),
+        };
+        let keys: Vec<String> = jobsets(&ch).iter().map(Jobset::key).collect();
+        assert_eq!(keys, [MASTER, STABLE]);
     }
 
     #[test]
@@ -453,18 +678,31 @@ mod tests {
         let s = store();
         let b = Builds::default();
         let t = Utc::now();
-        assert_eq!(b.record(&s, "a", 10, 0, t), None);
-        assert_eq!(b.record(&s, "a", 11, 0, t), None);
-        assert_eq!(b.record(&s, "a", 12, 4, t), None);
-        assert_eq!(b.state("a"), Some(State::Passes));
-        let c = b.record(&s, "a", 13, 1, t).unwrap();
+        assert_eq!(b.record(&s, MASTER, "a", 10, 0, t), None);
+        assert_eq!(b.record(&s, MASTER, "a", 11, 0, t), None);
+        assert_eq!(b.record(&s, MASTER, "a", 12, 4, t), None);
+        assert_eq!(b.state(MASTER, "a"), Some(State::Passes));
+        let c = b.record(&s, MASTER, "a", 13, 1, t).unwrap();
         assert_eq!((c.build, c.state), (13, State::Fails));
-        assert_eq!(b.record(&s, "a", 9, 0, t), None, "an older build");
-        assert_eq!(b.state("a"), Some(State::Fails));
-        assert_eq!(b.record(&s, "a", 13, 1, t), None, "the same build again");
-        let c = b.record(&s, "a", 14, 2, t).unwrap();
+        assert_eq!(b.record(&s, MASTER, "a", 9, 0, t), None, "an older build");
+        assert_eq!(b.state(MASTER, "a"), Some(State::Fails));
+        assert_eq!(
+            b.record(&s, MASTER, "a", 13, 1, t),
+            None,
+            "the same build again"
+        );
+        let c = b.record(&s, MASTER, "a", 14, 2, t).unwrap();
         assert_eq!(c.state, State::DependencyFails);
-        assert_eq!(b.record(&s, "a", 15, 0, t).unwrap().state, State::Passes);
+        assert_eq!(
+            b.record(&s, MASTER, "a", 15, 0, t).unwrap().state,
+            State::Passes
+        );
+        assert_eq!(
+            b.record(&s, STABLE, "a", 8, 1, t),
+            None,
+            "each jobset starts alone"
+        );
+        assert_eq!(b.state(STABLE, "a"), Some(State::Fails));
         let changes = s.hydra_changes(t - Duration::hours(1)).unwrap();
         assert_eq!(
             changes.iter().map(|c| c.build).collect::<Vec<_>>(),
@@ -475,24 +713,41 @@ mod tests {
             .hydra_states()
             .unwrap()
             .into_iter()
-            .map(|(a, b, st)| (a, (b, st)))
+            .map(|(j, a, b, st)| ((j, a), (b, st)))
             .collect();
-        assert_eq!(again.state("a"), Some(State::Passes));
+        assert_eq!(again.state(MASTER, "a"), Some(State::Passes));
+        assert_eq!(again.state(STABLE, "a"), Some(State::Fails));
+    }
+
+    #[test]
+    fn red_names_the_first_jobset_where_the_build_is_red() {
+        let s = store();
+        let b = Builds::default();
+        *b.jobsets.write().unwrap() = Arc::new(vec![
+            Jobset::master(),
+            Jobset::of_channel("nixos-26.05").unwrap(),
+        ]);
+        let t = Utc::now();
+        b.record(&s, MASTER, "a", 1, 0, t);
+        b.record(&s, STABLE, "a", 2, 2, t);
+        b.record(&s, MASTER, "b", 3, 1, t);
+        b.record(&s, STABLE, "b", 4, 1, t);
+        let red = b.red(["a".to_string(), "b".to_string(), "c".to_string()]);
+        assert_eq!(
+            red["a"],
+            (State::DependencyFails, "nixos-26.05".to_string())
+        );
+        assert_eq!(red["b"], (State::Fails, "unstable".to_string()));
+        assert!(!red.contains_key("c"));
     }
 
     #[test]
     fn the_feed_asks_for_more_only_when_it_does_not_reach_back() {
-        let rows = |ids: &[u64]| -> Vec<Row> {
-            ids.iter()
-                .map(|&id| Row {
-                    id,
-                    job: "a.x86_64-linux".into(),
-                    buildstatus: Some(0),
-                    timestamp: None,
-                })
-                .collect()
-        };
-        let r = rows(&[30, 20, 10]);
+        let r = vec![
+            row(30, "a.x86_64-linux", 0),
+            row(20, "a.x86_64-linux", 0),
+            row(10, "a.x86_64-linux", 0),
+        ];
         let (new, reaches) = fresh(&r, 20);
         assert_eq!(new.len(), 1);
         assert!(reaches);
@@ -502,21 +757,26 @@ mod tests {
 
     #[test]
     fn a_cancelled_last_build_shows_the_one_before() {
-        let r = vec![
-            Row {
-                id: 3,
-                job: "a.x86_64-linux".into(),
-                buildstatus: Some(4),
-                timestamp: None,
-            },
-            Row {
-                id: 2,
-                job: "a.x86_64-linux".into(),
-                buildstatus: Some(1),
-                timestamp: None,
-            },
-        ];
+        let r = vec![row(3, "a.x86_64-linux", 4), row(2, "a.x86_64-linux", 1)];
         assert_eq!(telling(&r).unwrap().id, 2);
+    }
+
+    #[test]
+    fn the_history_counts_the_builds_that_tell() {
+        let h = history(&[
+            row(5, "a", 0),
+            row(4, "a", 4),
+            row(3, "a", 1),
+            row(2, "a", 0),
+            Row {
+                buildstatus: None,
+                ..row(1, "a", 0)
+            },
+        ]);
+        assert_eq!(h.len(), 4, "an unfinished build is left out");
+        assert_eq!(h[1].state, None);
+        assert_eq!(h[2].status, "failed");
+        assert_eq!(passed(&h), (2, 3));
     }
 
     /// A Hydra stand-in that answers each request with the next body.
@@ -566,22 +826,26 @@ mod tests {
         .await;
         let http = reqwest::Client::new();
         feed(&app, &http, &base).await.unwrap();
-        assert_eq!(app.hydra.builds.state("hello"), Some(State::Passes));
-        assert_eq!(app.hydra.builds.state("other"), None, "not tracked");
+        assert_eq!(app.hydra.builds.state(MASTER, "hello"), Some(State::Passes));
+        assert_eq!(app.hydra.builds.state(MASTER, "other"), None, "not tracked");
         feed(&app, &http, &base).await.unwrap();
-        assert_eq!(app.hydra.builds.state("hello"), Some(State::Fails));
+        assert_eq!(app.hydra.builds.state(MASTER, "hello"), Some(State::Fails));
         let since = Utc::now() - Duration::hours(1);
         let attrs: BTreeSet<String> = ["hello".to_string()].into_iter().collect();
         let ev = events(&app, &attrs, since);
         assert_eq!(ev.len(), 1);
-        assert_eq!(ev[0].id, "hydra-hello-7");
+        assert_eq!(ev[0].id, "hydra-unstable-hello-7");
+        assert_eq!(
+            crate::notify::Kind::of(&ev[0].id),
+            crate::notify::Kind::Build
+        );
         assert_eq!(ev[0].title, "Hydra build fails");
         assert!(ev[0].url.ends_with("/build/7"));
         assert!(events(&app, &BTreeSet::new(), since).is_empty());
         app.store.set("hydra_feed_max", "8").unwrap();
         feed(&app, &http, &base).await.unwrap();
         assert_eq!(
-            app.hydra.builds.state("hello"),
+            app.hydra.builds.state(MASTER, "hello"),
             Some(State::Passes),
             "the 200 rows did not reach back, so the feed asked for 1000"
         );
@@ -589,24 +853,53 @@ mod tests {
         assert_eq!(asked.len(), 4);
         assert!(asked[0].contains("nr=200&project=nixpkgs&jobset=unstable&system=x86_64-linux"));
         assert!(asked[3].contains("nr=1000"), "{asked:?}");
+
+        *app.hydra.builds.jobsets.write().unwrap() = Arc::new(vec![
+            Jobset::master(),
+            Jobset::of_channel("nixos-26.05").unwrap(),
+        ]);
         let (base, asked) = hydra(vec![
-            r#"[{"id":20,"job":"hello.x86_64-linux","buildstatus":4},{"id":19,"job":"hello.x86_64-linux","buildstatus":0}]"#,
+            r#"[{"id":31,"job":"nixpkgs.hello.x86_64-linux","buildstatus":0}]"#,
+            r#"[{"id":32,"job":"nixpkgs.hello.x86_64-linux","buildstatus":1}]"#,
         ])
         .await;
-        app.store
-            .hydra_checked("hello", Utc::now() - Duration::days(2))
-            .unwrap();
         assert!(sweep_one(&app, &http, &base).await.unwrap());
-        assert_eq!(app.hydra.builds.state("hello"), Some(State::Passes));
+        assert_eq!(app.hydra.builds.state(STABLE, "hello"), Some(State::Passes));
         assert!(
             asked.lock().unwrap()[0]
-                .contains("nr=3&project=nixpkgs&jobset=unstable&job=hello.x86_64-linux")
+                .contains("nr=3&project=nixos&jobset=release-26.05&job=nixpkgs.hello.x86_64-linux")
         );
         assert!(
             !sweep_one(&app, &http, &base).await.unwrap(),
-            "checked less than a day ago"
+            "both jobsets were checked less than a day ago"
         );
+        app.store
+            .hydra_checked(STABLE, "hello", Utc::now() - Duration::days(2))
+            .unwrap();
+        assert!(sweep_one(&app, &http, &base).await.unwrap());
         let ev = events(&app, &attrs, since);
-        assert_eq!(ev[0].title, "Hydra build fixed");
+        assert_eq!(ev[0].title, "Hydra build fails on nixos-26.05");
+        assert_eq!(ev[0].id, "hydra-nixos-26.05-hello-32");
+        assert_eq!(
+            app.hydra.builds.red_on("hello"),
+            Some((State::Fails, "nixos-26.05".into()))
+        );
+
+        app.hydra
+            .builds
+            .saw("nixos/release-26.05/nixpkgs.hello.x86_64-linux", 33, 0);
+        app.hydra
+            .builds
+            .saw("nixos/release-26.05/nixpkgs.other.x86_64-linux", 34, 1);
+        app.hydra
+            .builds
+            .saw("nixos/trunk-combined/nixos.tests.foo.x86_64-linux", 35, 1);
+        assert_eq!(app.hydra.builds.pending.lock().unwrap().len(), 1);
+        flush(&app);
+        assert_eq!(
+            app.hydra.builds.red_on("hello"),
+            None,
+            "a page view saw it fixed"
+        );
     }
 }
