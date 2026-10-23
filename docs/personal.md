@@ -324,6 +324,23 @@ Sign in, and `/review` opens on **For you**. For you looks at the packages of yo
 
 Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these tabs are not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
 
+**Why a pull request is here.** For you, No maintainer and All list only the pull requests of authors who are [in the queues](rules.md#2-whose-pull-requests-appear): in the last 60 days, they reviewed the pull requests of 3 or more other authors. The subtitle of these tabs says so. Each row of For you also says why it is yours, for example "on your machines: curl · you maintain: hello · you watch: nginx". The kinds are: on your machines, you maintain, you own in ci/OWNERS, you changed this year, your tag, and you watch. The page of a pull request shows the same in "Why it is here", with the number of other authors whose pull requests the author reviewed.
+
+**Hide.** Signed in, each row of For you, No maintainer, First-timers and All has a **Hide** button (key `e`). A hidden pull request leaves these tabs and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the tab, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Bumps do not hide anything.
+
+**Sort and filter.** Above the list of For you, No maintainer, First-timers and All, a bar narrows and orders it. Each choice is a parameter of the address, so you can keep a link to a view:
+
+| Parameter   | Values                                  | What it does                                           |
+| ----------- | --------------------------------------- | ------------------------------------------------------ |
+| `q`         | text                                    | titles with a word that starts with the text           |
+| `sort`      | `oldest`, `newest`, `updated`           | the order; without it, the order of the tab            |
+| `checks`    | `pass`, `fail`, `pending`               | the state of the checks of the head commit             |
+| `reviews`   | `none`, `some`                          | no review by another person yet, or one or more        |
+| `conflicts` | `hide`                                  | drops the pull requests with a conflict                |
+| `base`      | a branch, such as `master` or `staging` | one base branch; the bar lists the branches of the tab |
+
+"Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for these queues. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
+
 The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own MCP token asks for your login. Then the answer has the rows and the order of the tab. In all other cases only your public area counts, in number order. See [api.md](api.md).
 
 ### First-timers

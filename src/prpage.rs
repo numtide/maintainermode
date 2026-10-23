@@ -1193,7 +1193,15 @@ fn about(pr: &Pr) -> String {
     out
 }
 
-fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
+/// `here` says why the pull request is in its queue and, for the viewer,
+/// in For you; `hide` is the viewer's Hide or Show again button.
+fn place_html(
+    p: &Place,
+    credits: &[&Credit],
+    for_you: bool,
+    here: &[String],
+    hide: &str,
+) -> String {
     let mut out = String::from(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">In Maintainer Mode</h2></div>",
     );
@@ -1212,7 +1220,10 @@ fn place_html(p: &Place, credits: &[&Credit], for_you: bool) -> String {
         }
         _ => "<span class=\"color-fg-muted\">in no queue</span>".to_string(),
     };
-    out.push_str(&kv("Queue", &queue));
+    out.push_str(&kv("Queue", &format!("{queue}{hide}")));
+    if !here.is_empty() {
+        out.push_str(&kv("Why it is here", &esc(&here.join("; "))));
+    }
     if !p.why.is_empty() {
         out.push_str(&kv(
             if p.queue == "merge" {
@@ -1672,13 +1683,44 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         run
     );
     let place = place(&s, pr);
-    let for_you = place.queue == "review"
-        && viewer.as_deref().is_some_and(|v| {
-            let watched = crate::web::watched_of(&app, Some(v));
-            crate::web::review_bucket(&s, Some(v), Some(&watched), "foryou")
-                .iter()
-                .any(|e| e.number == n)
-        });
+    let mine_why: Option<Vec<String>> = viewer.as_deref().and_then(|v| {
+        crate::mine::for_you_why(&app, &s, v)
+            .into_iter()
+            .find(|(e, _)| e.number == n)
+            .map(|(_, w)| w)
+    });
+    let for_you = place.queue == "review" && mine_why.is_some();
+    let mut here = Vec::new();
+    if place.queue != "none" {
+        let n_authors = s
+            .ledger
+            .people
+            .get(&pr.author)
+            .map_or(0, |p| p.counterparties);
+        here.push(format!(
+            "its author reviewed the pull requests of {n_authors} other authors in the last {} days ({} needed)",
+            ledger::WINDOW_DAYS,
+            ledger::MIN_COUNTERPARTIES
+        ));
+    }
+    if for_you {
+        here.extend(mine_why.unwrap_or_default());
+    }
+    let hide = match viewer.as_deref() {
+        Some(v) if pr.is_open() => {
+            let hidden = app.store.hidden_prs(v).unwrap_or_default().contains(&n);
+            format!(
+                "{}{}",
+                if hidden {
+                    " · <span class=\"color-fg-muted\">hidden from your review lists</span>"
+                } else {
+                    ""
+                },
+                crate::review::hide_button(n, hidden, &format!("/pr/{n}"), false)
+            )
+        }
+        _ => String::new(),
+    };
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
     let act = Act::of(&app, viewer.as_deref());
     let author = crate::profile::facts(&app, &s, &pr.author);
@@ -1747,7 +1789,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     ));
     out.push_str(&description_html(pr, &talk));
     out.push_str(&about(pr));
-    out.push_str(&place_html(&place, &credits, for_you));
+    out.push_str(&place_html(&place, &credits, for_you, &here, &hide));
     out.push_str(&touched_html(&list));
     out.push_str(&checklist(pr));
     out.push_str(&files_html(pr, &files));

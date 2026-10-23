@@ -23,6 +23,8 @@ public /review?tab=bumps
 public /review?tab=all
 both /review?tab=ready
 signed-in /review?tab=foryou
+signed-in /review?tab=foryou&hidden=1
+both /review?tab=all&sort=newest&checks=fail
 public /state
 public /state?tab=rules
 public /state?tab=docs

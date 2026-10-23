@@ -111,7 +111,7 @@ fn people(index: &Index, ql: &str) -> Vec<String> {
 }
 
 /// `hel` finds "hello: 2.12.1 -> 2.12.2" but not "add shell completions".
-fn at_word(text: &str, ql: &str) -> bool {
+pub(crate) fn at_word(text: &str, ql: &str) -> bool {
     text.match_indices(ql).any(|(i, _)| {
         !text[..i]
             .chars()

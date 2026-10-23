@@ -97,7 +97,7 @@ pub(crate) struct Endpoint {
 pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/prs",
-        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view.",
+        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. The review queues (foryou, unowned, firsttime, all) take sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login they leave out what you hid, and foryou rows have why.",
         params: &[
             opt("queue", Type::OneOf(&QUEUES), "the queue: all by default"),
             opt(
@@ -109,6 +109,36 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 "login",
                 Type::Text,
                 "whose queue, for foryou and bumps; for foryou, the caller by default",
+            ),
+            opt(
+                "sort",
+                Type::OneOf(&crate::review::SORTS),
+                "for a review queue: the order of the tab by default",
+            ),
+            opt(
+                "checks",
+                Type::OneOf(&crate::review::CHECKS),
+                "for a review queue: keep the pull requests whose checks pass, fail or are pending",
+            ),
+            opt(
+                "reviews",
+                Type::OneOf(&crate::review::REVIEWS),
+                "for a review queue: none keeps those with no review by another person yet",
+            ),
+            opt(
+                "conflicts",
+                Type::OneOf(&crate::review::CONFLICTS),
+                "for a review queue: hide drops those with a conflict",
+            ),
+            opt(
+                "base",
+                Type::Text,
+                "for a review queue: keep one base branch, like master or staging",
+            ),
+            opt(
+                "q",
+                Type::Text,
+                "for a review queue: keep the titles with a word that starts with this text",
             ),
             LIMIT_P,
             CURSOR_P,
@@ -423,6 +453,14 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
         By(&["/api/v1/prs?queue=bumps&login=<login>"]),
     ),
     ("/review?tab=all", By(&["/api/v1/prs?queue=all"])),
+    (
+        "/review?tab=all&sort=newest&checks=fail",
+        By(&["/api/v1/prs?queue=all&sort=newest&checks=fail"]),
+    ),
+    (
+        "/review?tab=foryou&hidden=1",
+        Without("the API leaves out what you hid and gives its count as hidden"),
+    ),
     ("/review?tab=ready", By(&["/api/v1/prs?queue=ready"])),
     (
         "/review?tab=ready&section=yours",
@@ -656,6 +694,11 @@ pub(crate) fn is_private(path: &str) -> bool {
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Args {
     pub queue: Option<String>,
+    pub sort: Option<String>,
+    pub checks: Option<String>,
+    pub reviews: Option<String>,
+    pub conflicts: Option<String>,
+    pub base: Option<String>,
     pub section: Option<String>,
     pub login: Option<String>,
     pub mood: Option<String>,
@@ -1045,12 +1088,54 @@ pub(crate) fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs
                 return Err("queue=foryou needs login, a session or an MCP token".into());
             }
             private = own;
+            let mut why: std::collections::HashMap<u64, Vec<String>> = Default::default();
             let entries = match login {
-                Some(l) if own && queue == "foryou" => crate::mine::for_you(app, &s, l),
+                Some(l) if own && queue == "foryou" => crate::mine::for_you_why(app, &s, l)
+                    .into_iter()
+                    .map(|(e, w)| {
+                        why.insert(e.number, w);
+                        e
+                    })
+                    .collect(),
                 _ => crate::web::review_bucket(&s, login, None, queue),
             };
-            out = page(&entries, q.limit, q.cursor.as_deref())?;
+            let hidden = match login {
+                Some(l) if own => app.store.hidden_prs(l).unwrap_or_default(),
+                _ => Default::default(),
+            };
+            let n_hidden = entries
+                .iter()
+                .filter(|e| hidden.contains(&e.number))
+                .count();
+            let opts = crate::review::Opts {
+                sort: q.sort.clone(),
+                checks: q.checks.clone(),
+                reviews: q.reviews.clone(),
+                conflicts: q.conflicts.clone(),
+                base: q.base.clone(),
+                q: q.q.clone(),
+            };
+            let entries = opts.apply(
+                entries
+                    .into_iter()
+                    .filter(|e| !hidden.contains(&e.number))
+                    .collect(),
+            );
+            let rows: Vec<Value> = entries
+                .iter()
+                .map(|e| {
+                    let mut v = json!(e);
+                    if let Some(w) = why.get(&e.number) {
+                        v["why"] = json!(w);
+                    }
+                    v
+                })
+                .collect();
+            out = page(&rows, q.limit, q.cursor.as_deref())?;
             out["login"] = json!(login);
+            if own {
+                out["hidden"] = json!(n_hidden);
+            }
         }
     }
     out["queue"] = json!(queue);
