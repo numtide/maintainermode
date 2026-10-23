@@ -340,6 +340,18 @@ pub(crate) fn needs_you(app: &App, login: &str) -> Vec<Row> {
 /// packages of their machines, then what they maintain, own, changed or
 /// tagged, then what they watch. The same [`order`] as the packages.
 pub(crate) fn for_you<'a>(app: &App, s: &'a Snapshot, login: &str) -> Vec<&'a Entry> {
+    for_you_why(app, s, login)
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect()
+}
+
+/// [`for_you`], with why each pull request is there.
+pub(crate) fn for_you_why<'a>(
+    app: &App,
+    s: &'a Snapshot,
+    login: &str,
+) -> Vec<(&'a Entry, Vec<String>)> {
     let watched = app.store.watched(login).unwrap_or_default();
     let machines: HashSet<String> = {
         let index = app.index.read().unwrap();
@@ -348,39 +360,61 @@ pub(crate) fn for_you<'a>(app: &App, s: &'a Snapshot, login: &str) -> Vec<&'a En
             .map(|a| Subject::Pkg(canonical(&index, a)).key())
             .collect()
     };
-    rank_prs(s, login, &watched, &machines)
+    rank_prs_why(s, login, &watched, &machines)
 }
 
+#[cfg(test)]
 pub(crate) fn rank_prs<'a>(
     s: &'a Snapshot,
     login: &str,
     watched: &[String],
     machine_keys: &HashSet<String>,
 ) -> Vec<&'a Entry> {
-    let on_machines: HashSet<u64> = machine_keys
-        .iter()
-        .filter_map(|k| s.links.prs.get(k))
-        .flatten()
-        .copied()
-        .collect();
+    rank_prs_why(s, login, watched, machine_keys)
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect()
+}
+
+pub(crate) fn rank_prs_why<'a>(
+    s: &'a Snapshot,
+    login: &str,
+    watched: &[String],
+    machine_keys: &HashSet<String>,
+) -> Vec<(&'a Entry, Vec<String>)> {
+    let mut on_machines: HashMap<u64, Vec<String>> = HashMap::new();
+    for k in machine_keys {
+        for n in s.links.prs.get(k).into_iter().flatten() {
+            if let Some(sub) = Subject::parse(k) {
+                on_machines.entry(*n).or_default().push(sub.label());
+            }
+        }
+    }
     let interest = crate::web::Interest::of(s, Some(login), Some(watched));
-    let mut list: Vec<(Why, &Entry)> = s
+    let mut list: Vec<(Why, &Entry, Vec<String>)> = s
         .queues
         .review
         .iter()
         .filter(|e| e.author != login)
         .map(|e| {
             let why = Why {
-                machine: on_machines.contains(&e.number),
+                machine: on_machines.contains_key(&e.number),
                 maintain: interest.maintains(e),
                 watch: interest.watches(e),
             };
-            (why, e)
+            let mut lines = Vec::new();
+            if let Some(names) = on_machines.get(&e.number) {
+                let mut names = names.clone();
+                names.sort();
+                lines.push(format!("on your machines: {}", crate::web::some_of(names)));
+            }
+            lines.extend(interest.why(e));
+            (why, e, lines)
         })
-        .filter(|(w, _)| w.machine || w.maintain || w.watch)
+        .filter(|(w, _, _)| w.machine || w.maintain || w.watch)
         .collect();
-    list.sort_by_key(|(w, e)| (order(*w, false), e.number));
-    list.into_iter().map(|(_, e)| e).collect()
+    list.sort_by_key(|(w, e, _)| (order(*w, false), e.number));
+    list.into_iter().map(|(_, e, l)| (e, l)).collect()
 }
 
 /// A row with its version, the team that names the person, and why it is

@@ -789,3 +789,20 @@ main:focus {
 .search-inline {
   position: relative;
 }
+.review-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.review-bar input[type="search"] {
+  flex: 1 1 180px;
+  max-width: 260px;
+}
+@media (max-width: 543px) {
+  .review-bar input[type="search"],
+  .review-bar select {
+    flex: 1 1 140px;
+    max-width: none;
+  }
+}

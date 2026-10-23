@@ -223,6 +223,7 @@ pub fn recount_one(app: &App, login: &str) {
 /// small reads.
 pub fn recount(app: &App) {
     crate::followup::purge(app);
+    crate::review::purge(app);
     for m in app.store.members().unwrap_or_default() {
         recount_one(app, &m.login);
     }

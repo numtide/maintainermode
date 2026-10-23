@@ -359,12 +359,18 @@ fn people(logins: &[String]) -> String {
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
 pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
-    rows(entries, act, false)
+    rows(entries, act, false, |_| Default::default())
 }
 
-/// As [`entry_rows`], with the age as the time the author has waited.
-pub(crate) fn waiting_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
-    rows(entries, act, true)
+/// As [`entry_rows`], with the age as the wait when `waiting`; `extra` gives each row HTML
+/// under its meta line and after its buttons.
+pub(crate) fn review_rows(
+    entries: &[&Entry],
+    act: crate::actions::Act,
+    waiting: bool,
+    extra: impl Fn(&Entry) -> (String, String),
+) -> String {
+    rows(entries, act, waiting, extra)
 }
 
 /// "11 months", "3 weeks": for a sentence, where `ago` is for a column.
@@ -380,7 +386,12 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
-fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
+fn rows(
+    entries: &[&Entry],
+    act: crate::actions::Act,
+    waiting: bool,
+    extra: impl Fn(&Entry) -> (String, String),
+) -> String {
     use crate::ui::{Kind, Tone, badge, item_row};
     let mut out = String::new();
     for e in entries {
@@ -408,6 +419,8 @@ fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
         if !e.approved_by.is_empty() {
             let _ = write!(meta, " · approved by {}", people(&e.approved_by));
         }
+        let (why, end) = extra(e);
+        meta.push_str(&why);
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
             &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
@@ -415,7 +428,7 @@ fn rows(entries: &[&Entry], act: crate::actions::Act, waiting: bool) -> String {
             &meta,
             &badges,
             &format!(
-                "<span class=\"ml-2\">{}</span>{}",
+                "<span class=\"ml-2\">{}</span>{}{end}",
                 ci_label(e),
                 act.buttons(e.number)
             ),
@@ -441,7 +454,8 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
 /// maintain, own, changed or tagged), or what they watch.
 pub(crate) struct Interest<'a> {
     mine: Option<Area>,
-    prs: std::collections::HashSet<u64>,
+    /// pull request → the names of the watched subjects that link to it.
+    prs: std::collections::HashMap<u64, Vec<String>>,
     paths: Vec<&'a str>,
 }
 
@@ -452,14 +466,18 @@ impl<'a> Interest<'a> {
         let mine = viewer
             .and_then(|v| s.areas.get(v))
             .map(|a| if own.is_some() { a.clone() } else { a.public() });
-        let mut prs = std::collections::HashSet::new();
+        let mut prs: std::collections::HashMap<u64, Vec<String>> = Default::default();
         let mut paths: Vec<&str> = Vec::new();
         for key in own.unwrap_or_default() {
             match crate::catalog::Subject::parse(key) {
                 Some(crate::catalog::Subject::Area(_)) => {
                     paths.extend(key.strip_prefix("area:"));
                 }
-                Some(_) => prs.extend(s.links.prs.get(key).into_iter().flatten()),
+                Some(sub) => {
+                    for n in s.links.prs.get(key).into_iter().flatten() {
+                        prs.entry(*n).or_default().push(sub.label());
+                    }
+                }
                 None => {}
             }
         }
@@ -471,11 +489,72 @@ impl<'a> Interest<'a> {
     }
 
     pub(crate) fn watches(&self, e: &Entry) -> bool {
-        self.prs.contains(&e.number)
+        self.prs.contains_key(&e.number)
             || e.files
                 .iter()
                 .any(|f| self.paths.iter().any(|p| area::under(f, p)))
     }
+
+    /// Why `e` is for the person, one line per kind of tie, most direct
+    /// first: "you maintain hello", "you watch nginx".
+    pub(crate) fn why(&self, e: &Entry) -> Vec<String> {
+        let hit = |prefixes: &[String]| -> Vec<String> {
+            prefixes
+                .iter()
+                .filter(|p| e.files.iter().any(|f| area::under(f, p)))
+                .map(|p| short_path(p))
+                .collect()
+        };
+        let mut out = Vec::new();
+        if let Some(a) = &self.mine {
+            for (what, list) in [
+                ("you maintain", hit(&a.maintains)),
+                ("you own in ci/OWNERS", hit(&a.owns)),
+                ("you changed this year", hit(&a.committed)),
+                ("your tag", hit(&a.tags)),
+            ] {
+                if !list.is_empty() {
+                    out.push(format!("{what}: {}", some_of(list)));
+                }
+            }
+        }
+        let mut watched: Vec<String> = self.prs.get(&e.number).cloned().unwrap_or_default();
+        watched.extend(
+            self.paths
+                .iter()
+                .filter(|p| e.files.iter().any(|f| area::under(f, p)))
+                .map(|p| format!("{p}/")),
+        );
+        if !watched.is_empty() {
+            out.push(format!("you watch: {}", some_of(watched)));
+        }
+        out
+    }
+}
+
+/// `pkgs/by-name/he/hello/package.nix` is "hello"; other paths stay, less
+/// a trailing `default.nix` or `package.nix`.
+pub(crate) fn short_path(p: &str) -> String {
+    let p = p
+        .trim_end_matches("/default.nix")
+        .trim_end_matches("/package.nix");
+    match p.split_once("pkgs/by-name/") {
+        Some((_, rest)) => rest.split('/').nth(1).unwrap_or(rest).to_string(),
+        None => p.to_string(),
+    }
+}
+
+/// "a, b and 3 more".
+pub(crate) fn some_of(mut list: Vec<String>) -> String {
+    const SHOWN: usize = 2;
+    list.dedup();
+    let more = list.len().saturating_sub(SHOWN);
+    list.truncate(SHOWN);
+    let mut out = list.join(", ");
+    if more > 0 {
+        let _ = write!(out, " and {more} more");
+    }
+    out
 }
 
 pub(crate) fn review_bucket<'a>(
@@ -1268,6 +1347,30 @@ mod tests {
                 &Default::default()
             )),
             vec![1, 2, 3]
+        );
+        let why: std::collections::HashMap<u64, Vec<String>> =
+            crate::mine::rank_prs_why(&s, "bob", &watched, &machines)
+                .into_iter()
+                .map(|(e, w)| (e.number, w))
+                .collect();
+        assert_eq!(why[&1], ["you maintain: hello"]);
+        assert_eq!(why[&2], ["on your machines: curl", "you watch: curl"]);
+        assert_eq!(why[&3], ["you watch: nixos/modules/services/web-servers/"]);
+        assert_eq!(why[&6], ["on your machines: jq"]);
+    }
+
+    #[test]
+    fn paths_get_short_names() {
+        assert_eq!(short_path("pkgs/by-name/he/hello/package.nix"), "hello");
+        assert_eq!(short_path("pkgs/by-name/he/hello"), "hello");
+        assert_eq!(
+            short_path("pkgs/development/python-modules/requests/default.nix"),
+            "pkgs/development/python-modules/requests"
+        );
+        assert_eq!(some_of(vec!["a".into()]), "a");
+        assert_eq!(
+            some_of(vec!["a".into(), "b".into(), "c".into(), "d".into()]),
+            "a, b and 2 more"
         );
     }
 

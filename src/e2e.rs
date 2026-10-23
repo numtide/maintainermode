@@ -138,7 +138,8 @@ async fn every_signed_in_page_answers_and_stays_private() {
 
 #[tokio::test]
 async fn me_pages_show_their_parts() {
-    let site = serve(signed_in_app()).await;
+    let app = signed_in_app();
+    let site = serve(app.clone()).await;
     for (filter, label) in [
         ("mine", "Mine"),
         ("machines", "On my machines"),
@@ -214,6 +215,29 @@ async fn me_pages_show_their_parts() {
             .contains("href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge")
     );
     assert!(a.body.contains("href=\"/review?tab=foryou\">For you"));
+    let a = site
+        .post(
+            "/me/review/hide",
+            SID,
+            &[("number", "42"), ("back", "/review?tab=all&checks=fail")],
+        )
+        .await;
+    assert_eq!(a.location.as_deref(), Some("/review?tab=all&checks=fail"));
+    assert!(app.store.hidden_prs("alice").unwrap().contains(&42));
+    let a = site
+        .get("/review?tab=all&hidden=1&checks=fail", Some(SID))
+        .await;
+    assert!(a.body.contains("Hidden by you"), "{}", a.body);
+    assert!(a.body.contains("<option value=\"fail\" selected>"));
+    let a = site
+        .post(
+            "/me/review/hide",
+            SID,
+            &[("number", "42"), ("hide", "0"), ("back", "//evil.example")],
+        )
+        .await;
+    assert_eq!(a.location.as_deref(), Some("/review"));
+    assert!(app.store.hidden_prs("alice").unwrap().is_empty());
     let a = site.get("/me/runs", Some(SID)).await;
     assert!(a.body.contains("Runs"), "{}", a.body);
     let a = site.get("/me/progress", Some(SID)).await;

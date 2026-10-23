@@ -112,6 +112,12 @@ impl Store {
                at TEXT NOT NULL,
                PRIMARY KEY (login, key)
              );
+             CREATE TABLE IF NOT EXISTS pr_hidden (
+               login TEXT NOT NULL,
+               number INTEGER NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (login, number)
+             );
              CREATE TABLE IF NOT EXISTS needs_seen (
                session TEXT NOT NULL,
                key TEXT NOT NULL,
@@ -1593,6 +1599,48 @@ impl Store {
     }
 }
 
+/// Pull requests a person hid from their review lists.
+impl Store {
+    pub fn hidden_prs(&self, login: &str) -> Result<std::collections::HashSet<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT number FROM pr_hidden WHERE login = ?1")?;
+        let rows = stmt.query_map([login], |r| r.get::<_, i64>(0).map(|n| n as u64))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn hide_pr(&self, login: &str, number: u64, hidden: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        if hidden {
+            conn.execute(
+                "INSERT OR IGNORE INTO pr_hidden (login, number, at) VALUES (?1, ?2, ?3)",
+                params![login, number as i64, Utc::now().to_rfc3339()],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM pr_hidden WHERE login = ?1 AND number = ?2",
+                params![login, number as i64],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Forgets the hidden pull requests that are not in `open`.
+    pub fn purge_hidden_prs(&self, open: &std::collections::HashSet<u64>) -> Result<usize> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let all: Vec<i64> = {
+            let mut stmt = tx.prepare("SELECT DISTINCT number FROM pr_hidden")?;
+            let rows = stmt.query_map([], |r| r.get(0))?;
+            rows.collect::<Result<_, _>>()?
+        };
+        let mut n = 0;
+        for number in all.into_iter().filter(|x| !open.contains(&(*x as u64))) {
+            n += tx.execute("DELETE FROM pr_hidden WHERE number = ?1", [number])?;
+        }
+        tx.commit()?;
+        Ok(n)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
