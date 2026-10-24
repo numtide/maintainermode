@@ -54,7 +54,8 @@ its known limits.
   listings and the due items of the walk, and for the live fields of the
   merge candidates. Each lent token pays at most a tenth of its budget in
   one rate limit window for this shared work. The walk back through history
-  never uses a lent token. A server with no App token, no bot token and no
+  never uses a lent token. `/me/settings#github` states this rule to each
+  person who signed in. A server with no App token, no bot token and no
   lent token reads nothing from GitHub.
 - **The bot token.** A deployment can give the server the classic token of
   its bot account (`MAINTAINER_MODE_BOT_TOKEN_FILE`). The archive walk uses

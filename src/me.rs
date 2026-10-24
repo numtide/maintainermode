@@ -54,7 +54,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-pub(crate) const SETTINGS: [(&str, &str); 10] = [
+pub(crate) const SETTINGS: [(&str, &str); 11] = [
     ("email", "Email"),
     ("followup", "Pull requests"),
     ("feed", "Feed"),
@@ -65,6 +65,7 @@ pub(crate) const SETTINGS: [(&str, &str); 10] = [
     ("tags", "Tags"),
     ("goal", "Goal"),
     ("start", "Get started"),
+    ("github", "GitHub"),
 ];
 
 #[derive(Deserialize)]
@@ -72,6 +73,33 @@ struct SettingsQuery {
     mail: Option<String>,
     /// GitHub adds it when it sends the person back after an App install.
     setup_action: Option<String>,
+}
+
+/// What the server does with the GitHub token of a session. Keep it in
+/// step with the lent tokens part of docs/data.md.
+fn github_box() -> crate::html::Html {
+    let body = crate::html::Html::from(
+        "<div class=\"Box-row\"><p>When you sign in, the server keeps the GitHub token of your session. \
+         It uses the token for reads that help you: the paths you changed in nixpkgs, when you sign in; \
+         the runs of your review workflow; and the workflows you start from this site.</p>\
+         <p>Shared work, such as the archive of nixpkgs, uses the server's own tokens. \
+         When they have less than 1000 points left, your token can pay for shared reads that keep the data fresh: \
+         at most a tenth of its budget in each rate limit window. It never pays for the walk back through history.</p>\
+         <p class=\"mb-0\">Sign out to delete the token from this server. \
+         You can also revoke it in your <a href=\"https://github.com/settings/applications\">GitHub settings</a>.</p></div>",
+    );
+    crate::html::html!(
+        "<div id=\"github\">{}</div>",
+        crate::ui::section(
+            crate::html::html!(
+                "{} Your GitHub sign-in",
+                crate::web::icon(crate::web::octicon!("key"))
+            ),
+            None,
+            None,
+            body
+        )
+    )
 }
 
 async fn settings_page(
@@ -97,6 +125,7 @@ async fn settings_page(
         crate::web::tags_box(&app, &login),
         crate::progress::goal_box(&app, &login),
         crate::welcome::settings_box(&app, &login),
+        github_box(),
     ]
     .into_iter()
     .collect::<crate::html::Html>();

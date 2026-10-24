@@ -565,6 +565,10 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/me/settings#goal", By(&["/api/v1/progress"])),
     ("/me/settings#start", Without("the steps of Get started")),
     (
+        "/me/settings#github",
+        Without("fixed text: what the server does with the GitHub token of a session"),
+    ),
+    (
         "/me/runs",
         Without(
             "the runs of your workflow repository: the page reads them from GitHub with the token of your session, which the API and the MCP server do not hold",
