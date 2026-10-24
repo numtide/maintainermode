@@ -209,6 +209,35 @@ impl Store {
         Ok(out)
     }
 
+    pub fn recent_prs(&self, limit: usize) -> Result<Vec<Pr>> {
+        self.recent_rows("pr", limit)
+    }
+
+    pub fn recent_issues(&self, limit: usize) -> Result<Vec<Issue>> {
+        self.recent_rows("issue", limit)
+    }
+
+    pub fn recent_facts(&self, limit: usize) -> Result<Vec<Facts>> {
+        self.recent_rows("history", limit)
+    }
+
+    fn recent_rows<T: serde::de::DeserializeOwned>(
+        &self,
+        table: &str,
+        limit: usize,
+    ) -> Result<Vec<T>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT data FROM {table} ORDER BY updated_at DESC LIMIT ?1"
+        ))?;
+        let rows = stmt.query_map([limit as i64], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(serde_json::from_str(&row?)?);
+        }
+        Ok(out)
+    }
+
     pub fn facts(&self) -> Result<Vec<Facts>> {
         self.json_rows("history")
     }

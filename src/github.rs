@@ -196,7 +196,7 @@ async fn graphql_call(
     Ok(Outcome::Data(body["data"].clone()))
 }
 
-fn time(v: &Value) -> Option<DateTime<Utc>> {
+pub(crate) fn time(v: &Value) -> Option<DateTime<Utc>> {
     v.as_str()
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|t| t.with_timezone(&Utc))
@@ -665,7 +665,7 @@ const HISTORY_PAGES: [i64; 3] = [50, 25, 10];
 /// stretches of history come in runs.
 const HISTORY_CALM: usize = 20;
 
-fn facts(n: &Value) -> Option<Facts> {
+pub(crate) fn facts(n: &Value) -> Option<Facts> {
     let (author, author_is_bot) = login(&n["author"]);
     let files: Vec<String> = nodes(&n["files"])
         .filter_map(|f| f["path"].as_str().map(String::from))

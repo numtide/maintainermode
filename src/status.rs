@@ -209,6 +209,29 @@ fn archive_row(a: &Value) -> String {
             "<span class=\"color-fg-attention\">{n} items fail; the server tries each again a day later</span>"
         ));
     }
+    if let Some(s) = a["shadow"].as_object() {
+        let mut fields: Vec<&str> = s["examples"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .flat_map(|e| e["fields"].as_array().into_iter().flatten())
+            .filter_map(Value::as_str)
+            .collect();
+        fields.sort_unstable();
+        fields.dedup();
+        parts.push(format!(
+            "projection check: {} of {} rows differ from the sync{} ({} not comparable), {}",
+            s["differ"],
+            s["compared"],
+            if fields.is_empty() {
+                String::new()
+            } else {
+                format!(" in {}", esc(&fields.join(", ")))
+            },
+            s["skipped"],
+            when(&s["at"])
+        ));
+    }
     if let Some(e) = a["last_error"].as_str() {
         parts.push(format!(
             "<span class=\"color-fg-attention\">last error: {}</span>",

@@ -201,6 +201,14 @@ cost.
   continues after a restart. It uses only the GitHub App token and the sync
   token of the server, never the tokens that people lend. It stops for the
   pass when the token has less than 1000 points left.
+- **Projection check.** After each pass over NixOS/nixpkgs, the server
+  turns archived items into rows, with the caps of the sync, and compares
+  them with the rows that the sync and the history walk wrote: the 500 last
+  updated of each of `pr`, `issue` and `history`. It writes nothing. Only items archived at
+  the same `updatedAt` count. `mergeable` and the CI state are not in the
+  archive and are not compared. `/state?tab=status` shows how many rows
+  differ and in which fields; `/api/v1/sync` gives the same data as
+  `archive[].shadow`.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
   JSON, or 404. `/state?tab=status` shows the progress. The endpoint has no
   authentication, so the archive keeps public repositories only: it refuses
