@@ -995,15 +995,12 @@ pub(crate) struct Touched {
 
 impl Touched {
     fn json(&self) -> Value {
-        json!({
-            "key": self.subject.key(),
-            "name": self.subject.label(),
-            "href": self.subject.href(),
-            "flags": self.flags.json(),
-            "maintainers": self.maintainers,
-            "teams": self.teams,
-            "maintainer_approved": self.approved_by,
-        })
+        let mut v = json!(crate::catalog::SubjectRow::new(&self.subject, &self.flags));
+        v["href"] = json!(self.subject.href());
+        v["maintainers"] = json!(self.maintainers);
+        v["teams"] = json!(self.teams);
+        v["maintainer_approved"] = json!(self.approved_by);
+        v
     }
 }
 
