@@ -16,7 +16,7 @@ use lettre::transport::smtp::AsyncSmtpTransportBuilder;
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 use std::path::PathBuf;
@@ -24,6 +24,7 @@ use std::sync::RwLock;
 
 use crate::catalog::{Event, person_events};
 use crate::github::urlencode;
+use crate::html::{Html, html};
 use crate::secret::Secret;
 use crate::sets::token_hash;
 use crate::store::Confirmation;
@@ -71,6 +72,12 @@ pub enum Kind {
     Advisory,
     Release,
     Build,
+}
+
+impl serde::Serialize for Kind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.key())
+    }
 }
 
 impl Kind {
@@ -240,6 +247,61 @@ pub(crate) struct InboxQuery {
     pub(crate) kind: Option<String>,
 }
 
+#[derive(Serialize)]
+pub(crate) struct InboxRow<'a> {
+    id: &'a str,
+    kind: Kind,
+    at: DateTime<Utc>,
+    title: &'a str,
+    url: &'a str,
+    subject: &'a str,
+    unread: bool,
+}
+
+/// What `/inbox` shows for one filter. Reading it marks nothing read.
+pub(crate) struct Inbox<'a> {
+    rows: Vec<InboxRow<'a>>,
+    /// Counted with the kinds the person chose, as the header counts.
+    unread: usize,
+    any_unread: bool,
+    subjects: BTreeSet<&'a str>,
+    kind: Option<Kind>,
+    sub: Option<&'a str>,
+}
+
+impl<'a> Inbox<'a> {
+    fn new(
+        app: &App,
+        login: &str,
+        all: &'a [Event],
+        kind: Option<Kind>,
+        sub: Option<&'a str>,
+    ) -> Self {
+        let read = read_at(app, login);
+        Inbox {
+            rows: all
+                .iter()
+                .filter(|e| sub.is_none_or(|s| e.subject == s))
+                .filter(|e| kind.is_none_or(|k| Kind::of(&e.id) == k))
+                .map(|e| InboxRow {
+                    id: &e.id,
+                    kind: Kind::of(&e.id),
+                    at: e.at,
+                    title: &e.title,
+                    url: &e.url,
+                    subject: &e.subject,
+                    unread: unread(e, read),
+                })
+                .collect(),
+            unread: unread_count(all, read, &kinds(app, login)),
+            any_unread: all.iter().any(|e| unread(e, read)),
+            subjects: all.iter().map(|e| e.subject.as_str()).collect(),
+            kind,
+            sub,
+        }
+    }
+}
+
 /// The events of `/inbox`, as JSON. Reading them marks nothing read.
 pub(crate) fn inbox_value(
     app: &App,
@@ -253,33 +315,12 @@ pub(crate) fn inbox_value(
         None => None,
         Some(k) => Some(Kind::parse(k).ok_or_else(|| format!("no kind {k}"))?),
     };
-    let sub = sub.filter(|s| !s.is_empty());
     let all = person_events(app, login);
-    let read = read_at(app, login);
-    let items: Vec<serde_json::Value> = all
-        .iter()
-        .filter(|e| sub.is_none_or(|s| e.subject == s))
-        .filter(|e| kind.is_none_or(|k| Kind::of(&e.id) == k))
-        .map(|e| {
-            serde_json::json!({
-                "id": e.id,
-                "kind": Kind::of(&e.id).key(),
-                "at": e.at,
-                "title": e.title,
-                "url": e.url,
-                "subject": e.subject,
-                "unread": unread(e, read),
-            })
-        })
-        .collect();
-    let mut out = crate::api::page(&items, limit, cursor)?;
+    let inbox = Inbox::new(app, login, &all, kind, sub.filter(|s| !s.is_empty()));
+    let mut out = crate::api::page(&inbox.rows, limit, cursor)?;
     out["login"] = serde_json::json!(login);
-    out["unread"] = serde_json::json!(unread_count(&all, read, &kinds(app, login)));
-    out["subjects"] = serde_json::json!(
-        all.iter()
-            .map(|e| e.subject.as_str())
-            .collect::<BTreeSet<_>>()
-    );
+    out["unread"] = serde_json::json!(inbox.unread);
+    out["subjects"] = serde_json::json!(inbox.subjects);
     Ok(out)
 }
 
@@ -293,90 +334,90 @@ async fn inbox_page(
         return Redirect::to("/auth/login").into_response();
     };
     let all = person_events(&app, &login);
-    let read = read_at(&app, &login);
-    let n = unread_count(&all, read, &kinds(&app, &login));
-    app.inbox.set(&login, n);
-    let sub = q.sub.as_deref().filter(|s| !s.is_empty());
-    let kind = q.kind.as_deref().and_then(Kind::parse);
-    let actions = if all.iter().any(|e| unread(e, read)) {
-        "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>".to_string()
+    let inbox = Inbox::new(
+        &app,
+        &login,
+        &all,
+        q.kind.as_deref().and_then(Kind::parse),
+        q.sub.as_deref().filter(|s| !s.is_empty()),
+    );
+    app.inbox.set(&login, inbox.unread);
+    inbox_view(&inbox).render(&app, Some(&login))
+}
+
+fn inbox_view(inbox: &Inbox) -> Page {
+    let (sub, kind) = (inbox.sub, inbox.kind);
+    let actions = if inbox.any_unread {
+        Html::from(
+            "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>",
+        )
     } else {
-        String::new()
+        Html::new()
     };
     let mut tabs = vec![Tab::new(inbox_href(sub, None), "All", kind.is_none())];
     for k in Kind::ALL {
         tabs.push(Tab::new(
             inbox_href(sub, Some(k)),
-            format!("{} {}", k.icon(), k.label()),
+            html!("{} {}", k.icon(), k.label()),
             kind == Some(k),
         ));
     }
-    let mut out = String::new();
-    let subjects: BTreeSet<&str> = all.iter().map(|e| e.subject.as_str()).collect();
-    if !subjects.is_empty() {
-        let _ = write!(
-            out,
-            "<form method=\"get\" action=\"{INBOX}\" class=\"d-flex gap-2 mb-3\">{}\
-             <select class=\"form-select\" name=\"sub\" aria-label=\"what you watch\"><option value=\"\">Everything you watch</option>",
-            kind.map(|k| format!(
-                "<input type=\"hidden\" name=\"kind\" value=\"{}\">",
-                k.key()
-            ))
-            .unwrap_or_default()
-        );
-        for s in &subjects {
-            let _ = write!(
-                out,
-                "<option value=\"{v}\"{}>{v}</option>",
-                if sub == Some(*s) { " selected" } else { "" },
-                v = esc(s)
-            );
+    let mut out = Html::new();
+    if !inbox.subjects.is_empty() {
+        let hidden = kind
+            .map(|k| {
+                html!(
+                    "<input type=\"hidden\" name=\"kind\" value=\"{}\">",
+                    k.key()
+                )
+            })
+            .unwrap_or_default();
+        out.push(&html!(
+            "<form method=\"get\" action=\"{INBOX}\" class=\"d-flex gap-2 mb-3\">{hidden}\
+             <select class=\"form-select\" name=\"sub\" aria-label=\"what you watch\"><option value=\"\">Everything you watch</option>"
+        ));
+        for s in &inbox.subjects {
+            let sel = if sub == Some(*s) { " selected" } else { "" };
+            out.push(&html!("<option value=\"{s}\"{sel}>{s}</option>"));
         }
-        out.push_str(
+        out.push(&Html::from(
             "</select><button class=\"btn btn-sm\" type=\"submit\">Filter</button></form>",
-        );
+        ));
     }
-    let shown: Vec<&Event> = all
-        .iter()
-        .filter(|e| sub.is_none_or(|s| e.subject == s))
-        .filter(|e| kind.is_none_or(|k| Kind::of(&e.id) == k))
-        .collect();
-    if shown.is_empty() {
-        out.push_str(
+    if inbox.rows.is_empty() {
+        out.push(&Html::from(
             "<div class=\"blankslate\"><p>Nothing here. <a href=\"/packages?filter=watch\">Watch</a> a package, a module or a directory, \
              or send the packages of <a href=\"/me/settings#upload\">your machines</a>.</p></div>",
-        );
+        ));
     } else {
-        out.push_str("<div class=\"Box\">");
-        for e in shown {
-            let new = unread(e, read);
-            let class = if new {
+        out.push(&Html::from("<div class=\"Box\">"));
+        for e in &inbox.rows {
+            let class = if e.unread {
                 "Link--primary text-bold"
             } else {
                 "Link--primary"
             };
             let title = if e.url.is_empty() {
-                format!("<span class=\"{class}\">{}</span>", esc(&e.title))
+                html!("<span class=\"{class}\">{}</span>", e.title)
             } else {
-                crate::prpage::link(&e.url, &esc(&e.title), class)
+                Html::from(crate::prpage::link(e.url, &esc(e.title), class))
             };
-            let _ = write!(
-                out,
+            let new = if e.unread {
+                "<span class=\"Label Label--accent ml-2 flex-shrink-0\">new</span>"
+            } else {
+                ""
+            };
+            out.push(&html!(
                 "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-muted\">{}</span>\
-                 <div class=\"flex-auto min-width-0 wb-break-word\">{}\
+                 <div class=\"flex-auto min-width-0 wb-break-word\">{title}\
                  <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{}</div>",
-                Kind::of(&e.id).icon(),
-                title,
-                esc(&e.subject),
+                e.kind.icon(),
+                e.subject,
                 ago(e.at),
-                if new {
-                    "<span class=\"Label Label--accent ml-2 flex-shrink-0\">new</span>"
-                } else {
-                    ""
-                }
-            );
+                Html::from(new)
+            ));
         }
-        out.push_str("</div>");
+        out.push(&Html::from("</div>"));
     }
     Page::new(Section::Personal(Personal::Inbox), "Inbox")
         .icon(octicon!("inbox"))
@@ -387,7 +428,6 @@ async fn inbox_page(
         .subnav(tabs)
         .actions(actions)
         .body(out)
-        .render(&app, Some(&login))
 }
 
 async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
