@@ -142,6 +142,7 @@ fn tabs(current: View) -> Vec<Tab> {
 
 #[derive(Deserialize)]
 struct StateQuery {
+    range: Option<String>,
     tab: Option<String>,
     doc: Option<String>,
 }
@@ -161,7 +162,10 @@ async fn state_page(
                  <a href=\"/state?tab=rules#the-state-of-nixpkgs\">How each number is made</a> · \
                  <a href=\"/api/v1/metrics\">JSON</a>",
             )
-            .body(crate::web::numbers(&app)),
+            .body(crate::numbers::numbers(
+                &app,
+                crate::numbers::Range::parse(q.range.as_deref()),
+            )),
         View::Rules => {
             let (title, html) = markdown(RULES);
             Page::new(Section::Nixpkgs, title).body(html!(

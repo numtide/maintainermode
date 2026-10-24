@@ -798,3 +798,328 @@ main:focus {
     max-width: none;
   }
 }
+
+/* charts (src/chart.rs): colours from the validated dataviz palette; the
+   ordered ramp gets darker with age on light and lighter on dark */
+.charts {
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-up: #e34948;
+  --chart-o1: #86b6ef;
+  --chart-o2: #5598e7;
+  --chart-o3: #2a78d6;
+  --chart-o4: #1c5cab;
+  --chart-o5: #104281;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+@media (prefers-color-scheme: dark) {
+  .charts {
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-up: #e66767;
+    --chart-o1: #184f95;
+    --chart-o2: #256abf;
+    --chart-o3: #3987e5;
+    --chart-o4: #6da7ec;
+    --chart-o5: #9ec5f4;
+  }
+}
+.chart {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+  background: var(--bgColor-default);
+}
+.chart-wide {
+  grid-column: 1 / -1;
+}
+.chart-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.chart-note {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  margin: 8px 0 4px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+}
+.chart-legend b {
+  color: var(--fgColor-default);
+  font-weight: 600;
+}
+.key {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.key-line {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--k);
+}
+.key-box {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--k);
+}
+.key-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--k);
+}
+.c1 {
+  --k: var(--chart-1);
+}
+.c2 {
+  --k: var(--chart-2);
+}
+.c3 {
+  --k: var(--chart-3);
+}
+.c4 {
+  --k: var(--chart-4);
+}
+.up {
+  --k: var(--chart-up);
+}
+.down {
+  --k: var(--chart-1);
+}
+.o1 {
+  --k: var(--chart-o1);
+}
+.o2 {
+  --k: var(--chart-o2);
+}
+.o3 {
+  --k: var(--chart-o3);
+}
+.o4 {
+  --k: var(--chart-o4);
+}
+.o5 {
+  --k: var(--chart-o5);
+}
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-svg .line {
+  fill: none;
+  stroke: var(--k);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-svg .wash {
+  fill: var(--k);
+  fill-opacity: 0.1;
+}
+.chart-svg .stack,
+.chart-svg .bar {
+  fill: var(--k);
+}
+.chart-svg .end {
+  fill: var(--k);
+  stroke: var(--bgColor-default);
+  stroke-width: 2;
+}
+.chart-svg .chart-sep {
+  fill: none;
+  stroke: var(--bgColor-default);
+  stroke-width: 1.5;
+}
+.chart-grid {
+  stroke: var(--borderColor-muted);
+  stroke-width: 1;
+}
+.chart-base {
+  stroke: var(--borderColor-default);
+  stroke-width: 1;
+}
+.chart-tick {
+  fill: var(--fgColor-muted);
+  paint-order: stroke;
+  stroke: var(--bgColor-default);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.chart-gap {
+  fill: var(--bgColor-muted);
+}
+.chart-gap-label {
+  fill: var(--fgColor-muted);
+  font-size: 11px;
+}
+.chart-hit rect {
+  fill: transparent;
+}
+.chart-hit rect:hover {
+  fill: var(--fgColor-default);
+  fill-opacity: 0.06;
+}
+.chart-table summary {
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+}
+.chart-table .markdown-body {
+  max-height: 320px;
+  overflow: auto;
+}
+.chart-table table {
+  margin-bottom: 0;
+}
+.dots {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.dots-row {
+  display: grid;
+  grid-template-columns: minmax(0, 14em) minmax(0, 1fr) 9.5em;
+  gap: 2px 16px;
+  align-items: center;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.dots-track {
+  position: relative;
+  height: 14px;
+  margin: 0 6px;
+  background:
+    linear-gradient(var(--borderColor-muted), var(--borderColor-muted)) center /
+      100% 1px no-repeat,
+    linear-gradient(var(--borderColor-muted), var(--borderColor-muted)) center /
+      1px 100% no-repeat;
+}
+.dots-scale {
+  background: none;
+}
+.dots-scale span {
+  position: absolute;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--fgColor-muted);
+}
+.dot {
+  position: absolute;
+  top: 2px;
+  width: 10px;
+  height: 10px;
+  margin-left: -5px;
+  border-radius: 50%;
+  background: var(--k);
+  box-shadow: 0 0 0 2px var(--bgColor-default);
+}
+.dots-value {
+  color: var(--fgColor-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.hbars-box {
+  overflow-x: auto;
+}
+.hbars {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.hbars th,
+.hbars td {
+  padding: 4px 8px 4px 0;
+  text-align: left;
+  font-weight: 400;
+  white-space: nowrap;
+}
+.hbars thead th {
+  color: var(--fgColor-muted);
+  border-bottom: 1px solid var(--borderColor-muted);
+}
+.hbars .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.hbar-col {
+  width: 40%;
+  min-width: 80px;
+}
+.hbar {
+  display: block;
+  height: 10px;
+  border-radius: 0 2px 2px 0;
+  background: var(--k);
+}
+@media (max-width: 543px) {
+  .chart {
+    padding: 10px 8px;
+  }
+  .dots-row {
+    grid-template-columns: minmax(0, 1fr) 9.5em;
+  }
+  .dots-label {
+    grid-column: 1 / -1;
+  }
+}
+.range-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.range-nav a[aria-current] {
+  color: var(--fgColor-default);
+  font-weight: 600;
+}
+.hbar-fill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.hbar-fill .hbar {
+  flex: none;
+}
+.hbar-tip {
+  font-variant-numeric: tabular-nums;
+}
+.range-nav a {
+  display: inline-block;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid var(--borderColor-default);
+  border-radius: 6px;
+}
+.range-nav a[aria-current] {
+  background: var(--bgColor-accent-muted);
+  border-color: var(--borderColor-accent-muted);
+}

@@ -871,7 +871,7 @@ pub(crate) fn metrics_value(app: &App) -> serde_json::Value {
     v
 }
 
-fn packages_section(app: &App) -> Html {
+pub(crate) fn packages_section(app: &App) -> Html {
     let p = package_stats(app);
     let mut out = Html::from("<h2 class=\"f4 mt-4 mb-2\" id=\"packages\">Packages</h2>");
     if p.rev.is_empty() {
@@ -1010,15 +1010,15 @@ async fn api_events(
         .into_response()
 }
 
-fn num(v: Option<f64>) -> String {
+pub(crate) fn num(v: Option<f64>) -> String {
     v.map_or_else(|| "–".into(), |v| format!("{v}"))
 }
 
-fn pct(v: Option<f64>) -> String {
+pub(crate) fn pct(v: Option<f64>) -> String {
     v.map_or_else(|| "–".into(), |v| format!("{:.0}%", v * 100.0))
 }
 
-fn table(head: &[&str], rows: &[Vec<Html>]) -> Html {
+pub(crate) fn table(head: &[&str], rows: &[Vec<Html>]) -> Html {
     let mut out = Html::from("<div class=\"markdown-body\"><table class=\"numbers\"><thead><tr>");
     for h in head {
         out.push(&html!("<th>{h}</th>"));
@@ -1035,191 +1035,8 @@ fn table(head: &[&str], rows: &[Vec<Html>]) -> Html {
     out
 }
 
-fn cell(v: impl ToString) -> Html {
+pub(crate) fn cell(v: impl ToString) -> Html {
     Html::text(&v.to_string())
-}
-
-/// The Numbers tab of `/state`.
-pub(crate) fn numbers(app: &App) -> Html {
-    let r = app.metrics.read().unwrap().clone();
-    let mut body = Html::new();
-    let Some(at) = r.generated_at else {
-        body.push(&Html::from(
-            "<div class=\"flash\">The first sync has not finished yet.</div>",
-        ));
-        body.push(&packages_section(app));
-        return body;
-    };
-    let n = &r.now;
-    body.push(&html!(
-        "<p class=\"f6 color-fg-muted\">{} pull requests, opened since {}. Computed {}. {}</p>",
-        r.pull_requests,
-        r.earliest_created
-            .map(|t| t.format("%Y-%m-%d").to_string())
-            .unwrap_or_default(),
-        ago(at),
-        if app.history_complete() {
-            "The archive holds all of history."
-        } else {
-            "The archive still walks back through history, so older months are incomplete."
-        }
-    ));
-    body.push(&html!(
-        "<div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}{}</div>",
-        stat(
-            n.open,
-            "open",
-            html!(
-                "{} drafts, {} from bots, median age {} days",
-                n.drafts,
-                n.by_bots,
-                num(n.age_days_p50)
-            )
-        ),
-        stat(
-            n.never_reviewed,
-            "never reviewed",
-            "human authors, not drafts, no review by anyone else"
-        ),
-        stat(
-            n.security,
-            "open security fixes",
-            html!("median age {} days", num(n.security_age_days_p50))
-        ),
-        stat(
-            n.first_time,
-            "open from first-time contributors",
-            "by GitHub's association or the nixpkgs label"
-        ),
-        stat(
-            n.ai,
-            "open with disclosed AI use",
-            "Assisted-by trailer or llm-assisted label; a floor"
-        ),
-    ));
-    let ages: Vec<Vec<Html>> = n
-        .age
-        .iter()
-        .map(|(k, v)| {
-            let k: &str = k;
-            vec![cell(k.split_once(": ").map_or(k, |(_, l)| l)), cell(v)]
-        })
-        .chain(
-            n.base
-                .iter()
-                .map(|(k, v)| vec![html!("base: {k}"), cell(v)]),
-        )
-        .collect();
-    let c = &r.concentration_365d;
-    let load = |l: &metrics::Load, what: &'static str| {
-        vec![
-            Html::from(what),
-            cell(l.total),
-            cell(l.people),
-            cell(l.people_for_half),
-            cell(l.people_for_80),
-        ]
-    };
-    body.push(&html!(
-        "<div class=\"d-flex flex-wrap gap-3 mb-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
-         <div class=\"flex-1\"><h2 class=\"f4 mb-2\">How many people do the work, last 365 days</h2>{}</div></div>",
-        table(&["", "open"], &ages),
-        table(
-            &["", "total", "people", "people for half", "people for 80%"],
-            &[
-                load(&c.merges, "merges"),
-                load(&c.reviews, "reviews"),
-                load(&c.authored, "authored, humans"),
-            ]
-        ),
-    ));
-    let months: Vec<Vec<Html>> = r
-        .months
-        .iter()
-        .rev()
-        .take(24)
-        .map(|m| {
-            vec![
-                cell(&m.month),
-                cell(m.opened),
-                cell(m.opened_by_bots),
-                cell(m.opened_first_time),
-                html!("{} / {}", m.opened_ai, m.opened_ai_other_form),
-                cell(m.merged),
-                cell(m.closed_unmerged),
-                cell(m.open_at_end),
-                cell(m.reviews),
-                cell(m.reviewers),
-                cell(m.mergers),
-                cell(num(m.first_review_hours_p50)),
-                cell(pct(m.reviewed_within_7d)),
-                html!("{} / {}", num(m.merge_days_p50), num(m.merge_days_p90)),
-                cell(pct(m.merge_rate)),
-                cell(pct(m.merge_rate_first_time)),
-            ]
-        })
-        .collect();
-    body.push(&html!(
-        "<h2 class=\"f4 mb-2\">Month by month</h2>{}",
-        table(
-            &[
-                "month",
-                "opened",
-                "bots",
-                "first-time",
-                "AI / other form",
-                "merged",
-                "closed",
-                "open at end",
-                "reviews",
-                "reviewers",
-                "mergers",
-                "first review, h (p50)",
-                "reviewed in 7 days",
-                "days to merge (p50 / p90)",
-                "merge rate",
-                "first-time merge rate",
-            ],
-            &months
-        )
-    ));
-    let areas: Vec<Vec<Html>> = r
-        .areas
-        .iter()
-        .map(|a| {
-            vec![
-                cell(&a.area),
-                cell(a.open),
-                cell(a.never_reviewed),
-                cell(a.opened_365d),
-                cell(a.merged_365d),
-                cell(num(a.merge_days_p50_365d)),
-            ]
-        })
-        .collect();
-    let tools: Vec<Vec<Html>> = r
-        .ai_tools_365d
-        .iter()
-        .map(|(t, n)| vec![cell(t), cell(n)])
-        .collect();
-    body.push(&html!(
-        "<div class=\"d-flex flex-wrap gap-3 mt-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">By area</h2>{}</div>\
-         <div><h2 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h2>{}</div></div>",
-        table(
-            &[
-                "area",
-                "open",
-                "never reviewed",
-                "opened, 365 d",
-                "merged, 365 d",
-                "days to merge (p50)"
-            ],
-            &areas
-        ),
-        table(&["tool", "pull requests"], &tools),
-    ));
-    body.push(&packages_section(app));
-    body
 }
 
 /// SameSite=Lax still sends the session cookie on a POST from a sibling
