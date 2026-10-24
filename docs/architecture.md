@@ -122,7 +122,8 @@ association, checked_at)` keeps them. `project::pr_live` and
 - GitHub drops an item when it pages a filtered timeline from a first page
   of fewer than 100 items. The walk reads such a connection again in
   pages of 100. Items stored before that can miss a timeline item; the
-  shadow check found 2 in 1132 rows, both in `pushes`. A new update of the
+  shadow check found 2 in 1132 rows, both in `pushes`. Each open item is
+  read once more, 1.2 s apart; a new update of a closed
   item fetches it again.
 
 ## Track B: typed HTML, and data apart from views
