@@ -469,7 +469,7 @@ pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> String {
         "<div class=\"Box mb-3\" id=\"sets\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Your sets</h2></div>\
          <div class=\"Box-row pb-0\">{}</div>",
         icon(octicon!("device-desktop")),
-        crate::ui::subnav(&tabs).replacen("aria-label=\"Views\"", "aria-label=\"Sets\"", 1)
+        crate::ui::subnav_named(&tabs, "Sets")
     );
     for s in &sets {
         let mut labels = format!(

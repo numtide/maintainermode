@@ -18,11 +18,12 @@ use crate::builds::State as BuildState;
 use crate::catalog::Subject;
 use crate::followup::{Plans, others, verb};
 use crate::health::Health;
+use crate::html::{Html, html};
 use crate::mine::{Interests, Why};
 use crate::model::Pr;
 use crate::severity::Band;
 use crate::ui::{Tone, badge};
-use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon};
+use crate::web::{App, Shared, Snapshot, ago, icon, octicon};
 
 const SHOWN: usize = 20;
 const MOOD_COOKIE: &str = "mood";
@@ -108,7 +109,32 @@ pub(crate) enum Cause {
     Package,
 }
 
-#[derive(Clone, Debug)]
+impl Serialize for Mood {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.key())
+    }
+}
+
+fn label_texts<S: serde::Serializer>(labels: &[(Tone, String)], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(labels.iter().map(|(_, l)| l))
+}
+
+fn links<S: serde::Serializer>(more: &[(String, String)], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(
+        more.iter()
+            .map(|(href, text)| json!({ "href": href, "text": text })),
+    )
+}
+
+fn outputs<S: serde::Serializer>(hosts: &[(String, String)], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(
+        hosts
+            .iter()
+            .map(|(set, output)| json!({ "set": set, "output": output })),
+    )
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct Item {
     pub(crate) key: String,
     pub(crate) cause: Cause,
@@ -122,13 +148,57 @@ pub(crate) struct Item {
     /// Changes when the state behind the item changes.
     pub(crate) fingerprint: String,
     pub(crate) moods: Vec<Mood>,
+    #[serde(serialize_with = "label_texts")]
     pub(crate) labels: Vec<(Tone, String)>,
     pub(crate) at: Option<DateTime<Utc>>,
     /// More links: the advisory, or the merge box and the contributor guide.
+    #[serde(rename = "links", serialize_with = "links")]
     pub(crate) more: Vec<(String, String)>,
     /// The (set, output label) pairs that run the package of an advisory.
+    #[serde(rename = "outputs", serialize_with = "outputs")]
     pub(crate) hosts: Vec<(String, String)>,
+    #[serde(skip)]
     rank: (u8, i64, String),
+}
+
+#[derive(Serialize)]
+pub(crate) struct Row<'a> {
+    #[serde(flatten)]
+    item: &'a Item,
+    /// The first of `links`, for older clients.
+    link: Option<&'a str>,
+}
+
+/// What Needs you shows to one person in one mood.
+#[derive(Serialize)]
+pub(crate) struct Needs<'a> {
+    login: &'a str,
+    mood: Mood,
+    #[serde(serialize_with = "count_map")]
+    counts: Vec<(Mood, usize)>,
+    items: Vec<Row<'a>>,
+}
+
+fn count_map<S: serde::Serializer>(counts: &[(Mood, usize)], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_map(counts.iter().map(|(m, n)| (m.key(), n)))
+}
+
+impl<'a> Needs<'a> {
+    pub(crate) fn new(login: &'a str, mood: Mood, shown: &'a [Item]) -> Self {
+        Needs {
+            login,
+            mood,
+            counts: counts(shown),
+            items: shown
+                .iter()
+                .filter(|it| it.fits(mood))
+                .map(|item| Row {
+                    item,
+                    link: item.more.first().map(|(href, _)| href.as_str()),
+                })
+                .collect(),
+        }
+    }
 }
 
 impl Item {
@@ -875,53 +945,53 @@ fn cause_icon(c: Cause) -> (&'static str, &'static str, &'static str) {
     }
 }
 
-fn snooze_form(it: &Item, mood: Mood, then: &str, class: &str, label: &str) -> String {
-    format!(
+fn snooze_form(it: &Item, mood: Mood, then: &str, class: &str, label: &str) -> Html {
+    html!(
         "<form method=\"post\" action=\"/needs/snooze\" class=\"{class}\">\
          <input type=\"hidden\" name=\"key\" value=\"{}\"><input type=\"hidden\" name=\"fingerprint\" value=\"{}\">\
          <input type=\"hidden\" name=\"mood\" value=\"{}\"><input type=\"hidden\" name=\"then\" value=\"{then}\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"Hide it until it changes\" data-hotkey=\"e\" data-hotkey-label=\"Snooze: hide it until it changes\">{label}</button></form>",
-        esc(&it.key),
-        esc(&it.fingerprint),
+        it.key,
+        it.fingerprint,
         mood.key()
     )
 }
 
-fn row(it: &Item, mood: Mood) -> String {
+fn row(it: &Item, mood: Mood) -> Html {
     let (svg, class, label) = cause_icon(it.cause);
-    let labels: String = it
+    let labels: Html = it
         .labels
         .iter()
-        .map(|(t, l)| format!(" {}", badge(*t, esc(l))))
+        .map(|(t, l)| html!(" {}", badge(*t, Html::text(l))))
         .collect();
-    let more = it
+    let more: Html = it
         .more
         .iter()
-        .map(|(href, text)| format!(" · <a href=\"{}\">{}</a>", esc(href), esc(text)))
-        .collect::<String>();
-    format!(
+        .map(|(href, text)| html!(" · <a href=\"{href}\">{text}</a>"))
+        .collect();
+    html!(
         "<div class=\"Box-row d-flex flex-items-start needs-item\" tabindex=\"-1\" data-key=\"{key}\">\
          <span class=\"mr-2 {class}\" role=\"img\" aria-label=\"{label}\">{ic}</span>\
          <div class=\"flex-auto min-width-0 wb-break-word\">\
          <a class=\"Link--primary text-bold needs-open\" href=\"{href}\">{title}</a>{labels}\
          <div class=\"f6 color-fg-muted mt-1\">{detail}{more}</div></div>{snooze}</div>",
-        key = esc(&it.key),
+        key = it.key,
         ic = icon(svg),
-        href = esc(&it.href),
-        title = esc(&it.title),
-        detail = esc(&it.detail),
+        href = it.href,
+        title = it.title,
+        detail = it.detail,
         snooze = snooze_form(it, mood, "home", "needs-snooze ml-2", "Snooze"),
     )
 }
 
-fn chips(counts: &[(Mood, usize)], mood: Mood) -> String {
+fn chips(counts: &[(Mood, usize)], mood: Mood) -> Html {
     let tabs: Vec<crate::ui::Tab> = counts
         .iter()
         .map(|(m, n)| {
             crate::ui::Tab::new(format!("/?mood={}", m.key()), m.label(), *m == mood).count(*n)
         })
         .collect();
-    crate::ui::subnav(&tabs).replacen("aria-label=\"Views\"", "aria-label=\"Moods\"", 1)
+    crate::ui::subnav_named(&tabs, "Moods")
 }
 
 fn empty_text(mood: Mood) -> &'static str {
@@ -943,7 +1013,7 @@ fn empty_text(mood: Mood) -> &'static str {
 }
 
 /// The top of the home page of a person who signed in.
-pub(crate) fn section(app: &App, login: &str, mood: Mood, headers: &HeaderMap) -> String {
+pub(crate) fn section(app: &App, login: &str, mood: Mood, headers: &HeaderMap) -> Html {
     let (all, shown) = of(app, login);
     let done = session_hash(headers)
         .and_then(|s| {
@@ -951,31 +1021,35 @@ pub(crate) fn section(app: &App, login: &str, mood: Mood, headers: &HeaderMap) -
             app.store.needs_session(&s, &keys).ok()
         })
         .unwrap_or(0);
-    render(&shown, mood, done)
+    view(&Needs::new(login, mood, &shown), done)
 }
 
-fn render(shown: &[Item], mood: Mood, done: usize) -> String {
-    let counts = counts(shown);
-    let list: Vec<&Item> = shown.iter().filter(|it| it.fits(mood)).collect();
-    let rows: String = list.iter().take(SHOWN).map(|it| row(it, mood)).collect();
+fn view(n: &Needs, done: usize) -> Html {
+    let mood = n.mood;
+    let rows: Html = n
+        .items
+        .iter()
+        .take(SHOWN)
+        .map(|r| row(r.item, mood))
+        .collect();
     let body = if rows.is_empty() {
         crate::ui::empty(empty_text(mood))
     } else {
-        rows.into()
+        rows
     };
-    let start = if list.is_empty() {
-        String::new()
+    let start = if n.items.is_empty() {
+        Html::new()
     } else {
-        format!(
+        html!(
             "<a class=\"btn btn-sm btn-primary ml-2\" data-needs-next href=\"/needs/next?mood={}\" data-hotkey=\"n\" data-hotkey-label=\"Start: the first item of Needs you\">Start</a>",
             mood.key()
         )
     };
-    let mut foot = Vec::new();
-    if list.len() > SHOWN {
-        foot.push(format!(
+    let mut foot: Vec<Html> = Vec::new();
+    if n.items.len() > SHOWN {
+        foot.push(html!(
             "{} more. Press Next on each page to go through all of them.",
-            list.len() - SHOWN
+            n.items.len() - SHOWN
         ));
     }
     if matches!(mood, Mood::All | Mood::Review) {
@@ -985,24 +1059,36 @@ fn render(shown: &[Item], mood: Mood, done: usize) -> String {
         );
     }
     if done > 0 {
-        foot.push(format!("{done} done this session."));
+        foot.push(html!("{done} done this session."));
     }
-    let foot = format!(
-        "<div class=\"Box-footer d-flex flex-wrap flex-items-center gap-2 f6 color-fg-muted\"><span class=\"flex-auto\">{}</span>{HINT}</div>",
-        foot.join(" ")
+    let foot = html!(
+        "<div class=\"Box-footer d-flex flex-wrap flex-items-center gap-2 f6 color-fg-muted\"><span class=\"flex-auto\">{}</span>{hint}</div>",
+        join(&foot, " "),
+        hint = Html::from(HINT)
     );
-    format!(
+    html!(
         "<div id=\"needs\">{}<section class=\"Box mb-4\"><div class=\"Box-header d-flex flex-items-center\">\
          <h2 class=\"Box-title flex-auto\">{} Needs you <span class=\"Counter\">{}</span></h2>{start}</div>{body}{foot}</section></div>",
-        chips(&counts, mood),
+        chips(&n.counts, mood),
         icon(octicon!("checklist")),
-        list.len(),
+        n.items.len(),
     )
+}
+
+fn join(parts: &[Html], sep: &str) -> Html {
+    let mut out = Html::new();
+    for (i, p) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push(&Html::text(sep));
+        }
+        out.push(p);
+    }
+    out
 }
 
 /// A small Next button for a page reached from Needs you, with Snooze
 /// when the page is an open item. None when nothing comes next.
-pub fn next_link(app: &App, login: &str, mood: Mood, current_key: &str) -> Option<String> {
+pub fn next_link(app: &App, login: &str, mood: Mood, current_key: &str) -> Option<Html> {
     let (_, shown) = of(app, login);
     let here = shown
         .iter()
@@ -1016,32 +1102,23 @@ pub fn next_link(app: &App, login: &str, mood: Mood, current_key: &str) -> Optio
     if next.is_none() && here.is_none() {
         return None;
     }
-    let mut out = String::from("<span class=\"needs-nav d-inline-flex flex-items-center gap-2\">");
-    if let Some(it) = here {
-        out.push_str(&snooze_form(
-            it,
-            mood,
-            "next",
-            "needs-snooze-here d-inline",
-            "Snooze",
-        ));
-    }
-    let _ = write!(
-        out,
-        "<a class=\"btn btn-sm\" data-needs-next data-hotkey=\"n\" href=\"/needs/next?mood={}&amp;from={}\" title=\"The next item of Needs you\">Next {}</a>",
+    let snooze = here
+        .map(|it| snooze_form(it, mood, "next", "needs-snooze-here d-inline", "Snooze"))
+        .unwrap_or_default();
+    Some(html!(
+        "<span class=\"needs-nav d-inline-flex flex-items-center gap-2\">{snooze}\
+         <a class=\"btn btn-sm\" data-needs-next data-hotkey=\"n\" href=\"/needs/next?mood={}&amp;from={}\" title=\"The next item of Needs you\">Next {}</a>{hint}</span>",
         mood.key(),
         crate::github::urlencode(current_key),
-        icon(octicon!("arrow-right"))
-    );
-    out.push_str(HINT);
-    out.push_str("</span>");
-    Some(out)
+        icon(octicon!("arrow-right")),
+        hint = Html::from(HINT)
+    ))
 }
 
 /// [`next_link`] for the person and the mood of a request, or nothing.
-pub(crate) fn here(app: &App, headers: &HeaderMap, current_key: &str) -> String {
+pub(crate) fn here(app: &App, headers: &HeaderMap, current_key: &str) -> Html {
     let Some(login) = app.viewer(headers) else {
-        return String::new();
+        return Html::new();
     };
     next_link(app, &login, Mood::of(None, headers), current_key).unwrap_or_default()
 }
@@ -1110,42 +1187,13 @@ async fn snooze(
 /// The answer of `/api/v1/needs` and of the MCP tool `needs`.
 pub(crate) fn value(app: &App, login: &str, mood: Mood) -> serde_json::Value {
     let (_, shown) = of(app, login);
-    let counts: serde_json::Map<String, serde_json::Value> = counts(&shown)
-        .into_iter()
-        .map(|(m, n)| (m.key().to_string(), json!(n)))
-        .collect();
-    let items: Vec<serde_json::Value> = shown
+    let mut v = json!(Needs::new(login, mood, &shown));
+    v["plans"] = crate::followup::plans_value(app, login);
+    v["events"] = crate::followup::own_events(app, login, crate::catalog::FEED_DAYS)
         .iter()
-        .filter(|it| it.fits(mood))
-        .map(|it| {
-            json!({
-                "key": it.key,
-                "cause": it.cause,
-                "title": it.title,
-                "detail": it.detail,
-                "href": it.href,
-                "action": it.action,
-                "fingerprint": it.fingerprint,
-                "moods": it.moods.iter().map(|m| m.key()).collect::<Vec<_>>(),
-                "labels": it.labels.iter().map(|(_, l)| l).collect::<Vec<_>>(),
-                "at": it.at,
-                "link": it.more.first().map(|(href, _)| href),
-                "links": it.more.iter().map(|(href, text)| json!({ "href": href, "text": text })).collect::<Vec<_>>(),
-                "outputs": it.hosts.iter().map(|(set, output)| json!({ "set": set, "output": output })).collect::<Vec<_>>(),
-            })
-        })
+        .map(|e| json!({ "id": e.id, "at": e.at, "title": e.title, "url": e.url }))
         .collect();
-    json!({
-        "login": login,
-        "mood": mood.key(),
-        "counts": counts,
-        "items": items,
-        "plans": crate::followup::plans_value(app, login),
-        "events": crate::followup::own_events(app, login, crate::catalog::FEED_DAYS)
-            .iter()
-            .map(|e| json!({ "id": e.id, "at": e.at, "title": e.title, "url": e.url }))
-            .collect::<Vec<_>>(),
-    })
+    v
 }
 
 #[cfg(test)]
@@ -1156,6 +1204,10 @@ mod tests {
     use crate::model::Review;
     use crate::queue::Entry;
     use crate::severity::Cve;
+
+    fn render(items: &[Item], mood: Mood, done: usize) -> Html {
+        view(&Needs::new("x", mood, items), done)
+    }
 
     fn now() -> DateTime<Utc> {
         "2026-10-17T12:00:00Z".parse().unwrap()
