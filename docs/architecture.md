@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A4, and B1 to B7 are done.
+Status: A1 to A4, and B1 to B8 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -169,7 +169,8 @@ several places today:
 6. **profile, home.** Add `SubjectRow`. Done, with `PrSummary`.
 7. **prpanel, then prpage.** Blockers and checks reach the API. Done.
 8. **catalog.** Split it into package, module, area and maintains, one
-   at a time.
+   at a time. `PackageView`, `ModuleView`, `AreaView`, `MaintainsView`,
+   with `SubjectView` for what they share. Done.
 9. **Remove `Html::trusted` and `web::esc`.** Then a string with no
    escaping does not compile.
 

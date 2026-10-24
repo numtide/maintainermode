@@ -1133,7 +1133,7 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
     let dossier = crate::dossier::build(&s.pr_data, login);
     let area = s.areas.get(login).map(crate::area::Area::public);
     drop(s);
-    let mut maintains = crate::catalog::maintains_value(app, login);
+    let mut maintains = crate::catalog::maintains::value(app, login);
     if let Some(m) = maintains.as_object_mut() {
         m.remove("login");
     }

@@ -29,6 +29,7 @@ use crate::ui::{Page, Section, Tone, badge, empty, item_row, kv};
 use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, random_id};
 
 pub(crate) mod area;
+pub(crate) mod maintains;
 pub(crate) mod module;
 pub(crate) mod package;
 
@@ -1140,84 +1141,19 @@ pub(crate) fn maintained(index: &Index, login: &str) -> Maintained {
 
 /// A small flag when a channel lags master, with both versions on hover.
 pub(crate) fn lag_label(ch: &Channels, attr: &str, master: &str) -> String {
-    let behind = ch.behind(attr, master);
+    lag_of(&ch.behind(attr, master), attr, master)
+}
+
+/// [`lag_label`] for the channels that lag master.
+fn lag_of(behind: &[&Channel], attr: &str, master: &str) -> String {
     if behind.is_empty() {
         return String::new();
     }
     format!(
         " <span class=\"Label\" title=\"{}\">behind in {}</span>",
-        esc(&hover(&behind, attr, master)),
-        esc(&channel_names(&behind))
+        esc(&hover(behind, attr, master)),
+        esc(&channel_names(behind))
     )
-}
-
-fn maintained_rows(
-    s: &Snapshot,
-    index: &Index,
-    h: &Health,
-    ch: &Channels,
-    list: &[(Subject, Option<String>)],
-) -> String {
-    let mut out = String::new();
-    let mut rows: Vec<(&Subject, &Option<String>, Flags)> = list
-        .iter()
-        .map(|(sub, how)| (sub, how, Flags::of(s, index, h, sub)))
-        .collect();
-    rows.sort_by_key(|(sub, _, f)| (f.rank(), sub.label()));
-    for (sub, how, f) in rows {
-        let version = match sub {
-            Subject::Pkg(a) => index
-                .pkgs
-                .get(a)
-                .map(|p| {
-                    format!(
-                        " <span class=\"color-fg-muted f6\">{}</span>{}",
-                        esc(&p.version),
-                        lag_label(ch, a, &p.version)
-                    )
-                })
-                .unwrap_or_default(),
-            _ => String::new(),
-        };
-        let via = how
-            .as_ref()
-            .map(|t| format!(" <span class=\"Label\">via {}</span>", esc(t)))
-            .unwrap_or_default();
-        out.push_str(&subject_row(sub, &f, &format!("{version}{via}"), ""));
-    }
-    out
-}
-
-/// The Maintains tab of `/u/<login>`.
-pub(crate) fn maintains_body(app: &crate::web::App, login: &str) -> String {
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let ch = app.channels.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let m = maintained(&index, login);
-    let mut out = format!(
-        "<p class=\"f6 color-fg-muted\">Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name {0}, \
-         at nixpkgs {1}. Change the list in nixpkgs, not here.</p>",
-        esc(login),
-        esc(if index.rev.is_empty() {
-            "(index pending)"
-        } else {
-            &index.rev[..index.rev.len().min(12)]
-        })
-    );
-    out.push_str(&crate::ui::section(
-        format!("{} Packages", icon(octicon!("package"))),
-        Some(m.packages.len()),
-        None,
-        maintained_rows(&s, &index, &h, &ch, &m.packages),
-    ));
-    out.push_str(&crate::ui::section(
-        format!("{} NixOS modules", icon(octicon!("gear"))),
-        Some(m.modules.len()),
-        None,
-        maintained_rows(&s, &index, &h, &ch, &m.modules),
-    ));
-    out
 }
 
 #[derive(Deserialize)]
@@ -1614,56 +1550,6 @@ impl<'a> SubjectView<'a> {
         out.push(&section("Issues", &self.issues, |i| i.is_open(), issue_row));
         out
     }
-}
-
-#[derive(Serialize)]
-struct MaintainedRow<'a> {
-    #[serde(flatten)]
-    row: SubjectRow,
-    version: Option<String>,
-    via_team: Option<&'a str>,
-    channels_behind: Vec<&'a str>,
-}
-
-pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let ch = app.channels.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let m = maintained(&index, login);
-    let rows = |list: &[(Subject, Option<String>)]| -> Vec<Value> {
-        let mut rows: Vec<(&Subject, &Option<String>, Flags)> = list
-            .iter()
-            .map(|(sub, how)| (sub, how, Flags::of(&s, &index, &h, sub)))
-            .collect();
-        rows.sort_by_key(|(sub, _, f)| (f.rank(), sub.label()));
-        rows.into_iter()
-            .map(|(sub, how, f)| {
-                let version = match sub {
-                    Subject::Pkg(a) => index.pkgs.get(a).map(|p| p.version.clone()),
-                    _ => None,
-                };
-                let behind: Vec<&str> = match (sub, &version) {
-                    (Subject::Pkg(a), Some(v)) => {
-                        ch.behind(a, v).iter().map(|c| c.label()).collect()
-                    }
-                    _ => vec![],
-                };
-                json!(MaintainedRow {
-                    row: SubjectRow::new(sub, &f),
-                    version,
-                    via_team: how.as_deref(),
-                    channels_behind: behind,
-                })
-            })
-            .collect()
-    };
-    json!({
-        "login": login,
-        "rev": index.rev,
-        "packages": rows(&m.packages),
-        "modules": rows(&m.modules),
-    })
 }
 
 pub(crate) fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<Value> {
