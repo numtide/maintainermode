@@ -4,16 +4,16 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::collections::HashSet;
-use std::fmt::Write;
 
 use crate::actions::Act;
 use crate::area::{Index, under};
 use crate::catalog::{Subject, pr_row, subscriptions, upstream};
 use crate::health::Health;
+use crate::html::{Html, html};
 use crate::links::pkg_key;
 use crate::model::Pr;
 use crate::ui::{Kind, Tone, badge, empty, item_row, pager, section};
-use crate::web::{App, Snapshot, ago, esc};
+use crate::web::{App, Snapshot, ago};
 
 const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
 
@@ -180,9 +180,9 @@ fn checks(pr: &Pr) -> &'static str {
     }
 }
 
-fn upstream_html(r: &Row) -> String {
+fn upstream_html(r: &Row) -> Html {
     let Some(u) = &r.upstream else {
-        return String::new();
+        return Html::new();
     };
     let (class, hint) = if u == r.bump.new {
         ("Label--success", "this pull request brings it")
@@ -191,23 +191,20 @@ fn upstream_html(r: &Row) -> String {
     } else {
         ("", "the newest release Maintainer Mode knows")
     };
-    format!(
-        "<span class=\"Label {class}\" title=\"{hint}\">upstream {}</span>",
-        esc(u)
-    )
+    html!("<span class=\"Label {class}\" title=\"{hint}\">upstream {u}</span>")
 }
 
-fn row_html(r: &Row, act: Act) -> crate::html::Html {
+fn row_html(r: &Row, act: Act) -> Html {
     let p = r.pr;
     let package = r
         .attr
         .as_deref()
-        .map(|a| format!(" · <a href=\"/p/{0}\">{0}</a>", esc(a)))
+        .map(|a| html!(" · <a href=\"/p/{0}\">{0}</a>", a))
         .unwrap_or_default();
     let base = if p.base == "master" || p.base == "staging" {
-        String::new()
+        Html::new()
     } else {
-        format!(" · <span class=\"branch-name\">{}</span>", esc(&p.base))
+        html!(" · <span class=\"branch-name\">{}</span>", p.base)
     };
     let approved = match r.approvals {
         0 => "no approval".to_string(),
@@ -218,17 +215,17 @@ fn row_html(r: &Row, act: Act) -> crate::html::Html {
     if p.is_draft {
         badges.push(badge(Tone::Neutral, "draft"));
     }
-    badges.push(upstream_html(r).into());
+    badges.push(upstream_html(r));
     item_row(
         Some(Kind::PR_OPEN),
-        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, Html::text(&p.title), "Link--primary text-bold"),
         "",
-        format!(
+        html!(
             "#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}",
             n = p.number,
-            a = esc(&p.author),
+            a = p.author,
             age = ago(p.created_at),
-            checks = checks(p),
+            checks = Html::from(checks(p)),
         ),
         &badges,
         act.buttons(p.number),
@@ -244,19 +241,19 @@ pub(crate) fn tab(
     mut rows: Vec<Row>,
     only_mine: bool,
     after: Option<u64>,
-) -> String {
+) -> Html {
     let only_mine = only_mine && viewer.is_some();
     if let (true, Some(v)) = (only_mine, viewer) {
         rows = mine(app, index, v, true, rows);
     }
     let json = match (only_mine, viewer) {
         (true, Some(v)) => format!(
-            "/api/v1/prs?queue=bumps&amp;login={}",
+            "/api/v1/prs?queue=bumps&login={}",
             crate::github::urlencode(v)
         ),
         _ => "/api/v1/prs?queue=bumps".to_string(),
     };
-    let mut out = format!(
+    let mut out = html!(
         "<p>Open pull requests with a title like <code>name: old -&gt; new</code>. Most come from r-ryantm. Oldest first. \
          Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>.</p>"
     );
@@ -268,13 +265,12 @@ pub(crate) fn tab(
     if viewer.is_some() {
         let link = |on: bool, href: &str, label: &str| {
             if on {
-                format!("<strong>{label}</strong>")
+                html!("<strong>{label}</strong>")
             } else {
-                format!("<a href=\"{}\">{label}</a>", esc(href))
+                html!("<a href=\"{href}\">{label}</a>")
             }
         };
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<p class=\"f6\">Show: {} · {}</p>",
             link(!only_mine, "/review?tab=bumps", "all"),
             link(
@@ -282,28 +278,29 @@ pub(crate) fn tab(
                 "/review?tab=bumps&filter=mine",
                 "what you maintain or watch"
             )
-        );
+        ));
     }
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"{json}\">JSON</a></p>",
         rows.len(),
         median_age_days(&rows, Utc::now())
             .map(|d| format!(", median age {d} days"))
             .unwrap_or_default()
-    );
+    ));
     if rows.is_empty() {
-        out.push_str("<div class=\"blankslate\"><p>No open version bump.</p></div>");
+        out.push(&Html::from(
+            "<div class=\"blankslate\"><p>No open version bump.</p></div>",
+        ));
         return out;
     }
     let (page, next) = crate::review::paged(&rows, after, |r| r.pr.number);
     let act = Act::of(app, viewer);
-    out.push_str("<div class=\"Box\">");
+    out.push(&Html::from("<div class=\"Box\">"));
     for r in page {
-        out.push_str(&row_html(r, act));
+        out.push(&row_html(r, act));
     }
-    out.push_str("</div>");
-    out.push_str(&pager(href, next.as_deref()));
+    out.push(&Html::from("</div>"));
+    out.push(&pager(href, next.as_deref()));
     out
 }
 
@@ -336,25 +333,22 @@ pub(crate) fn package_section(
     attr: &str,
     prs: &[&Pr],
     act: Act,
-) -> crate::html::Html {
+) -> Html {
     let pname = index.pkgs.get(attr).map_or("", |p| p.pname.as_str());
     let list = of_package(attr, pname, prs);
-    let mut body: crate::html::Html = list.iter().map(|p| pr_row(p, act)).collect();
+    let mut body: Html = list.iter().map(|p| pr_row(p, act)).collect();
     if list.is_empty() {
         let hint = match upstream(s, index, h, attr) {
-            Some(u) => format!(
-                " Upstream has {}: <a href=\"{GUIDE}\">how to update a package</a>.",
-                esc(u)
-            ),
-            None => String::new(),
+            Some(u) => html!(" Upstream has {u}: <a href=\"{GUIDE}\">how to update a package</a>."),
+            None => Html::new(),
         };
-        body = empty(format!("None open.{hint}"));
+        body = empty(html!("None open.{hint}"));
     }
     section(
         "Version bumps",
         Some(list.len()),
         Some(("/review?tab=bumps", "all open bumps")),
-        &body,
+        body,
     )
 }
 

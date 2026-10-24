@@ -16,10 +16,11 @@ use std::collections::{BTreeSet, HashMap};
 use std::fmt::Write;
 
 use crate::dossier::{self, Outcome};
+use crate::html::{Html, html};
 use crate::ledger;
 use crate::model::Pr;
 use crate::ui::{Kind, Page, Section, Tab, Tone, badge, empty, item_row, note, pager, section};
-use crate::web::{App, Shared, Snapshot, ago, ci_icon, esc, icon, octicon, stat};
+use crate::web::{App, Shared, Snapshot, ago, ci_icon, icon, octicon, stat};
 
 /// A pull request with no review this long waits for a first review.
 pub(crate) const WAITING_DAYS: i64 = 7;
@@ -156,24 +157,24 @@ pub(crate) fn flakes_value(app: &App, login: &str) -> Value {
     Value::Array(list)
 }
 
-fn flakes_body(app: &App, login: &str, own: bool) -> String {
+fn flakes_body(app: &App, login: &str, own: bool) -> Html {
     let sets = app.store.public_sets(login).unwrap_or_default();
-    let mut out = String::new();
+    let mut out = Html::new();
     if own {
-        let off = if app.rescan.is_none() {
+        let off = Html::from(if app.rescan.is_none() {
             " This server does not scan flakes, so upload your own scan of a public flake: \
              <code class=\"set-ref\">maintainer-mode submit --name NAME --public-flake REFERENCE#OUTPUT</code>."
         } else {
             ""
-        };
-        out.push_str(&note(format!(
+        });
+        out.push(&note(html!(
             "Only the flakes that you mark \"Show on my profile\" show here. Your machine reports never do. \
              Change them on <a href=\"{}#sets\">your packages</a>.{off}",
             crate::mine::MACHINES
         )));
     }
     if sets.is_empty() {
-        out.push_str(&empty(format!("{} shows no public flake.", esc(login))));
+        out.push(&empty(html!("{login} shows no public flake.")));
         return out;
     }
     for s in sets {
@@ -184,55 +185,45 @@ fn flakes_body(app: &App, login: &str, own: bool) -> String {
             (None, _) => "Not scanned yet.".to_string(),
             (Some(d), true) => format!("Scanned by this server {} ago.", ago(d.uploaded_at)),
             (Some(d), false) => format!(
-                "Uploaded {} ago from the scan of {}. The server checked the package names, not the flake.",
-                ago(d.uploaded_at),
-                esc(login)
+                "Uploaded {} ago from the scan of {login}. The server checked the package names, not the flake.",
+                ago(d.uploaded_at)
             ),
         };
         let shown = match flake_href(reference) {
-            Some(u) => format!(
-                "<a class=\"set-ref\" href=\"{}\"><code>{}</code></a>",
-                esc(&u),
-                esc(reference)
-            ),
-            None => format!("<code class=\"set-ref\">{}</code>", esc(reference)),
+            Some(u) => html!("<a class=\"set-ref\" href=\"{u}\"><code>{reference}</code></a>"),
+            None => html!("<code class=\"set-ref\">{reference}</code>"),
         };
         let attrs = s.data.map(|d| d.attrs).unwrap_or_default();
-        let mut list: String = attrs
-            .iter()
-            .take(FLAKE_PACKAGES)
-            .map(|a| {
-                format!(
-                    "<a class=\"Label tap-label\" href=\"/p/{}\">{}</a>",
-                    crate::github::urlencode(a),
-                    esc(a)
+        let mut list = crate::html::join(
+            attrs.iter().take(FLAKE_PACKAGES).map(|a| {
+                html!(
+                    "<a class=\"Label tap-label\" href=\"/p/{}\">{a}</a>",
+                    crate::github::urlencode(a)
                 )
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+            }),
+            " ",
+        );
         if attrs.len() > FLAKE_PACKAGES {
-            let _ = write!(
-                list,
+            list.push(&html!(
                 " <span class=\"color-fg-muted\">and {} more in <a href=\"/api/v1/people/{}\">the JSON</a></span>",
                 attrs.len() - FLAKE_PACKAGES,
                 crate::github::urlencode(login)
-            );
+            ));
         }
-        let body = format!(
-            "<div class=\"Box-row set-ref\">{shown} <span class=\"color-fg-muted\">#</span><code>{}</code>\
+        let body = html!(
+            "<div class=\"Box-row set-ref\">{shown} <span class=\"color-fg-muted\">#</span><code>{output}</code>\
              <div class=\"f6 color-fg-muted mt-1\">{source}</div></div>{}",
-            esc(output),
             if list.is_empty() {
-                String::new()
+                Html::new()
             } else {
-                format!("<div class=\"Box-row d-flex flex-wrap gap-1\">{list}</div>")
+                html!("<div class=\"Box-row d-flex flex-wrap gap-1\">{list}</div>")
             }
         );
-        out.push_str(&section(
-            format!("{} {}", icon(octicon!("package")), esc(&s.name)),
+        out.push(&section(
+            html!("{} {}", icon(octicon!("package")), s.name),
             Some(attrs.len()),
             None,
-            &body,
+            body,
         ));
     }
     out
@@ -481,12 +472,12 @@ pub(crate) fn profile_value(app: &App, login: &str) -> Value {
     })
 }
 
-fn header_facts(login: &str, f: &Facts) -> String {
+fn header_facts(login: &str, f: &Facts) -> Html {
     let mut b = Vec::new();
     if f.committer {
         b.push(badge(
             Tone::Neutral,
-            format!("{} committer", icon(octicon!("git-merge"))),
+            html!("{} committer", icon(octicon!("git-merge"))),
         ));
     }
     if f.packages + f.modules > 0 {
@@ -497,36 +488,35 @@ fn header_facts(login: &str, f: &Facts) -> String {
         if f.modules > 0 {
             what.push(plural(f.modules, "module", "modules"));
         }
-        b.push(crate::html::Html::from(format!(
+        b.push(html!(
             "<a class=\"Label\" href=\"{}\">maintains {}</a>",
-            esc(&ProfileTab::Maintains.href(login)),
+            ProfileTab::Maintains.href(login),
             what.join(" and ")
-        )));
+        ));
     }
     if !f.teams.is_empty() {
-        let names: Vec<String> = f.teams.iter().map(|t| esc(t)).collect();
         b.push(badge(
             Tone::Neutral,
-            format!(
+            html!(
                 "{} {}: {}",
                 icon(octicon!("people")),
-                if names.len() == 1 { "team" } else { "teams" },
-                names.join(", ")
+                if f.teams.len() == 1 { "team" } else { "teams" },
+                f.teams.join(", ")
             ),
         ));
     }
     if let Some(t) = f.first_pr_at {
         b.push(badge(
             Tone::Neutral,
-            format!("first pull request {}", t.format("%Y-%m-%d")),
+            html!("first pull request {}", t.format("%Y-%m-%d").to_string()),
         ));
     }
     if b.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    format!(
+    html!(
         "<span class=\"d-inline-flex flex-wrap gap-1 flex-items-center\">{}</span>",
-        b.join(" ")
+        crate::html::join(b, " ")
     )
 }
 
@@ -539,21 +529,21 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 }
 
 /// The login follows the avatar, so the image is decorative: `alt` is empty.
-fn avatar(login: &str) -> String {
-    format!(
+fn avatar(login: &str) -> Html {
+    html!(
         "<img class=\"avatar mr-2 v-align-middle\" src=\"https://avatars.githubusercontent.com/{}?s=96\" \
          alt=\"\" width=\"48\" height=\"48\" loading=\"lazy\">",
         crate::github::urlencode(login)
     )
 }
 
-fn open_row(p: &Pr, now: DateTime<Utc>) -> crate::html::Html {
+fn open_row(p: &Pr, now: DateTime<Utc>) -> Html {
     let state = review_state(p);
     let mut badges = vec![state.badge()];
     if waiting(p, now) {
         badges.push(badge(
             Tone::Attention,
-            format!("waiting {}", crate::web::age_words(p.created_at)),
+            html!("waiting {}", crate::web::age_words(p.created_at)),
         ));
     }
     if p.mergeable == "CONFLICTING" {
@@ -561,23 +551,23 @@ fn open_row(p: &Pr, now: DateTime<Utc>) -> crate::html::Html {
     }
     item_row(
         Some(Kind::PR_OPEN),
-        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, Html::text(&p.title), "Link--primary text-bold"),
         "",
-        format!(
+        html!(
             "#{} · opened {} ago · <span class=\"branch-name\">{}</span>",
             p.number,
             ago(p.created_at),
-            esc(&p.base)
+            p.base
         ),
         &badges,
-        &match p.ci.as_deref() {
-            None => String::new(),
-            ci => format!("<span class=\"ml-2\">{}</span>", ci_icon(ci)),
+        match p.ci.as_deref() {
+            None => Html::new(),
+            ci => html!("<span class=\"ml-2\">{}</span>", ci_icon(ci)),
         },
     )
 }
 
-fn recent_row(p: &Pr) -> crate::html::Html {
+fn recent_row(p: &Pr) -> Html {
     let (kind, when) = match (p.merged_at, p.closed_at) {
         (Some(t), _) => (Kind::PR_MERGED, format!("merged {} ago", ago(t))),
         (None, Some(t)) => (Kind::PR_CLOSED, format!("closed {} ago", ago(t))),
@@ -587,92 +577,91 @@ fn recent_row(p: &Pr) -> crate::html::Html {
         .merged_by
         .as_deref()
         .filter(|m| !m.eq_ignore_ascii_case(&p.author))
-        .map(|m| format!(" by <a href=\"/u/{0}\">{0}</a>", esc(m)))
+        .map(|m| html!(" by <a href=\"/u/{0}\">{0}</a>", m))
         .unwrap_or_default();
     item_row(
         Some(kind),
-        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, Html::text(&p.title), "Link--primary text-bold"),
         "",
-        format!("#{} · {when}{merger}", p.number),
+        html!("#{} · {when}{merger}", p.number),
         &[],
         "",
     )
 }
 
-fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> String {
+fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Html {
     let open = open_prs(&s.pr_data, login, now);
     let waiting_n = open.iter().filter(|p| waiting(p, now)).count();
-    let mut out = String::new();
+    let mut out = Html::new();
     if waiting_n > 0 {
-        out.push_str(&note(format!(
-            "{} of {} wait for a first review for {WAITING_DAYS} days or more. They come first. A review helps here.",
-            plural(waiting_n, "pull request", "pull requests"),
-            esc(login)
+        out.push(&note(html!(
+            "{} of {login} wait for a first review for {WAITING_DAYS} days or more. They come first. A review helps here.",
+            plural(waiting_n, "pull request", "pull requests")
         )));
     }
-    let rows: String = open
+    let rows: Html = open
         .iter()
         .skip(after)
         .take(PAGE)
         .map(|p| open_row(p, now))
         .collect();
-    out.push_str(&section(
-        format!("{} Open pull requests", icon(octicon!("git-pull-request"))),
+    out.push(&section(
+        html!("{} Open pull requests", icon(octicon!("git-pull-request"))),
         Some(open.len()),
         None,
-        &if rows.is_empty() {
+        if rows.is_empty() {
             empty("No open pull request in the synced data.")
         } else {
-            rows.into()
+            rows
         },
     ));
     let next = after + PAGE;
     if next < open.len() {
-        out.push_str(&pager(
+        out.push(&pager(
             &ProfileTab::Overview.href(login),
             Some(&next.to_string()),
         ));
     }
     let recent = recent_prs(&s.pr_data, login, now);
-    let rows: String = recent.iter().map(|p| recent_row(p)).collect();
-    out.push_str(&section(
-        format!(
+    let rows: Html = recent.iter().map(|p| recent_row(p)).collect();
+    out.push(&section(
+        html!(
             "{} Merged or closed in the last {RECENT_DAYS} days",
             icon(octicon!("git-merge"))
         ),
         Some(recent.len()),
         None,
-        &if rows.is_empty() {
+        if rows.is_empty() {
             empty("None in the synced data.")
         } else {
-            rows.into()
+            rows
         },
     ));
     let areas = top_areas(&s.pr_data, login, now);
-    let rows: String = areas
+    let rows: Html = areas
         .iter()
         .map(|(d, n)| {
             item_row(
                 None,
-                format!("{} {}/", icon(octicon!("file-directory")), esc(d)),
-                format!("/a/{}", esc(d)),
-                plural(*n, "pull request", "pull requests"),
+                html!("{} {d}/", icon(octicon!("file-directory"))),
+                &format!("/a/{d}"),
+                Html::text(&plural(*n, "pull request", "pull requests")),
                 &[],
                 "",
             )
         })
         .collect();
-    out.push_str(&section(
-        format!(
+    out.push(&section(
+        html!(
             "{} Where they work in nixpkgs",
             icon(octicon!("file-directory"))
         ),
         None,
         None,
-        &if rows.is_empty() {
+        if rows.is_empty() {
             empty("No pull request in the synced data.")
         } else {
-            rows.into()
+            rows
         },
     ));
     out
@@ -691,40 +680,38 @@ fn outcome_label(o: Outcome) -> &'static str {
     }
 }
 
-fn overlap(title: &str, list: &[(String, usize)]) -> String {
+fn overlap(title: &'static str, list: &[(String, usize)]) -> Html {
     const SHOWN: usize = 15;
-    let mut rows: String = list
+    let mut rows: Html = list
         .iter()
         .take(SHOWN)
         .map(|(l, n)| {
-            format!(
-                "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>",
-                l = esc(l)
+            html!(
+                "<div class=\"Box-row d-flex\"><a class=\"flex-auto\" href=\"/u/{l}\">{l}</a><span class=\"Counter\">{n}</span></div>"
             )
         })
         .collect();
     if list.len() > SHOWN {
-        rows.push_str(&format!(
+        rows.push(&html!(
             "<div class=\"Box-row color-fg-muted\">and {} more</div>",
             list.len() - SHOWN
         ));
     }
-    format!(
+    html!(
         "<div class=\"col-grow\">{}</div>",
-        section(title, None, None, &rows)
+        section(title, None, None, rows)
     )
 }
 
 /// The review record: facts about reviews, not a judgement.
-fn reviews(s: &Snapshot, login: &str) -> crate::html::Html {
+fn reviews(s: &Snapshot, login: &str) -> Html {
     let d = dossier::build(&s.pr_data, login);
-    let mut out = note(format!(
+    let mut out = note(html!(
         "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
          It counts the reviews of the last {} days and on every open pull request.",
-        ledger::WINDOW_DAYS,
+        ledger::WINDOW_DAYS
     ));
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(
             d.merged_unchanged,
@@ -736,47 +723,45 @@ fn reviews(s: &Snapshot, login: &str) -> crate::html::Html {
             "problems found",
             "the author changed the pull request after their review asked for it"
         ),
-    );
-    let mut recent = String::new();
+    ));
+    let mut recent = Html::new();
     for r in &d.recent {
         let found = if r.problem_found {
-            format!(" {}", badge(Tone::Attention, "problem found"))
+            html!(" {}", badge(Tone::Attention, "problem found"))
         } else {
-            String::new()
+            Html::new()
         };
-        let _ = write!(
-            recent,
+        recent.push(&html!(
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto min-width-0 wb-break-word\">\
              {t}\
              <div class=\"f6 color-fg-muted\">{} · <a href=\"{u}\">{}</a> · author <a href=\"/u/{a}\">{a}</a></div></div>\
              <div class=\"text-right ml-2 flex-shrink-0\">{}{found}</div></div>",
-            r.at.format("%Y-%m-%d"),
-            esc(&r.state.to_lowercase().replace('_', " ")),
-            outcome_label(r.outcome),
+            r.at.format("%Y-%m-%d").to_string(),
+            r.state.to_lowercase().replace('_', " "),
+            Html::from(outcome_label(r.outcome)),
             t = crate::prpage::title_link(
                 r.pr,
-                &format!("#{} {}", r.pr, esc(&r.pr_title)),
+                html!("#{} {}", r.pr, r.pr_title),
                 "Link--primary"
             ),
-            u = esc(&r.review_url),
-            a = esc(&r.pr_author),
-        );
+            u = r.review_url,
+            a = r.pr_author,
+        ));
     }
     if recent.is_empty() {
-        recent = empty("No reviews in the synced data.").into_string();
+        recent = empty("No reviews in the synced data.");
     }
-    out.push_str(&section(
-        format!("Last {} reviews, and what came of each", dossier::RECENT),
+    out.push(&section(
+        html!("Last {} reviews, and what came of each", dossier::RECENT),
         None,
         None,
-        &recent,
+        recent,
     ));
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<div class=\"d-flex flex-wrap gap-3\">{}{}</div>",
         overlap("Reviewed alongside", &d.co_reviewers),
         overlap("Reviewed pull requests of", &d.authors)
-    );
+    ));
     out
 }
 
@@ -813,10 +798,7 @@ async fn page(
             let after = q.after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(0);
             (login.clone(), overview(&s, &login, after, now))
         }
-        ProfileTab::Reviews => (
-            format!("Reviews of {login}"),
-            reviews(&s, &login).into_string(),
-        ),
+        ProfileTab::Reviews => (format!("Reviews of {login}"), reviews(&s, &login)),
         ProfileTab::Maintains => (
             format!("What {login} maintains"),
             crate::catalog::maintains::body(&app, &login),
@@ -827,20 +809,19 @@ async fn page(
         ),
     };
     drop(s);
-    let mut actions = format!(
+    let mut actions = html!(
         "<a class=\"btn btn-sm\" href=\"https://github.com/{}\">{} GitHub</a>",
         crate::github::urlencode(&login),
         icon(octicon!("mark-github"))
     );
     if own {
-        let _ = write!(
-            actions,
+        actions.push(&html!(
             " <a class=\"btn btn-sm\" href=\"/packages?filter=mine\">{} Your packages</a>",
             icon(octicon!("person"))
-        );
+        ));
     }
     Page::new(Section::Other, title)
-        .heading(format!("{}{}", avatar(&login), esc(&login)))
+        .heading(html!("{}{login}", avatar(&login)))
         .sub(header_facts(&login, &f))
         .subnav(tabs(&login, tab, flakes))
         .actions(actions)

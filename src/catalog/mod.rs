@@ -19,14 +19,14 @@ use crate::area::{Index, under};
 use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Health, Hydra, Last};
-use crate::html::Html;
+use crate::html::{Html, html};
 use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
 use crate::score::{self, Score};
 use crate::severity::{self, Worst};
 use crate::ui::{Page, Section, Tone, badge, empty, item_row, kv};
-use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, random_id};
+use crate::web::{Shared, Snapshot, ago, icon, octicon, random_id};
 
 pub(crate) mod area;
 pub(crate) mod maintains;
@@ -187,9 +187,9 @@ impl Subject {
 
     pub fn href(&self) -> String {
         match self {
-            Subject::Pkg(a) => format!("/p/{}", esc(a)),
-            Subject::Module(f) => format!("/m/{}", esc(f)),
-            Subject::Area(p) => format!("/a/{}", esc(p)),
+            Subject::Pkg(a) => format!("/p/{a}"),
+            Subject::Module(f) => format!("/m/{f}"),
+            Subject::Area(p) => format!("/a/{p}"),
         }
     }
 
@@ -329,10 +329,9 @@ pub(crate) fn upstream<'a>(
 }
 
 /// The text of the upstream badge of a row.
-fn upstream_badge(version: &str) -> String {
-    format!(
-        "<span title=\"Upstream released a newer version than nixpkgs has\">{} available</span>",
-        esc(version)
+fn upstream_badge(version: &str) -> Html {
+    html!(
+        "<span title=\"Upstream released a newer version than nixpkgs has\">{version} available</span>"
     )
 }
 
@@ -582,7 +581,7 @@ impl Flags {
         if self.advisories > 0 {
             out.push(badge(
                 Tone::Danger,
-                format!(
+                html!(
                     "{} {} advisor{}",
                     icon(octicon!("shield")),
                     self.advisories,
@@ -593,7 +592,7 @@ impl Flags {
         if self.build_failed {
             out.push(badge(
                 Tone::Danger,
-                format!("{} build fails", icon(octicon!("x-circle-fill"))),
+                html!("{} build fails", icon(octicon!("x-circle-fill"))),
             ));
         }
         if let Some(u) = &self.upstream {
@@ -622,15 +621,15 @@ impl Flags {
     }
 
     /// badges() puts the upstream badge last.
-    pub(crate) fn html(&self) -> String {
+    pub(crate) fn html(&self) -> Html {
         let mut out = self.badges();
         let upstream = self.upstream.as_ref().and_then(|_| out.pop());
         let meta = self.meta();
         if !meta.is_empty() {
-            out.push(format!("<span class=\"f6 color-fg-muted\">{meta}</span>").into());
+            out.push(html!("<span class=\"f6 color-fg-muted\">{meta}</span>"));
         }
         out.extend(upstream);
-        out.join(" · ")
+        crate::html::join(out, " · ")
     }
 
     pub(crate) fn json(&self) -> Value {
@@ -685,18 +684,18 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> Html {
     };
     item_row(
         Some(kind),
-        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, Html::text(&p.title), "Link--primary text-bold"),
         "",
-        format!(
+        html!(
             "#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}",
             n = p.number,
-            a = esc(&p.author)
+            a = p.author
         ),
         &badges,
-        &if p.is_open() {
+        if p.is_open() {
             act.buttons(p.number)
         } else {
-            String::new()
+            Html::new()
         },
     )
 }
@@ -711,7 +710,7 @@ fn issue_row(i: &Issue) -> Html {
         .labels
         .iter()
         .filter(|l| !l.starts_with("0.kind:") && !l.starts_with("9."))
-        .map(|l| badge(Tone::Neutral, esc(l)))
+        .map(|l| badge(Tone::Neutral, Html::text(l)))
         .collect();
     item_row(
         Some(if i.is_open() {
@@ -719,9 +718,9 @@ fn issue_row(i: &Issue) -> Html {
         } else {
             Kind::ISSUE_CLOSED
         }),
-        esc(&i.title),
-        esc(&i.url),
-        format!(
+        Html::text(&i.title),
+        &i.url,
+        html!(
             "#{} by {} · {when} · {} comments",
             i.number,
             crate::web::person_link(&i.author),
@@ -745,92 +744,89 @@ fn section<T>(
         body = empty("None open.");
     }
     if o.len() > LIST {
-        let _ = write!(
-            body,
+        body.push(&html!(
             "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
             o.len() - LIST
-        );
+        ));
     }
-    let mut out = crate::ui::section(title, Some(o.len()), None, &body);
+    let mut out = crate::ui::section(Html::text(title), Some(o.len()), None, body);
     if !c.is_empty() {
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<details class=\"Box mb-4\"><summary class=\"Box-header\">Closed or merged in the last {} days <span class=\"Counter\">{}</span></summary>",
             crate::ledger::WINDOW_DAYS,
             c.len()
-        );
+        ));
         for x in c.iter().take(LIST) {
-            out.push_str(&row(x));
+            out.push(&row(x));
         }
-        out.push_str("</details>");
+        out.push(&Html::from("</details>"));
     }
     out
 }
 
-/// `after_title` is HTML that follows the link, such as a version.
-pub(crate) fn subject_row(sub: &Subject, f: &Flags, after_title: &str, status: &str) -> Html {
+/// `after_title` follows the link, such as a version.
+pub(crate) fn subject_row(
+    sub: &Subject,
+    f: &Flags,
+    after_title: impl Into<Html>,
+    status: impl Into<Html>,
+) -> Html {
+    let after_title = after_title.into();
     item_row(
         None,
-        format!(
+        html!(
             "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>{after_title}",
             sub.href(),
             sub.icon(),
-            esc(&sub.label())
+            sub.label()
         ),
         "",
-        f.meta(),
+        Html::text(&f.meta()),
         &f.badges(),
         status,
     )
 }
 
-fn people_links(logins: &[String]) -> String {
+fn people_links(logins: &[String]) -> Html {
     if logins.is_empty() {
         return "<span class=\"color-fg-muted\">none</span>".into();
     }
-    logins
-        .iter()
-        .map(|l| crate::web::person_link(l))
-        .collect::<Vec<_>>()
-        .join(", ")
+    crate::web::people(logins)
 }
 
-fn teams_html(index: &Index, teams: &[String]) -> String {
-    teams
-        .iter()
-        .map(|t| {
-            format!(
-                "{} ({})",
-                esc(t),
+fn teams_html(index: &Index, teams: &[String]) -> Html {
+    crate::html::join(
+        teams.iter().map(|t| {
+            html!(
+                "{t} ({})",
                 people_links(index.teams.get(t).map(Vec::as_slice).unwrap_or(&[]))
             )
-        })
-        .collect::<Vec<_>>()
-        .join("; ")
-}
-
-fn source_link(rev: &str, file: &str) -> String {
-    let r = if rev.is_empty() { "master" } else { rev };
-    format!(
-        "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{}/{f}\">{f}</a>",
-        esc(r),
-        f = esc(file)
+        }),
+        "; ",
     )
 }
 
-fn subscribe_button(watching: Option<bool>, subject: &Subject) -> String {
+fn source_link(rev: &str, file: &str) -> Html {
+    let r = if rev.is_empty() { "master" } else { rev };
+    html!(
+        "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{r}/{f}\">{f}</a>",
+        f = file
+    )
+}
+
+fn subscribe_button(watching: Option<bool>, subject: &Subject) -> Html {
     match watching {
         None => "<a class=\"btn btn-sm\" href=\"/auth/login\">Sign in to watch</a>".into(),
-        Some(false) => format!(
+        Some(false) => html!(
             "<form method=\"post\" action=\"/me/watch\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
              <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch</button></form>",
-            esc(&subject.key()),
+            subject.key(),
             icon(octicon!("bell"))
         ),
-        Some(true) => format!(
+        Some(true) => html!(
             "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
              <button class=\"btn btn-sm\" type=\"submit\">Stop watching</button></form>",
-            esc(&subject.key())
+            subject.key()
         ),
     }
 }
@@ -846,9 +842,8 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
 }
 
 fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Response {
-    let body = format!(
-        "<div class=\"blankslate\"><p>{} is not in the nixpkgs index{}.</p><p><a href=\"/packages\">Search packages, modules and directories</a></p></div>",
-        esc(what),
+    let body = html!(
+        "<div class=\"blankslate\"><p>{what} is not in the nixpkgs index{}.</p><p><a href=\"/packages\">Search packages, modules and directories</a></p></div>",
         if app.index.read().unwrap().rev.is_empty() {
             " yet: the first index is still being built"
         } else {
@@ -901,17 +896,16 @@ fn contents(index: &Index, s: &Snapshot, h: &Health, path: &str) -> Vec<(Subject
     v
 }
 
-pub(crate) fn subject_rows(rows: &[(Subject, Flags)]) -> String {
-    let mut out = String::new();
+pub(crate) fn subject_rows(rows: &[(Subject, Flags)]) -> Html {
+    let mut out = Html::new();
     for (sub, f) in rows.iter().take(LIST) {
-        out.push_str(&subject_row(sub, f, "", ""));
+        out.push(&subject_row(sub, f, "", ""));
     }
     if rows.len() > LIST {
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<div class=\"Box-footer f6 color-fg-muted\">{} more in the JSON API</div>",
             rows.len() - LIST
-        );
+        ));
     }
     out
 }
@@ -971,7 +965,7 @@ async fn browse(
     if filter == Filter::All {
         return page
             .sub(CATALOG_SUB)
-            .body(format!("{step}{}", catalog_body(&app, true)))
+            .body(html!("{step}{}", catalog_body(&app, true)))
             .render(&app, Some(&login));
     }
     let v = crate::mine::view(
@@ -988,7 +982,7 @@ async fn browse(
     );
     page.sub(v.sub)
         .actions(v.actions)
-        .body(format!("{step}{}", v.body))
+        .body(html!("{step}{}", v.body))
         .render(&app, Some(&login))
 }
 
@@ -996,16 +990,20 @@ const CATALOG_SUB: &str = "Each one has a page with its health, issues and pull 
 
 /// The catalog: the directories. The search box of the header finds the
 /// rest.
-fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
+fn catalog_body(app: &crate::web::App, signed_in: bool) -> Html {
     let s = app.snap();
     let index = app.index.read().unwrap();
-    let mut out = String::from(
+    let mut out = Html::from(
         "<p class=\"color-fg-muted\">Use the search box at the top, or press <kbd>/</kbd>, to find a package, a module or a person.</p>",
     );
     if signed_in {
-        out.push_str("<p><a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>");
+        out.push(&Html::from(
+            "<p><a href=\"/review?tab=bumps&amp;filter=mine\">Version bumps</a></p>",
+        ));
     } else {
-        out.push_str("<p><a href=\"/review?tab=bumps\">Version bumps</a></p>");
+        out.push(&Html::from(
+            "<p><a href=\"/review?tab=bumps\">Version bumps</a></p>",
+        ));
     }
     {
         let mut areas: Vec<String> = TOP_AREAS.iter().map(|a| a.to_string()).collect();
@@ -1018,7 +1016,7 @@ fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
         );
         areas.sort();
         areas.dedup();
-        let list: String = areas
+        let list: Html = areas
             .iter()
             .map(|a| {
                 let n = s.open_by_dir.get(a).copied().unwrap_or(0);
@@ -1029,15 +1027,15 @@ fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
                 };
                 item_row(
                     None,
-                    format!("{} {}/", icon(octicon!("file-directory")), esc(a)),
-                    format!("/a/{}", esc(a)),
-                    &meta,
+                    html!("{} {a}/", icon(octicon!("file-directory"))),
+                    &format!("/a/{a}"),
+                    Html::text(&meta),
                     &[],
                     "",
                 )
             })
             .collect();
-        out.push_str(&crate::ui::section("Directories", None, None, &list));
+        out.push(&crate::ui::section("Directories", None, None, list));
     }
     out
 }
@@ -1140,19 +1138,19 @@ pub(crate) fn maintained(index: &Index, login: &str) -> Maintained {
 }
 
 /// A small flag when a channel lags master, with both versions on hover.
-pub(crate) fn lag_label(ch: &Channels, attr: &str, master: &str) -> String {
+pub(crate) fn lag_label(ch: &Channels, attr: &str, master: &str) -> Html {
     lag_of(&ch.behind(attr, master), attr, master)
 }
 
 /// [`lag_label`] for the channels that lag master.
-fn lag_of(behind: &[&Channel], attr: &str, master: &str) -> String {
+pub(crate) fn lag_of(behind: &[&Channel], attr: &str, master: &str) -> Html {
     if behind.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    format!(
+    html!(
         " <span class=\"Label\" title=\"{}\">behind in {}</span>",
-        esc(&hover(behind, attr, master)),
-        esc(&channel_names(behind))
+        hover(behind, attr, master),
+        channel_names(behind)
     )
 }
 
@@ -1259,25 +1257,24 @@ pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> 
 }
 
 /// The `#feed` section of `/me/settings`.
-pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> String {
+pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> Html {
     let feed = match app.store.feed_token(login).ok().flatten() {
-        Some(t) => format!(
+        Some(t) => html!(
             "<p>Add this link to a feed reader. It is private: anyone with it reads what you watch, and the advisories and releases of your package set.</p>\
-             <input class=\"form-control width-full mb-2\" readonly value=\"{}/feed/{}\" aria-label=\"feed link\">\
+             <input class=\"form-control width-full mb-2\" readonly value=\"{}/feed/{t}\" aria-label=\"feed link\">\
              <form method=\"post\" action=\"/me/feed\"><button class=\"btn btn-sm\" type=\"submit\">Replace the link</button></form>",
-            esc(app.public_url.trim_end_matches('/')),
-            esc(&t)
+            app.public_url.trim_end_matches('/')
         ),
         None => "<form method=\"post\" action=\"/me/feed\"><button class=\"btn btn-sm\" type=\"submit\">Make a feed link</button></form>"
             .into(),
     };
-    format!(
+    html!(
         "<div id=\"feed\">{}</div>",
         crate::ui::section(
-            format!("{} Atom feed", icon(octicon!("rss"))),
+            html!("{} Atom feed", icon(octicon!("rss"))),
             None,
             None,
-            format!("<div class=\"Box-row\">{feed}</div>")
+            html!("<div class=\"Box-row\">{feed}</div>")
         )
     )
 }
@@ -1450,7 +1447,7 @@ fn xml(s: &str) -> String {
         .chars()
         .filter(|c| !c.is_control() || matches!(c, '\t' | '\n' | '\r'))
         .collect();
-    esc(&s).replace('\'', "&apos;")
+    Html::text(&s).into_string().replace('\'', "&apos;")
 }
 
 async fn feed(State(app): State<Shared>, Path(token): Path<String>) -> Response {

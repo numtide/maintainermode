@@ -79,50 +79,44 @@ pub(crate) fn data<'a>(
     }
 }
 
-fn rows_html(rows: &[MaintainedRow]) -> String {
-    let mut out = String::new();
+fn rows_html(rows: &[MaintainedRow]) -> Html {
+    let mut out = Html::new();
     for r in rows {
         let version = match (r.sub, r.version) {
-            (Subject::Pkg(a), Some(v)) => format!(
-                " <span class=\"color-fg-muted f6\">{}</span>{}",
-                esc(v),
+            (Subject::Pkg(a), Some(v)) => html!(
+                " <span class=\"color-fg-muted f6\">{v}</span>{}",
                 lag_of(&r.channels_behind, a, v)
             ),
-            _ => String::new(),
+            _ => Html::new(),
         };
         let via = r
             .via_team
-            .map(|t| format!(" <span class=\"Label\">via {}</span>", esc(t)))
+            .map(|t| html!(" <span class=\"Label\">via {t}</span>"))
             .unwrap_or_default();
-        out.push_str(&subject_row(
-            r.sub,
-            &r.flags,
-            &format!("{version}{via}"),
-            "",
-        ));
+        out.push(&subject_row(r.sub, &r.flags, html!("{version}{via}"), ""));
     }
     out
 }
 
-pub(crate) fn view(v: &MaintainsView) -> String {
-    let mut out = format!(
+pub(crate) fn view(v: &MaintainsView) -> Html {
+    let mut out = html!(
         "<p class=\"f6 color-fg-muted\">Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name {0}, \
          at nixpkgs {1}. Change the list in nixpkgs, not here.</p>",
-        esc(v.login),
-        esc(if v.rev.is_empty() {
+        v.login,
+        if v.rev.is_empty() {
             "(index pending)"
         } else {
             &v.rev[..v.rev.len().min(12)]
-        })
+        }
     );
-    out.push_str(&crate::ui::section(
-        format!("{} Packages", icon(octicon!("package"))),
+    out.push(&crate::ui::section(
+        html!("{} Packages", icon(octicon!("package"))),
         Some(v.packages.len()),
         None,
         rows_html(&v.packages),
     ));
-    out.push_str(&crate::ui::section(
-        format!("{} NixOS modules", icon(octicon!("gear"))),
+    out.push(&crate::ui::section(
+        html!("{} NixOS modules", icon(octicon!("gear"))),
         Some(v.modules.len()),
         None,
         rows_html(&v.modules),
@@ -131,7 +125,7 @@ pub(crate) fn view(v: &MaintainsView) -> String {
 }
 
 /// The Maintains tab of `/u/<login>`.
-pub(crate) fn body(app: &crate::web::App, login: &str) -> String {
+pub(crate) fn body(app: &crate::web::App, login: &str) -> Html {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();

@@ -21,7 +21,7 @@ use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
 use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put, SetOutputs};
 use crate::ui::{Page, Section, Tab, section};
-use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
+use crate::web::{App, Shared, ago, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
 pub const MAX_NAME: usize = 32;
@@ -430,7 +430,7 @@ fn expires_at(s: &NamedSet) -> Option<DateTime<Utc>> {
         .map(|d| d.uploaded_at + Duration::days(RETENTION_DAYS))
 }
 
-/// The facts of one set, in one line.
+/// The facts of one set, in one line of text.
 fn facts(s: &NamedSet) -> String {
     let Some(d) = &s.data else {
         return "No packages yet.".into();
@@ -453,21 +453,19 @@ fn facts(s: &NamedSet) -> String {
         let _ = write!(
             out,
             " Scanned {}.",
-            esc(d
-                .scanned_at
+            d.scanned_at
                 .as_deref()
                 .map(|t| t.get(..10).unwrap_or(t))
-                .unwrap_or("at an unknown time"))
+                .unwrap_or("at an unknown time")
         );
     }
     let _ = write!(
         out,
         " nixpkgs {}.",
-        esc(d
-            .nixpkgs_rev
+        d.nixpkgs_rev
             .as_deref()
             .map(|r| r.get(..12).unwrap_or(r))
-            .unwrap_or("unknown")),
+            .unwrap_or("unknown"),
     );
     if let Some(at) = expires_at(s) {
         let _ = write!(out, " Expires {}.", at.format("%Y-%m-%d"));
@@ -475,7 +473,7 @@ fn facts(s: &NamedSet) -> String {
     out
 }
 
-fn small_form(action: &str, name: &str, extra: &str, class: &str, label: &str) -> Html {
+fn small_form(action: &str, name: &str, extra: &'static str, class: &str, label: &str) -> Html {
     let extra = Html::from(extra);
     html!(
         "<form method=\"post\" action=\"{action}\" class=\"d-inline\"><input type=\"hidden\" name=\"name\" value=\"{name}\">{extra}\
@@ -542,7 +540,7 @@ fn summary_view(
             .map(|r| {
                 html!(
                     "<div class=\"f6 color-fg-muted\">{}</div>",
-                    Html::from(crate::rescan::state(r, index_at))
+                    crate::rescan::state(r, index_at)
                 )
             })
             .unwrap_or_default();
@@ -570,7 +568,7 @@ fn summary_view(
              <div class=\"d-flex flex-wrap gap-2\">{switch}{}</div></div>",
             machines_href(Some(s.name)),
             s.name,
-            Html::from(facts(s.set)),
+            facts(s.set),
             small_form("/me/sets/delete", s.name, "", " btn-danger", "Delete"),
         ));
     }
@@ -579,23 +577,23 @@ fn summary_view(
 }
 
 /// The `#upload` section of `/me/settings`.
-pub(crate) fn token_box(app: &App, login: &str) -> String {
+pub(crate) fn token_box(app: &App, login: &str) -> Html {
     let state = match app.store.upload_token_at(login).ok().flatten() {
-        Some(at) => format!(
+        Some(at) => html!(
             "<p>You made an upload token on {}. The server shows a token once and keeps only its hash.</p>\
              <form method=\"post\" action=\"/me/upload-token\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">Replace the token</button></form> \
              <form method=\"post\" action=\"/me/upload-token/delete\" class=\"d-inline\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Revoke the token</button></form>",
-            esc(at.get(..10).unwrap_or(&at))
+            at.get(..10).unwrap_or(&at)
         ),
         None => "<form method=\"post\" action=\"/me/upload-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an upload token</button></form>".into(),
     };
-    format!(
+    html!(
         "<div id=\"upload\">{}</div>",
         section(
-            format!("{} Upload token", icon(octicon!("key"))),
+            html!("{} Upload token", icon(octicon!("key"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\"><p>Send the packages of your machines, and they show first in \
                  <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p></div>\
                  {}<div class=\"Box-row\"><ol class=\"ml-3\">{}</ol>{state}</div>",
@@ -664,39 +662,39 @@ fn sample() -> (Report, Upload, Upload) {
 }
 
 /// What leaves the machine, what the server keeps and who sees it.
-fn shared(app: &App) -> String {
+fn shared(app: &App) -> Html {
     let (report, upload, with) = sample();
-    let fate = |f: &Found| match upload.packages.iter().find(|e| e.pname == f.pname) {
-        Some(e) if !e.modified => "sent with its version, because nixpkgs has this version",
-        Some(_) => "sent without its version, marked <code>modified</code>",
-        None => "not sent, only counted",
+    let fate = |f: &Found| {
+        Html::from(match upload.packages.iter().find(|e| e.pname == f.pname) {
+            Some(e) if !e.modified => "sent with its version, because nixpkgs has this version",
+            Some(_) => "sent without its version, marked <code>modified</code>",
+            None => "not sent, only counted",
+        })
     };
-    let rows: String = report
+    let rows: Html = report
         .packages
         .iter()
         .map(|f| {
-            format!(
+            html!(
                 "<li><code>{} {}</code>: {}</li>",
-                esc(&f.pname),
-                esc(&f.version),
+                f.pname,
+                f.version,
                 fate(f)
             )
         })
         .collect();
     let json = serde_json::to_string_pretty(&upload).unwrap_or_default();
     let with_json = serde_json::to_string_pretty(&with).unwrap_or_default();
-    let hosts = with
-        .outputs
-        .iter()
-        .map(|h| format!("<code>{}</code>", esc(h)))
-        .collect::<Vec<_>>()
-        .join(" and ");
+    let hosts = crate::html::join(
+        with.outputs.iter().map(|h| html!("<code>{h}</code>")),
+        " and ",
+    );
     let host = app
         .public_url
         .split_once("://")
         .map_or(app.public_url.as_str(), |(_, h)| h)
         .trim_end_matches('/');
-    format!(
+    html!(
         "<div class=\"Box-row\" id=\"shared\"><h3 class=\"f5 mb-2\">What leaves your machine</h3>\
          <p>An example. The scan of the flake <code>{name}</code> reads two machines, {hosts}, and finds three packages:</p>\
          <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent. The set name <code>infra</code> is what you type with <code>--name</code>.</li>\
@@ -720,10 +718,7 @@ fn shared(app: &App) -> String {
          <p class=\"mb-0\"><strong>The risk.</strong> The report tells which public packages run on your machines, and their versions. \
          A person who reads it can find the known advisories that can affect you. \
          Send only machines that you can share at that level.</p></div>",
-        name = esc(&report.source.name),
-        with_json = esc(&with_json),
-        json = esc(&json),
-        host = esc(host),
+        name = report.source.name,
     )
 }
 
@@ -732,33 +727,30 @@ pub(crate) const PUBLIC_SERVER: &str = "https://maintainermode.org";
 
 /// The whole way from nothing to a report on the server. `token` is the
 /// new token, shown once; without it, step 2 is `login`.
-fn steps(base: &str, token: Option<&str>) -> String {
+fn steps(base: &str, token: Option<&str>) -> Html {
     let server = if base == PUBLIC_SERVER {
         String::new()
     } else {
         format!(" --server {base}")
     };
-    let step = |title: &str, body: &str, cmd: &str| {
+    let step = |title: &str, body: Html, cmd: &str| {
         let pre = if cmd.is_empty() {
-            String::new()
+            Html::new()
         } else {
-            format!(
-                "<pre class=\"p-2 mt-1 color-bg-subtle overflow-auto\">{}</pre>",
-                esc(cmd)
-            )
+            html!("<pre class=\"p-2 mt-1 color-bg-subtle overflow-auto\">{cmd}</pre>")
         };
-        format!("<li class=\"mb-3 upload-step\"><strong>{title}</strong> {body}{pre}</li>")
+        html!("<li class=\"mb-3 upload-step\"><strong>{title}</strong> {body}{pre}</li>")
     };
     let save = format!("mkdir -p ~/.config/maintainer-mode\n(umask 077; cat > {TOKEN_FILE})");
     let token_step = match token {
         Some(_) => step(
             "Save the token.",
-            "Run this, paste the token from the box above, then press Enter and Ctrl-D. Only you can read the file.",
+            "Run this, paste the token from the box above, then press Enter and Ctrl-D. Only you can read the file.".into(),
             &save,
         ),
         None => step(
             "Sign in.",
-            &format!(
+            html!(
                 "The tool shows a link and a code. Open the link, check the code and confirm. \
                  The tool saves an upload token in <code>{TOKEN_FILE}</code>, which only you can read. \
                  It replaces any token you made before. For CI, the button below makes a token to put in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code>."
@@ -769,7 +761,7 @@ fn steps(base: &str, token: Option<&str>) -> String {
     [
         step(
             "Get the command line tool.",
-            "It needs Nix with flakes. The first run builds it from source, which takes a few minutes.",
+            "It needs Nix with flakes. The first run builds it from source, which takes a few minutes.".into(),
             "nix shell github:numtide/maintainermode",
         ),
         token_step,
@@ -777,7 +769,7 @@ fn steps(base: &str, token: Option<&str>) -> String {
             "Read the packages of your machine.",
             "Run it in the repository of your NixOS configuration. It reads the outputs of the flake that this machine can evaluate: \
              your machines, your packages, your devShells and your checks. It writes <code>maintainer-mode-scan.json</code>, which stays there. \
-             For one machine only, name it with <code>--output nixosConfigurations.HOST.config.system.build.toplevel</code>.",
+             For one machine only, name it with <code>--output nixosConfigurations.HOST.config.system.build.toplevel</code>.".into(),
             "maintainer-mode scan --flake .",
         ),
         step(
@@ -786,13 +778,14 @@ fn steps(base: &str, token: Option<&str>) -> String {
              <code>export</code> prints the exact report that <code>submit</code> sends. Read it first. \
              Give each flake its own set with <code>--name</code>, such as <code>--name infra</code>. A new upload replaces the set of that name. \
              Add <code>--with-outputs</code> to both commands to see which host runs each package. It also sends your host names: \
-             <a href=\"/me/settings#with-outputs\">read the risk</a> first.",
+             <a href=\"/me/settings#with-outputs\">read the risk</a> first.".into(),
             &format!(
                 "maintainer-mode{server} export\nmaintainer-mode{server} submit --name infra"
             ),
         ),
     ]
-    .concat()
+    .into_iter()
+    .collect()
 }
 
 async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -804,7 +797,7 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     let base = app.public_url.trim_end_matches('/');
-    let out = format!(
+    let out = html!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <p>Your new upload token. The server shows it only now. Any token you made before no longer works.</p>\
          <input class=\"form-control width-full mb-3 text-mono\" readonly value=\"{t}\" aria-label=\"upload token\">\
@@ -812,7 +805,7 @@ async fn new_token(State(app): State<Shared>, headers: HeaderMap) -> Response {
          <p class=\"color-fg-muted\">You can also put the token in <code>MAINTAINER_MODE_UPLOAD_TOKEN</code> instead of a file. \
          <a href=\"/me/settings#shared\">What leaves your machine</a> shows an example report and the risk.</p>\
          <a class=\"btn btn-sm\" href=\"/me/settings#upload\">Back to your settings</a></div></div>",
-        t = esc(&token),
+        t = token,
         s = steps(base, Some(&token)),
     );
     Page::new(

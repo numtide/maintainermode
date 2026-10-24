@@ -8,9 +8,10 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use std::fmt::Write;
 
+use crate::html::{Html, html};
 use crate::queue::Entry;
 use crate::ui::{Page, Section, Tab, empty, pager, section};
-use crate::web::{Shared, esc, octicon, review_bucket, review_rows};
+use crate::web::{Shared, octicon, review_bucket, review_rows};
 
 pub(crate) const PAGE: usize = 50;
 use crate::web::NIXPKGS;
@@ -112,8 +113,8 @@ A first review needs no special knowledge. Is <code>meta</code> complete (descri
 Are the hashes fixed-output and pinned? Are the <code>platforms</code> correct? Does a CLI have <code>versionCheckHook</code>? \
 Write each finding as a comment on the changed line.</div>";
 
-fn first_timers() -> String {
-    format!(
+fn first_timers() -> Html {
+    html!(
         "<div class=\"callout mb-3\">First contributions that no one but the author has reviewed, the oldest first. \
          A first answer decides if a new contributor stays: start at the top. \
          <a href=\"{}#how-to-review-pull-requests\">How to review</a></div>",
@@ -182,18 +183,17 @@ async fn review_page(
                 } else {
                     paged(&entries, q.after, |e| e.number)
                 };
-                let first = first_timers();
-                let (title, intro) = match tab {
+                let (title, intro): (&str, Html) = match tab {
                     "foryou" => (
                         "For you",
                         "<p>Pull requests that touch the packages of <a href=\"/packages?filter=machines\">your machines</a> come first. Then those that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-                         own in <code>ci/OWNERS</code>, changed this year or tagged. Then those on what you <a href=\"/packages?filter=watch\">watch</a>. Oldest first in each group. Each row tells why it is here.</p>",
+                         own in <code>ci/OWNERS</code>, changed this year or tagged. Then those on what you <a href=\"/packages?filter=watch\">watch</a>. Oldest first in each group. Each row tells why it is here.</p>".into(),
                     ),
-                    "unowned" => ("No maintainer", NO_MAINTAINER),
-                    "firsttime" => ("First-timers", first.as_str()),
+                    "unowned" => ("No maintainer", NO_MAINTAINER.into()),
+                    "firsttime" => ("First-timers", first_timers()),
                     _ => (
                         "All",
-                        "<p>Every pull request <a href=\"/state?tab=rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>",
+                        "<p>Every pull request <a href=\"/state?tab=rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>".into(),
                     ),
                 };
                 let title = if show_hidden { "Hidden by you" } else { title };
@@ -219,7 +219,7 @@ async fn review_page(
                         let end = if v.is_some() {
                             hide_button(e.number, show_hidden, &here, true)
                         } else {
-                            String::new()
+                            Html::new()
                         };
                         (why, end)
                     })
@@ -229,26 +229,23 @@ async fn review_page(
                     Some((format!("/review?tab={tab}"), "back to the list"))
                 } else if n_hidden > 0 {
                     more_hidden = format!("{n_hidden} hidden by you");
-                    Some((
-                        format!("/review?tab={tab}&amp;hidden=1"),
-                        more_hidden.as_str(),
-                    ))
+                    Some((format!("/review?tab={tab}&hidden=1"), more_hidden.as_str()))
                 } else {
                     None
                 };
                 let intro = if show_hidden {
-                    "<p>Pull requests you hid. They come back when you press Show again, and leave this list when they close.</p>"
+                    "<p>Pull requests you hid. They come back when you press Show again, and leave this list when they close.</p>".into()
                 } else {
                     intro
                 };
-                format!(
+                html!(
                     "{intro}{}{}{}",
                     opts.bar(tab, show_hidden, &bases),
                     section(
                         title,
                         Some(entries.len()),
                         more.as_ref().map(|(h, l)| (h.as_str(), *l)),
-                        &rows
+                        rows
                     ),
                     pager(&here, next.as_deref())
                 )
@@ -274,17 +271,17 @@ async fn review_page(
         tabs.push(Tab::new(format!("/review?tab={id}"), label, id == tab).count(count));
     }
     let sub = if tab == "ready" {
-        format!(
+        html!(
             "Pull requests that wait for a committer. \
              <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a>"
         )
     } else if matches!(tab, "firsttime" | "bumps") {
-        format!(
+        html!(
             "Pull requests that wait for a review. \
              <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>"
         )
     } else {
-        format!(
+        html!(
             "Pull requests that wait for a review. Each author is <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">in the queues</a>: \
              they reviewed the pull requests of {} or more other authors in the last {} days. \
              <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>",
@@ -299,7 +296,7 @@ async fn review_page(
         .icon(octicon!("eye"))
         .sub(sub)
         .subnav(tabs)
-        .body(format!("{widget}{body}"))
+        .body(html!("{widget}{body}"))
         .render(&app, v)
 }
 
@@ -403,9 +400,9 @@ impl Opts {
 
     /// The filter bar above a list. `bases` are the base branches of the
     /// list, so each choice has rows.
-    fn bar(&self, tab: &str, hidden: bool, bases: &[&str]) -> String {
+    fn bar(&self, tab: &str, hidden: bool, bases: &[&str]) -> Html {
         let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
-            let mut s = format!(
+            let mut s = html!(
                 "<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">"
             );
             for (value, text) in choices {
@@ -414,38 +411,33 @@ impl Opts {
                 } else {
                     ""
                 };
-                let _ = write!(
-                    s,
-                    "<option value=\"{}\"{sel}>{}</option>",
-                    esc(value),
-                    esc(text)
-                );
+                s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
             }
-            s.push_str("</select>");
+            s.push(&Html::from("</select>"));
             s
         };
         let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
         base_choices.extend(bases.iter().map(|b| (*b, *b)));
         let clear = if self.active() {
-            format!(
+            html!(
                 " <a class=\"btn btn-sm btn-invisible\" href=\"/review?tab={tab}{}\">Clear</a>",
-                if hidden { "&amp;hidden=1" } else { "" }
+                if hidden { "&hidden=1" } else { "" }
             )
         } else {
-            String::new()
+            Html::new()
         };
-        format!(
+        html!(
             "<form class=\"review-bar mb-3\" method=\"get\" action=\"/review\" role=\"search\" aria-label=\"Sort and filter\">\
              <input type=\"hidden\" name=\"tab\" value=\"{tab}\">{}\
              <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Words in the title\" aria-label=\"Words in the title\">\
              {}{}{}{}{}\
              <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}</form>",
-            if hidden {
+            Html::from(if hidden {
                 "<input type=\"hidden\" name=\"hidden\" value=\"1\">"
             } else {
                 ""
-            },
-            esc(self.q.as_deref().unwrap_or("")),
+            }),
+            self.q.as_deref().unwrap_or(""),
             select(
                 "sort",
                 "Sort",
@@ -530,23 +522,22 @@ async fn hide(State(app): State<Shared>, headers: HeaderMap, Form(f): Form<HideF
 
 /// The Hide button of a row, or Show again for a hidden one. `key` gives
 /// it the `e` hotkey; a pull request page leaves `e` to Snooze.
-pub(crate) fn hide_button(number: u64, hidden: bool, back: &str, key: bool) -> String {
+pub(crate) fn hide_button(number: u64, hidden: bool, back: &str, key: bool) -> Html {
     let (value, label, title) = if hidden {
         ("0", "Show again", "Put it back in your review lists")
     } else {
         ("1", "Hide", "Hide it from your review lists")
     };
     let hotkey = if key {
-        format!(" data-hotkey=\"e\" data-hotkey-label=\"{label}: {title}\"")
+        html!(" data-hotkey=\"e\" data-hotkey-label=\"{label}: {title}\"")
     } else {
-        String::new()
+        Html::new()
     };
-    format!(
+    html!(
         "<form method=\"post\" action=\"/me/review/hide\" class=\"d-inline ml-2\">\
          <input type=\"hidden\" name=\"number\" value=\"{number}\"><input type=\"hidden\" name=\"hide\" value=\"{value}\">\
-         <input type=\"hidden\" name=\"back\" value=\"{}\">\
-         <button class=\"btn btn-sm\" type=\"submit\" title=\"{title}\"{hotkey}>{label}</button></form>",
-        esc(back)
+         <input type=\"hidden\" name=\"back\" value=\"{back}\">\
+         <button class=\"btn btn-sm\" type=\"submit\" title=\"{title}\"{hotkey}>{label}</button></form>"
     )
 }
 
@@ -568,14 +559,14 @@ pub(crate) fn purge(app: &crate::web::App) {
 }
 
 /// Why a row of For you is there: "you maintain: hello · you watch: nginx".
-pub(crate) fn why_line(why: &[String]) -> String {
+pub(crate) fn why_line(why: &[String]) -> Html {
     if why.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    format!(
+    html!(
         "<div class=\"mt-1 color-fg-default\">{} {}</div>",
         crate::web::icon(octicon!("info")),
-        esc(&why.join(" · "))
+        why.join(" · ")
     )
 }
 

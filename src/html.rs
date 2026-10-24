@@ -26,6 +26,12 @@ impl Html {
         Html(s)
     }
 
+    /// HTML that this program did not build with `html!`. Each caller says
+    /// why its input is safe; keep the callers few.
+    pub(crate) fn trusted(s: String) -> Self {
+        Html(s)
+    }
+
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
@@ -49,24 +55,10 @@ impl fmt::Display for Html {
     }
 }
 
-// The bridge for the modules that still build HTML as `str` or `String`:
-// these conversions, `Deref`, `push_str` and `fmt::Write` trust their
-// input. When the last module uses `html!`, only `From<&'static str>` stays.
-impl From<&str> for Html {
-    fn from(s: &str) -> Self {
+/// A literal in the source is written by us.
+impl From<&'static str> for Html {
+    fn from(s: &'static str) -> Self {
         Html(s.to_string())
-    }
-}
-
-impl From<String> for Html {
-    fn from(s: String) -> Self {
-        Html(s)
-    }
-}
-
-impl From<&String> for Html {
-    fn from(s: &String) -> Self {
-        Html(s.clone())
     }
 }
 
@@ -74,25 +66,6 @@ impl std::ops::Deref for Html {
     type Target = str;
     fn deref(&self) -> &str {
         &self.0
-    }
-}
-
-impl FromIterator<String> for Html {
-    fn from_iter<I: IntoIterator<Item = String>>(iter: I) -> Self {
-        Html(iter.into_iter().collect())
-    }
-}
-
-impl fmt::Write for Html {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.0.push_str(s);
-        Ok(())
-    }
-}
-
-impl Html {
-    pub(crate) fn push_str(&mut self, s: &str) {
-        self.0.push_str(s);
     }
 }
 
@@ -146,6 +119,18 @@ pub(crate) fn escape_into(out: &mut String, s: &str) {
             c => out.push(c),
         }
     }
+}
+
+/// `parts` with `sep` between each two.
+pub(crate) fn join<I: IntoIterator<Item = Html>>(parts: I, sep: &'static str) -> Html {
+    let mut out = Html::new();
+    for (i, p) in parts.into_iter().enumerate() {
+        if i > 0 {
+            out.0.push_str(sep);
+        }
+        out.0.push_str(&p.0);
+    }
+    out
 }
 
 /// The text of a fragment of our own HTML: tags out, entities decoded.
@@ -203,6 +188,13 @@ impl Render for std::borrow::Cow<'_, str> {
 impl Render for char {
     fn render(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.encode_utf8(&mut [0; 4]).render(f)
+    }
+}
+
+/// As JSON prints it, escaped: a number, `null`, or a quoted string.
+impl Render for serde_json::Value {
+    fn render(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.to_string().render(f)
     }
 }
 

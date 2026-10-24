@@ -12,16 +12,16 @@ use axum::routing::post;
 use chrono::Utc;
 use serde::Deserialize;
 use serde_json::Value;
-use std::fmt::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::time::Instant;
 
+use crate::html::{Html, html};
 use crate::report::{Found, MAX_PACKAGES, Report, SCHEMA, Source};
 use crate::store::{AddFlake, FlakeRef, MAX_SETS, PackageSet};
-use crate::web::{App, Shared, ago, esc, icon, octicon};
+use crate::web::{App, Shared, ago, icon, octicon};
 
 const MAX_REFERENCE: usize = 256;
 const MAX_OUTPUT_NAME: usize = 256;
@@ -801,16 +801,15 @@ async fn add(State(app): State<Shared>, headers: HeaderMap, Form(f): Form<AddFor
     }
 }
 
-pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> String {
+pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> Html {
     let again = r.last_at.is_none_or(|l| index_at.is_some_and(|i| l < i));
     let mut s = match (&r.error, r.last_at, r.scanned_at) {
-        (Some(e), Some(at), _) => format!(
+        (Some(e), Some(at), _) => html!(
             "<span class=\"color-fg-danger\">failed {} ago</span> \
-             <details class=\"d-inline\"><summary class=\"f6\">why</summary><pre class=\"p-2 color-bg-subtle f6 pre-wrap\">{}</pre></details>",
-            ago(at),
-            esc(e)
+             <details class=\"d-inline\"><summary class=\"f6\">why</summary><pre class=\"p-2 color-bg-subtle f6 pre-wrap\">{e}</pre></details>",
+            ago(at)
         ),
-        (_, _, Some(at)) => format!(
+        (_, _, Some(at)) => html!(
             "{} attributes, {} entries dropped, scanned {} ago",
             r.attrs.len(),
             r.dropped,
@@ -819,14 +818,13 @@ pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> St
         _ => "not scanned yet".into(),
     };
     if again {
-        s.push_str(" · <span class=\"Label\">queued</span>");
+        s.push(&Html::from(" · <span class=\"Label\">queued</span>"));
     }
     if r.error.is_some() && r.scanned_at.is_some() {
-        let _ = write!(
-            s,
+        s.push(&html!(
             " · keeps the {} attributes of the last good scan",
             r.attrs.len()
-        );
+        ));
     }
     s
 }
@@ -837,35 +835,31 @@ const SUBMIT_FLAKE: &str =
 
 /// The flakes box of the machines filter of /packages: the form that adds
 /// a flake for the server to scan, or why there is none.
-pub fn panel(app: &App, login: &str) -> String {
+pub(crate) fn panel(app: &App, login: &str) -> Html {
     let n = app.store.flake_refs(login).unwrap_or_default().len();
-    let mut out = format!(
+    let mut out = html!(
         "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Public flakes</h2></div>",
         icon(octicon!("shield"))
     );
-    let upload = format!(
+    let upload = html!(
         "You can scan a public flake on your machine and upload it as a public set: \
-         <code class=\"set-ref\">{}</code>. It shows on your profile.",
-        esc(SUBMIT_FLAKE)
+         <code class=\"set-ref\">{SUBMIT_FLAKE}</code>. It shows on your profile."
     );
     match &app.rescan {
         None => {
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-row\"><p><strong>This server does not scan flakes.</strong> The operator has not turned \
                  server rescans on.</p><p class=\"mb-0\">{upload}</p></div>"
-            );
+            ));
         }
         Some(cfg) if n >= cfg.max_flakes => {
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-row color-fg-muted\">The server scans the most flakes a person can have here: {}. {upload}</div>",
                 cfg.max_flakes
-            );
+            ));
         }
         Some(cfg) => {
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2 flex-items-center\">\
                  <input class=\"form-control\" name=\"name\" required maxlength=\"{}\" pattern=\"[a-z0-9][a-z0-9._\\-]*\" \
                  placeholder=\"name, such as web-1\" aria-label=\"set name\">\
@@ -883,10 +877,10 @@ pub fn panel(app: &App, login: &str) -> String {
                 crate::sets::MAX_NAME,
                 cfg.max_flakes,
                 cfg.per_day
-            );
+            ));
         }
     }
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 

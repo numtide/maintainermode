@@ -4,10 +4,10 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use std::fmt::Write;
 
+use crate::html::{Html, html};
 use crate::ui::kv;
-use crate::web::{App, ago, esc};
+use crate::web::{App, ago};
 
 fn time(app: &App, key: &str) -> Option<DateTime<Utc>> {
     app.store.get_time(key).ok().flatten()
@@ -166,8 +166,8 @@ fn hours(h: f64) -> String {
     }
 }
 
-fn archive_row(a: &Value) -> String {
-    let mut parts = vec![format!(
+fn archive_row(a: &Value) -> Html {
+    let mut parts = vec![html!(
         "{} issues and pull requests stored ({:.1} MB)",
         a["items"],
         a["bytes"].as_f64().unwrap_or(0.0) / 1e6
@@ -175,7 +175,7 @@ fn archive_row(a: &Value) -> String {
     match (a["top"].as_i64(), a["oldest"].as_i64()) {
         (None, _) => parts.push("waiting for the first listing".into()),
         (Some(_), None) => parts.push("recent updates first".into()),
-        (Some(_), Some(o)) => parts.push(format!("oldest number reached #{o}")),
+        (Some(_), Some(o)) => parts.push(html!("oldest number reached #{o}")),
     }
     if a["open_complete"].as_bool() == Some(false) {
         parts.push(if a["open_listed"].as_bool() == Some(true) {
@@ -185,14 +185,14 @@ fn archive_row(a: &Value) -> String {
         });
     }
     if let Some(p) = a["percent"].as_f64() {
-        parts.push(format!("{p:.1} % of the repository"));
+        parts.push(html!("{p:.1} % of the repository"));
     }
     if a["complete"].as_bool() == Some(true) {
         parts.push("<span class=\"color-fg-success\">every number read</span>".into());
     } else if let Some(h) = a["hours_left"].as_f64() {
-        parts.push(format!("{} left at the current pace", hours(h)));
+        parts.push(html!("{} left at the current pace", hours(h)));
     }
-    parts.push(format!(
+    parts.push(html!(
         "{} due · {} per run, a run every {} · the last ended {}",
         a["due"],
         a["items_per_pass"],
@@ -200,7 +200,7 @@ fn archive_row(a: &Value) -> String {
         when(&a["last_pass"])
     ));
     if let Some(n) = a["failed"].as_i64().filter(|n| *n > 0) {
-        parts.push(format!(
+        parts.push(html!(
             "<span class=\"color-fg-attention\">{n} items fail; the server tries each again an hour later, then a day later</span>"
         ));
     }
@@ -214,26 +214,25 @@ fn archive_row(a: &Value) -> String {
             .collect();
         fields.sort_unstable();
         fields.dedup();
-        parts.push(format!(
+        parts.push(html!(
             "projection check: {} of {} rows differ from the sync{} ({} not comparable), {}",
             s["differ"],
             s["compared"],
             if fields.is_empty() {
                 String::new()
             } else {
-                format!(" in {}", esc(&fields.join(", ")))
+                format!(" in {}", fields.join(", "))
             },
             s["skipped"],
             when(&s["at"])
         ));
     }
     if let Some(e) = a["last_error"].as_str() {
-        parts.push(format!(
-            "<span class=\"color-fg-attention\">last error: {}</span>",
-            esc(e)
+        parts.push(html!(
+            "<span class=\"color-fg-attention\">last error: {e}</span>"
         ));
     }
-    parts.join(" · ")
+    crate::html::join(parts, " · ")
 }
 
 fn when(v: &Value) -> String {
@@ -243,11 +242,11 @@ fn when(v: &Value) -> String {
         .unwrap_or_else(|| "not yet".into())
 }
 
-fn done(v: &Value, yes: &str, no: &str) -> String {
+fn done(v: &Value, yes: &str, no: &str) -> Html {
     if v.as_bool() == Some(true) {
-        format!("<span class=\"color-fg-success\">{yes}</span>")
+        html!("<span class=\"color-fg-success\">{yes}</span>")
     } else {
-        format!("<span class=\"color-fg-attention\">{no}</span>")
+        html!("<span class=\"color-fg-attention\">{no}</span>")
     }
 }
 
@@ -285,20 +284,18 @@ const SOURCES: [(&str, &str, &str); 6] = [
     ),
 ];
 
-fn source(run: &Value, what: &str) -> String {
+fn source(run: &Value, what: &str) -> Html {
     let Some(at) = run.get("at") else {
-        return format!("{what} · not run yet");
+        return html!("{what} · not run yet");
     };
-    format!(
+    let line = run["line"].as_str().unwrap_or("");
+    html!(
         "{what} · read {} · {}",
         when(at),
         if run["ok"].as_bool() == Some(true) {
-            esc(run["line"].as_str().unwrap_or(""))
+            Html::text(line)
         } else {
-            format!(
-                "<span class=\"color-fg-attention\">{}</span>",
-                esc(run["line"].as_str().unwrap_or(""))
-            )
+            html!("<span class=\"color-fg-attention\">{line}</span>")
         }
     )
 }
@@ -312,36 +309,38 @@ fn minutes(s: i64) -> String {
 }
 
 /// The Data status tab of `/state`.
-pub(crate) fn body(app: &App) -> String {
+pub(crate) fn body(app: &App) -> Html {
     let v = state(app);
-    let mut out = String::new();
+    let mut out = Html::new();
     let p = &v["pull_requests"];
     let i = &v["issues"];
     let x = &v["index"];
     let h = &v["health"];
     let e = &v["events"];
     let pass = &v["passes"];
-    out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">GitHub</h2></div>");
-    out.push_str(&kv(
+    out.push(&Html::from(
+        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">GitHub</h2></div>",
+    ));
+    out.push(&kv(
         "Pull requests",
-        format!(
+        html!(
             "{} stored: the open ones and those updated in the last {} days, from the archive",
             p["stored"],
             crate::ledger::WINDOW_DAYS
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "Issues",
-        format!(
+        html!(
             "{} stored: the open ones and those updated in the last {} days, from the archive",
             i["stored"],
             crate::ledger::WINDOW_DAYS
         ),
     ));
     let l = &v["live"];
-    out.push_str(&kv(
+    out.push(&kv(
         "Mergeable and checks",
-        format!(
+        html!(
             "{} of {} open pull requests checked · {} per update, the oldest check first · oldest check {}",
             l["checked"],
             l["open_pull_requests"],
@@ -349,7 +348,7 @@ pub(crate) fn body(app: &App) -> String {
             when(&l["oldest_check"])
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "History since 2020",
         done(
             &v["history"]["done"],
@@ -357,9 +356,9 @@ pub(crate) fn body(app: &App) -> String {
             "in progress: the archive walks back through history, and the numbers on the state of nixpkgs grow while it reads",
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "Tokens",
-        format!(
+        html!(
             "{} · {} · {} lent by people who signed in",
             if v["tokens"]["app"].as_bool() == Some(true) {
                 "a GitHub App token"
@@ -374,9 +373,9 @@ pub(crate) fn body(app: &App) -> String {
             v["tokens"]["lent"]
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "Updates",
-        format!(
+        html!(
             "one every {} · the last took {} and ended {}",
             minutes(pass["every_seconds"].as_i64().unwrap_or(600)),
             pass["last_seconds"]
@@ -389,25 +388,27 @@ pub(crate) fn body(app: &App) -> String {
     let n = &v["notifications"];
     let on = n["enabled"].as_bool() == Some(true);
     let healthy = n["healthy"].as_bool() == Some(true);
-    out.push_str(&kv(
+    out.push(&kv(
         "Notifications",
-        &if on {
+        if on {
             notifications_row(n)
         } else {
             "off: this server has no token of a bot account, so a change waits for the next archive pass"
-                .to_string()
+                .into()
         },
     ));
-    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>");
-    out.push_str(&kv(
+    out.push(&Html::from(
+        "</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>",
+    ));
+    out.push(&kv(
         "Index",
-        format!(
+        html!(
             "<code>{}</code> · {} packages, {} NixOS modules, {} teams · built {}",
-            esc(x["rev"]
+            x["rev"]
                 .as_str()
                 .unwrap_or("")
                 .get(..12)
-                .unwrap_or("not built yet")),
+                .unwrap_or("not built yet"),
             x["packages"],
             x["modules"],
             x["teams"],
@@ -415,12 +416,12 @@ pub(crate) fn body(app: &App) -> String {
         ),
     ));
     for c in v["channels"]["list"].as_array().into_iter().flatten() {
-        out.push_str(&kv(
-            format!("Channel {}", esc(c["channel"].as_str().unwrap_or(""))),
-            &match c["rev"].as_str() {
-                Some(rev) => format!(
+        out.push(&kv(
+            html!("Channel {}", c["channel"].as_str().unwrap_or("")),
+            match c["rev"].as_str() {
+                Some(rev) => html!(
                     "<code>{}</code> · {} attributes · this revision first seen {}",
-                    esc(rev.get(..12).unwrap_or(rev)),
+                    rev.get(..12).unwrap_or(rev),
                     c["attributes"],
                     when(&c["read_at"])
                 ),
@@ -428,57 +429,61 @@ pub(crate) fn body(app: &App) -> String {
             },
         ));
     }
-    out.push_str(&kv(
+    out.push(&kv(
         "Upstream versions",
-        format!(
+        html!(
             "repology, read {} · {} attributes behind upstream",
             when(&h["repology_at"]),
             h["outdated"]
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "Advisories",
-        format!(
+        html!(
             "security tracker, read {} · {} attributes with advisories",
             when(&h["tracker_at"]),
             h["attributes_with_advisories"]
         ),
     ));
     let pk = &v["packaging"];
-    out.push_str(&kv(
+    out.push(&kv(
         "Packaging hygiene",
-        &if pk["checked"].as_u64().unwrap_or(0) == 0 {
-            "from the nixpkgs index, with no network access · the next index reads it".to_string()
+        if pk["checked"].as_u64().unwrap_or(0) == 0 {
+            "from the nixpkgs index, with no network access · the next index reads it".into()
         } else {
-            format!(
+            html!(
                 "from the nixpkgs index, with no network access · {} of {} packages have a gap in meta or no versionCheckHook",
-                pk["with_gaps"], pk["checked"]
+                pk["with_gaps"],
+                pk["checked"]
             )
         },
     ));
     for (key, label, what) in SOURCES {
-        out.push_str(&kv(label, source(&h["sources"][key], what)));
+        out.push(&kv(label, source(&h["sources"][key], what)));
     }
-    out.push_str(&kv(
+    out.push(&kv(
         "Health task",
-        format!(
+        html!(
             "its own task, one run every {}: a slow source does not delay the GitHub updates",
             minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
     ));
     let hy = &v["hydra"];
-    out.push_str(&kv(
+    out.push(&kv(
         "Hydra builds",
-        format!(
+        html!(
             "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
              {} jobs kept · {} page views not asked since the start",
-            hy["concurrent"], hy["per_minute"], hy["cached"], hy["not_asked"]
+            hy["concurrent"],
+            hy["per_minute"],
+            hy["cached"],
+            hy["not_asked"]
         ),
     ));
     let b = &v["hydra_builds"];
-    out.push_str(&kv(
+    out.push(&kv(
         "Hydra build watch",
-        format!(
+        html!(
             "{} packages that someone maintains or watches · the feed of finished builds every {} ({} requests, {} rows, last {}) · \
              one job at a time, {} a minute, each job once a day ({} requests) · {} failed requests · {} state changes since the start · {} cache.nixos.org requests, {} paths known",
             b["tracked"],
@@ -495,10 +500,10 @@ pub(crate) fn body(app: &App) -> String {
         ),
     ));
     let r = &v["rescans"];
-    out.push_str(&kv(
+    out.push(&kv(
         "Flake rescans",
-        &if r["enabled"].as_bool() == Some(true) {
-            format!(
+        if r["enabled"].as_bool() == Some(true) {
+            html!(
                 "{} flakes · {} queued · last scan {} · {} failing",
                 r["flakes"],
                 r["queued"],
@@ -509,12 +514,12 @@ pub(crate) fn body(app: &App) -> String {
             "off on this server: people upload reports from their own machines".into()
         },
     ));
-    out.push_str(
+    out.push(&Html::from(
         "</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Event log</h2></div>",
-    );
-    out.push_str(&kv(
+    ));
+    out.push(&kv(
         "Events",
-        format!(
+        html!(
             "{} stored · newest from {} · {}",
             e["stored"],
             when(&e["newest"]),
@@ -526,19 +531,21 @@ pub(crate) fn body(app: &App) -> String {
         ),
     ));
     let m = &v["email"];
-    out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Email</h2></div>");
-    out.push_str(&kv(
+    out.push(&Html::from(
+        "</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Email</h2></div>",
+    ));
+    out.push(&kv(
         "Notification emails",
-        &if m["enabled"].as_bool() == Some(true) {
+        if m["enabled"].as_bool() == Some(true) {
             let skipped = m["skipped_24h"].as_u64().unwrap_or(0);
-            format!(
+            html!(
                 "{} sent in the last 24 hours, at most {} · {}",
                 m["sent_24h"],
                 m["per_day"],
                 if skipped == 0 {
-                    "none skipped".to_string()
+                    Html::from("none skipped")
                 } else {
-                    format!(
+                    html!(
                         "<span class=\"color-fg-attention\">{skipped} skipped over a daily limit</span>"
                     )
                 }
@@ -547,22 +554,25 @@ pub(crate) fn body(app: &App) -> String {
             "off on this server: its operator did not set up SMTP".into()
         },
     ));
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     if let Some(list) = v["archive"].as_array().filter(|l| !l.is_empty()) {
-        out.push_str(
+        out.push(&Html::from(
             "<div class=\"Box mb-4\" id=\"archive\"><div class=\"Box-header\"><h2 class=\"Box-title\">Archive of issues and pull requests</h2></div>",
-        );
+        ));
         for a in list {
-            out.push_str(&kv(esc(a["repo"].as_str().unwrap_or("")), archive_row(a)));
+            out.push(&kv(
+                Html::text(a["repo"].as_str().unwrap_or("")),
+                archive_row(a),
+            ));
         }
-        out.push_str("</div>");
+        out.push(&Html::from("</div>"));
     }
-    let walk_delay = format!(
+    let walk_delay = html!(
         "up to <strong>{}</strong> later (the archive lists the updates on each pass)",
         minutes(crate::archive::PASS_EVERY as i64)
     );
     let now = if healthy {
-        format!(
+        html!(
             "<p>A bot account watches nixpkgs, and GitHub notifies it of each issue and pull request that changes. \
              This server reads those notifications every {}, and the archive reads each changed item again within seconds. \
              A review, push or merge on GitHub shows here in <strong>about a minute</strong>{}. \
@@ -575,18 +585,17 @@ pub(crate) fn body(app: &App) -> String {
             minutes(crate::archive::PASS_EVERY as i64)
         )
     } else if on {
-        format!(
+        html!(
             "<p>A bot account watches nixpkgs, but the poll of its notifications fails now. \
              Until it works again, a review, push or merge on GitHub shows here {walk_delay}.</p>"
         )
     } else {
-        format!(
+        html!(
             "<p>The archive lists the updates on GitHub. A review, push or merge shows here \
              {walk_delay}. With the token of a bot account that watches nixpkgs, it shows in about a minute.</p>"
         )
     };
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<div class=\"Box\"><div class=\"Box-header\"><h2 class=\"Box-title\">How fast changes show here</h2></div><div class=\"Box-row\">\
          {now}\
          <p>The Events API keeps only the last 300 events, so a busy hour loses some events of the event log until \
@@ -601,31 +610,28 @@ pub(crate) fn body(app: &App) -> String {
          <p class=\"color-fg-muted f6\">Maintainer Mode has no webhook receiver yet: GitHub sends webhooks only to the \
          administrators of a repository. See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/events.md\">docs/events.md</a>.</p>\
          </div></div>"
-    );
+    ));
     out
 }
 
-fn notifications_row(n: &Value) -> String {
-    let mut parts = vec![format!(
+fn notifications_row(n: &Value) -> Html {
+    let mut parts = vec![html!(
         "the notifications of the bot account, read every {} · the last read {}",
         minutes(n["interval_seconds"].as_i64().unwrap_or(60)),
         when(&n["last_poll"])
     )];
-    parts.push(format!(
-        "{} threads in the last hour",
-        n["threads_last_hour"]
-    ));
+    parts.push(html!("{} threads in the last hour", n["threads_last_hour"]));
     if let Some(d) = n["average_delay_seconds"].as_i64() {
-        parts.push(format!(
+        parts.push(html!(
             "{} on average from a change on GitHub to its mark here",
             minutes(d)
         ));
     }
     match n["errors_last_hour"].as_u64().unwrap_or(0) {
         0 => parts.push("no errors in the last hour".into()),
-        e => parts.push(format!(
+        e => parts.push(html!(
             "<span class=\"color-fg-attention\">{e} errors in the last hour; the last: {}</span>",
-            esc(n["last_error"]["message"].as_str().unwrap_or(""))
+            n["last_error"]["message"].as_str().unwrap_or("")
         )),
     }
     if n["healthy"].as_bool() != Some(true) {
@@ -634,5 +640,5 @@ fn notifications_row(n: &Value) -> String {
                 .into(),
         );
     }
-    parts.join(" · ")
+    crate::html::join(parts, " · ")
 }

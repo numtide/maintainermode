@@ -1,3 +1,4 @@
+use crate::html::{Html, html};
 use anyhow::Result;
 use axum::Router;
 use axum::extract::{Form, Query, State};
@@ -302,10 +303,6 @@ pub(crate) fn random_id() -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-pub(crate) fn esc(s: &str) -> String {
-    crate::html::Html::text(s).into_string()
-}
-
 /// Coarser as it grows: nobody needs the day of something five years old.
 pub(crate) fn ago(t: DateTime<Utc>) -> String {
     let d = Utc::now() - t;
@@ -328,21 +325,21 @@ pub(crate) fn ago(t: DateTime<Utc>) -> String {
 pub(crate) const CONTRIBUTING: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
 
-pub(crate) fn ci_label(e: &Entry) -> String {
+pub(crate) fn ci_label(e: &Entry) -> Html {
     ci_icon(e.ci.as_deref())
 }
 
-pub(crate) fn ci_icon(ci: Option<&str>) -> String {
+pub(crate) fn ci_icon(ci: Option<&str>) -> Html {
     match ci {
-        Some("SUCCESS") => format!(
+        Some("SUCCESS") => html!(
             "<span class=\"color-fg-success\" role=\"img\" title=\"checks pass\" aria-label=\"checks pass\">{}</span>",
             icon(octicon!("check-circle-fill"))
         ),
-        Some("FAILURE" | "ERROR") => format!(
+        Some("FAILURE" | "ERROR") => html!(
             "<span class=\"color-fg-danger\" role=\"img\" title=\"checks fail\" aria-label=\"checks fail\">{}</span>",
             icon(octicon!("x-circle-fill"))
         ),
-        _ => format!(
+        _ => html!(
             "<span class=\"color-fg-attention\" role=\"img\" title=\"checks pending\" aria-label=\"checks pending\">{}</span>",
             icon(octicon!("dot-fill"))
         ),
@@ -350,20 +347,15 @@ pub(crate) fn ci_icon(ci: Option<&str>) -> String {
 }
 
 /// A login, linked to its profile.
-pub(crate) fn person_link(login: &str) -> String {
-    format!(
-        "<a href=\"/u/{}\">{}</a>",
-        crate::github::urlencode(login),
-        esc(login)
+pub(crate) fn person_link(login: &str) -> Html {
+    html!(
+        "<a href=\"/u/{}\">{login}</a>",
+        crate::github::urlencode(login)
     )
 }
 
-pub(crate) fn people(logins: &[String]) -> String {
-    logins
-        .iter()
-        .map(|l| person_link(l))
-        .collect::<Vec<_>>()
-        .join(", ")
+pub(crate) fn people(logins: &[String]) -> Html {
+    crate::html::join(logins.iter().map(|l| person_link(l)), ", ")
 }
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
@@ -390,10 +382,10 @@ pub(crate) fn review_rows(
     entries: &[&Entry],
     act: crate::actions::Act,
     waiting: bool,
-    extra: impl Fn(&Entry) -> (String, String),
-) -> crate::html::Html {
+    extra: impl Fn(&Entry) -> (Html, Html),
+) -> Html {
     use crate::ui::{Kind, Tone, badge, item_row};
-    let mut out = crate::html::Html::new();
+    let mut out = Html::new();
     for e in entries {
         let mut badges = Vec::new();
         if e.mergeable == "CONFLICTING" {
@@ -403,31 +395,31 @@ pub(crate) fn review_rows(
             badges.push(badge(Tone::Attention, "no maintainer"));
         }
         let age = if waiting {
-            format!(
+            html!(
                 "<span class=\"color-fg-attention text-bold\">waiting {}</span>",
                 age_words(e.created_at)
             )
         } else {
-            format!("{} old", ago(e.created_at))
+            html!("{} old", ago(e.created_at))
         };
-        let mut meta = format!(
+        let mut meta = html!(
             "#{} by <a href=\"/u/{a}\">{a}</a> · {age} · <span class=\"branch-name\">{}</span>",
             e.number,
-            esc(&e.base),
-            a = esc(&e.author)
+            e.base,
+            a = e.author
         );
         if !e.approved_by.is_empty() {
-            let _ = write!(meta, " · approved by {}", people(&e.approved_by));
+            meta.push(&html!(" · approved by {}", people(&e.approved_by)));
         }
         let (why, end) = extra(e);
-        meta.push_str(&why);
-        out.push_str(&item_row(
+        meta.push(&why);
+        out.push(&item_row(
             Some(Kind::PR_OPEN),
-            crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            crate::prpage::title_link(e.number, Html::text(&e.title), "Link--primary text-bold"),
             "",
-            &meta,
+            meta,
             &badges,
-            format!(
+            html!(
                 "<span class=\"ml-2\">{}</span>{}{end}",
                 ci_label(e),
                 act.buttons(e.number)
@@ -578,23 +570,24 @@ pub(crate) fn review_bucket<'a>(
         .collect()
 }
 
-pub(crate) fn stat(n: usize, label: &str, hint: &str) -> String {
-    format!(
+pub(crate) fn stat(n: usize, label: &str, hint: impl Into<Html>) -> Html {
+    let hint = hint.into();
+    html!(
         "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"text-bold\">{label}</div>\
          <div class=\"f6 color-fg-muted\">{hint}</div></div>"
     )
 }
 
 /// The `#tags` section of `/me/settings`.
-pub(crate) fn tags_box(app: &App, login: &str) -> String {
+pub(crate) fn tags_box(app: &App, login: &str) -> Html {
     let area = app.snap().areas.get(login).cloned().unwrap_or_default();
-    format!(
+    html!(
         "<div id=\"tags\">{}</div>",
         crate::ui::section(
-            format!("{} Tags", icon(octicon!("tag"))),
+            html!("{} Tags", icon(octicon!("tag"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row f6\">For you on <a href=\"/review\">/review</a> holds {} paths you maintain, \
                  {} you own in ci/OWNERS, {} you changed this year, and your tags.</div>\
                  <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
@@ -604,7 +597,7 @@ pub(crate) fn tags_box(app: &App, login: &str) -> String {
                 area.maintains.len(),
                 area.owns.len(),
                 area.committed.len(),
-                esc(&area.tags.join("\n"))
+                area.tags.join("\n")
             ),
         )
     )
@@ -837,7 +830,7 @@ pub(crate) const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
 /// The rules below say what this site shows; how to work on
 /// nixpkgs is nixpkgs' own guide.
-pub(crate) fn nixpkgs_guides() -> String {
+pub(crate) fn nixpkgs_guides() -> Html {
     let links = [
         (
             "CONTRIBUTING.md",
@@ -856,11 +849,11 @@ pub(crate) fn nixpkgs_guides() -> String {
             "how to become a maintainer, and what it means",
         ),
     ];
-    let items: String = links
+    let items: Html = links
         .iter()
-        .map(|(file, what)| format!("<li><a href=\"{NIXPKGS}/{file}\">{file}</a>: {what}</li>"))
+        .map(|(file, what)| html!("<li><a href=\"{NIXPKGS}/{file}\">{file}</a>: {what}</li>"))
         .collect();
-    format!(
+    html!(
         "<div class=\"flash mb-4\" id=\"contributor-guide\"><strong>These are the rules of Maintainer Mode, not of nixpkgs.</strong> \
          nixpkgs decides how the work is done. Read its contributor guide first:\
          <ul class=\"ml-4 mt-2\">{items}<li><a href=\"https://nixos.org/manual/nixpkgs/unstable/\">The Nixpkgs manual</a>: the reference</li></ul></div>"
@@ -878,23 +871,22 @@ pub(crate) fn metrics_value(app: &App) -> serde_json::Value {
     v
 }
 
-fn packages_section(app: &App) -> String {
+fn packages_section(app: &App) -> Html {
     let p = package_stats(app);
-    let mut out = String::from("<h2 class=\"f4 mt-4 mb-2\" id=\"packages\">Packages</h2>");
+    let mut out = Html::from("<h2 class=\"f4 mt-4 mb-2\" id=\"packages\">Packages</h2>");
     if p.rev.is_empty() {
-        out.push_str(
+        out.push(&Html::from(
             "<div class=\"flash\">The first nixpkgs index is still being built. These numbers come from it.</div>",
-        );
+        ));
         return out;
     }
     let b = &p.advisories_by_band;
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<p class=\"f6 color-fg-muted\">One package per package name, at nixpkgs {}. \
          <a href=\"/state?tab=rules#the-state-of-nixpkgs\">How each number is made</a></p>\
          <div class=\"d-flex flex-wrap gap-2 mb-2\">{}{}{}{}</div>\
          <div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}{}</div>",
-        esc(&p.rev[..p.rev.len().min(12)]),
+        &p.rev[..p.rev.len().min(12)],
         stat(p.packages, "packages", "in the swept package sets"),
         stat(
             p.behind_upstream,
@@ -904,10 +896,15 @@ fn packages_section(app: &App) -> String {
         stat(
             p.with_advisories,
             "with open advisories",
-            &format!(
+            html!(
                 "that can affect master; worst: {} critical, {} high, {} medium, {} low, {} with no score; \
                  {} more only in a channel",
-                b.critical, b.high, b.medium, b.low, b.unscored, p.fixed_in_master_only,
+                b.critical,
+                b.high,
+                b.medium,
+                b.low,
+                b.unscored,
+                p.fixed_in_master_only
             )
         ),
         stat(
@@ -925,9 +922,8 @@ fn packages_section(app: &App) -> String {
         stat(
             p.open_bumps,
             "open version bumps",
-            &match p.bumps_median_age_days {
-                Some(d) =>
-                    format!("median age {d} days; <a href=\"/review?tab=bumps\">the list</a>"),
+            match p.bumps_median_age_days {
+                Some(d) => html!("median age {d} days; <a href=\"/review?tab=bumps\">the list</a>"),
                 None => "<a href=\"/review?tab=bumps\">the list</a>".into(),
             }
         ),
@@ -936,13 +932,13 @@ fn packages_section(app: &App) -> String {
             "tracker issues to close",
             "fixed in master and every channel; <a href=\"#tracker-issues-to-close\">the list</a>"
         ),
-    );
-    out.push_str(&to_close_section(&p.tracker_issues_to_close));
+    ));
+    out.push(&to_close_section(&p.tracker_issues_to_close));
     out
 }
 
-fn to_close_section(list: &[crate::catalog::ToClose]) -> String {
-    let mut out = String::from(
+fn to_close_section(list: &[crate::catalog::ToClose]) -> Html {
+    let mut out = Html::from(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"tracker-issues-to-close\">Tracker issues to close</h2>\
          <p class=\"f6 color-fg-muted\">The nixpkgs issue of these security tracker advisories is still open, \
          but master and every channel read already ship a version outside the affected range. \
@@ -950,29 +946,29 @@ fn to_close_section(list: &[crate::catalog::ToClose]) -> String {
          <code>packages.tracker_issues_to_close</code>.</p>",
     );
     if list.is_empty() {
-        out.push_str("<p class=\"color-fg-muted\">None.</p>");
+        out.push(&Html::from("<p class=\"color-fg-muted\">None.</p>"));
         return out;
     }
-    let rows: Vec<Vec<String>> = list
+    let rows: Vec<Vec<Html>> = list
         .iter()
         .map(|t| {
             vec![
-                format!("<a href=\"/p/{0}\">{0}</a>", esc(&t.attr)),
-                format!(
+                html!("<a href=\"/p/{0}\">{0}</a>", t.attr),
+                html!(
                     "<a href=\"https://tracker.security.nixos.org/issue/{0}\">{0}</a> {1}",
-                    esc(&t.code),
-                    esc(&t.title)
+                    t.code,
+                    t.title
                 ),
-                esc(t.fixed_in.as_deref().unwrap_or("–")),
-                esc(&t.version),
-                format!(
+                Html::text(t.fixed_in.as_deref().unwrap_or("–")),
+                Html::text(&t.version),
+                html!(
                     "<a href=\"https://github.com/NixOS/nixpkgs/issues/{0}\">#{0}</a>",
                     t.issue
                 ),
             ]
         })
         .collect();
-    out.push_str(&table(
+    out.push(&table(
         &["package", "advisory", "fixed in", "master", "issue"],
         &rows,
     ));
@@ -1022,35 +1018,40 @@ fn pct(v: Option<f64>) -> String {
     v.map_or_else(|| "–".into(), |v| format!("{:.0}%", v * 100.0))
 }
 
-fn table(head: &[&str], rows: &[Vec<String>]) -> String {
-    let mut out = String::from("<div class=\"markdown-body\"><table class=\"numbers\"><thead><tr>");
+fn table(head: &[&str], rows: &[Vec<Html>]) -> Html {
+    let mut out = Html::from("<div class=\"markdown-body\"><table class=\"numbers\"><thead><tr>");
     for h in head {
-        let _ = write!(out, "<th>{h}</th>");
+        out.push(&html!("<th>{h}</th>"));
     }
-    out.push_str("</tr></thead><tbody>");
+    out.push(&Html::from("</tr></thead><tbody>"));
     for r in rows {
-        out.push_str("<tr>");
+        out.push(&Html::from("<tr>"));
         for c in r {
-            let _ = write!(out, "<td>{c}</td>");
+            out.push(&html!("<td>{c}</td>"));
         }
-        out.push_str("</tr>");
+        out.push(&Html::from("</tr>"));
     }
-    out.push_str("</tbody></table></div>");
+    out.push(&Html::from("</tbody></table></div>"));
     out
 }
 
+fn cell(v: impl ToString) -> Html {
+    Html::text(&v.to_string())
+}
+
 /// The Numbers tab of `/state`.
-pub(crate) fn numbers(app: &App) -> String {
+pub(crate) fn numbers(app: &App) -> Html {
     let r = app.metrics.read().unwrap().clone();
-    let mut body = String::new();
+    let mut body = Html::new();
     let Some(at) = r.generated_at else {
-        body.push_str("<div class=\"flash\">The first sync has not finished yet.</div>");
-        body.push_str(&packages_section(app));
+        body.push(&Html::from(
+            "<div class=\"flash\">The first sync has not finished yet.</div>",
+        ));
+        body.push(&packages_section(app));
         return body;
     };
     let n = &r.now;
-    let _ = write!(
-        body,
+    body.push(&html!(
         "<p class=\"f6 color-fg-muted\">{} pull requests, opened since {}. Computed {}. {}</p>",
         r.pull_requests,
         r.earliest_created
@@ -1062,14 +1063,13 @@ pub(crate) fn numbers(app: &App) -> String {
         } else {
             "The archive still walks back through history, so older months are incomplete."
         }
-    );
-    let _ = write!(
-        body,
+    ));
+    body.push(&html!(
         "<div class=\"d-flex flex-wrap gap-2 mb-4\">{}{}{}{}{}</div>",
         stat(
             n.open,
             "open",
-            &format!(
+            html!(
                 "{} drafts, {} from bots, median age {} days",
                 n.drafts,
                 n.by_bots,
@@ -1084,7 +1084,7 @@ pub(crate) fn numbers(app: &App) -> String {
         stat(
             n.security,
             "open security fixes",
-            &format!("median age {} days", num(n.security_age_days_p50))
+            html!("median age {} days", num(n.security_age_days_p50))
         ),
         stat(
             n.first_time,
@@ -1096,29 +1096,31 @@ pub(crate) fn numbers(app: &App) -> String {
             "open with disclosed AI use",
             "Assisted-by trailer or llm-assisted label; a floor"
         ),
-    );
-    let ages: Vec<Vec<String>> = n
+    ));
+    let ages: Vec<Vec<Html>> = n
         .age
         .iter()
-        .map(|(k, v)| vec![esc(k.split_once(": ").map_or(k, |(_, l)| l)), v.to_string()])
+        .map(|(k, v)| {
+            let k: &str = k;
+            vec![cell(k.split_once(": ").map_or(k, |(_, l)| l)), cell(v)]
+        })
         .chain(
             n.base
                 .iter()
-                .map(|(k, v)| vec![format!("base: {k}"), v.to_string()]),
+                .map(|(k, v)| vec![html!("base: {k}"), cell(v)]),
         )
         .collect();
     let c = &r.concentration_365d;
-    let load = |l: &metrics::Load, what: &str| {
+    let load = |l: &metrics::Load, what: &'static str| {
         vec![
-            what.to_string(),
-            l.total.to_string(),
-            l.people.to_string(),
-            l.people_for_half.to_string(),
-            l.people_for_80.to_string(),
+            Html::from(what),
+            cell(l.total),
+            cell(l.people),
+            cell(l.people_for_half),
+            cell(l.people_for_80),
         ]
     };
-    let _ = write!(
-        body,
+    body.push(&html!(
         "<div class=\"d-flex flex-wrap gap-3 mb-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">Open now</h2>{}</div>\
          <div class=\"flex-1\"><h2 class=\"f4 mb-2\">How many people do the work, last 365 days</h2>{}</div></div>",
         table(&["", "open"], &ages),
@@ -1130,35 +1132,34 @@ pub(crate) fn numbers(app: &App) -> String {
                 load(&c.authored, "authored, humans"),
             ]
         ),
-    );
-    let months: Vec<Vec<String>> = r
+    ));
+    let months: Vec<Vec<Html>> = r
         .months
         .iter()
         .rev()
         .take(24)
         .map(|m| {
             vec![
-                m.month.clone(),
-                m.opened.to_string(),
-                m.opened_by_bots.to_string(),
-                m.opened_first_time.to_string(),
-                format!("{} / {}", m.opened_ai, m.opened_ai_other_form),
-                m.merged.to_string(),
-                m.closed_unmerged.to_string(),
-                m.open_at_end.to_string(),
-                m.reviews.to_string(),
-                m.reviewers.to_string(),
-                m.mergers.to_string(),
-                num(m.first_review_hours_p50),
-                pct(m.reviewed_within_7d),
-                format!("{} / {}", num(m.merge_days_p50), num(m.merge_days_p90)),
-                pct(m.merge_rate),
-                pct(m.merge_rate_first_time),
+                cell(&m.month),
+                cell(m.opened),
+                cell(m.opened_by_bots),
+                cell(m.opened_first_time),
+                html!("{} / {}", m.opened_ai, m.opened_ai_other_form),
+                cell(m.merged),
+                cell(m.closed_unmerged),
+                cell(m.open_at_end),
+                cell(m.reviews),
+                cell(m.reviewers),
+                cell(m.mergers),
+                cell(num(m.first_review_hours_p50)),
+                cell(pct(m.reviewed_within_7d)),
+                html!("{} / {}", num(m.merge_days_p50), num(m.merge_days_p90)),
+                cell(pct(m.merge_rate)),
+                cell(pct(m.merge_rate_first_time)),
             ]
         })
         .collect();
-    let _ = write!(
-        body,
+    body.push(&html!(
         "<h2 class=\"f4 mb-2\">Month by month</h2>{}",
         table(
             &[
@@ -1181,28 +1182,27 @@ pub(crate) fn numbers(app: &App) -> String {
             ],
             &months
         )
-    );
-    let areas: Vec<Vec<String>> = r
+    ));
+    let areas: Vec<Vec<Html>> = r
         .areas
         .iter()
         .map(|a| {
             vec![
-                esc(&a.area),
-                a.open.to_string(),
-                a.never_reviewed.to_string(),
-                a.opened_365d.to_string(),
-                a.merged_365d.to_string(),
-                num(a.merge_days_p50_365d),
+                cell(&a.area),
+                cell(a.open),
+                cell(a.never_reviewed),
+                cell(a.opened_365d),
+                cell(a.merged_365d),
+                cell(num(a.merge_days_p50_365d)),
             ]
         })
         .collect();
-    let tools: Vec<Vec<String>> = r
+    let tools: Vec<Vec<Html>> = r
         .ai_tools_365d
         .iter()
-        .map(|(t, n)| vec![esc(t), n.to_string()])
+        .map(|(t, n)| vec![cell(t), cell(n)])
         .collect();
-    let _ = write!(
-        body,
+    body.push(&html!(
         "<div class=\"d-flex flex-wrap gap-3 mt-4\"><div class=\"flex-1\"><h2 class=\"f4 mb-2\">By area</h2>{}</div>\
          <div><h2 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h2>{}</div></div>",
         table(
@@ -1217,8 +1217,8 @@ pub(crate) fn numbers(app: &App) -> String {
             &areas
         ),
         table(&["tool", "pull requests"], &tools),
-    );
-    body.push_str(&packages_section(app));
+    ));
+    body.push(&packages_section(app));
     body
 }
 

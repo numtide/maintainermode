@@ -305,11 +305,9 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> Html {
     let subnav = subnav(&p.subnav);
     let search = search_box(&p.query);
     let body = &p.body;
-    let sprite = Html::from(crate::assets::sprite(&[
-        &club, &menu, &nav, &search, &head, &subnav, body,
-    ]));
-    let css = Html::from(crate::assets::stylesheets());
-    let js = Html::from(crate::assets::scripts());
+    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &search, &head, &subnav, body]);
+    let css = crate::assets::stylesheets();
+    let js = crate::assets::scripts();
     let nvd = if app.store.get("nvd_api").ok().flatten().is_some() {
         Html::from("<br>This product uses the NVD API but is not endorsed or certified by the NVD.")
     } else {
@@ -377,7 +375,7 @@ pub(crate) fn page_header(
 
 /// A box with an `h2`. An empty `body` shows "None." in its place; pass
 /// [`empty`] for other words. `more` is a link: its href and its label, as
-/// HTML.
+/// text.
 pub(crate) fn section(
     title: impl Into<Html>,
     count: Option<usize>,
@@ -387,10 +385,7 @@ pub(crate) fn section(
     let (title, body) = (title.into(), body.into());
     let count = counter(count);
     let more = more
-        .map(|(href, label)| {
-            let (href, label) = (Html::from(href), Html::from(label));
-            html!("<a class=\"f6 ml-2\" href=\"{href}\">{label}</a>")
-        })
+        .map(|(href, label)| html!("<a class=\"f6 ml-2\" href=\"{href}\">{label}</a>"))
         .unwrap_or_default();
     let body = if body.is_empty() {
         empty("None.")
@@ -496,12 +491,12 @@ pub(crate) const MAX_BADGES: usize = 3;
 pub(crate) fn item_row(
     kind: Option<Kind>,
     title: impl Into<Html>,
-    href: impl Into<Html>,
+    href: &str,
     meta: impl Into<Html>,
     badges: &[Html],
     status: impl Into<Html>,
 ) -> Html {
-    let (title, href, meta, status) = (title.into(), href.into(), meta.into(), status.into());
+    let (title, meta, status) = (title.into(), meta.into(), status.into());
     let ic = kind
         .map(|k| {
             html!(
@@ -540,7 +535,7 @@ pub(crate) fn pager(href: &str, after: Option<&str>) -> Html {
         return Html::new();
     };
     let sep = Html::from(if href.contains('?') { "&amp;" } else { "?" });
-    let after = Html::from(crate::github::urlencode(after));
+    let after = crate::github::urlencode(after);
     html!(
         "<nav class=\"d-flex flex-justify-center my-3\" aria-label=\"Pages\"><a class=\"btn btn-sm\" href=\"{href}{sep}after={after}\">Next page</a></nav>"
     )
@@ -580,7 +575,7 @@ mod tests {
     #[test]
     fn a_row_shows_at_most_three_badges() {
         let b: Vec<Html> = (0..5)
-            .map(|i| badge(Tone::Neutral, i.to_string()))
+            .map(|i| badge(Tone::Neutral, Html::text(&i.to_string())))
             .collect();
         let row = item_row(Some(Kind::PR_OPEN), "t", "/pr/1", "", &b, "");
         assert_eq!(row.matches("class=\"Label\"").count(), MAX_BADGES);

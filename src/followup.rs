@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::catalog::Event;
+use crate::html::{Html, html};
 use crate::model::{Pr, Review};
-use crate::web::{App, Shared, esc, icon, octicon};
+use crate::web::{App, Shared, icon, octicon};
 
 pub(crate) const DAYS: u32 = 7;
 pub(crate) const MAX_DAYS: u32 = 90;
@@ -461,11 +462,11 @@ pub fn routes() -> Router<Shared> {
         .route("/me/settings/followup", post(save_default_form))
 }
 
-fn options(selected: Action) -> String {
+fn options(selected: Action) -> Html {
     Action::ALL
         .iter()
         .map(|a| {
-            format!(
+            html!(
                 "<option value=\"{}\"{}>{}</option>",
                 a.key(),
                 if *a == selected { " selected" } else { "" },
@@ -482,8 +483,8 @@ pub(crate) fn merge_box(n: u64) -> String {
     format!("{}#partial-pull-merging", crate::prpage::github_url(n))
 }
 
-fn merge_links(n: u64) -> String {
-    format!(
+fn merge_links(n: u64) -> Html {
+    html!(
         "<a href=\"{}\">Open the merge box on GitHub</a> · \
          nixpkgs <a href=\"{GUIDE}\">CONTRIBUTING.md</a>: “{GUIDE_QUOTE}”",
         merge_box(n)
@@ -495,18 +496,18 @@ const COMMITTER_NOTE: &str = "This site counts you as a committer when you merge
 
 /// The plan of the author, under the panel of `/pr/<n>`. Empty for anyone
 /// else, and for a pull request that is not open.
-pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) -> String {
+pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) -> Html {
     let Some(login) = viewer.filter(|v| v.eq_ignore_ascii_case(&pr.author)) else {
-        return String::new();
+        return Html::new();
     };
     if !pr.is_open() {
-        return String::new();
+        return Html::new();
     }
     let plans = Plans::of(app, login, committer);
     let plan = plans.get(pr.number);
     let now = Utc::now();
     let st = status(pr, &plan, committer, now);
-    let text = esc(&sentence(pr, &plan, &st, now));
+    let text = sentence(pr, &plan, &st, now);
     let (tone, mark) = match &st {
         Status::Due { blocked, .. } if blocked.is_empty() => {
             ("color-fg-success", octicon!("check-circle-fill"))
@@ -515,15 +516,15 @@ pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) 
         Status::Reviewed { .. } => ("color-fg-success", octicon!("comment")),
         _ => ("color-fg-muted", octicon!("circle")),
     };
-    let mut more = String::new();
+    let mut more = Html::new();
     if plan.action == Action::Merge
         && matches!(st, Status::Due { ref blocked, .. } if blocked.is_empty())
     {
-        more = format!("<p class=\"f6 mb-2\">{}</p>", merge_links(pr.number));
+        more = html!("<p class=\"f6 mb-2\">{}</p>", merge_links(pr.number));
     } else if plan.action == Action::Merge && !committer {
-        more = format!("<p class=\"f6 color-fg-muted mb-2\">{COMMITTER_NOTE}</p>");
+        more = html!("<p class=\"f6 color-fg-muted mb-2\">{COMMITTER_NOTE}</p>");
     }
-    let source = match plan.source {
+    let source = Html::from(match plan.source {
         Source::PullRequest => "You set this plan for this pull request.",
         Source::Default => {
             "Your default plan applies. Change it in <a href=\"/me/settings#followup\">your settings</a>."
@@ -531,18 +532,18 @@ pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) 
         Source::BuiltIn => {
             "No plan yet: Needs you shows this pull request after 7 days with no review. Save a plan to get a reminder in your inbox too."
         }
-    };
+    });
     let reset = if plan.source == Source::PullRequest {
-        format!(
+        html!(
             "<form method=\"post\" action=\"/me/followup\" class=\"mt-1\">\
              <input type=\"hidden\" name=\"number\" value=\"{}\"><input type=\"hidden\" name=\"reset\" value=\"1\">\
              <button class=\"btn btn-sm\" type=\"submit\">Use my default</button></form>",
             pr.number
         )
     } else {
-        String::new()
+        Html::new()
     };
-    format!(
+    html!(
         "<section class=\"Box mb-4\" id=\"followup\" aria-labelledby=\"followup-heading\">\
          <div class=\"Box-header\"><h2 class=\"Box-title\" id=\"followup-heading\">{} Your follow-up plan</h2></div>\
          <div class=\"Box-row\"><p class=\"mb-2\"><span class=\"{tone} mr-1\">{}</span>{text}</p>{more}\
@@ -564,7 +565,7 @@ pub(crate) fn pr_box(app: &App, viewer: Option<&str>, pr: &Pr, committer: bool) 
 }
 
 /// The `#followup` section of `/me/settings`.
-pub(crate) fn settings_box(app: &App, login: &str) -> String {
+pub(crate) fn settings_box(app: &App, login: &str) -> Html {
     let committer = app.snap().committers.is(login);
     let plan = Plans::of(app, login, committer).default;
     let state = if plan.source == Source::Default {
@@ -574,13 +575,13 @@ pub(crate) fn settings_box(app: &App, login: &str) -> String {
     } else {
         "Not saved yet: this is the default."
     };
-    format!(
+    html!(
         "<div id=\"followup\">{}</div>",
         crate::ui::section(
-            format!("{} Your pull requests", icon(octicon!("git-pull-request"))),
+            html!("{} Your pull requests", icon(octicon!("git-pull-request"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\"><p>The default follow-up plan of each pull request you open. \
                  Change the plan of one pull request on its page.</p>\
                  <form method=\"post\" action=\"/me/settings/followup\" class=\"d-flex flex-wrap flex-items-center gap-2\">\

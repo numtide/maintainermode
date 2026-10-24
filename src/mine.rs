@@ -462,7 +462,7 @@ pub(crate) fn row_html(
                 html!(
                     " <span class=\"color-fg-muted f6\">{}</span>{}",
                     p.version,
-                    Html::from(crate::catalog::lag_label(ch, a, &p.version))
+                    crate::catalog::lag_label(ch, a, &p.version)
                 )
             })
             .unwrap_or_default(),
@@ -476,7 +476,7 @@ pub(crate) fn row_html(
     subject_row(
         &r.sub,
         &r.flags,
-        &html!("{version}{via}{}{}", marks.labels(), hosts_html(&r.hosts)),
+        html!("{version}{via}{}{}", marks.labels(), hosts_html(&r.hosts)),
         &status,
     )
 }
@@ -525,7 +525,7 @@ fn href(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
 
 /// The filter bar, and the step that asks for a machine report in place
 /// of the machines filter when there is none.
-pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, String) {
+pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Html) {
     let mut tabs = Vec::new();
     for f in Filter::ALL {
         if f == Filter::Machines && !i.has_machines && current != f {
@@ -535,9 +535,9 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
         tabs.push(Tab::new(href(f, "", None, None), f.label(), f == current).count(n));
     }
     let step = if i.has_machines {
-        String::new()
+        Html::new()
     } else {
-        format!(
+        html!(
             "<div class=\"callout mb-3\">{} <a class=\"text-bold\" href=\"{UPLOAD}\">Upload the packages of your machines</a> \
              <span class=\"color-fg-muted\">to see them first here.</span></div>",
             icon(octicon!("upload"))
@@ -752,7 +752,7 @@ pub(crate) fn view(
         ));
     }
     if f == Filter::Machines {
-        out.push(&Html::from(crate::rescan::panel(app, login)));
+        out.push(&crate::rescan::panel(app, login));
     }
     let sub: Html = match f {
         Filter::Mine => "The packages of your machines first, then what you maintain, then what you watch. \

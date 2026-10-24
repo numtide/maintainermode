@@ -15,7 +15,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::ui::{Page, Section};
-use crate::web::{App, Shared, esc, octicon, random_id};
+use crate::web::{App, Shared, octicon, random_id};
 
 const EXPIRES_MINUTES: u64 = 10;
 pub const INTERVAL_SECONDS: u64 = 2;
@@ -133,7 +133,7 @@ fn sign_in_href(code: &str) -> String {
     format!("/auth/login?next=%2Flogin%2Fcli%3Fcode%3D{code}")
 }
 
-fn render(app: &App, login: &str, body: String) -> Response {
+fn render(app: &App, login: &str, body: crate::html::Html) -> Response {
     Page::new(
         Section::Personal(crate::ui::Personal::Settings),
         "Sign in the command line tool",
@@ -153,16 +153,15 @@ async fn page(
         return Redirect::to(&sign_in_href(&code)).into_response();
     };
     let named = if code.is_empty() {
-        String::new()
+        crate::html::Html::new()
     } else {
-        format!(
-            "<p>The link names the code <code>{}</code>. Type it only if your terminal shows the same code.</p>",
-            esc(&code)
+        crate::html::html!(
+            "<p>The link names the code <code>{code}</code>. Type it only if your terminal shows the same code.</p>"
         )
     };
     // RFC 8628 §5.4: the person types the code, so a link alone cannot
     // hand the token to the person who sent it.
-    let body = format!(
+    let body = crate::html::html!(
         "<div class=\"Box\"><div class=\"Box-row\">\
          <p>A <code>maintainer-mode login</code> asks for an upload token for <strong>{who}</strong>. \
          Confirm only a code that your own terminal shows now. A person who sent you this link gets the token.</p>{named}\
@@ -172,7 +171,7 @@ async fn page(
          <p class=\"color-fg-muted\">The token can only send your package sets. Any upload token you made before stops working.</p>\
          <button class=\"btn btn-primary\" type=\"submit\">Confirm</button> \
          <a class=\"btn\" href=\"/\">Cancel</a></form></div></div>",
-        who = esc(&login),
+        who = login,
     );
     render(&app, &login, body)
 }

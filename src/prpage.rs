@@ -12,7 +12,6 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::fmt::Write;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -22,11 +21,12 @@ use crate::actions::Act;
 use crate::archive::RESERVE;
 use crate::area::Index;
 use crate::catalog::{Flags, Subject};
+use crate::html::{Html, html};
 use crate::ledger::{self, Credit, Dropped};
 use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::ui::{Page, Section, kv};
-use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon};
+use crate::web::{App, Shared, Snapshot, ago, icon, octicon};
 
 const PULL: &str = "https://github.com/NixOS/nixpkgs/pull/";
 const API: &str = "https://api.github.com";
@@ -66,8 +66,8 @@ pub(crate) fn github_url(n: u64) -> String {
 }
 
 /// The small GitHub mark that sits next to a pull request title.
-fn github_icon(n: u64) -> String {
-    format!(
+fn github_icon(n: u64) -> Html {
+    html!(
         " <a class=\"color-fg-muted ml-1\" href=\"{}\" title=\"Open on GitHub\" aria-label=\"Open #{n} on GitHub\">{}</a>",
         github_url(n),
         icon(octicon!("mark-github"))
@@ -83,19 +83,20 @@ pub(crate) fn number_of(url: &str) -> Option<u64> {
 }
 
 /// A pull request title that opens our page, and the GitHub mark after it.
-pub(crate) fn title_link(n: u64, text: &str, class: &str) -> String {
-    format!(
+pub(crate) fn title_link(n: u64, text: impl Into<Html>, class: &str) -> Html {
+    let text = text.into();
+    html!(
         "<a class=\"{class}\" href=\"/pr/{n}\">{text}</a>{}",
         github_icon(n)
     )
 }
 
 /// As `title_link` for any link: a nixpkgs pull request opens our page.
-/// `text` is HTML.
-pub(crate) fn link(url: &str, text: &str, class: &str) -> String {
+pub(crate) fn link(url: &str, text: impl Into<Html>, class: &str) -> Html {
+    let text = text.into();
     match number_of(url) {
         Some(n) => title_link(n, text, class),
-        None => format!("<a class=\"{class}\" href=\"{}\">{text}</a>", esc(url)),
+        None => html!("<a class=\"{class}\" href=\"{url}\">{text}</a>"),
     }
 }
 
@@ -870,7 +871,7 @@ impl Tags {
 /// `details`, `summary` and `b` with no attributes. HTML comments go, only
 /// web and mail links stay, and an image becomes a link so the page loads
 /// nothing from elsewhere.
-pub(crate) fn markdown(text: &str) -> String {
+pub(crate) fn markdown(text: &str) -> Html {
     use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut open = false;
@@ -903,7 +904,10 @@ pub(crate) fn markdown(text: &str) -> String {
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
     html.push_str(&tags.close_all());
-    html
+    // pulldown-cmark escapes text and attributes; raw HTML reaches it only
+    // through `Tags`, which keeps the bare tags above, and links through
+    // `safe_url`.
+    Html::trusted(html)
 }
 
 #[derive(Debug, Serialize)]
@@ -1047,7 +1051,7 @@ fn touched(s: &Snapshot, index: &Index, h: &crate::health::Health, pr: &Pr) -> V
         .collect()
 }
 
-fn ai_text(ai: Option<&str>) -> String {
+fn ai_text(ai: Option<&str>) -> Html {
     match ai {
         None => "none disclosed in the last commit or the description".into(),
         Some(crate::github::OTHER_FORM) => {
@@ -1055,11 +1059,11 @@ fn ai_text(ai: Option<&str>) -> String {
                 .into()
         }
         Some("disclosed") => "disclosed".into(),
-        Some(t) => format!("disclosed: {}", esc(t)),
+        Some(t) => html!("disclosed: {t}"),
     }
 }
 
-fn state_label(pr: &Pr) -> String {
+fn state_label(pr: &Pr) -> Html {
     let (ic, class, word) = match pr.state.as_str() {
         "MERGED" => (icon(octicon!("git-merge")), "Label--success", "merged"),
         "CLOSED" => (
@@ -1069,25 +1073,25 @@ fn state_label(pr: &Pr) -> String {
         ),
         _ => (icon(octicon!("git-pull-request")), "Label--success", "open"),
     };
-    let draft = if pr.is_draft {
+    let draft = Html::from(if pr.is_draft {
         " <span class=\"Label\">draft</span>"
     } else {
         ""
-    };
-    format!("<span class=\"Label {class}\">{ic} {word}</span>{draft}")
+    });
+    html!("<span class=\"Label {class}\">{ic} {word}</span>{draft}")
 }
 
-pub(crate) fn ci_text(ci: Option<&str>) -> String {
+pub(crate) fn ci_text(ci: Option<&str>) -> Html {
     match ci {
-        Some("SUCCESS") => format!(
+        Some("SUCCESS") => html!(
             "<span class=\"color-fg-success\">{} checks pass</span>",
             icon(octicon!("check-circle-fill"))
         ),
-        Some("FAILURE" | "ERROR") => format!(
+        Some("FAILURE" | "ERROR") => html!(
             "<span class=\"color-fg-danger\">{} checks fail</span>",
             icon(octicon!("x-circle-fill"))
         ),
-        Some(_) => format!(
+        Some(_) => html!(
             "<span class=\"color-fg-attention\">{} checks pending</span>",
             icon(octicon!("dot-fill"))
         ),
@@ -1103,67 +1107,67 @@ fn mergeable_text(m: &str) -> &'static str {
     }
 }
 
-fn people(logins: &[String]) -> String {
+fn people(logins: &[String]) -> Html {
     if logins.is_empty() {
         return "<span class=\"color-fg-muted\">none</span>".into();
     }
     crate::web::people(logins)
 }
 
-fn about(pr: &Pr) -> String {
-    let labels: String = if pr.labels.is_empty() {
+fn about(pr: &Pr) -> Html {
+    let labels: Html = if pr.labels.is_empty() {
         "<span class=\"color-fg-muted\">none</span>".into()
     } else {
         pr.labels
             .iter()
-            .map(|l| format!("<span class=\"Label mr-1\">{}</span>", esc(l)))
+            .map(|l| html!("<span class=\"Label mr-1\">{l}</span>"))
             .collect()
     };
     let when = match (pr.merged_at, pr.closed_at) {
-        (Some(t), _) => format!(
+        (Some(t), _) => html!(
             "{} ago, merged {} ago{}",
             ago(pr.created_at),
             ago(t),
             pr.merged_by
                 .as_deref()
-                .map(|m| format!(" by <a href=\"/u/{0}\">{0}</a>", esc(m)))
+                .map(|m| html!(" by <a href=\"/u/{0}\">{0}</a>", m))
                 .unwrap_or_default()
         ),
-        (None, Some(t)) => format!("{} ago, closed {} ago", ago(pr.created_at), ago(t)),
-        _ => format!(
+        (None, Some(t)) => html!("{} ago, closed {} ago", ago(pr.created_at), ago(t)),
+        _ => html!(
             "{} ago, updated {} ago",
             ago(pr.created_at),
             ago(pr.updated_at)
         ),
     };
-    let mut out = String::from(
+    let mut out = Html::from(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">About</h2></div>",
     );
-    out.push_str(&kv("State", state_label(pr)));
-    out.push_str(&kv(
+    out.push(&kv("State", state_label(pr)));
+    out.push(&kv(
         "Author",
-        format!(
+        html!(
             "<a href=\"/u/{a}\">{a}</a>{}",
             if pr.association.is_empty() {
-                String::new()
+                Html::new()
             } else {
-                format!(
+                html!(
                     " <span class=\"color-fg-muted f6\">{}</span>",
-                    esc(&pr.association.to_lowercase().replace('_', " "))
+                    pr.association.to_lowercase().replace('_', " ")
                 )
             },
-            a = esc(&pr.author)
+            a = pr.author
         ),
     ));
-    out.push_str(&kv(
+    out.push(&kv(
         "Base",
-        format!("<span class=\"branch-name\">{}</span>", esc(&pr.base)),
+        html!("<span class=\"branch-name\">{}</span>", pr.base),
     ));
-    out.push_str(&kv("Labels", &labels));
-    out.push_str(&kv("Age", &when));
-    out.push_str(&kv(
+    out.push(&kv("Labels", labels));
+    out.push(&kv("Age", when));
+    out.push(&kv(
         "Size",
-        format!(
+        html!(
             "<span class=\"color-fg-success\">+{}</span> <span class=\"color-fg-danger\">−{}</span> in {} file{}",
             pr.additions,
             pr.deletions,
@@ -1172,145 +1176,129 @@ fn about(pr: &Pr) -> String {
         ),
     ));
     if pr.is_open() {
-        out.push_str(&kv("Checks", ci_text(pr.ci.as_deref())));
-        out.push_str(&kv("Mergeable", mergeable_text(&pr.mergeable)));
+        out.push(&kv("Checks", ci_text(pr.ci.as_deref())));
+        out.push(&kv("Mergeable", mergeable_text(&pr.mergeable)));
     }
-    out.push_str(&kv("AI use", ai_text(pr.ai.as_deref())));
-    out.push_str("</div>");
+    out.push(&kv("AI use", ai_text(pr.ai.as_deref())));
+    out.push(&Html::from("</div>"));
     out
 }
 
 /// `here` says why the pull request is in its queue and, for the viewer,
 /// in For you; `hide` is the viewer's Hide or Show again button.
-fn place_html(
-    p: &Place,
-    credits: &[&Credit],
-    for_you: bool,
-    here: &[String],
-    hide: &str,
-) -> String {
-    let mut out = String::from(
+fn place_html(p: &Place, credits: &[&Credit], for_you: bool, here: &[String], hide: Html) -> Html {
+    let mut out = Html::from(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">In Maintainer Mode</h2></div>",
     );
-    let queue = match p.queue {
-        "merge" => "<a href=\"/review?tab=ready\">Ready to merge</a>".to_string(),
+    let queue: Html = match p.queue {
+        "merge" => "<a href=\"/review?tab=ready\">Ready to merge</a>".into(),
         "review" => {
-            let mut buckets = Vec::new();
+            let mut buckets: Vec<Html> = Vec::new();
             if for_you {
-                buckets.push("<a href=\"/review?tab=foryou\">for you</a>");
+                buckets.push("<a href=\"/review?tab=foryou\">for you</a>".into());
             }
             if p.unowned {
-                buckets.push("<a href=\"/review?tab=unowned\">no maintainer</a>");
+                buckets.push("<a href=\"/review?tab=unowned\">no maintainer</a>".into());
             }
-            buckets.push("<a href=\"/review?tab=all\">all</a>");
-            format!("Needs review: {}", buckets.join(", "))
+            buckets.push("<a href=\"/review?tab=all\">all</a>".into());
+            html!("Needs review: {}", crate::html::join(buckets, ", "))
         }
-        _ => "<span class=\"color-fg-muted\">in no queue</span>".to_string(),
+        _ => "<span class=\"color-fg-muted\">in no queue</span>".into(),
     };
-    out.push_str(&kv("Queue", format!("{queue}{hide}")));
+    out.push(&kv("Queue", html!("{queue}{hide}")));
     if !here.is_empty() {
-        out.push_str(&kv("Why it is here", esc(&here.join("; "))));
+        out.push(&kv("Why it is here", Html::text(&here.join("; "))));
     }
     if !p.why.is_empty() {
-        out.push_str(&kv(
+        out.push(&kv(
             if p.queue == "merge" {
                 "Why"
             } else {
                 "Why not ready"
             },
-            esc(&p.why.join("; ")),
+            Html::text(&p.why.join("; ")),
         ));
     }
     if p.unowned {
-        out.push_str(&kv(
+        out.push(&kv(
             "No maintainer",
             "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files.",
         ));
     }
-    out.push_str(&kv("Approved head", people(&p.approved_by)));
-    let mut rows = String::new();
+    out.push(&kv("Approved head", people(&p.approved_by)));
+    let mut rows = Html::new();
     for c in credits {
         let status = match &c.dropped {
             Some(Dropped::DailyCap) => continue,
-            None => String::new(),
-            Some(Dropped::Voided { by, url }) => format!(
-                " · <a class=\"Label Label--danger\" href=\"{}\">voided</a> by {}",
-                esc(url),
+            None => Html::new(),
+            Some(Dropped::Voided { by, url }) => html!(
+                " · <a class=\"Label Label--danger\" href=\"{url}\">voided</a> by {}",
                 crate::web::person_link(by)
             ),
         };
-        let _ = write!(
-            rows,
+        rows.push(&html!(
             "<div><a href=\"/u/{r}\">{r}</a> · <a href=\"{u}\">review</a> {} ago{status}</div>",
             ago(c.at),
-            r = esc(&c.reviewer),
-            u = esc(&c.review_url),
-        );
+            r = c.reviewer,
+            u = c.review_url,
+        ));
     }
     if rows.is_empty() {
         rows = "<span class=\"color-fg-muted\">none yet</span>".into();
     }
-    out.push_str(&kv(
+    out.push(&kv(
         "Reviews that moved it",
-        format!(
+        html!(
             "{rows}<div class=\"f6 color-fg-muted\">A change, a reply or a merge followed in {} days. \
              <a href=\"/state?tab=rules#1-a-review-that-moves-a-pull-request\">Why it matters</a></div>",
             ledger::MOVE_DAYS
         ),
     ));
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 
-fn touched_html(list: &[Touched]) -> String {
-    let mut out = String::from(
+fn touched_html(list: &[Touched]) -> Html {
+    let mut out = Html::from(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">What it touches</h2></div>",
     );
     if list.is_empty() {
-        out.push_str(
+        out.push(&Html::from(
             "<div class=\"Box-row color-fg-muted\">No package or NixOS module in the index matches its files or its title.</div>",
-        );
+        ));
     }
     for t in list {
         let approved = if t.approved_by.is_empty() {
-            String::new()
+            Html::new()
         } else {
-            format!(
+            html!(
                 " · <span class=\"color-fg-success\">{} approved by {}</span>",
                 icon(octicon!("check-circle-fill")),
                 people(&t.approved_by)
             )
         };
         let teams = if t.teams.is_empty() {
-            String::new()
+            Html::new()
         } else {
-            format!(
-                " · teams {}",
-                t.teams
-                    .iter()
-                    .map(|x| esc(x))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
+            html!(" · teams {}", t.teams.join(", "))
         };
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<div class=\"Box-row\"><div class=\"d-flex flex-items-center flex-wrap gap-2\">\
              <a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a> {}</div>\
              <div class=\"f6 color-fg-muted mt-1\">maintainers {}{teams}{approved}</div></div>",
             t.subject.href(),
             t.subject.icon(),
-            esc(&t.subject.label()),
+            t.subject.label(),
             t.flags.html(),
             people(&t.maintainers),
-        );
+        ));
     }
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 
-fn checklist(pr: &Pr) -> String {
-    let items: [(&str, String); 7] = [
+fn checklist(pr: &Pr) -> Html {
+    let items: [(&'static str, String); 7] = [
         (
             "The commit messages follow the nixpkgs format, like <code>hello: 2.12 -&gt; 2.13</code> or <code>nixos/nginx: fix the test</code>.",
             format!("{NIXPKGS}/CONTRIBUTING.md#commit-conventions"),
@@ -1340,35 +1328,37 @@ fn checklist(pr: &Pr) -> String {
             format!("{NIXPKGS}/CONTRIBUTING.md#automationai-policy"),
         ),
     ];
-    let mut out = format!(
+    let mut out = html!(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title d-inline\">{} Review checklist</h2> \
          <span class=\"f6 text-normal color-fg-muted\">from <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">CONTRIBUTING.md</a> \
          and <a href=\"{NIXPKGS}/pkgs/README.md#reviewing-contributions\">pkgs/README.md</a></span></div><div class=\"Box-row\"><ul class=\"ml-3\">",
         icon(octicon!("checklist"))
     );
     for (text, href) in &items {
-        let _ = write!(out, "<li>{text} <a href=\"{}\">Guide</a></li>", esc(href));
+        out.push(&html!(
+            "<li>{} <a href=\"{href}\">Guide</a></li>",
+            Html::from(*text)
+        ));
     }
-    out.push_str("</ul>");
+    out.push(&Html::from("</ul>"));
     let title_ok = !crate::subject::of_title(&pr.title).is_empty();
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<p class=\"f6 color-fg-muted mt-2\">The title {}. AI use: {}.</p></div>",
-        if title_ok {
+        Html::from(if title_ok {
             "names what it changes"
         } else {
             "does not start with <code>name:</code>"
-        },
+        }),
         ai_text(pr.ai.as_deref())
-    );
-    out.push_str(
+    ));
+    out.push(&Html::from(
         "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You write your review on GitHub.</div></div>",
-    );
+    ));
     out
 }
 
-fn exits(n: u64) -> String {
-    format!(
+fn exits(n: u64) -> Html {
+    html!(
         "<a class=\"btn btn-sm btn-primary\" href=\"{u}/files\">{} Review the diff on GitHub</a>\
          <a class=\"btn btn-sm\" href=\"{u}\">{} Open on GitHub</a>",
         icon(octicon!("file-diff")),
@@ -1387,8 +1377,8 @@ fn file_anchor(n: u64, path: &str) -> String {
     format!("{}/files#diff-{hash}", github_url(n))
 }
 
-fn patch_html(patch: &str) -> String {
-    let mut out = String::from("<pre class=\"diff\">");
+fn patch_html(patch: &str) -> Html {
+    let mut out = Html::from("<pre class=\"diff\">");
     for line in patch.lines() {
         let class = match line.as_bytes().first() {
             Some(b'+') => "diff-add",
@@ -1397,175 +1387,166 @@ fn patch_html(patch: &str) -> String {
             Some(b'\\') => "diff-note",
             _ => "",
         };
-        let _ = write!(
-            out,
-            "<span class=\"{class}\">{}</span>",
-            if line.is_empty() {
-                " ".into()
-            } else {
-                esc(line)
-            }
-        );
+        let text = if line.is_empty() { " " } else { line };
+        out.push(&html!("<span class=\"{class}\">{text}</span>"));
     }
-    out.push_str("</pre>");
+    out.push(&Html::from("</pre>"));
     out
 }
 
-fn file_html(n: u64, f: &File) -> String {
+fn file_html(n: u64, f: &File) -> Html {
     let lines = f.patch.as_deref().map_or(0, |p| p.lines().count());
     let name = match &f.previous {
-        Some(p) if p != &f.path => format!("{} → {}", esc(p), esc(&f.path)),
-        _ => esc(&f.path),
+        Some(p) if p != &f.path => html!("{p} → {}", f.path),
+        _ => Html::text(&f.path),
     };
     let link = file_anchor(n, &f.path);
     let body = match &f.patch {
-        None => format!(
+        None => html!(
             "<div class=\"Box-row color-fg-muted\">No diff here: a binary file, or a diff too large for the GitHub API. <a href=\"{link}\">See it on GitHub</a></div>"
         ),
-        Some(_) if lines > PATCH_LINES => format!(
+        Some(_) if lines > PATCH_LINES => html!(
             "<div class=\"Box-row color-fg-muted\">A large diff of {lines} lines. <a href=\"{link}\">See it on GitHub</a></div>"
         ),
         Some(p) => patch_html(p),
     };
-    format!(
+    html!(
         "<details class=\"Box mb-3\"{open}><summary class=\"Box-header d-flex flex-items-center gap-2\">\
          <span class=\"Label\">{status}</span><span class=\"text-mono f6 flex-auto\">{name}</span>\
          <span class=\"color-fg-success f6\">+{a}</span><span class=\"color-fg-danger f6\">−{d}</span>\
          <a class=\"f6\" href=\"{link}\">GitHub</a></summary>{body}</details>",
         open = if lines <= FOLD_LINES { " open" } else { "" },
-        status = esc(&f.status),
+        status = f.status,
         a = f.additions,
         d = f.deletions,
     )
 }
 
 /// Why a read failed, with a way to sign in when that is the reason.
-fn why(e: &str) -> String {
+fn why(e: &str) -> Html {
     if e == NOT_LIVE {
-        format!("{} (<a href=\"/auth/login\">sign in</a>)", esc(e))
+        html!("{e} (<a href=\"/auth/login\">sign in</a>)")
     } else {
-        esc(e)
+        Html::text(e)
     }
 }
 
-fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> String {
-    let mut out = format!(
+fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> Html {
+    let mut out = html!(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"files\">{} Files changed <span class=\"Counter\">{}</span></h2>",
         icon(octicon!("file-diff")),
         pr.changed_files
     );
     match files {
         Err(e) => {
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"flash mb-4\">The diff could not be read: {}. <a href=\"{}/files\">Read it on GitHub</a></div>",
                 why(e),
                 github_url(pr.number)
-            );
+            ));
         }
         Ok(f) => {
             if f.files.is_empty() {
-                out.push_str("<div class=\"blankslate\"><p>No changed files.</p></div>");
+                out.push(&Html::from(
+                    "<div class=\"blankslate\"><p>No changed files.</p></div>",
+                ));
             }
             for file in &f.files {
-                out.push_str(&file_html(pr.number, file));
+                out.push(&file_html(pr.number, file));
             }
             if f.capped {
-                let _ = write!(
-                    out,
+                out.push(&html!(
                     "<div class=\"flash mb-4\">This page shows the first {} files. <a href=\"{}/files\">See all on GitHub</a></div>",
                     f.files.len(),
                     github_url(pr.number)
-                );
+                ));
             }
         }
     }
     out
 }
 
-fn description_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
+fn description_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> Html {
     let body = match talk {
         Ok(t) if t.body.trim().is_empty() => {
-            "<p class=\"color-fg-muted\">No description.</p>".to_string()
+            "<p class=\"color-fg-muted\">No description.</p>".into()
         }
         Ok(t) => markdown(&t.body),
-        Err(e) => format!(
+        Err(e) => html!(
             "<p class=\"color-fg-muted\">The description could not be read: {}. <a href=\"{}\">Read it on GitHub</a></p>",
             why(e),
             github_url(pr.number)
         ),
     };
-    format!(
+    html!(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Description</h2></div>\
          <div class=\"Box-row markdown-body\">{body}</div></div>"
     )
 }
 
-fn note_html(n: &Note) -> String {
+fn note_html(n: &Note) -> Html {
     let what = match n.kind {
         "review" => {
             let s = n.state.as_deref().unwrap_or("");
             let label = match s {
-                "APPROVED" => "<span class=\"Label Label--success\">approved</span>".to_string(),
+                "APPROVED" => "<span class=\"Label Label--success\">approved</span>".into(),
                 "CHANGES_REQUESTED" => {
-                    "<span class=\"Label Label--danger\">changes requested</span>".to_string()
+                    "<span class=\"Label Label--danger\">changes requested</span>".into()
                 }
-                _ => format!(
+                _ => html!(
                     "<span class=\"Label\">{}</span>",
-                    esc(&s.to_lowercase().replace('_', " "))
+                    s.to_lowercase().replace('_', " ")
                 ),
             };
-            format!("reviewed {label}")
+            html!("reviewed {label}")
         }
-        "inline" => format!(
+        "inline" => html!(
             "commented on <span class=\"text-mono\">{}{}</span>",
-            esc(n.path.as_deref().unwrap_or("")),
+            n.path.as_deref().unwrap_or(""),
             n.line.map(|l| format!(":{l}")).unwrap_or_default()
         ),
-        _ => "commented".to_string(),
+        _ => "commented".into(),
     };
     let body = if n.body.trim().is_empty() {
-        String::new()
+        Html::new()
     } else {
-        format!(
+        html!(
             "<div class=\"markdown-body mt-2\">{}</div>",
             markdown(&n.body)
         )
     };
-    format!(
+    html!(
         "<div class=\"Box-row\"><div class=\"f6\"><a class=\"text-bold\" href=\"/u/{a}\">{a}</a> {what} \
          <a class=\"color-fg-muted\" href=\"{u}\">{} ago</a></div>{body}</div>",
         ago(n.at),
-        a = esc(&n.author),
-        u = esc(&n.url),
+        a = n.author,
+        u = n.url,
     )
 }
 
-fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
-    let mut out = format!(
+fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> Html {
+    let mut out = html!(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"discussion\">{} Reviews and comments</h2><div class=\"Box mb-4\">",
         icon(octicon!("comment"))
     );
     match talk {
         Ok(t) => {
             if t.notes.is_empty() {
-                out.push_str(
+                out.push(&Html::from(
                     "<div class=\"Box-row color-fg-muted\">No review or comment yet.</div>",
-                );
+                ));
             }
             if t.omitted > 0 {
-                let _ = write!(
-                    out,
+                out.push(&html!(
                     "<div class=\"Box-row color-fg-muted\">{} earlier reviews and comments are not shown. <a href=\"{}\">Read them on GitHub</a></div>",
                     t.omitted,
                     github_url(pr.number)
-                );
+                ));
             }
             for n in &t.notes {
-                out.push_str(&note_html(n));
+                out.push(&note_html(n));
             }
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-footer f6 color-fg-muted\">{}. <a href=\"{}\">The whole conversation on GitHub</a></div>",
                 if t.source == "archive" {
                     "From the archive of this server"
@@ -1573,37 +1554,34 @@ fn talk_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> String {
                     "Read from GitHub: the first 100 reviews and comments of each kind"
                 },
                 github_url(pr.number)
-            );
+            ));
         }
         Err(e) => {
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-row color-fg-muted\">The conversation could not be read: {}. The reviews that this site keeps, without their text:</div>",
                 why(e)
-            );
+            ));
             for r in &pr.reviews {
-                let _ = write!(
-                    out,
+                out.push(&html!(
                     "<div class=\"Box-row f6\"><a href=\"/u/{a}\">{a}</a> {} <a class=\"color-fg-muted\" href=\"{}\">{} ago</a></div>",
-                    esc(&r.state.to_lowercase().replace('_', " ")),
-                    esc(&r.url),
+                    r.state.to_lowercase().replace('_', " "),
+                    r.url,
                     ago(r.submitted_at),
-                    a = esc(&r.author)
-                );
+                    a = r.author
+                ));
             }
-            let _ = write!(
-                out,
+            out.push(&html!(
                 "<div class=\"Box-footer f6\"><a href=\"{}\">The conversation on GitHub</a></div>",
                 github_url(pr.number)
-            );
+            ));
         }
     }
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 
 fn not_synced(app: &App, viewer: Option<&str>, n: u64) -> Response {
-    let body = format!(
+    let body = html!(
         "<div class=\"blankslate\"><p>Pull request #{n} is not in the data of this site. \
          The site keeps the open pull requests and the ones updated in the last {} days.</p>\
          <p class=\"d-flex flex-justify-center gap-2\">{}</p></div>",
@@ -1696,17 +1674,17 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
     let hide = match viewer.as_deref() {
         Some(v) if pr.is_open() => {
             let hidden = app.store.hidden_prs(v).unwrap_or_default().contains(&n);
-            format!(
+            html!(
                 "{}{}",
-                if hidden {
+                Html::from(if hidden {
                     " · <span class=\"color-fg-muted\">hidden from your review lists</span>"
                 } else {
                     ""
-                },
+                }),
                 crate::review::hide_button(n, hidden, &format!("/pr/{n}"), false)
             )
         }
-        _ => String::new(),
+        _ => Html::new(),
     };
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
     let act = Act::of(&app, viewer.as_deref());
@@ -1748,39 +1726,39 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             buttons: if pr.is_open() {
                 act.buttons(n)
             } else {
-                String::new()
+                Html::new()
             },
-            extra_actions: next.into_string(),
+            extra_actions: next,
         })
     };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
-        .heading(format!(
+        .heading(html!(
             "{} <span class=\"text-nowrap\"><span class=\"color-fg-muted\">#{n}</span>{}</span>",
-            esc(&pr.title),
+            pr.title,
             github_icon(n)
         ))
-        .sub(format!(
+        .sub(html!(
             "{} <a href=\"/u/{a}\">{a}</a> wants to merge into <span class=\"branch-name\">{}</span> · opened {} ago",
             state_label(pr),
-            esc(&pr.base),
+            pr.base,
             ago(pr.created_at),
-            a = esc(&pr.author)
+            a = pr.author
         ))
         .actions(exits(n));
     let mut out = panel;
-    out.push_str(&crate::followup::pr_box(
+    out.push(&crate::followup::pr_box(
         &app,
         viewer.as_deref(),
         pr,
         s.committers.is(&pr.author),
     ));
-    out.push_str(&description_html(pr, &talk));
-    out.push_str(&about(pr));
-    out.push_str(&place_html(&place, &credits, for_you, &here, &hide));
-    out.push_str(&touched_html(&list));
-    out.push_str(&checklist(pr));
-    out.push_str(&files_html(pr, &files));
-    out.push_str(&talk_html(pr, &talk));
+    out.push(&description_html(pr, &talk));
+    out.push(&about(pr));
+    out.push(&place_html(&place, &credits, for_you, &here, hide));
+    out.push(&touched_html(&list));
+    out.push(&checklist(pr));
+    out.push(&files_html(pr, &files));
+    out.push(&talk_html(pr, &talk));
     page.body(out).render(&app, viewer.as_deref())
 }
 
@@ -1885,7 +1863,7 @@ mod tests {
                 .starts_with("<a class=\"x\" href=\"/pr/7\">t</a> <a class=\"color-fg-muted ml-1\" href=\"https://github.com/NixOS/nixpkgs/pull/7\"")
         );
         assert_eq!(
-            link("https://example.org/?a=\"", "t", "x"),
+            link("https://example.org/?a=\"", "t", "x").as_str(),
             "<a class=\"x\" href=\"https://example.org/?a=&quot;\">t</a>"
         );
     }

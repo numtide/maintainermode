@@ -63,55 +63,52 @@ pub(crate) fn data<'a>(
 pub(crate) fn view(v: &AreaView, actions: Html, act: Act) -> Page {
     let path = v.path;
     let rows = &v.contents;
-    let owners: Vec<String> = v
+    let owners: Vec<Html> = v
         .owners
         .iter()
-        .map(|(p, l)| format!("<a href=\"/a/{0}\">{0}</a> {1}", esc(p), people_links(l)))
+        .map(|(p, l)| html!("<a href=\"/a/{0}\">{0}</a> {1}", p, people_links(l)))
         .collect();
     let parent = path
         .rsplit_once('/')
-        .map(|(p, _)| format!("<a href=\"/a/{0}\">{0}/</a> · ", esc(p)))
+        .map(|(p, _)| html!("<a href=\"/a/{0}\">{0}/</a> · ", p))
         .unwrap_or_default();
     let page = Page::new(Section::Packages, format!("{path}/"))
         .icon(octicon!("file-directory"))
-        .sub(format!(
+        .sub(html!(
             "{parent}{} packages and modules · {} open pull requests",
             rows.len(),
             v.open
         ))
         .actions(actions);
-    let mut out = String::new();
+    let mut out = Html::new();
     if !owners.is_empty() || !v.children.is_empty() {
-        out.push_str("<div class=\"Box mb-4\">");
+        out.push(&Html::from("<div class=\"Box mb-4\">"));
         if !owners.is_empty() {
-            out.push_str(&kv("ci/OWNERS", owners.join("<br>")));
+            out.push(&kv("ci/OWNERS", crate::html::join(owners, "<br>")));
         }
         if !v.children.is_empty() {
-            let list: Vec<String> = v
-                .children
-                .iter()
-                .take(40)
-                .map(|(d, n)| {
-                    format!(
-                        "<a href=\"/a/{0}\">{1}</a>&nbsp;<span class=\"color-fg-muted\">{n}</span>",
-                        esc(d),
-                        esc(d.rsplit('/').next().unwrap_or(d))
-                    )
-                })
-                .collect();
-            out.push_str(&kv("Most open pull requests", list.join(" · ")));
+            let list = v.children.iter().take(40).map(|(d, n)| {
+                html!(
+                    "<a href=\"/a/{d}\">{}</a>&nbsp;<span class=\"color-fg-muted\">{n}</span>",
+                    d.rsplit('/').next().unwrap_or(d)
+                )
+            });
+            out.push(&kv(
+                "Most open pull requests",
+                crate::html::join(list, " · "),
+            ));
         }
-        out.push_str("</div>");
+        out.push(&Html::from("</div>"));
     }
     if !rows.is_empty() {
-        out.push_str(&crate::ui::section(
+        out.push(&crate::ui::section(
             "Packages and modules",
             Some(rows.len()),
             None,
             subject_rows(rows),
         ));
     }
-    out.push_str(&v.subject.sections(act));
+    out.push(&v.subject.sections(act));
     page.body(out)
 }
 
@@ -126,10 +123,7 @@ pub(super) async fn page(
         return (StatusCode::BAD_REQUEST, "not a nixpkgs path").into_response();
     }
     let subject = Subject::Area(path.clone());
-    let actions = Html::from(subscribe_button(
-        watching(&app, viewer.as_deref(), &subject),
-        &subject,
-    ));
+    let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let act = Act::of(&app, viewer.as_deref());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();

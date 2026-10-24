@@ -9,10 +9,10 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::json;
-use std::fmt::Write;
 
+use crate::html::{Html, html};
 use crate::ui::{Page, Section};
-use crate::web::{App, Shared, ago, esc, icon, octicon};
+use crate::web::{App, Shared, ago, icon, octicon};
 use crate::workflows::{self, Check, Line, Mark, Names, Needed, REVIEW, UPDATE, valid_repo};
 use chrono::Utc;
 
@@ -66,13 +66,13 @@ impl Act {
         }
     }
 
-    pub fn buttons(self, number: u64) -> String {
-        let mut out = String::new();
+    pub(crate) fn buttons(self, number: u64) -> Html {
+        let mut out = Html::new();
         if self.review {
-            out.push_str(&review_button(number, !self.incomplete));
+            out.push(&review_button(number, !self.incomplete));
         }
         if self.claude {
-            out.push_str(&crate::llm::claude_button(number));
+            out.push(&crate::llm::claude_button(number));
         }
         out
     }
@@ -84,18 +84,18 @@ pub fn ready(app: &App, login: &str, button: Needed) -> bool {
     fresh_check(app, login).is_none_or(|c| c.blocker(button).is_none())
 }
 
-fn setup_link(label: &str, class: &str) -> String {
-    format!(
+fn setup_link(label: &str, class: &str) -> Html {
+    html!(
         "<a class=\"btn btn-sm {class}\" href=\"{SETUP}\" title=\"finish the setup of your workflow repository first\">{label}</a>"
     )
 }
 
 /// A small button for a pull request row.
-pub fn review_button(number: u64, ready: bool) -> String {
+pub(crate) fn review_button(number: u64, ready: bool) -> Html {
     if !ready {
         return setup_link("Review in CI", "ml-2");
     }
-    format!(
+    html!(
         "<form method=\"post\" action=\"/me/runs/review\" class=\"d-inline ml-2\">\
          <input type=\"hidden\" name=\"pr\" value=\"{number}\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"run nixpkgs-review in your GitHub Actions\">Review in CI</button></form>"
@@ -103,20 +103,19 @@ pub fn review_button(number: u64, ready: bool) -> String {
 }
 
 /// The update form for a package page, prefilled with the upstream release.
-pub fn update_form(attr: &str, version: Option<&str>, ready: bool) -> String {
+pub(crate) fn update_form(attr: &str, version: Option<&str>, ready: bool) -> Html {
     if !ready {
-        return format!(
+        return html!(
             "{} <span class=\"f6 color-fg-muted\">Finish the setup of your workflow repository first.</span>",
             setup_link("Update with nix-update", "")
         );
     }
-    format!(
+    html!(
         "<form method=\"post\" action=\"/me/runs/update\" class=\"d-flex flex-items-center gap-2\">\
-         <input type=\"hidden\" name=\"attr\" value=\"{a}\">\
+         <input type=\"hidden\" name=\"attr\" value=\"{attr}\">\
          <input class=\"form-control input-sm input-narrow\" name=\"version\" value=\"{v}\" placeholder=\"newest\" aria-label=\"version\">\
          <button class=\"btn btn-sm\" type=\"submit\" title=\"run nix-update in your GitHub Actions\">Update with nix-update</button></form>",
-        a = esc(attr),
-        v = esc(version.unwrap_or(""))
+        v = version.unwrap_or("")
     )
 }
 
@@ -134,7 +133,7 @@ fn take_flash(app: &App, login: &str) -> Option<String> {
     (!m.is_empty()).then_some(m)
 }
 
-fn run_rows(runs: &[workflows::Run]) -> String {
+fn run_rows(runs: &[workflows::Run]) -> Html {
     if runs.is_empty() {
         return "<div class=\"Box-row color-fg-muted\">No runs yet.</div>".into();
     }
@@ -145,12 +144,11 @@ fn run_rows(runs: &[workflows::Run]) -> String {
                 ("completed", Some(c)) => ("color-fg-danger", c),
                 (s, _) => ("color-fg-attention", s),
             };
-            format!(
+            html!(
                 "<div class=\"Box-row d-flex\"><a class=\"flex-auto Link--primary\" href=\"{}\">{}</a>\
-                 <span class=\"{class} mr-2\">{}</span><span class=\"color-fg-muted f6\">{}</span></div>",
-                esc(&r.url),
-                esc(&r.name),
-                esc(word),
+                 <span class=\"{class} mr-2\">{word}</span><span class=\"color-fg-muted f6\">{}</span></div>",
+                r.url,
+                r.name,
                 r.created_at.map(|t| format!("{} ago", ago(t))).unwrap_or_default()
             )
         })
@@ -160,37 +158,35 @@ fn run_rows(runs: &[workflows::Run]) -> String {
 /// What an update run left: a branch to open a pull request from, a branch
 /// to keep working on, or no branch. `pushed` is `None` when GitHub did not
 /// say.
-fn update_row(attr: &str, fork: &str, conclusion: Option<&str>, pushed: Option<bool>) -> String {
+fn update_row(attr: &str, fork: &str, conclusion: Option<&str>, pushed: Option<bool>) -> Html {
     let success = conclusion == Some("success");
     if pushed == Some(false) {
         let text = if success {
-            format!("{} is already up to date. No branch was pushed.", esc(attr))
+            html!("{attr} is already up to date. No branch was pushed.")
         } else {
-            format!(
-                "{}: {}. No branch was pushed.",
-                esc(attr),
-                esc(conclusion.unwrap_or("not finished"))
+            html!(
+                "{attr}: {}. No branch was pushed.",
+                conclusion.unwrap_or("not finished")
             )
         };
-        return format!("<div class=\"Box-row color-fg-muted\">{text}</div>");
+        return html!("<div class=\"Box-row color-fg-muted\">{text}</div>");
     }
-    format!(
-        "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><span class=\"branch-name\">{b}</span> on {f}</span>\
+    html!(
+        "<div class=\"Box-row d-flex\"><span class=\"flex-auto\"><span class=\"branch-name\">{b}</span> on {fork}</span>\
          <a class=\"btn btn-sm\" href=\"{}\">{}</a></div>",
-        esc(&workflows::compare_url(fork, attr)),
+        workflows::compare_url(fork, attr),
         if success {
             "Open a pull request"
         } else {
             "Open the branch and continue"
         },
-        b = esc(&workflows::update_branch(attr)),
-        f = esc(fork),
+        b = workflows::update_branch(attr),
     )
 }
 
 /// The last finished run of each attribute (`update hello 2.13`), and what
 /// it left.
-async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &str) -> String {
+async fn update_links(token: &str, repo: &str, runs: &[workflows::Run], fork: &str) -> Html {
     let mut seen = std::collections::HashSet::new();
     let latest: Vec<(&str, &workflows::Run)> = runs
         .iter()
@@ -228,26 +224,25 @@ async fn actions_page(State(app): State<Shared>, headers: HeaderMap) -> Response
     if app.viewer(&headers).is_some() {
         return Redirect::to("/me/runs").into_response();
     }
-    let sign_in = if app.oauth.is_some() {
+    let sign_in = Html::from(if app.oauth.is_some() {
         "<a class=\"btn btn-primary\" href=\"/auth/login\">Sign in with GitHub</a> "
     } else {
         ""
-    };
+    });
     let app_link = app
         .github_app_slug
         .as_deref()
         .map(|s| {
-            format!(
-                "<p class=\"f6 color-fg-muted\">The workflows start through the GitHub App <a href=\"{}\">{}</a>. You install it on your workflow repository only.</p>",
-                esc(&app_page(s)),
-                esc(s)
+            html!(
+                "<p class=\"f6 color-fg-muted\">The workflows start through the GitHub App <a href=\"{}\">{s}</a>. You install it on your workflow repository only.</p>",
+                app_page(s)
             )
         })
         .unwrap_or_default();
     Page::new(Section::Home, "Actions")
         .icon(octicon!("play"))
         .sub(WHAT)
-        .body(format!(
+        .body(html!(
             "<div class=\"blankslate\"><p>Sign in to run workflows. Your runs are then in the menu, under Runs.</p>\
              <p>{sign_in}<a class=\"btn\" href=\"{DOCS}\">How to set it up</a></p>{app_link}</div>"
         ))
@@ -259,36 +254,37 @@ async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let page = Page::new(Section::Personal(crate::ui::Personal::Runs), "Runs")
         .icon(octicon!("play"))
         .sub(WHAT);
-    let mut out = String::new();
+    let mut out = Html::new();
     let Some(login) = viewer.as_deref() else {
         return Redirect::to("/auth/login").into_response();
     };
     if let Some(m) = take_flash(&app, login) {
-        let _ = write!(out, "<div class=\"flash mb-3\">{}</div>", esc(&m));
+        out.push(&html!("<div class=\"flash mb-3\">{m}</div>"));
     }
     let r = repos(&app, login);
-    out.push_str(&crate::ui::note(format!(
+    out.push(&crate::ui::note(html!(
         "Runs start in {} and {}. <a href=\"/me/settings#workflows\">Change the repositories</a>.",
-        esc(&r.review),
-        esc(&r.update)
+        r.review,
+        r.update
     )));
     let review_ready = ready(&app, login, Needed::Review);
     if !review_ready || !ready(&app, login, Needed::Update) {
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<div class=\"flash flash-warn mb-3\">The setup of your workflow repository is not complete. \
              <a href=\"{SETUP}\">Finish it in your settings</a>.</div>"
-        );
+        ));
     }
     if review_ready {
-        out.push_str(
+        out.push(&Html::from(
             "<form method=\"post\" action=\"/me/runs/review\" class=\"inline-form mb-4\">\
              <input class=\"form-control flex-auto\" name=\"pr\" placeholder=\"pull request number\" aria-label=\"pull request number\" inputmode=\"numeric\">\
              <button class=\"btn btn-primary\" type=\"submit\">Review in CI</button></form>",
-        );
+        ));
     }
     let Some(t) = token(&app, login) else {
-        out.push_str("<div class=\"blankslate\"><p>No GitHub token in your session; sign in again.</p></div>");
+        out.push(&Html::from(
+            "<div class=\"blankslate\"><p>No GitHub token in your session; sign in again.</p></div>",
+        ));
         return page.body(out).render(&app, viewer.as_deref());
     };
     for (title, repo, file) in [
@@ -299,23 +295,20 @@ async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
             Ok(runs) => {
                 let mut b = run_rows(&runs);
                 if file == UPDATE {
-                    b.push_str(&update_links(&t, repo, &runs, &r.fork).await);
+                    b.push(&update_links(&t, repo, &runs, &r.fork).await);
                 }
                 b
             }
-            Err(e) => format!(
+            Err(e) => html!(
                 "<div class=\"Box-row color-fg-muted\">{}</div>",
-                esc(&format!("{e:#}"))
+                format!("{e:#}")
             ),
         };
-        out.push_str(&crate::ui::section(
-            format!(
-                "{title} <span class=\"color-fg-muted text-normal f6\">{} · {file}</span>",
-                esc(repo)
-            ),
+        out.push(&crate::ui::section(
+            html!("{title} <span class=\"color-fg-muted text-normal f6\">{repo} · {file}</span>"),
             None,
             None,
-            &body,
+            body,
         ));
     }
     page.body(out).render(&app, viewer.as_deref())
@@ -397,21 +390,28 @@ fn mark_html(mark: Mark) -> (&'static str, crate::html::Html, &'static str) {
     }
 }
 
-fn step_row(n: u8, mark: Mark, title: &str, body: &str, lines: &[&Line]) -> String {
+fn step_row(
+    n: u8,
+    mark: Mark,
+    title: impl Into<Html>,
+    body: impl Into<Html>,
+    lines: &[&Line],
+) -> Html {
+    let (title, body) = (title.into(), body.into());
     let (class, ic, word) = mark_html(mark);
-    let lines: String = lines
+    let lines: Html = lines
         .iter()
         .map(|l| {
             let (class, ic, _) = mark_html(l.mark);
-            format!("<li class=\"f6 {class}\">{ic} {}</li>", esc(&l.text))
+            html!("<li class=\"f6 {class}\">{ic} {}</li>", l.text)
         })
         .collect();
     let lines = if lines.is_empty() {
-        String::new()
+        Html::new()
     } else {
-        format!("<ul class=\"list-style-none mt-1\">{lines}</ul>")
+        html!("<ul class=\"list-style-none mt-1\">{lines}</ul>")
     };
-    format!(
+    html!(
         "<div class=\"Box-row d-flex flex-items-start\">\
          <span class=\"{class} mr-2\" title=\"{word}\">{ic}</span>\
          <div class=\"flex-auto min-width-0\"><div class=\"text-bold\">{n}. {title} <span class=\"Label ml-1\">{word}</span></div>\
@@ -421,10 +421,10 @@ fn step_row(n: u8, mark: Mark, title: &str, body: &str, lines: &[&Line]) -> Stri
 
 /// The `#workflows` section of `/me/settings`: the setup steps as a
 /// checklist, each with what the check found.
-pub async fn repos_box(app: &App, login: &str) -> String {
+pub(crate) async fn repos_box(app: &App, login: &str) -> Html {
     let r = repos(app, login);
     let flash = take_flash(app, login)
-        .map(|m| format!("<div class=\"flash m-2\">{}</div>", esc(&m)))
+        .map(|m| html!("<div class=\"flash m-2\">{m}</div>"))
         .unwrap_or_default();
     let check = setup(app, login).await;
     let mark = |n: u8| match &check {
@@ -439,28 +439,27 @@ pub async fn repos_box(app: &App, login: &str) -> String {
             .collect()
     };
     let install = match app.github_app_slug.as_deref() {
-        Some(slug) => format!(
-            "<a class=\"btn btn-sm btn-primary\" href=\"{}/installations/new\">Install {}</a> \
+        Some(slug) => html!(
+            "<a class=\"btn btn-sm btn-primary\" href=\"{}/installations/new\">Install {slug}</a> \
              <span class=\"f6 color-fg-muted\">Choose \"Only select repositories\" and pick {}. \
              The App needs the \"Actions: read and write\" permission and nothing else.</span>",
-            esc(&app_page(slug)),
-            esc(slug),
-            esc(&r.update)
+            app_page(slug),
+            r.update
         ),
         None => "This site names no GitHub App. Ask the people who run it.".into(),
     };
-    let steps = [
+    let steps: Html = [
         step_row(
             1,
             mark(1),
-            &format!("Fork <a href=\"{REVIEW_GHA}\">Defelo/nixpkgs-review-gha</a>"),
-            &format!("<a class=\"btn btn-sm\" href=\"{REVIEW_GHA}/fork\">Fork it on GitHub</a>"),
+            html!("Fork <a href=\"{REVIEW_GHA}\">Defelo/nixpkgs-review-gha</a>"),
+            html!("<a class=\"btn btn-sm\" href=\"{REVIEW_GHA}/fork\">Fork it on GitHub</a>"),
             &lines(1),
         ),
         step_row(
             2,
             mark(2),
-            &format!(
+            html!(
                 "Copy <a href=\"{UPDATE_YML}\">gha/update.yml</a> into <code>.github/workflows/</code> of your fork"
             ),
             "<span class=\"f6 color-fg-muted\">The fork already has <code>review.yml</code>. \
@@ -471,11 +470,11 @@ pub async fn repos_box(app: &App, login: &str) -> String {
             3,
             mark(3),
             "Add a <code>GH_TOKEN</code> secret that can push to your nixpkgs fork",
-            &format!(
+            html!(
                 "<a class=\"btn btn-sm\" href=\"https://github.com/{u}/settings/secrets/actions\">Open the secrets of {u}</a> \
                  <span class=\"f6 color-fg-muted\">No fork of nixpkgs yet? \
                  <a href=\"https://github.com/NixOS/nixpkgs/fork\">Fork NixOS/nixpkgs</a>.</span>",
-                u = esc(&r.update)
+                u = r.update
             ),
             &lines(3),
         ),
@@ -483,14 +482,14 @@ pub async fn repos_box(app: &App, login: &str) -> String {
             4,
             mark(4),
             "Install the GitHub App on that fork only",
-            &install,
+            install,
             &lines(4),
         ),
         step_row(
             5,
             mark(5),
             "Save the repository names",
-            &format!(
+            html!(
                 "<form method=\"post\" action=\"/me/settings/workflows\">\
                  <label class=\"f6\" for=\"review_repo\">Your fork of nixpkgs-review-gha, with <code>review.yml</code></label>\
                  <input class=\"form-control width-full mb-2\" id=\"review_repo\" name=\"review_repo\" value=\"{}\">\
@@ -499,14 +498,15 @@ pub async fn repos_box(app: &App, login: &str) -> String {
                  <label class=\"f6\" for=\"nixpkgs_fork\">Your fork of nixpkgs, where updates push their branch</label>\
                  <input class=\"form-control width-full mb-2\" id=\"nixpkgs_fork\" name=\"nixpkgs_fork\" value=\"{}\">\
                  <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>",
-                esc(&r.review),
-                esc(&r.update),
-                esc(&r.fork)
+                r.review,
+                r.update,
+                r.fork
             ),
             &lines(5),
         ),
     ]
-    .concat();
+    .into_iter()
+    .collect();
     let status = match &check {
         Some(c) => format!(
             "Checked {} ago with your GitHub token. The check only reads.",
@@ -514,13 +514,13 @@ pub async fn repos_box(app: &App, login: &str) -> String {
         ),
         None => "Not checked: there is no GitHub token in your session. Sign in again.".into(),
     };
-    format!(
+    html!(
         "<div id=\"workflows\">{}</div>",
         crate::ui::section(
-            format!("{} Workflows", icon(octicon!("play"))),
+            html!("{} Workflows", icon(octicon!("play"))),
             None,
             Some((DOCS, "docs/actions.md")),
-            format!(
+            html!(
                 "{flash}{steps}<div class=\"Box-row d-flex flex-items-center\">\
                  <span class=\"flex-auto f6 color-fg-muted\">{status}</span>\
                  <form method=\"post\" action=\"/me/settings/workflows/check\">\

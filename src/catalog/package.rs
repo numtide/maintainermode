@@ -105,22 +105,22 @@ pub(crate) fn binary_cache(app: &crate::web::App, attr: &str) -> Vec<CacheRow> {
         .collect()
 }
 
-fn cache_html(rows: &[CacheRow]) -> String {
-    rows.iter()
-        .map(|c| {
+fn cache_html(rows: &[CacheRow]) -> Html {
+    crate::html::join(
+        rows.iter().map(|c| {
             let (class, word) = match c.cached {
                 Some(true) => ("color-fg-success", "built"),
                 Some(false) => ("color-fg-attention", "not in the cache"),
                 None => ("color-fg-muted", "not asked yet"),
             };
-            format!(
+            html!(
                 "{} <span class=\"{class}\" title=\"{}\">{word}</span>",
-                esc(&c.channel),
-                esc(&c.path)
+                c.channel,
+                c.path
             )
-        })
-        .collect::<Vec<_>>()
-        .join(" · ")
+        }),
+        " · ",
+    )
 }
 
 fn dead_row(label: &str, job: &str, last: &Last) -> Html {
@@ -130,23 +130,22 @@ fn dead_row(label: &str, job: &str, last: &Last) -> Html {
         .map(|t| t.format("%B %Y").to_string())
         .unwrap_or_default();
     kv(
-        label,
-        format!(
-            "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
-            esc(&Hydra::job_url(job)),
-            esc(job)
+        Html::text(label),
+        html!(
+            "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{job}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
+            Hydra::job_url(job)
         ),
     )
 }
 
 /// The last builds as a strip of cells, the oldest first, and how many
 /// passed.
-fn history_strip(job: &str, h: &[crate::builds::Past]) -> String {
+fn history_strip(job: &str, h: &[crate::builds::Past]) -> Html {
     if h.len() < 2 {
-        return String::new();
+        return Html::new();
     }
     let (ok, told) = crate::builds::passed(h);
-    let cells: String = h
+    let cells: Html = h
         .iter()
         .rev()
         .map(|p| {
@@ -158,23 +157,23 @@ fn history_strip(job: &str, h: &[crate::builds::Past]) -> String {
             let when =
                 p.at.map(|t| format!(", queued {} ago", ago(t)))
                     .unwrap_or_default();
-            format!(
+            html!(
                 "<span class=\"build-cell build-{class}\" title=\"{}{when}\"></span>",
                 p.status
             )
         })
         .collect();
-    format!(
+    html!(
         "<div class=\"mt-1\"><a class=\"build-strip\" href=\"{}\" aria-label=\"{ok} of {told} of the last builds passed: open the job on Hydra\">{cells}</a> \
          <span class=\"f6 color-fg-muted text-nowrap\">{ok} of {told} passed</span></div>",
-        esc(&Hydra::job_url(job))
+        Hydra::job_url(job)
     )
 }
 
 pub(super) fn build_row(label: &str, job: &str, last: &Last) -> Html {
-    let link = format!("<a href=\"{}\">{}</a>", esc(&Hydra::job_url(job)), esc(job));
+    let link = html!("<a href=\"{}\">{job}</a>", Hydra::job_url(job));
     let body = match last {
-        Last::Build(b) => format!(
+        Last::Build(b) => html!(
             "<a href=\"{}\" class=\"{}\">{}</a> <span class=\"color-fg-muted\">{}</span>{}",
             b.url(),
             if b.ok {
@@ -188,23 +187,22 @@ pub(super) fn build_row(label: &str, job: &str, last: &Last) -> Html {
             history_strip(job, &b.history)
         ),
         Last::Missing => {
-            format!("<span class=\"color-fg-muted\">no finished build of {link}</span>")
+            html!("<span class=\"color-fg-muted\">no finished build of {link}</span>")
         }
         Last::NoAnswer => {
-            format!("<span class=\"color-fg-muted\">Hydra did not answer; see {link}</span>")
+            html!("<span class=\"color-fg-muted\">Hydra did not answer; see {link}</span>")
         }
-        Last::NotAsked => format!(
+        Last::NotAsked => html!(
             "<span class=\"color-fg-muted\">not asked yet: this server asks Hydra a few times a minute; see {link}</span>"
         ),
     };
-    kv(label, &body)
+    kv(Html::text(label), body)
 }
 
-fn severity_html(w: &Worst) -> String {
-    let mut out = String::new();
+fn severity_html(w: &Worst) -> Html {
+    let mut out = Html::new();
     if let Some(b) = w.band {
-        let _ = write!(
-            out,
+        out.push(&html!(
             " <span class=\"Label {}\" title=\"CVSS base score{}\">{}{}</span>",
             b.label_class(),
             match w.from.as_deref() {
@@ -214,26 +212,25 @@ fn severity_html(w: &Worst) -> String {
             },
             b.word(),
             w.cvss.map(|s| format!(" {s:.1}")).unwrap_or_default()
-        );
+        ));
     }
     match w.exploitation.as_deref() {
-        Some("active") => out.push_str(
+        Some("active") => out.push(&Html::from(
             " <span class=\"Label Label--danger\" title=\"CISA SSVC\">exploited in the wild</span>",
-        ),
-        Some("poc") => out.push_str(
+        )),
+        Some("poc") => out.push(&Html::from(
             " <span class=\"Label Label--attention\" title=\"CISA SSVC\">public exploit</span>",
-        ),
+        )),
         _ => {}
     }
     if let Some(e) = w.epss {
-        let _ = write!(
-            out,
+        out.push(&html!(
             " <span class=\"Label\" title=\"chance of exploitation in the next 30 days (EPSS){}\">EPSS {:.1}%</span>",
             w.percentile
                 .map(|p| format!(", higher than {:.0}% of all CVEs", p * 100.0))
                 .unwrap_or_default(),
             e * 100.0
-        );
+        ));
     }
     out
 }
@@ -255,12 +252,12 @@ pub(super) fn rated<'a>(h: &Health, list: &[&'a Advisory]) -> Vec<(&'a Advisory,
     v
 }
 
-fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
+fn packaging_html(attr: &str, p: &crate::area::Package) -> Html {
     let Some(gaps) = hygiene::gaps(attr, p) else {
         return "<span class=\"color-fg-muted f6\">not read yet: the next index update reads it</span>"
             .into();
     };
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<Html> = Vec::new();
     if let Some(f) = &p.facts {
         if f.broken {
             out.push("<span class=\"Label Label--danger\">meta.broken</span>".into());
@@ -271,12 +268,12 @@ fn packaging_html(attr: &str, p: &crate::area::Package) -> String {
     }
     out.extend(
         gaps.iter()
-            .map(|g| format!("<span class=\"Label Label--attention\">{}</span>", esc(g))),
+            .map(|g| html!("<span class=\"Label Label--attention\">{g}</span>")),
     );
     if out.is_empty() {
         return "<span class=\"color-fg-success\">meta complete</span>".into();
     }
-    out.join(" ")
+    crate::html::join(out, " ")
 }
 
 /// An OSV match: its own band, or the worst of its CVEs when one is known.
@@ -327,32 +324,31 @@ pub(super) fn hover(list: &[&Channel], attr: &str, master: &str) -> String {
     format!("master has {master}; {}", has.join("; "))
 }
 
-fn backport_label(backport: &[&Channel], attr: &str, master: &str) -> String {
+fn backport_label(backport: &[&Channel], attr: &str, master: &str) -> Html {
     if backport.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    format!(
+    html!(
         " <span class=\"Label Label--attention\" title=\"{}\">needs backport to {}</span>",
-        esc(&hover(backport, attr, master)),
-        esc(&channel_names(backport))
+        hover(backport, attr, master),
+        channel_names(backport)
     )
 }
 
-pub(super) fn channels_html(ch: &Channels, attr: &str, master: &str) -> String {
+pub(super) fn channels_html(ch: &Channels, attr: &str, master: &str) -> Html {
     let seen = ch.of(attr, master);
     if seen.is_empty() {
         return "<span class=\"color-fg-muted\">no channel read yet</span>".into();
     }
-    let mut parts = vec![format!("master {}", esc(master))];
+    let mut parts = vec![html!("master {master}")];
     for s in &seen {
-        parts.push(format!(
+        parts.push(html!(
             "<a href=\"{}\">{}</a> {}",
-            esc(&s.channel.url()),
-            esc(s.channel.label()),
+            s.channel.url(),
+            s.channel.label(),
             match s.version {
-                Some(v) if s.behind =>
-                    format!("<span class=\"color-fg-attention\">{}</span>", esc(v)),
-                Some(v) => esc(v),
+                Some(v) if s.behind => html!("<span class=\"color-fg-attention\">{v}</span>"),
+                Some(v) => Html::text(v),
                 None => "<span class=\"color-fg-muted\">absent</span>".into(),
             }
         ));
@@ -363,71 +359,58 @@ pub(super) fn channels_html(ch: &Channels, attr: &str, master: &str) -> String {
         .map(|s| s.channel)
         .collect();
     let tail = if behind.is_empty() {
-        " <span class=\"color-fg-muted f6\">no channel is behind master</span>".to_string()
+        Html::from(" <span class=\"color-fg-muted f6\">no channel is behind master</span>")
     } else {
-        format!(
+        html!(
             " <span class=\"Label Label--attention\">master is ahead of {}</span>",
-            esc(&channel_names(&behind))
+            channel_names(&behind)
         )
     };
-    format!("{}{tail}", parts.join(" · "))
+    html!("{}{tail}", crate::html::join(parts, " · "))
 }
 
-fn issue_link(a: &Advisory) -> String {
+fn issue_link(a: &Advisory) -> Html {
     a.issue_url()
-        .map(|u| {
-            format!(
-                " · <a href=\"{}\">#{}</a>",
-                esc(&u),
-                a.issue.unwrap_or_default()
-            )
-        })
+        .map(|u| html!(" · <a href=\"{u}\">#{}</a>", a.issue.unwrap_or_default()))
         .unwrap_or_default()
 }
 
 /// What a verdict asks of a maintainer, as one line.
-fn verdict_html(a: &Advisory, v: &Verdict, master: &str) -> String {
+fn verdict_html(a: &Advisory, v: &Verdict, master: &str) -> Html {
     match v {
-        Verdict::Affects => format!(
-            "<span class=\"color-fg-danger\">affects {}</span>",
-            esc(master)
-        ),
+        Verdict::Affects => html!("<span class=\"color-fg-danger\">affects {master}</span>"),
         Verdict::Unknown => "<span class=\"color-fg-attention\" title=\"The tracker gives no affected version that Maintainer Mode can read\">range unknown</span>".into(),
         Verdict::Behind { fixed_in, channels } => {
             let fixed = fixed_in
                 .as_deref()
-                .map_or_else(|| "fixed in master".to_string(), |f| format!("fixed in {} in master", esc(f)));
-            let lags: Vec<String> = channels
-                .iter()
-                .map(|l| {
-                    let what = format!("{} has {}", esc(&l.channel), esc(&l.version));
-                    if l.stable {
-                        format!("<span class=\"Label Label--attention\">needs backport: {what}</span>")
-                    } else {
-                        format!("<span class=\"color-fg-attention\">{what}</span>")
-                    }
-                })
-                .collect();
-            format!(
+                .map_or_else(|| "fixed in master".to_string(), |f| format!("fixed in {f} in master"));
+            let lags = channels.iter().map(|l| {
+                let what = format!("{} has {}", l.channel, l.version);
+                if l.stable {
+                    html!("<span class=\"Label Label--attention\">needs backport: {what}</span>")
+                } else {
+                    html!("<span class=\"color-fg-attention\">{what}</span>")
+                }
+            });
+            html!(
                 "<span class=\"color-fg-success\">{fixed}</span> · {}",
-                lags.join(" · ")
+                crate::html::join(lags, " · ")
             )
         }
         Verdict::Fixed { fixed_in } => {
             let fixed = fixed_in
                 .as_deref()
-                .map_or_else(|| format!("not affected: master has {}", esc(master)), |f| format!("fixed in {}", esc(f)));
+                .map_or_else(|| format!("not affected: master has {master}"), |f| format!("fixed in {f}"));
             let close = match (a.issue, a.issue_url()) {
-                (Some(n), Some(u)) => format!(
-                    "<a href=\"{}\">the tracker issue #{n} can be closed</a>",
-                    esc(&u)
-                ),
-                _ => format!(
+                (Some(n), Some(u)) => {
+                    html!("<a href=\"{u}\">the tracker issue #{n} can be closed</a>")
+                }
+                _ => html!(
                     "<a href=\"{}\">the tracker advisory can be closed</a>",
-                    esc(&a.url())
+                    a.url()
                 ),
             };
-            format!("<span class=\"color-fg-success\">{fixed}</span> · {close}")
+            html!("<span class=\"color-fg-success\">{fixed}</span> · {close}")
         }
     }
 }
@@ -449,20 +432,20 @@ pub(super) fn advisories_html(
     backport: &[&Channel],
     attr: &str,
     master: &str,
-) -> String {
+) -> Html {
     let hint = backport_label(backport, attr, master);
     let fixed: Vec<&&Advisory> = fixed.iter().filter(|_| !hint.is_empty()).collect();
     if list.is_empty() && osv.is_empty() && fixed.is_empty() {
         return "<span class=\"color-fg-success\">none open</span>".into();
     }
-    let fixed_html: String = fixed
+    let fixed_html: Html = fixed
         .iter()
         .map(|a| {
-            format!(
+            html!(
                 "<div><a href=\"{}\">{}</a> {} <span class=\"color-fg-muted f6\">fixed in master</span>{hint}</div>",
-                esc(&a.url()),
-                esc(&a.code),
-                esc(&a.title),
+                a.url(),
+                a.code,
+                a.title,
             )
         })
         .collect();
@@ -479,30 +462,29 @@ pub(super) fn advisories_html(
         .collect();
     rows.sort_by_key(|(_, _, v)| verdict_order(v));
     let tracker = rows.into_iter().map(|(a, w, v)| {
-        let class = if v.open() { " class=\"color-fg-danger\"" } else { "" };
+        let class = Html::from(if v.open() { " class=\"color-fg-danger\"" } else { "" });
         let cves = if a.cves.is_empty() {
-            String::new()
+            Html::new()
         } else {
-            format!("{} · ", esc(&a.cves.join(", ")))
+            html!("{} · ", a.cves.join(", "))
         };
-        format!(
+        html!(
             "<div><a{class} href=\"{}\">{}</a>{} {}{}<div class=\"f6 color-fg-muted\">{cves}{}</div></div>",
-            esc(&a.url()),
-            esc(&a.code),
+            a.url(),
+            a.code,
             severity_html(&w),
-            esc(&a.title),
+            a.title,
             issue_link(a),
             verdict_html(a, v, master)
         )
     });
     let osv = osv.iter().map(|(id, v)| {
-        format!(
-            "<div><a class=\"color-fg-danger\" href=\"{}\">{}</a>{} {} <span class=\"f6 color-fg-muted\">(OSV, for this version)</span><div class=\"f6 color-fg-muted\">{}</div></div>",
-            esc(&crate::osv::Vuln::url(id)),
-            esc(id),
+        html!(
+            "<div><a class=\"color-fg-danger\" href=\"{}\">{id}</a>{} {} <span class=\"f6 color-fg-muted\">(OSV, for this version)</span><div class=\"f6 color-fg-muted\">{}</div></div>",
+            crate::osv::Vuln::url(id),
             severity_html(&osv_worst(h, *v)),
-            esc(v.and_then(|v| v.summary.as_deref()).unwrap_or("")),
-            esc(&v.map(|v| v.cves.join(", ")).unwrap_or_default())
+            v.and_then(|v| v.summary.as_deref()).unwrap_or(""),
+            v.map(|v| v.cves.join(", ")).unwrap_or_default()
         )
     });
     tracker
@@ -513,40 +495,34 @@ pub(super) fn advisories_html(
 
 /// A link only for http and https: `meta` is nixpkgs code, and a
 /// `javascript:` homepage must not run on this site.
-fn url_html(u: &str) -> String {
+fn url_html(u: &str) -> Html {
     if u.starts_with("https://") || u.starts_with("http://") {
-        format!("<a href=\"{0}\">{0}</a>", esc(u))
+        html!("<a href=\"{0}\">{0}</a>", u)
     } else {
-        esc(u)
+        Html::text(u)
     }
 }
 
-fn urls_html(list: &[String]) -> String {
-    list.iter()
-        .map(|u| url_html(u))
-        .collect::<Vec<_>>()
-        .join("<br>")
+fn urls_html(list: &[String]) -> Html {
+    crate::html::join(list.iter().map(|u| url_html(u)), "<br>")
 }
 
-fn license_html(l: &License) -> String {
+fn license_html(l: &License) -> Html {
     let name = match (&l.spdx, &l.name) {
-        (Some(id), _) => format!(
-            "<a href=\"https://spdx.org/licenses/{0}.html\">{0}</a>",
-            esc(id)
-        ),
-        (None, Some(n)) => esc(n),
+        (Some(id), _) => html!("<a href=\"https://spdx.org/licenses/{0}.html\">{0}</a>", id),
+        (None, Some(n)) => Html::text(n),
         (None, None) => "unnamed".into(),
     };
     if l.free || l.name.as_deref() == Some("unfree") {
         name
     } else {
-        format!("{name} <span class=\"Label Label--attention\">unfree</span>")
+        html!("{name} <span class=\"Label Label--attention\">unfree</span>")
     }
 }
 
-fn platforms_html(m: &Meta) -> String {
+fn platforms_html(m: &Meta) -> Html {
     let mut out = match &m.platforms {
-        None => "<span class=\"color-fg-muted\">not set</span>".to_string(),
+        None => "<span class=\"color-fg-muted\">not set</span>".into(),
         Some(p) => {
             let mut kinds: Vec<&str> = Vec::new();
             if p.linux {
@@ -555,7 +531,7 @@ fn platforms_html(m: &Meta) -> String {
             if p.darwin {
                 kinds.push("Darwin");
             }
-            format!(
+            html!(
                 "{} platform{}{}",
                 p.count,
                 if p.count == 1 { "" } else { "s" },
@@ -568,38 +544,33 @@ fn platforms_html(m: &Meta) -> String {
         }
     };
     if !m.bad_platforms.is_empty() {
-        let _ = write!(
-            out,
+        out.push(&html!(
             " · not on {}",
-            m.bad_platforms
-                .iter()
-                .map(|p| format!("<code>{}</code>", esc(p)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
+            crate::html::join(
+                m.bad_platforms.iter().map(|p| html!("<code>{p}</code>")),
+                ", "
+            )
+        ));
     }
     out
 }
 
-fn codes(list: &[String]) -> String {
-    list.iter()
-        .map(|c| format!("<code>{}</code>", esc(c)))
-        .collect::<Vec<_>>()
-        .join(" ")
+fn codes(list: &[String]) -> Html {
+    crate::html::join(list.iter().map(|c| html!("<code>{c}</code>")), " ")
 }
 
-fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> String {
-    let mut out: Vec<String> = Vec::new();
+fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> Html {
+    let mut out: Vec<Html> = Vec::new();
     if f.is_some_and(|f| f.broken) {
         out.push("<span class=\"Label Label--danger\">broken</span>".into());
     }
     if !m.known_vulnerabilities.is_empty() {
-        out.push(format!(
+        out.push(html!(
             "<span class=\"Label Label--danger\">insecure</span><ul class=\"f6 ml-3\">{}</ul>",
             m.known_vulnerabilities
                 .iter()
-                .map(|v| format!("<li class=\"pre-wrap\">{}</li>", esc(v.trim())))
-                .collect::<String>()
+                .map(|v| html!("<li class=\"pre-wrap\">{}</li>", v.trim()))
+                .collect::<Html>()
         ));
     }
     if m.unfree() {
@@ -608,96 +579,89 @@ fn status_html(f: Option<&crate::attrs::Facts>, m: &Meta) -> String {
     if out.is_empty() {
         return "<span class=\"color-fg-success\">not broken, not insecure, free</span>".into();
     }
-    out.join(" ")
+    crate::html::join(out, " ")
 }
 
 /// The "Package" box: what nixpkgs says about the package, as the sweep read it.
-pub(super) fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
-    let mut out = format!(
+pub(super) fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> Html {
+    let mut out = html!(
         "<div class=\"Box mb-4\"><div class=\"Box-header d-flex\"><span class=\"text-bold flex-auto\">Package</span>\
          <a class=\"f6\" href=\"{META_GUIDE}\">what each field means</a></div>"
     );
     let description = p.facts.as_ref().and_then(|f| f.description.as_deref());
-    out.push_str(&kv(
+    out.push(&kv(
         "Description",
         description
-            .map(esc)
+            .map(Html::text)
             .unwrap_or_else(|| "<span class=\"color-fg-muted\">none</span>".into()),
     ));
     match &p.meta {
-        None => out.push_str(&kv(
+        None => out.push(&kv(
             "meta",
             "<span class=\"color-fg-muted f6\">not read yet: the next index update reads it</span>",
         )),
         Some(m) => {
             if let Some(d) = &m.long_description {
-                out.push_str(&kv(
+                out.push(&kv(
                     "Long description",
-                    format!("<div class=\"f6 pre-wrap\">{}</div>", esc(d.trim_end())),
+                    html!("<div class=\"f6 pre-wrap\">{}</div>", d.trim_end()),
                 ));
             }
             let none = "<span class=\"color-fg-muted\">none</span>";
-            out.push_str(&kv(
+            out.push(&kv(
                 "Homepage",
-                &if m.homepage.is_empty() {
+                if m.homepage.is_empty() {
                     none.into()
                 } else {
                     urls_html(&m.homepage)
                 },
             ));
             if let Some(d) = &m.download_page {
-                out.push_str(&kv("Download page", url_html(d)));
+                out.push(&kv("Download page", url_html(d)));
             }
             if !m.changelog.is_empty() {
-                out.push_str(&kv("Changelog", urls_html(&m.changelog)));
+                out.push(&kv("Changelog", urls_html(&m.changelog)));
             }
-            out.push_str(&kv(
+            out.push(&kv(
                 "License",
-                &if m.licenses.is_empty() {
+                if m.licenses.is_empty() {
                     none.into()
                 } else {
-                    m.licenses
-                        .iter()
-                        .map(license_html)
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    crate::html::join(m.licenses.iter().map(license_html), ", ")
                 },
             ));
-            out.push_str(&kv("Platforms", platforms_html(m)));
+            out.push(&kv("Platforms", platforms_html(m)));
             if let Some(b) = &m.main_program {
-                out.push_str(&kv("Main program", format!("<code>{}</code>", esc(b))));
+                out.push(&kv("Main program", html!("<code>{b}</code>")));
             }
-            out.push_str(&kv(
+            out.push(&kv(
                 "Source provenance",
-                &if m.source_provenance.is_empty() {
+                if m.source_provenance.is_empty() {
                     "<span class=\"color-fg-muted\">not set: built from source</span>".into()
                 } else {
                     codes(&m.source_provenance)
                 },
             ));
             if !m.outputs.is_empty() {
-                out.push_str(&kv("Outputs", codes(&m.outputs)));
+                out.push(&kv("Outputs", codes(&m.outputs)));
             }
-            out.push_str(&kv("Status", status_html(p.facts.as_ref(), m)));
+            out.push(&kv("Status", status_html(p.facts.as_ref(), m)));
             if let Some((file, line)) = m.file_line() {
                 let r = if rev.is_empty() { "master" } else { rev };
-                out.push_str(&kv(
+                out.push(&kv(
                     "Position",
-                    format!(
-                        "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{}/{}#L{line}\">{}:{line}</a>",
-                        esc(r),
-                        esc(file),
-                        esc(file)
+                    html!(
+                        "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{r}/{file}#L{line}\">{file}:{line}</a>"
                     ),
                 ));
             }
         }
     }
-    out.push_str(&kv("Maintainers", people_links(&p.maintainers)));
+    out.push(&kv("Maintainers", people_links(&p.maintainers)));
     if !p.teams.is_empty() {
-        out.push_str(&kv("Teams", teams_html(index, &p.teams)));
+        out.push(&kv("Teams", teams_html(index, &p.teams)));
     }
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 
@@ -898,55 +862,53 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
     let p = v.package.unwrap_or(&default);
     let page = Page::new(Section::Packages, attr)
         .icon(octicon!("package"))
-        .sub(format!(
+        .sub(html!(
             "{} {}{}",
-            esc(&p.pname),
-            esc(&p.version),
+            p.pname,
+            p.version,
             p.file
                 .as_deref()
-                .map(|f| format!(" · {}", source_link(&index.rev, f)))
+                .map(|f| html!(" · {}", source_link(&index.rev, f)))
                 .unwrap_or_default()
         ))
         .actions(personal.actions);
-    let mut out = String::new();
-    let mut health = String::new();
+    let mut out = Html::new();
+    let mut health = Html::new();
     if let Some(sc) = score_of(s, index, h, attr) {
-        let reasons: String = sc
+        let reasons: Html = sc
             .reasons
             .iter()
-            .map(|r| format!("<li>+{} {}</li>", r.points, esc(&r.text)))
+            .map(|r| html!("<li>+{} {}</li>", r.points, r.text))
             .collect();
-        health.push_str(&kv(
+        health.push(&kv(
             "Risk",
-            format!(
+            html!(
                 "{} {}{}",
                 score_label(&sc),
                 sc.band(),
                 if reasons.is_empty() {
-                    String::new()
+                    Html::new()
                 } else {
-                    format!("<ul class=\"f6 color-fg-muted ml-3\">{reasons}</ul>")
+                    html!("<ul class=\"f6 color-fg-muted ml-3\">{reasons}</ul>")
                 }
             ),
         ));
     }
     let version = match upstream_from(s, index, h, attr) {
-        Some((u, from)) => format!(
-            "{} <span class=\"Label Label--attention\" title=\"Upstream released a newer version, from {}\">{} available</span>",
-            esc(&p.version),
-            esc(from),
-            esc(u)
+        Some((u, from)) => html!(
+            "{} <span class=\"Label Label--attention\" title=\"Upstream released a newer version, from {from}\">{u} available</span>",
+            p.version
         ),
-        None => format!(
+        None => html!(
             "{} <span class=\"color-fg-muted f6\">{}</span>",
-            esc(&p.version),
+            p.version,
             match h.direct.get(attr) {
                 Some(d) if d.latest.is_some() => format!(
                     "no newer release in {}",
                     if d.from == "tags" {
-                        "its git tags".into()
+                        "its git tags"
                     } else {
-                        esc(&d.from)
+                        d.from.as_str()
                     }
                 ),
                 _ if h.repology_at.is_some() => "no newer release known to repology".into(),
@@ -954,24 +916,24 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
             }
         ),
     };
-    health.push_str(&kv("Version", &version));
-    health.push_str(&kv("Channels", channels_html(ch, attr, &p.version)));
+    health.push(&kv("Version", version));
+    health.push(&kv("Channels", channels_html(ch, attr, &p.version)));
     for b in &v.builds.0 {
         let label = if b.jobset.key() == Jobset::master().key() {
             "Hydra".to_string()
         } else {
             format!("Hydra, {}", b.jobset.label())
         };
-        health.push_str(&if b.dead {
+        health.push(&if b.dead {
             dead_row(&label, &b.job, &b.last)
         } else {
             build_row(&label, &b.job, &b.last)
         });
     }
     if !v.binary_cache.is_empty() {
-        health.push_str(&kv("Binary cache", cache_html(&v.binary_cache)));
+        health.push(&kv("Binary cache", cache_html(&v.binary_cache)));
     }
-    health.push_str(&kv(
+    health.push(&kv(
         "Advisories",
         advisories_html(
             h,
@@ -983,13 +945,13 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
             &p.version,
         ),
     ));
-    health.push_str(&kv("Packaging", packaging_html(attr, p)));
+    health.push(&kv("Packaging", packaging_html(attr, p)));
     if let Some(u) = personal.update {
-        health.push_str(&kv("Update", u));
+        health.push(&kv("Update", u));
     }
-    out.push_str(&crate::ui::section("Health", None, None, &health));
-    out.push_str(&package_box(index, &index.rev, p));
-    out.push_str(&crate::bumps::package_section(
+    out.push(&crate::ui::section("Health", None, None, health));
+    out.push(&package_box(index, &index.rev, p));
+    out.push(&crate::bumps::package_section(
         s,
         index,
         h,
@@ -997,7 +959,7 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         &v.subject.prs,
         personal.act,
     ));
-    out.push_str(&v.subject.sections(personal.act));
+    out.push(&v.subject.sections(personal.act));
     page.body(out)
 }
 
@@ -1025,14 +987,14 @@ pub(super) async fn page(
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let update = viewer.as_deref().map(|v| {
-        Html::from(crate::actions::update_form(
+        crate::actions::update_form(
             &attr,
             upstream(&s, &index, &h, &attr),
             crate::actions::ready(&app, v, crate::workflows::Needed::Update),
-        ))
+        )
     });
     let personal = Personal {
-        actions: Html::from(watch + &next),
+        actions: html!("{watch}{next}"),
         update,
         act,
     };

@@ -98,7 +98,8 @@ async fn settings_page(
         crate::progress::goal_box(&app, &login),
         crate::welcome::settings_box(&app, &login),
     ]
-    .concat();
+    .into_iter()
+    .collect::<crate::html::Html>();
     let jump = SETTINGS
         .iter()
         .map(|(id, label)| Tab::new(format!("#{id}"), *label, false))

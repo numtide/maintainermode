@@ -29,7 +29,7 @@ use crate::secret::Secret;
 use crate::sets::token_hash;
 use crate::store::Confirmation;
 use crate::ui::{Page, Personal, Section, Tab};
-use crate::web::{App, Shared, ago, esc, icon, octicon, random_id};
+use crate::web::{App, Shared, ago, icon, octicon, random_id};
 
 pub(crate) const INBOX: &str = "/inbox";
 const READ_AT: &str = "inbox_read_at";
@@ -400,7 +400,7 @@ fn inbox_view(inbox: &Inbox) -> Page {
             let title = if e.url.is_empty() {
                 html!("<span class=\"{class}\">{}</span>", e.title)
             } else {
-                Html::from(crate::prpage::link(e.url, &esc(e.title), class))
+                crate::prpage::link(e.url, Html::text(e.title), class)
             };
             let new = if e.unread {
                 "<span class=\"Label Label--accent ml-2 flex-shrink-0\">new</span>"
@@ -481,39 +481,37 @@ fn confirmed_address(app: &App, login: &str) -> Option<String> {
 }
 
 /// The section of `/me/settings`. The address shows only here, to its owner.
-pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
+pub(crate) fn settings_box(app: &App, login: &str, mail: Option<&str>) -> Html {
     let on = kinds(app, login);
-    let mut boxes = String::new();
+    let mut boxes = Html::new();
     for k in Kind::ALL {
-        let _ = write!(
-            boxes,
+        boxes.push(&html!(
             "<div class=\"form-checkbox my-1\"><label><input type=\"checkbox\" name=\"k_{key}\" value=\"1\"{}> {} {}</label></div>",
             if on.contains(&k) { " checked" } else { "" },
             k.icon(),
             k.label(),
             key = k.key()
-        );
+        ));
     }
     let address = stored_address(app, login).unwrap_or_default();
     let confirmed = confirmed_address(app, login).is_some();
-    let state = match (address.is_empty(), confirmed) {
+    let state = Html::from(match (address.is_empty(), confirmed) {
         (true, _) => "",
         (false, true) => " <span class=\"Label Label--success ml-1\">confirmed</span>",
         (false, false) => {
             " <span class=\"Label Label--attention ml-1\">pending confirmation</span>"
         }
-    };
+    });
     let email = if app.smtp.is_some() {
-        format!(
+        html!(
             "<label class=\"d-block mt-3\" for=\"email-address\">Daily email to</label>{state}\
-             <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{}\" placeholder=\"name@example.org\">\
+             <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{address}\" placeholder=\"name@example.org\">\
              <p class=\"note\">At most one email a day, with the unread events of these kinds since the last daily email. \
              A new address gets a confirmation email first; the daily email starts when you open its link. \
              Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>\
              <div class=\"form-checkbox my-1\"><label><input type=\"checkbox\" name=\"mine_now\" value=\"1\"{}> Send the events of your own pull requests at once</label>\
              <p class=\"note\">One email for each review, merge, close or reminder, a few minutes after the server sees it. \
              At most {NOW_PER_DAY} in 24 hours, and only to a confirmed address. The daily email still includes them.</p></div>",
-            esc(&address),
             if mine_now(app, login).is_some() {
                 " checked"
             } else {
@@ -525,9 +523,9 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
             .into()
     };
     let test = if app.smtp.is_none() || address.is_empty() {
-        String::new()
+        Html::new()
     } else if !confirmed {
-        format!(
+        html!(
             "<form method=\"post\" action=\"/me/notify/confirm\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send the confirmation email again</button></form>",
             icon(octicon!("mail"))
         )
@@ -535,23 +533,23 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
         let last = digest_at(app, login)
             .map(|t| format!(" The last daily email went out {} ago.", ago(t)))
             .unwrap_or_default();
-        format!(
+        html!(
             "<form method=\"post\" action=\"/me/notify/test\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send me a test email</button>\
              <span class=\"f6 color-fg-muted ml-2\">{last}</span></form>",
             icon(octicon!("mail"))
         )
     };
     let note = match mail_note(mail) {
-        "" => String::new(),
-        n => format!("<div class=\"flash mb-3\">{n}</div>"),
+        "" => Html::new(),
+        n => html!("<div class=\"flash mb-3\">{n}</div>"),
     };
-    format!(
+    html!(
         "<div id=\"email\">{}</div>",
         crate::ui::section(
-            format!("{} Notifications", icon(octicon!("bell"))),
+            html!("{} Notifications", icon(octicon!("bell"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\">{note}\
                  <form method=\"post\" action=\"/me/notify\">\
                  <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
@@ -766,16 +764,15 @@ async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> R
             UNKNOWN_CONFIRM,
         );
     }
-    let body = format!(
-        "<form method=\"post\" action=\"/confirm/{}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>",
-        esc(&token)
+    let body = html!(
+        "<form method=\"post\" action=\"/confirm/{token}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>"
     );
     token_reply(
         &app,
         StatusCode::OK,
         "Confirm your address",
         "Start the daily email of Maintainer Mode at this address.",
-        &body,
+        body,
     )
 }
 
@@ -1305,7 +1302,13 @@ pub async fn run(app: Shared) {
     }
 }
 
-fn token_reply(app: &App, code: StatusCode, title: &str, sub: &str, body: &str) -> Response {
+fn token_reply(
+    app: &App,
+    code: StatusCode,
+    title: &str,
+    sub: &'static str,
+    body: impl Into<Html>,
+) -> Response {
     let page = Page::new(Section::Home, title)
         .sub(sub)
         .body(body)
@@ -1339,16 +1342,15 @@ async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) 
     if unsubscribe_login(&app, &token).is_none() {
         return token_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
     }
-    let body = format!(
-        "<form method=\"post\" action=\"/unsubscribe/{}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>",
-        esc(&token)
+    let body = html!(
+        "<form method=\"post\" action=\"/unsubscribe/{token}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>"
     );
     token_reply(
         &app,
         StatusCode::OK,
         "Unsubscribe",
         "Stop the daily email of Maintainer Mode. Your inbox on the site stays.",
-        &body,
+        body,
     )
 }
 

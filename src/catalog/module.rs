@@ -61,24 +61,24 @@ pub(crate) fn view(index: &Index, v: &ModuleView, actions: Html, act: Act) -> Pa
     let (file, m) = (v.file, v.module);
     let page = Page::new(Section::Packages, module_name(file))
         .icon(octicon!("gear"))
-        .sub(format!("NixOS module · {}", source_link(&index.rev, file)))
+        .sub(html!("NixOS module · {}", source_link(&index.rev, file)))
         .actions(actions);
-    let mut out = String::new();
-    let mut health = String::new();
-    health.push_str(&build_row("NixOS test", &v.test.job, &v.test.last));
-    health.push_str(&kv("Maintainers", people_links(&m.maintainers)));
+    let mut out = Html::new();
+    let mut health = Html::new();
+    health.push(&build_row("NixOS test", &v.test.job, &v.test.last));
+    health.push(&kv("Maintainers", people_links(&m.maintainers)));
     if !m.teams.is_empty() {
-        health.push_str(&kv("Teams", teams_html(index, &m.teams)));
+        health.push(&kv("Teams", teams_html(index, &m.teams)));
     }
-    health.push_str(&kv(
+    health.push(&kv(
         "Directory",
-        format!(
+        html!(
             "<a href=\"/a/{0}\">{0}/</a>",
-            esc(file.rsplit_once('/').map_or("nixos/modules", |(d, _)| d))
+            file.rsplit_once('/').map_or("nixos/modules", |(d, _)| d)
         ),
     ));
-    out.push_str(&crate::ui::section("Health", None, None, &health));
-    out.push_str(&v.subject.sections(act));
+    out.push(&crate::ui::section("Health", None, None, health));
+    out.push(&v.subject.sections(act));
     page.body(out)
 }
 
@@ -94,10 +94,7 @@ pub(super) async fn page(
     }
     let subject = Subject::Module(file.clone());
     let last = app.hydra.last(&test_job(&file)).await;
-    let actions = Html::from(subscribe_button(
-        watching(&app, viewer.as_deref(), &subject),
-        &subject,
-    ));
+    let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let act = Act::of(&app, viewer.as_deref());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
