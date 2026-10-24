@@ -3,13 +3,15 @@
 //! sync queries return, with their caps, and reads it with the same parser,
 //! so the ledger and the queues see the same data from either source.
 //!
-//! `mergeable` and the CI state are not in the archive: a projected `Pr` has
-//! UNKNOWN and no CI.
+//! `mergeable` and the CI state are not in the archive, and the archived
+//! `authorAssociation` goes stale: [`pr_live`] and [`facts_live`] take them
+//! from `pr_live`. A plain projected `Pr` has UNKNOWN and no CI.
 
 use serde_json::{Map, Value, json};
 
 use crate::metrics::Facts;
 use crate::model::{Issue, Pr};
+use crate::store::Live;
 
 const PR_LABELS: usize = 30;
 const ISSUE_LABELS: usize = 20;
@@ -164,9 +166,31 @@ pub(crate) fn facts(item: &Value) -> Option<Facts> {
     crate::github::facts(&Value::Object(n))
 }
 
+/// [`pr`] with the live fields of `pr_live` joined in.
+pub(crate) fn pr_live(item: &Value, live: Option<&Live>) -> Option<Pr> {
+    let mut p = pr(item)?;
+    if let Some(l) = live {
+        l.apply(&mut p);
+    }
+    Some(p)
+}
+
+/// [`facts`] with the author association of `pr_live`.
+pub(crate) fn facts_live(item: &Value, live: Option<&Live>) -> Option<Facts> {
+    let mut f = facts(item)?;
+    if let Some(l) = live {
+        f.association = l.association.clone();
+    }
+    Some(f)
+}
+
+/// The fields a projection cannot know when `pr_live` has no row for the
+/// same head.
+pub(crate) const NOT_ARCHIVED: [&str; 2] = ["mergeable", "ci"];
+
 /// The top-level fields where the projection and the stored row differ,
-/// apart from the fields the archive does not hold.
-pub(crate) fn differ<T: serde::Serialize>(projected: &T, stored: &T) -> Vec<String> {
+/// apart from `skip`.
+pub(crate) fn differ<T: serde::Serialize>(projected: &T, stored: &T, skip: &[&str]) -> Vec<String> {
     let (Ok(Value::Object(a)), Ok(Value::Object(b))) = (
         serde_json::to_value(projected),
         serde_json::to_value(stored),
@@ -174,7 +198,7 @@ pub(crate) fn differ<T: serde::Serialize>(projected: &T, stored: &T) -> Vec<Stri
         return vec!["?".into()];
     };
     a.iter()
-        .filter(|(k, _)| !matches!(k.as_str(), "mergeable" | "ci"))
+        .filter(|(k, _)| !skip.contains(&k.as_str()))
         .filter(|(k, v)| b.get(k.as_str()) != Some(v))
         .map(|(k, _)| k.clone())
         .collect()
@@ -192,34 +216,33 @@ pub(crate) mod tests {
         serde_json::from_slice(&zstd::decode_all(z.as_slice()).unwrap()).unwrap()
     }
 
-    /// `authorAssociation` changes when the author joins the organization,
-    /// with no change to `updatedAt`: the author of #444470 joined after the
-    /// archive read it.
-    fn same<T: serde::Serialize>(got: &T, want: &T) -> Vec<String> {
-        let mut d = differ(got, want);
-        d.retain(|k| k != "association");
-        d
-    }
-
+    /// With `pr_live` joined in, the projection equals the sync in every
+    /// field. Without it, `authorAssociation` can be stale: the author of
+    /// #444470 joined the organization after the archive read it.
     #[test]
     fn the_projection_matches_the_sync() {
         let f = fixtures();
         let archive = f["archive"].as_object().unwrap();
         let github = &f["github"];
+        let none = Vec::<String>::new();
         let (mut prs, mut issues) = (0, 0);
         for (number, item) in archive {
             if is_pr(item) {
                 let want = crate::github::normalize(&github[format!("p{number}")]).unwrap();
-                let got = pr(item).unwrap();
-                assert_eq!(same(&got, &want), Vec::<String>::new(), "#{number}");
+                let live = Live::of(&want, chrono::Utc::now());
+                let mut d = differ(&pr(item).unwrap(), &want, &NOT_ARCHIVED);
+                d.retain(|k| k != "association");
+                assert_eq!(d, none, "#{number}");
+                let got = pr_live(item, Some(&live)).unwrap();
+                assert_eq!(differ(&got, &want, &[]), none, "#{number}");
                 let want = crate::github::facts(&github[format!("h{number}")]).unwrap();
-                let got = facts(item).unwrap();
-                assert_eq!(same(&got, &want), Vec::<String>::new(), "#{number}");
+                let got = facts_live(item, Some(&live)).unwrap();
+                assert_eq!(differ(&got, &want, &[]), none, "#{number}");
                 prs += 1;
             } else {
                 let want = crate::github::normalize_issue(&github[format!("i{number}")]).unwrap();
                 let got = issue(item).unwrap();
-                assert_eq!(same(&got, &want), Vec::<String>::new(), "#{number}");
+                assert_eq!(differ(&got, &want, &[]), none, "#{number}");
                 issues += 1;
             }
         }
@@ -253,8 +276,27 @@ pub(crate) mod tests {
         let mut b = a.clone();
         b.mergeable = "MERGEABLE".into();
         b.ci = Some("SUCCESS".into());
-        assert!(differ(&a, &b).is_empty());
+        assert!(differ(&a, &b, &NOT_ARCHIVED).is_empty());
         b.title.push('!');
-        assert_eq!(differ(&a, &b), vec!["title".to_string()]);
+        assert_eq!(differ(&a, &b, &NOT_ARCHIVED), vec!["title".to_string()]);
+    }
+
+    #[test]
+    fn a_live_row_of_another_head_sets_only_the_association() {
+        let f = fixtures();
+        let item = &f["archive"]["300123"];
+        let mut live = Live::of(&pr(item).unwrap(), chrono::Utc::now());
+        live.mergeable = "MERGEABLE".into();
+        live.ci = Some("SUCCESS".into());
+        live.association = "MEMBER".into();
+        let p = pr_live(item, Some(&live)).unwrap();
+        assert_eq!(
+            (p.mergeable.as_str(), p.ci.as_deref()),
+            ("MERGEABLE", Some("SUCCESS"))
+        );
+        live.head_oid = "other".into();
+        let p = pr_live(item, Some(&live)).unwrap();
+        assert_eq!((p.mergeable.as_str(), p.ci.as_deref()), ("UNKNOWN", None));
+        assert_eq!(p.association, "MEMBER");
     }
 }

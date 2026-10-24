@@ -7,6 +7,41 @@ use std::sync::Mutex;
 use crate::metrics::Facts;
 use crate::model::{Issue, Pr};
 
+/// The fields of an open pull request that change with no change to its
+/// `updatedAt`, so the archive cannot keep them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Live {
+    pub number: u64,
+    pub head_oid: String,
+    pub mergeable: String,
+    pub ci: Option<String>,
+    pub association: String,
+    pub checked_at: DateTime<Utc>,
+}
+
+impl Live {
+    pub fn of(pr: &Pr, at: DateTime<Utc>) -> Live {
+        Live {
+            number: pr.number,
+            head_oid: pr.head_oid.clone(),
+            mergeable: pr.mergeable.clone(),
+            ci: pr.ci.clone(),
+            association: pr.association.clone(),
+            checked_at: at,
+        }
+    }
+
+    /// Sets the live fields of `pr`. `mergeable` and CI belong to a head,
+    /// so they apply only when the head is the same.
+    pub fn apply(&self, pr: &mut Pr) {
+        pr.association = self.association.clone();
+        if pr.head_oid == self.head_oid {
+            pr.mergeable = self.mergeable.clone();
+            pr.ci = self.ci.clone();
+        }
+    }
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
 }
@@ -36,6 +71,14 @@ impl Store {
                updated_at TEXT NOT NULL,
                state TEXT NOT NULL,
                data TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS pr_live (
+               number INTEGER PRIMARY KEY,
+               head_oid TEXT NOT NULL,
+               mergeable TEXT NOT NULL,
+               ci TEXT,
+               association TEXT NOT NULL,
+               checked_at TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS history (
                number INTEGER PRIMARY KEY,
@@ -258,17 +301,114 @@ impl Store {
         Ok(out)
     }
 
-    pub fn set_mergeable(&self, number: u64, mergeable: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "UPDATE pr SET data = json_set(data, '$.mergeable', ?2) WHERE number = ?1",
-            params![number, mergeable],
-        )?;
+    pub fn prs(&self) -> Result<Vec<Pr>> {
+        self.json_rows("pr")
+    }
+
+    /// Keeps the live fields and copies them into the `pr` row of the same
+    /// head. An UNKNOWN `mergeable` keeps the known value of the same head:
+    /// GitHub computes it lazily, and a bulk read mostly answers UNKNOWN.
+    pub fn put_live(&self, rows: &[Live]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        for l in rows {
+            tx.execute(
+                "INSERT INTO pr_live (number, head_oid, mergeable, ci, association, checked_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(number) DO UPDATE SET
+                   mergeable = CASE WHEN excluded.mergeable = 'UNKNOWN' AND pr_live.head_oid = excluded.head_oid
+                                    THEN pr_live.mergeable ELSE excluded.mergeable END,
+                   head_oid = excluded.head_oid, ci = excluded.ci,
+                   association = excluded.association, checked_at = excluded.checked_at",
+                params![
+                    l.number,
+                    l.head_oid,
+                    l.mergeable,
+                    l.ci,
+                    l.association,
+                    l.checked_at.to_rfc3339()
+                ],
+            )?;
+            tx.execute(
+                "UPDATE pr SET data = CASE WHEN json_extract(pr.data, '$.head_oid') = l.head_oid
+                     THEN json_set(data, '$.mergeable', l.mergeable, '$.ci', l.ci, '$.association', l.association)
+                     ELSE json_set(data, '$.association', l.association) END
+                 FROM pr_live l WHERE pr.number = ?1 AND l.number = ?1",
+                [l.number],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
-    pub fn prs(&self) -> Result<Vec<Pr>> {
-        self.json_rows("pr")
+    /// The live fields of pull requests that a full read from GitHub just
+    /// wrote, so `pr_live` never holds older values than the `pr` row.
+    pub fn note_live(&self, prs: &[Pr], at: DateTime<Utc>) -> Result<()> {
+        let rows: Vec<Live> = prs.iter().map(|p| Live::of(p, at)).collect();
+        self.put_live(&rows)
+    }
+
+    pub fn live(&self) -> Result<std::collections::HashMap<u64, Live>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT number, head_oid, mergeable, ci, association, checked_at FROM pr_live",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)? as u64,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<String>>(3)?,
+                r.get::<_, String>(4)?,
+                r.get::<_, String>(5)?,
+            ))
+        })?;
+        let mut out = std::collections::HashMap::new();
+        for row in rows {
+            let (number, head_oid, mergeable, ci, association, at) = row?;
+            let checked_at = DateTime::parse_from_rfc3339(&at)?.with_timezone(&Utc);
+            out.insert(
+                number,
+                Live {
+                    number,
+                    head_oid,
+                    mergeable,
+                    ci,
+                    association,
+                    checked_at,
+                },
+            );
+        }
+        Ok(out)
+    }
+
+    /// Open pull requests, the ones never checked first, then the oldest
+    /// check.
+    pub fn live_due(&self, limit: usize) -> Result<Vec<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT pr.number FROM pr LEFT JOIN pr_live l ON l.number = pr.number
+             WHERE pr.state = 'OPEN'
+             ORDER BY l.checked_at IS NOT NULL, l.checked_at, pr.number LIMIT ?1",
+        )?;
+        let rows = stmt.query_map([limit as i64], |r| r.get::<_, i64>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row? as u64);
+        }
+        Ok(out)
+    }
+
+    /// Open pull requests, how many have a live row, and the oldest check
+    /// among them.
+    pub fn live_progress(&self) -> Result<(i64, i64, Option<String>)> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.query_row(
+            "SELECT COUNT(*), COUNT(l.number), MIN(l.checked_at)
+             FROM pr LEFT JOIN pr_live l ON l.number = pr.number WHERE pr.state = 'OPEN'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?)
     }
 
     pub fn put_issues(&self, issues: &[Issue]) -> Result<()> {
@@ -1670,6 +1810,49 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pr_live_keeps_a_known_mergeable_of_the_same_head() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let f = crate::project::tests::fixtures();
+        let mut a = crate::project::pr(&f["archive"]["300123"]).unwrap();
+        let mut b = crate::project::pr(&f["archive"]["350000"]).unwrap();
+        a.state = "OPEN".into();
+        b.state = "OPEN".into();
+        s.put_prs(&[a.clone(), b.clone()]).unwrap();
+        let t0: DateTime<Utc> = "2026-10-17T12:00:00Z".parse().unwrap();
+        assert_eq!(s.live_due(10).unwrap(), [300123, 350000]);
+        let mut l = Live::of(&a, t0);
+        l.mergeable = "MERGEABLE".into();
+        l.ci = Some("SUCCESS".into());
+        l.association = "MEMBER".into();
+        s.put_live(std::slice::from_ref(&l)).unwrap();
+        assert_eq!(s.live_due(10).unwrap(), [350000, 300123]);
+        let row = |s: &Store| {
+            s.prs()
+                .unwrap()
+                .into_iter()
+                .find(|p| p.number == 300123)
+                .unwrap()
+        };
+        let p = row(&s);
+        assert_eq!(
+            (p.mergeable.as_str(), p.ci.as_deref()),
+            ("MERGEABLE", Some("SUCCESS"))
+        );
+        assert_eq!(p.association, "MEMBER");
+        s.put_prs(std::slice::from_ref(&a)).unwrap();
+        s.note_live(std::slice::from_ref(&a), t0 + chrono::Duration::hours(1))
+            .unwrap();
+        assert_eq!(row(&s).mergeable, "MERGEABLE");
+        a.head_oid = "new".into();
+        s.put_prs(std::slice::from_ref(&a)).unwrap();
+        s.note_live(std::slice::from_ref(&a), t0 + chrono::Duration::hours(2))
+            .unwrap();
+        assert_eq!(row(&s).mergeable, "UNKNOWN");
+        assert_eq!(s.live().unwrap()[&300123].head_oid, "new");
+        assert_eq!(s.live_progress().unwrap().0, 2);
+    }
 
     #[test]
     fn a_followup_keeps_its_first_time_and_goes_with_its_pull_request() {

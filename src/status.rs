@@ -34,6 +34,16 @@ fn last_event_at(app: &App) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
+fn live(app: &App) -> Value {
+    let (open, checked, oldest) = app.store.live_progress().unwrap_or_default();
+    json!({
+        "open_pull_requests": open,
+        "checked": checked,
+        "oldest_check": oldest,
+        "per_pass": crate::LIVE_BATCH,
+    })
+}
+
 /// Counts of jobs only: no reference, login or package.
 fn rescans(app: &App) -> Value {
     let (flakes, failing, last) = app.store.flake_ref_counts().unwrap_or_default();
@@ -126,6 +136,7 @@ pub(crate) fn state(app: &App) -> Value {
             "up_to": time(app, "issues_watermark"),
         },
         "history": { "done": has(app, "history_done") },
+        "live": live(app),
         "index": {
             "rev": rev, "at": time(app, "index_at"),
             "packages": pkgs, "modules": modules, "teams": teams,
@@ -358,6 +369,17 @@ pub(crate) fn body(app: &App) -> String {
                 "first read of the open ones in progress"
             ),
             when(&i["up_to"])
+        ),
+    ));
+    let l = &v["live"];
+    out.push_str(&kv(
+        "Mergeable and checks",
+        format!(
+            "{} of {} open pull requests checked · {} per update, the oldest check first · oldest check {}",
+            l["checked"],
+            l["open_pull_requests"],
+            l["per_pass"],
+            when(&l["oldest_check"])
         ),
     ));
     out.push_str(&kv(

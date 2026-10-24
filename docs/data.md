@@ -12,6 +12,17 @@ its known limits.
   pull requests by `updatedAt`, newest first, and stops at the watermark of
   the previous pass. Both walks store their cursor, so a pass that runs out
   of budget resumes where it stopped.
+- **Mergeable, checks and author association** change with no change to
+  `updatedAt`. The table `pr_live` keeps them for each open pull request,
+  with the head they belong to and the time of the check. Each pass reads
+  them for up to 500 open pull requests: first the merge candidates, then
+  the ones checked longest ago, 50 to a query. GitHub computes `mergeable`
+  lazily, so a bulk read mostly answers UNKNOWN; an UNKNOWN keeps the known
+  value of the same head. A full read of a pull request also writes
+  `pr_live`. These reads use only the GitHub App token and the bot token.
+  With neither, they use the sync tokens for the merge candidates only.
+  `/state?tab=status` shows how many open pull requests have a check, and
+  the oldest one; `/api/v1/sync` gives the same data as `live`.
 - **Issues** are read the same way, 100 to a query. The body is read but not
   kept: only the paths and the package name it gives are. The first pass reads
   every open issue, then each pass walks by `updatedAt`.
@@ -206,8 +217,9 @@ cost.
   turns archived items into rows, with the caps of the sync, and compares
   them with the rows that the sync and the history walk wrote: the 500 last
   updated of each of `pr`, `issue` and `history`. It writes nothing. Only items archived at
-  the same `updatedAt` count. `mergeable` and the CI state are not in the
-  archive and are not compared. `/state?tab=status` shows how many rows
+  the same `updatedAt` count. The projection takes `mergeable`, the CI
+  state and the author association from `pr_live`. When `pr_live` has no
+  row for the same head, `mergeable` and the CI state are not compared. `/state?tab=status` shows how many rows
   differ and in which fields; `/api/v1/sync` gives the same data as
   `archive[].shadow`.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
