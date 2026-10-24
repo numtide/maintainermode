@@ -25,7 +25,7 @@ pub(crate) const GUIDE: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#the-committers-perspective";
 pub(crate) const GUIDE_QUOTE: &str =
     "To merge, at least one committer has to be confident about its quality.";
-pub(crate) const SUBJECT: &str = "Your pull requests";
+const SUBJECT: &str = "Your pull requests";
 const DAYS_KEY: &str = "followup_days";
 const ACTION_KEY: &str = "followup_action";
 
@@ -180,12 +180,7 @@ impl Plans {
     }
 }
 
-pub(crate) fn save_default(
-    app: &App,
-    login: &str,
-    days: u32,
-    action: Action,
-) -> anyhow::Result<()> {
+fn save_default(app: &App, login: &str, days: u32, action: Action) -> anyhow::Result<()> {
     app.store.set_setting(login, DAYS_KEY, &days.to_string())?;
     app.store.set_setting(login, ACTION_KEY, action.key())
 }
@@ -290,7 +285,7 @@ fn day(t: DateTime<Utc>) -> String {
     t.format("%Y-%m-%d").to_string()
 }
 
-fn quiet_days(pr: &Pr, now: DateTime<Utc>) -> i64 {
+pub(crate) fn quiet_days(pr: &Pr, now: DateTime<Utc>) -> i64 {
     (now - pr.created_at).num_days().max(0)
 }
 
@@ -482,11 +477,16 @@ fn options(selected: Action) -> String {
 
 /// The links that go with a reminder to merge: the merge box on GitHub and
 /// the line of the contributor guide.
-pub(crate) fn merge_links(n: u64) -> String {
+/// The merge box of pull request `n` on GitHub.
+pub(crate) fn merge_box(n: u64) -> String {
+    format!("{}#partial-pull-merging", crate::prpage::github_url(n))
+}
+
+fn merge_links(n: u64) -> String {
     format!(
-        "<a href=\"{}#partial-pull-merging\">Open the merge box on GitHub</a> · \
+        "<a href=\"{}\">Open the merge box on GitHub</a> · \
          nixpkgs <a href=\"{GUIDE}\">CONTRIBUTING.md</a>: “{GUIDE_QUOTE}”",
-        crate::prpage::github_url(n)
+        merge_box(n)
     )
 }
 

@@ -83,8 +83,8 @@ impl Kind {
         Kind::Build,
     ];
 
-    /// From the id that `catalog::events`, `catalog::set_events` and
-    /// `followup::events` give.
+    /// From the id that `catalog::events`, `catalog::set_events`,
+    /// `followup::events` and `builds::events` give.
     pub fn of(id: &str) -> Kind {
         match id.split_once('-').map_or(id, |(k, _)| k) {
             "mine" => Kind::Mine,
@@ -167,21 +167,11 @@ pub fn kinds(app: &App, login: &str) -> Vec<Kind> {
 /// When the person turned on one email per event of their own pull
 /// requests, or nothing.
 fn mine_now(app: &App, login: &str) -> Option<DateTime<Utc>> {
-    app.store
-        .setting(login, MINE_NOW)
-        .ok()
-        .flatten()
-        .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
-        .map(|t| t.with_timezone(&Utc))
+    app.store.setting_time(login, MINE_NOW)
 }
 
 pub(crate) fn read_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
-    app.store
-        .setting(login, READ_AT)
-        .ok()
-        .flatten()
-        .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
-        .map(|t| t.with_timezone(&Utc))
+    app.store.setting_time(login, READ_AT)
 }
 
 fn unread(e: &Event, read_at: Option<DateTime<Utc>>) -> bool {
@@ -195,8 +185,8 @@ pub fn unread_count(events: &[Event], read_at: Option<DateTime<Utc>>, kinds: &[K
         .count()
 }
 
-/// Unread counts per login, for the header. The background pass fills it
-/// after each recompute; a page view only reads it.
+/// Unread counts per login, for the header. A recompute, the inbox page and
+/// each change of settings write it.
 #[derive(Default)]
 pub struct Counts(RwLock<HashMap<String, usize>>);
 
@@ -360,21 +350,23 @@ async fn inbox_page(
         out.push_str("<div class=\"Box\">");
         for e in shown {
             let new = unread(e, read);
+            let class = if new {
+                "Link--primary text-bold"
+            } else {
+                "Link--primary"
+            };
+            let title = if e.url.is_empty() {
+                format!("<span class=\"{class}\">{}</span>", esc(&e.title))
+            } else {
+                crate::prpage::link(&e.url, &esc(&e.title), class)
+            };
             let _ = write!(
                 out,
                 "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-muted\">{}</span>\
                  <div class=\"flex-auto min-width-0 wb-break-word\">{}\
                  <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{}</div>",
                 Kind::of(&e.id).icon(),
-                crate::prpage::link(
-                    &e.url,
-                    &esc(&e.title),
-                    if new {
-                        "Link--primary text-bold"
-                    } else {
-                        "Link--primary"
-                    }
-                ),
+                title,
                 esc(&e.subject),
                 ago(e.at),
                 if new {
@@ -419,6 +411,7 @@ fn mail_note(mail: Option<&str>) -> &'static str {
         Some("wait") => "Wait 10 minutes between two test emails.",
         Some("invalid") => "Use an address like name@example.org, with no spaces and no name.",
         Some("none") => "Save an address first.",
+        Some("off") => "Email is off on this server.",
         Some("confirm") => {
             "We sent a confirmation email. Open its link in the next 24 hours to start the daily email."
         }
@@ -499,18 +492,8 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
             icon(octicon!("mail"))
         )
     } else {
-        let last = app
-            .store
-            .setting(login, DIGEST_AT)
-            .ok()
-            .flatten()
-            .and_then(|t| DateTime::parse_from_rfc3339(&t).ok())
-            .map(|t| {
-                format!(
-                    " The last daily email went out {} ago.",
-                    ago(t.with_timezone(&Utc))
-                )
-            })
+        let last = digest_at(app, login)
+            .map(|t| format!(" The last daily email went out {} ago.", ago(t)))
             .unwrap_or_default();
         format!(
             "<form method=\"post\" action=\"/me/notify/test\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send me a test email</button>\
@@ -587,13 +570,14 @@ async fn save_notify(
     if app.smtp.is_some() && address.is_some_and(|a| !a.is_empty() && !valid_address(a)) {
         return Redirect::to("/me/settings?mail=invalid#email").into_response();
     }
-    let keys: Vec<&str> = f
-        .chosen()
-        .into_iter()
+    let chosen = f.chosen();
+    let keys: Vec<&str> = chosen
+        .iter()
+        .copied()
         .filter(|k| *k != Kind::Mine)
         .map(Kind::key)
         .collect();
-    let mine_off = if f.chosen().contains(&Kind::Mine) {
+    let mine_off = if chosen.contains(&Kind::Mine) {
         ""
     } else {
         "1"
@@ -734,7 +718,7 @@ const UNKNOWN_CONFIRM: &str = "<div class=\"blankslate\"><p>This confirmation li
 /// A link scanner opens every link of an email, so a GET only asks.
 async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     if pending_confirmation(&app, &token, Utc::now()).is_none() {
-        return unsubscribe_reply(
+        return token_reply(
             &app,
             StatusCode::NOT_FOUND,
             "Confirm your address",
@@ -746,7 +730,7 @@ async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> R
         "<form method=\"post\" action=\"/confirm/{}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>",
         esc(&token)
     );
-    unsubscribe_reply(
+    token_reply(
         &app,
         StatusCode::OK,
         "Confirm your address",
@@ -757,7 +741,7 @@ async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> R
 
 async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     let Some(c) = pending_confirmation(&app, &token, Utc::now()) else {
-        return unsubscribe_reply(
+        return token_reply(
             &app,
             StatusCode::NOT_FOUND,
             "Confirm your address",
@@ -772,7 +756,7 @@ async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Respon
     if let Err(e) = done {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    unsubscribe_reply(
+    token_reply(
         &app,
         StatusCode::OK,
         "Address confirmed",
@@ -785,24 +769,18 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let back = |m: &str| Redirect::to(&format!("/me/settings?mail={m}#email")).into_response();
     let Some(smtp) = &app.smtp else {
-        return back("off");
+        return settings_redirect("off");
     };
     if stored_address(&app, &login).is_none() {
-        return back("none");
+        return settings_redirect("none");
     }
     let Some(address) = confirmed_address(&app, &login) else {
-        return back("unconfirmed");
+        return settings_redirect("unconfirmed");
     };
-    let last = app
-        .store
-        .setting(&login, TEST_AT)
-        .ok()
-        .flatten()
-        .and_then(|t| DateTime::parse_from_rfc3339(&t).ok());
-    if last.is_some_and(|t| Utc::now() - t.with_timezone(&Utc) < Duration::minutes(10)) {
-        return back("wait");
+    let last = app.store.setting_time(&login, TEST_AT);
+    if last.is_some_and(|t| Utc::now() - t < Duration::minutes(10)) {
+        return settings_redirect("wait");
     }
     if let Err(e) = app
         .store
@@ -811,7 +789,7 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     if !take_slot(&app, smtp, &login, Mail::Test) {
-        return back("limit");
+        return settings_redirect("limit");
     }
     let body = format!(
         "This is a test email from Maintainer Mode, sent because {login} asked for it on the settings page.\n\
@@ -827,10 +805,10 @@ async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
     )
     .await
     {
-        Ok(()) => back("sent"),
+        Ok(()) => settings_redirect("sent"),
         Err(e) => {
             tracing::warn!("test email of {login}: {e:#}");
-            back("failed")
+            settings_redirect("failed")
         }
     }
 }
@@ -1086,12 +1064,7 @@ async fn deliver(
 }
 
 fn digest_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
-    app.store
-        .setting(login, DIGEST_AT)
-        .ok()
-        .flatten()
-        .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
-        .map(|t| t.with_timezone(&Utc))
+    app.store.setting_time(login, DIGEST_AT)
 }
 
 /// At most one digest per person and UTC day.
@@ -1099,18 +1072,53 @@ pub fn digest_due(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
     last.is_none_or(|t| t.date_naive() < now.date_naive())
 }
 
-/// The unread events of the chosen kinds that no digest carried yet.
+const DIGEST_MARK: &str = "digest:";
+
+/// The mark in `mail_once` of an event that a digest carried.
+fn digest_key(id: &str) -> String {
+    format!("{DIGEST_MARK}{id}")
+}
+
+/// The unread events of the chosen kinds that no digest carried yet. The
+/// time of an event is the time of the fact, often before the server saw
+/// it, so the marks decide and not the time of the last digest.
 pub fn digest_selection<'a>(
     events: &'a [Event],
     read_at: Option<DateTime<Utc>>,
-    last_digest: Option<DateTime<Utc>>,
+    sent: &std::collections::HashSet<String>,
     kinds: &[Kind],
 ) -> Vec<&'a Event> {
     events
         .iter()
-        .filter(|e| unread(e, read_at) && last_digest.is_none_or(|t| e.at > t))
+        .filter(|e| unread(e, read_at) && !sent.contains(&digest_key(&e.id)))
         .filter(|e| kinds.contains(&Kind::of(&e.id)))
         .collect()
+}
+
+/// The marks of a person's sent digests. The first time, before any mark
+/// exists, the events up to the last digest count as sent, so the switch
+/// to marks sends no old event again.
+fn digest_sent(
+    app: &App,
+    login: &str,
+    events: &[Event],
+    last: Option<DateTime<Utc>>,
+) -> anyhow::Result<std::collections::HashSet<String>> {
+    let sent = app.store.mailed(login, DIGEST_MARK)?;
+    let Some(last) = last.filter(|_| sent.is_empty()) else {
+        return Ok(sent);
+    };
+    let old: Vec<&Event> = events.iter().filter(|e| e.at <= last).collect();
+    mark_sent(app, login, &old)?;
+    Ok(old.iter().map(|e| digest_key(&e.id)).collect())
+}
+
+fn mark_sent(app: &App, login: &str, list: &[&Event]) -> anyhow::Result<()> {
+    let now = Utc::now();
+    for e in list {
+        app.store.mail_once(login, &digest_key(&e.id), now)?;
+    }
+    Ok(())
 }
 
 const DIGEST_LINES: usize = 50;
@@ -1127,13 +1135,10 @@ fn digest_body(list: &[&Event]) -> String {
         list.len()
     );
     for e in list.iter().take(DIGEST_LINES) {
-        let _ = writeln!(
-            out,
-            "- {}: {}\n  {}",
-            one_line(&e.subject),
-            one_line(&e.title),
-            one_line(&e.url)
-        );
+        let _ = writeln!(out, "- {}: {}", one_line(&e.subject), one_line(&e.title));
+        if !e.url.is_empty() {
+            let _ = writeln!(out, "  {}", one_line(&e.url));
+        }
     }
     if list.len() > DIGEST_LINES {
         let _ = writeln!(
@@ -1161,7 +1166,8 @@ async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
             continue;
         }
         let events = person_events(app, &login);
-        let list = digest_selection(&events, read_at(app, &login), last, &kinds(app, &login));
+        let marks = digest_sent(app, &login, &events, last)?;
+        let list = digest_selection(&events, read_at(app, &login), &marks, &kinds(app, &login));
         if list.is_empty() {
             continue;
         }
@@ -1171,6 +1177,7 @@ async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
         let subject = format!("Maintainer Mode: {} new", list.len());
         match send(app, smtp, &login, &address, &subject, digest_body(&list)).await {
             Ok(()) => {
+                mark_sent(app, &login, &list)?;
                 app.store
                     .set_setting(&login, DIGEST_AT, &now.to_rfc3339())?;
                 sent += 1;
@@ -1258,7 +1265,7 @@ pub async fn run(app: Shared) {
     }
 }
 
-fn unsubscribe_reply(app: &App, code: StatusCode, title: &str, sub: &str, body: &str) -> Response {
+fn token_reply(app: &App, code: StatusCode, title: &str, sub: &str, body: &str) -> Response {
     let page = Page::new(Section::Home, title)
         .sub(sub)
         .body(body)
@@ -1290,13 +1297,13 @@ const UNKNOWN_LINK: &str = "<div class=\"blankslate\"><p>This unsubscribe link i
 /// one-click POST of RFC 8058 and the button below do the work.
 async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     if unsubscribe_login(&app, &token).is_none() {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
+        return token_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
     }
     let body = format!(
         "<form method=\"post\" action=\"/unsubscribe/{}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>",
         esc(&token)
     );
-    unsubscribe_reply(
+    token_reply(
         &app,
         StatusCode::OK,
         "Unsubscribe",
@@ -1307,12 +1314,12 @@ async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) 
 
 async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Response {
     let Some(login) = unsubscribe_login(&app, &token) else {
-        return unsubscribe_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
+        return token_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
     };
     if let Err(e) = forget_address(&app, &login) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    unsubscribe_reply(
+    token_reply(
         &app,
         StatusCode::OK,
         "Unsubscribed",
@@ -1446,7 +1453,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_digest_carries_the_unread_events_since_the_last_digest() {
+    fn a_digest_carries_the_unread_events_no_digest_carried() {
         let now = Utc::now();
         let list = [
             event("pr-1-merged", now - Duration::hours(1)),
@@ -1455,21 +1462,21 @@ pub(crate) mod tests {
             event("upstream-hello-2", now - Duration::days(3)),
         ];
         let ids = |v: Vec<&Event>| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
-        assert_eq!(digest_selection(&list, None, None, &Kind::ALL).len(), 4);
+        let none = std::collections::HashSet::new();
+        assert_eq!(digest_selection(&list, None, &none, &Kind::ALL).len(), 4);
+        let sent: std::collections::HashSet<String> = ["issue-2-issue opened", "upstream-hello-2"]
+            .iter()
+            .map(|id| digest_key(id))
+            .collect();
         assert_eq!(
-            ids(digest_selection(
-                &list,
-                None,
-                Some(now - Duration::days(1)),
-                &Kind::ALL
-            )),
+            ids(digest_selection(&list, None, &sent, &Kind::ALL)),
             ["pr-1-merged", "advisory-A-1-hello"]
         );
         assert_eq!(
             ids(digest_selection(
                 &list,
                 Some(now - Duration::hours(2)),
-                Some(now - Duration::days(1)),
+                &sent,
                 &Kind::ALL
             )),
             ["pr-1-merged"]
@@ -1478,12 +1485,31 @@ pub(crate) mod tests {
             ids(digest_selection(
                 &list,
                 None,
-                None,
+                &none,
                 &[Kind::Advisory, Kind::Release]
             )),
             ["advisory-A-1-hello", "upstream-hello-2"]
         );
-        assert!(digest_selection(&list, Some(now), None, &Kind::ALL).is_empty());
+        assert!(digest_selection(&list, Some(now), &none, &Kind::ALL).is_empty());
+    }
+
+    #[test]
+    fn an_event_found_after_a_digest_goes_in_the_next_one() {
+        let app = crate::sets::tests::app(&[]);
+        let now = Utc::now();
+        let last = now - Duration::hours(2);
+        let old = event("pr-1-merged", now - Duration::hours(5));
+        let mut events = vec![old];
+        let marks = digest_sent(&app, "alice", &events, Some(last)).unwrap();
+        assert!(digest_selection(&events, None, &marks, &Kind::ALL).is_empty());
+        events.push(event("advisory-A-1-hello", now - Duration::days(3)));
+        let marks = digest_sent(&app, "alice", &events, Some(last)).unwrap();
+        let list = digest_selection(&events, None, &marks, &Kind::ALL);
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, "advisory-A-1-hello");
+        mark_sent(&app, "alice", &list).unwrap();
+        let marks = digest_sent(&app, "alice", &events, Some(now)).unwrap();
+        assert!(digest_selection(&events, None, &marks, &Kind::ALL).is_empty());
     }
 
     #[test]

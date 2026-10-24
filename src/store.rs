@@ -124,6 +124,7 @@ impl Store {
                at TEXT NOT NULL,
                PRIMARY KEY (session, key)
              );
+             CREATE INDEX IF NOT EXISTS needs_seen_at ON needs_seen (at);
              CREATE TABLE IF NOT EXISTS followup (
                login TEXT NOT NULL,
                number INTEGER NOT NULL,
@@ -138,6 +139,7 @@ impl Store {
                at TEXT NOT NULL,
                PRIMARY KEY (login, id)
              );
+             CREATE INDEX IF NOT EXISTS mail_once_at ON mail_once (at);
              CREATE TABLE IF NOT EXISTS hydra_state (
                jobset TEXT NOT NULL,
                attr TEXT NOT NULL,
@@ -195,15 +197,20 @@ impl Store {
         Ok(())
     }
 
-    pub fn facts(&self) -> Result<Vec<Facts>> {
+    /// Each `data` column of `table`, read as JSON.
+    fn json_rows<T: serde::de::DeserializeOwned>(&self, table: &str) -> Result<Vec<T>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT data FROM history")?;
+        let mut stmt = conn.prepare(&format!("SELECT data FROM {table}"))?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
         let mut out = Vec::new();
         for row in rows {
             out.push(serde_json::from_str(&row?)?);
         }
         Ok(out)
+    }
+
+    pub fn facts(&self) -> Result<Vec<Facts>> {
+        self.json_rows("history")
     }
 
     /// Who merged each pull request in the history walk, and when.
@@ -232,14 +239,7 @@ impl Store {
     }
 
     pub fn prs(&self) -> Result<Vec<Pr>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT data FROM pr")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(serde_json::from_str(&row?)?);
-        }
-        Ok(out)
+        self.json_rows("pr")
     }
 
     pub fn put_issues(&self, issues: &[Issue]) -> Result<()> {
@@ -263,14 +263,7 @@ impl Store {
     }
 
     pub fn issues(&self) -> Result<Vec<Issue>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT data FROM issue")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(serde_json::from_str(&row?)?);
-        }
-        Ok(out)
+        self.json_rows("issue")
     }
 
     pub fn get(&self, key: &str) -> Result<Option<String>> {
@@ -344,10 +337,7 @@ impl Store {
     }
 
     pub fn get_time(&self, key: &str) -> Result<Option<DateTime<Utc>>> {
-        Ok(self
-            .get(key)?
-            .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
-            .map(|t| t.with_timezone(&Utc)))
+        Ok(time_of(self.get(key)?))
     }
 
     pub fn create_session(&self, id: &str, login: &str, token: &str) -> Result<()> {
@@ -368,8 +358,8 @@ impl Store {
         )?;
         Ok(conn
             .query_row(
-                "SELECT login, token FROM session WHERE id = ?1",
-                [id],
+                "SELECT login, token FROM session WHERE id = ?1 AND created_at > ?2",
+                params![id, session_cutoff()],
                 |r| {
                     Ok(Session {
                         login: r.get(0)?,
@@ -396,11 +386,21 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         Ok(conn
             .query_row(
-                "SELECT token FROM session WHERE login = ?1 ORDER BY seen_at DESC LIMIT 1",
-                [login],
+                "SELECT token FROM session WHERE login = ?1 AND created_at > ?2 ORDER BY seen_at DESC LIMIT 1",
+                params![login, session_cutoff()],
                 |r| r.get(0),
             )
             .optional()?)
+    }
+
+    /// Deletes the sessions, and their GitHub tokens, that outlived their
+    /// cookie.
+    pub fn purge_sessions(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "DELETE FROM session WHERE created_at <= ?1",
+            [session_cutoff()],
+        )?)
     }
 
     /// Tokens of people seen in the last 30 days, most recent first. The sync
@@ -496,17 +496,9 @@ impl Store {
             .optional()?)
     }
 
-    pub fn has_table(&self, name: &str) -> bool {
-        let conn = self.conn.lock().unwrap();
-        conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
-            [name],
-            |_| Ok(()),
-        )
-        .optional()
-        .ok()
-        .flatten()
-        .is_some()
+    /// A setting that holds a time; a read error or bad value is `None`.
+    pub fn setting_time(&self, login: &str, key: &str) -> Option<DateTime<Utc>> {
+        time_of(self.setting(login, key).ok().flatten())
     }
 
     pub fn set_setting(&self, login: &str, key: &str, value: &str) -> Result<()> {
@@ -532,14 +524,7 @@ impl Store {
     }
 
     pub fn channels(&self) -> Result<Vec<crate::channels::Channel>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT data FROM channel")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(serde_json::from_str(&row?)?);
-        }
-        Ok(out)
+        self.json_rows("channel")
     }
 
     /// Drops the channels no longer configured.
@@ -924,17 +909,22 @@ pub struct FlakeRef {
     pub name: String,
     pub reference: String,
     pub output: String,
-    pub public: bool,
     pub last_at: Option<DateTime<Utc>>,
     pub error: Option<String>,
     pub attrs: Vec<String>,
     pub dropped: usize,
     pub scanned_at: Option<DateTime<Utc>>,
-    pub nixpkgs_rev: Option<String>,
 }
 
 fn mail_hour(at: DateTime<Utc>) -> String {
     at.format("%Y-%m-%dT%H").to_string()
+}
+
+/// The age of the session cookie in web.rs: a session dies with it.
+const SESSION_DAYS: i64 = 30;
+
+fn session_cutoff() -> String {
+    (Utc::now() - chrono::Duration::days(SESSION_DAYS)).to_rfc3339()
 }
 
 fn time_of(s: Option<String>) -> Option<DateTime<Utc>> {
@@ -942,7 +932,8 @@ fn time_of(s: Option<String>) -> Option<DateTime<Utc>> {
         .map(|t| t.with_timezone(&Utc))
 }
 
-const FLAKE_COLUMNS: &str = "login, name, reference, output, public, last_at, error, attrs, dropped, uploaded_at, nixpkgs_rev";
+const FLAKE_COLUMNS: &str =
+    "login, name, reference, output, last_at, error, attrs, dropped, uploaded_at";
 
 fn flake_row(r: &rusqlite::Row) -> rusqlite::Result<FlakeRef> {
     Ok(FlakeRef {
@@ -950,13 +941,11 @@ fn flake_row(r: &rusqlite::Row) -> rusqlite::Result<FlakeRef> {
         name: r.get(1)?,
         reference: r.get(2)?,
         output: r.get(3)?,
-        public: r.get(4)?,
-        last_at: time_of(r.get(5)?),
-        error: r.get(6)?,
-        attrs: serde_json::from_str(&r.get::<_, String>(7)?).unwrap_or_default(),
-        dropped: r.get::<_, i64>(8)?.max(0) as usize,
-        scanned_at: time_of(r.get(9)?),
-        nixpkgs_rev: r.get(10)?,
+        last_at: time_of(r.get(4)?),
+        error: r.get(5)?,
+        attrs: serde_json::from_str(&r.get::<_, String>(6)?).unwrap_or_default(),
+        dropped: r.get::<_, i64>(7)?.max(0) as usize,
+        scanned_at: time_of(r.get(8)?),
     })
 }
 
@@ -1289,7 +1278,6 @@ impl Store {
     }
 }
 
-/// What a person put aside on Needs you, and what each session saw there.
 impl Store {
     /// item key → the fingerprint it had when the person snoozed it.
     pub fn needs_snoozed(&self, login: &str) -> Result<std::collections::HashMap<String, String>> {
@@ -1454,6 +1442,15 @@ impl Store {
         )? == 1)
     }
 
+    /// The ids marked for `login` that start with `prefix`.
+    pub fn mailed(&self, login: &str, prefix: &str) -> Result<std::collections::HashSet<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT id FROM mail_once WHERE login = ?1 AND substr(id, 1, ?2) = ?3")?;
+        let rows = stmt.query_map(params![login, prefix.len() as i64, prefix], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Everyone who signed in, chose a setting or watches something.
     pub fn logins(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
@@ -1599,7 +1596,6 @@ impl Store {
     }
 }
 
-/// Pull requests a person hid from their review lists.
 impl Store {
     pub fn hidden_prs(&self, login: &str) -> Result<std::collections::HashSet<u64>> {
         let conn = self.conn.lock().unwrap();
@@ -1670,6 +1666,36 @@ mod tests {
         assert_eq!(s.purge_followups(&[2]).unwrap(), 2);
         assert!(s.followups("alice").unwrap().is_empty());
         assert!(s.followups("bob").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_session_ends_with_its_cookie() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        s.create_session("new", "alice", "t1").unwrap();
+        s.create_session("old", "bob", "t2").unwrap();
+        let old = (Utc::now() - chrono::Duration::days(SESSION_DAYS + 1)).to_rfc3339();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE session SET created_at = ?1 WHERE id = 'old'", [old])
+            .unwrap();
+        assert!(s.session("new").unwrap().is_some());
+        assert!(s.session("old").unwrap().is_none());
+        assert_eq!(s.token_for("bob").unwrap(), None);
+        assert_eq!(s.token_for("alice").unwrap().as_deref(), Some("t1"));
+        assert_eq!(s.purge_sessions().unwrap(), 1);
+    }
+
+    #[test]
+    fn mailed_ids_keep_to_their_prefix() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let now = Utc::now();
+        s.mail_once("alice", "digest:pr-1", now).unwrap();
+        s.mail_once("alice", "mine-1-merged", now).unwrap();
+        s.mail_once("bob", "digest:pr-2", now).unwrap();
+        let ids = s.mailed("alice", "digest:").unwrap();
+        assert_eq!(ids.len(), 1);
+        assert!(ids.contains("digest:pr-1"));
     }
 
     #[test]

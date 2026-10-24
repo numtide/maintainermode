@@ -1011,7 +1011,7 @@ pub(crate) fn page<T: Serialize>(
     }))
 }
 
-pub(crate) struct Prs {
+struct Prs {
     pub value: Value,
     /// The caller's subscriptions shaped the answer.
     pub private: bool,
@@ -1019,15 +1019,16 @@ pub(crate) struct Prs {
 
 /// `caller` is the session or the MCP token. Subscriptions, tags and
 /// machines are private, so they count only when `login` is the caller.
-pub(crate) fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
-    let queue = q.queue.as_deref().unwrap_or("all");
+fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
+    let queue = Args::text(&q.queue).unwrap_or("all");
     if !QUEUES.contains(&queue) {
         return Err(format!(
             "no queue {queue}; use one of {}",
             QUEUES.join(", ")
         ));
     }
-    let login = Args::text(&q.login).or(caller.filter(|_| queue == "foryou"));
+    let yours = queue == "ready" && Args::text(&q.section) == Some("yours");
+    let login = Args::text(&q.login).or(caller.filter(|_| queue == "foryou" || yours));
     let own = login.is_some() && login == caller;
     let s = app.snap();
     let mut out;
@@ -1264,7 +1265,15 @@ mod tests {
             ..Default::default()
         };
         assert!(prs_value(&app, &q, None).is_err());
-        assert!(prs_value(&app, &q, Some("alice")).is_err());
+        assert_eq!(
+            prs_value(&app, &q, Some("alice")).err().as_deref(),
+            Some("alice is not a committer")
+        );
+        let q = Args {
+            queue: Some(String::new()),
+            ..Default::default()
+        };
+        assert_eq!(prs_value(&app, &q, None).unwrap().value["queue"], "all");
     }
 
     #[test]

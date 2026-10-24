@@ -153,7 +153,7 @@ pub(crate) fn fingerprint(parts: &[&str]) -> String {
     d.as_ref()[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// What the items are made from. Built by [`Inputs::read`] on a request,
+/// What the items are made from. Built by [`read_inputs`] on a request,
 /// and by hand in the tests.
 pub(crate) struct Inputs<'a> {
     pub(crate) login: &'a str,
@@ -354,7 +354,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
 /// "On your machines", or the outputs that run the package: "On web-1,
 /// laptop and 2 more".
 fn where_it_runs(hosts: &[(String, String)]) -> String {
-    const SHOWN: usize = 3;
+    const HOSTS_SHOWN: usize = 3;
     if hosts.is_empty() {
         return "On your machines".into();
     }
@@ -364,8 +364,8 @@ fn where_it_runs(hosts: &[(String, String)]) -> String {
             names.push(l);
         }
     }
-    let more = names.len().saturating_sub(SHOWN);
-    let mut out = format!("On {}", names[..names.len().min(SHOWN)].join(", "));
+    let more = names.len().saturating_sub(HOSTS_SHOWN);
+    let mut out = format!("On {}", names[..names.len().min(HOSTS_SHOWN)].join(", "));
     if more > 0 {
         let _ = write!(out, " and {more} more");
     }
@@ -483,7 +483,7 @@ fn due(i: &Inputs, pr: &Pr) -> Option<Item> {
             crate::followup::sentence(pr, &plan, &st, i.now),
             vec![
                 (
-                    format!("{}#partial-pull-merging", crate::prpage::github_url(n)),
+                    crate::followup::merge_box(n),
                     "the merge box on GitHub".to_string(),
                 ),
                 (
@@ -498,7 +498,7 @@ fn due(i: &Inputs, pr: &Pr) -> Option<Item> {
             vec![],
         ),
         _ => {
-            let days = (i.now - pr.created_at).num_days();
+            let days = crate::followup::quiet_days(pr, i.now);
             let ping = maintainers(i.s, i.index, pr);
             let detail = if ping.is_empty() {
                 format!(
@@ -617,8 +617,9 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
             return Some(it);
         }
     }
-    if let Some(it) = due(i, pr).filter(|it| it.cause == Cause::FollowUp) {
-        return Some(it);
+    let due = due(i, pr);
+    if due.as_ref().is_some_and(|it| it.cause == Cause::FollowUp) {
+        return due;
     }
     if matches!(pr.ci.as_deref(), Some("FAILURE" | "ERROR")) {
         return Some(mk(
@@ -655,7 +656,7 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
             t,
         ));
     }
-    due(i, pr)
+    due
 }
 
 /// The maintainers of what a pull request touches, less its author.

@@ -77,6 +77,33 @@ use crate::web::App;
 /// apart from an answer it did not want.
 const EXIT_NOT_LISTED: i32 = 3;
 
+/// Stdout closed by the reader, as `| head` does: not a failure.
+#[derive(Debug)]
+struct StdoutClosed;
+
+impl std::fmt::Display for StdoutClosed {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("stdout closed")
+    }
+}
+
+impl std::error::Error for StdoutClosed {}
+
+fn stdout_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        StdoutClosed.into()
+    } else {
+        anyhow::Error::new(e).context("write to stdout")
+    }
+}
+
+/// `println!` panics when stdout is closed.
+macro_rules! out {
+    ($($arg:tt)*) => {
+        writeln!(std::io::stdout(), $($arg)*).map_err(stdout_error)?
+    };
+}
+
 #[derive(Parser)]
 #[command(
     name = "maintainer-mode",
@@ -121,7 +148,7 @@ struct Cli {
     history_since: chrono::NaiveDate,
     #[arg(long, global = true)]
     json: bool,
-    /// The server that the query, export, submit and login commands use.
+    /// The server that the client commands use.
     #[arg(
         long,
         global = true,
@@ -432,10 +459,7 @@ async fn public_list(server: &str, file: Option<&std::path::Path>) -> Result<rep
             let status = resp.status();
             if !status.is_success() {
                 let body: Value = resp.json().await.unwrap_or(Value::Null);
-                bail!(
-                    "{url}: {status}: {}",
-                    body["error"].as_str().unwrap_or("no reason given")
-                );
+                return Err(api_error(&url, status, &body));
             }
             resp.bytes().await?.to_vec()
         }
@@ -526,13 +550,10 @@ async fn submit(
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        bail!(
-            "{url}: {status}: {}",
-            body["error"].as_str().unwrap_or("no reason given")
-        );
+        return Err(api_error(&url, status, &body));
     }
     print_omitted(&report);
-    println!("{body}");
+    out!("{body}");
     Ok(())
 }
 
@@ -563,15 +584,20 @@ fn save_token(token: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// The error of a server answer that is not a success, with its `error`.
+fn api_error(url: &str, status: reqwest::StatusCode, body: &Value) -> anyhow::Error {
+    anyhow::anyhow!(
+        "{url}: {status}: {}",
+        body["error"].as_str().unwrap_or("no reason given")
+    )
+}
+
 async fn api_post(url: &str, body: &Value) -> Result<(reqwest::StatusCode, Value)> {
     let resp = github::http().post(url).json(body).send().await?;
     let status = resp.status();
     let body: Value = resp.json().await.unwrap_or(Value::Null);
     if !status.is_success() {
-        bail!(
-            "{url}: {status}: {}",
-            body["error"].as_str().unwrap_or("no reason given")
-        );
+        return Err(api_error(url, status, &body));
     }
     Ok((status, body))
 }
@@ -645,8 +671,7 @@ pub async fn refresh_member(app: &App, login: &str, token: &str) -> Result<()> {
 
 async fn settle(app: &App, client: &mut github::Client) -> Result<usize> {
     app.recompute()?;
-    let n = github::settle_mergeable(&app.store, client, &app.merge_candidates()).await?;
-    Ok(n)
+    github::settle_mergeable(&app.store, client, &app.merge_candidates()).await
 }
 
 /// About ten minutes of walking per pass; the full walk back to 2020 takes
@@ -703,6 +728,11 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             Ok(0) => {}
             Ok(n) => tracing::info!("{n} expired package sets deleted"),
             Err(e) => tracing::warn!("package sets: {e:#}"),
+        }
+        match app.store.purge_sessions() {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("{n} expired sessions deleted"),
+            Err(e) => tracing::warn!("sessions: {e:#}"),
         }
         match app
             .store
@@ -830,10 +860,7 @@ async fn fetch(server: &str, path: &str) -> Result<Value> {
     let status = resp.status();
     if !status.is_success() {
         let v: Value = resp.json().await.unwrap_or_default();
-        bail!(
-            "{url}: {status}: {}",
-            v["error"].as_str().unwrap_or("no message")
-        );
+        return Err(api_error(&url, status, &v));
     }
     Ok(resp.json().await?)
 }
@@ -844,33 +871,6 @@ fn query(pairs: &[(&str, Option<&str>)]) -> String {
         .filter_map(|(k, v)| v.map(|v| format!("{k}={}", github::urlencode(v))))
         .collect();
     q.join("&")
-}
-
-/// Stdout closed by the reader, as `| head` does: not a failure.
-#[derive(Debug)]
-struct StdoutClosed;
-
-impl std::fmt::Display for StdoutClosed {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str("stdout closed")
-    }
-}
-
-impl std::error::Error for StdoutClosed {}
-
-fn stdout_error(e: std::io::Error) -> anyhow::Error {
-    if e.kind() == std::io::ErrorKind::BrokenPipe {
-        StdoutClosed.into()
-    } else {
-        anyhow::Error::new(e).context("write to stdout")
-    }
-}
-
-/// `println!` panics when stdout is closed.
-macro_rules! out {
-    ($($arg:tt)*) => {
-        writeln!(std::io::stdout(), $($arg)*).map_err(stdout_error)?
-    };
 }
 
 fn print_entries(v: &Value) -> Result<()> {
@@ -1154,12 +1154,15 @@ async fn run(cli: Cli) -> Result<i32> {
             limit,
             cursor,
         } => {
-            let mut path = format!("/api/v1/prs?queue={queue}&limit={limit}");
-            for (k, v) in [("section", section), ("login", login), ("cursor", cursor)] {
-                if let Some(v) = v {
-                    path.push_str(&format!("&{k}={}", github::urlencode(&v)));
-                }
-            }
+            let path = format!(
+                "/api/v1/prs?limit={limit}&{}",
+                query(&[
+                    ("queue", Some(&queue)),
+                    ("section", section.as_deref()),
+                    ("login", login.as_deref()),
+                    ("cursor", cursor.as_deref()),
+                ])
+            );
             let v = fetch(&cli.server, &path).await?;
             if cli.json {
                 out!("{v}");
@@ -1541,7 +1544,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     std::fs::write(&o, text).with_context(|| format!("write {}", o.display()))?;
                     print_omitted(&r);
                 }
-                None => println!("{text}"),
+                None => out!("{text}"),
             }
             Ok(0)
         }
