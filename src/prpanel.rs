@@ -300,7 +300,7 @@ pub(crate) enum Level {
     Warn,
 }
 
-/// What stops or slows a merge, the hard stops first. `html` is safe HTML.
+/// What stops or slows a merge, the hard stops first, each as HTML.
 pub(crate) fn blockers(pr: &Pr, rebuilds: &[Rebuild]) -> Vec<(Level, String)> {
     let mut out = Vec::new();
     if pr.state == "MERGED" {
@@ -1031,10 +1031,8 @@ fn people_block(c: &Ctx) -> String {
     let a = if approvals.is_empty() {
         "<span class=\"color-fg-muted\">none on the current head</span>".to_string()
     } else {
-        let mut seen = BTreeSet::new();
         approvals
             .iter()
-            .filter(|(l, _)| seen.insert(l.to_lowercase()))
             .map(|(l, _)| {
                 let mut tags = String::new();
                 if maintainers.iter().any(|m| m.eq_ignore_ascii_case(l))
@@ -1095,10 +1093,7 @@ fn security_block(c: &Ctx) -> String {
         text.push_str(b);
     }
     let named = cves(&text);
-    let label =
-        c.pr.labels
-            .iter()
-            .any(|l| l.starts_with("1.severity: security"));
+    let label = c.pr.labels.iter().any(|l| l == crate::committer::SECURITY);
     let pkgs: Vec<&str> = packages(c).collect();
     let tracked: Vec<(&str, &crate::health::Advisory)> = pkgs
         .iter()

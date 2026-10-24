@@ -317,7 +317,7 @@ pub(crate) const CONFLICTS: [&str; 1] = ["hide"];
 /// How a person narrows and orders a review list. Each field is `None` for
 /// "any", and an unknown value counts as `None`: the API checks the values
 /// before.
-#[derive(Debug, Default, Clone, Deserialize)]
+#[derive(Debug, Default, Clone)]
 pub(crate) struct Opts {
     pub sort: Option<String>,
     pub checks: Option<String>,
@@ -513,8 +513,7 @@ fn bases<'a>(list: &[&'a Entry]) -> Vec<&'a str> {
 
 /// A safe place to go back to after a form: a path of this site.
 pub(crate) fn back_to(s: Option<&str>) -> &str {
-    s.filter(|b| b.starts_with('/') && !b.starts_with("//") && !b.contains('\\'))
-        .unwrap_or("/review")
+    s.filter(|b| crate::web::local_path(b)).unwrap_or("/review")
 }
 
 #[derive(Deserialize)]
@@ -690,6 +689,12 @@ mod tests {
         assert_eq!(back_to(Some("//evil.example")), "/review");
         assert_eq!(back_to(Some("https://evil.example")), "/review");
         assert_eq!(back_to(Some("/\\evil.example")), "/review");
+        assert_eq!(back_to(Some("/\n")), "/review");
+        assert_eq!(back_to(Some("/\t/evil.example")), "/review");
+        assert_eq!(
+            back_to(Some("/review?q=a%20b&sort=new")),
+            "/review?q=a%20b&sort=new"
+        );
         assert_eq!(back_to(None), "/review");
     }
 
