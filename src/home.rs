@@ -106,7 +106,11 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
         "Packages that need help",
         Some(("/packages", "search all")),
         &if help.is_empty() {
-            empty("The health data is not read yet.")
+            empty(if app.health.read().unwrap().tracker_at.is_none() {
+                "The health data is not read yet."
+            } else {
+                "None right now."
+            })
         } else {
             subject_rows(&help)
         },

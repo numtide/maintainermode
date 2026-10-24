@@ -15,7 +15,7 @@ const DONE: &str = "welcome_done";
 const SEEN: &str = "welcome_at";
 const INTRO_COOKIE: &str = "intro";
 
-pub const CONTRIBUTING: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
+use crate::web::CONTRIBUTING;
 pub(crate) const MAINTAINERS_README: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/maintainers/README.md";
 const GUIDES: [(&str, &str, &str); 5] = [
@@ -138,7 +138,6 @@ struct Facts {
     queue: usize,
     reviewed: usize,
     feed: bool,
-    inbox: bool,
     system: bool,
     actions: bool,
     llm: bool,
@@ -179,7 +178,6 @@ impl Facts {
             queue: crate::mine::for_you(app, &s, login).len(),
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
             feed: app.store.feed_token(login).ok().flatten().is_some(),
-            inbox: true,
             system: !app.store.sets(login).unwrap_or_default().is_empty(),
             actions: ["review_repo", "update_repo", "nixpkgs_fork"]
                 .iter()
@@ -251,18 +249,11 @@ fn checklist(f: &Facts) -> String {
             f.queue, f.reviewed
         ),
     ));
-    let inbox = if f.inbox {
-        " Your inbox on this site shows the same news."
-    } else {
-        ""
-    };
     out.push_str(&step(
         mark(f.feed),
         "Notifications",
-        &format!(
-            "Make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>. It tells you about new pull requests, merges, \
-             issues, advisories and releases of what you watch.{inbox}"
-        ),
+        "Make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>. It tells you about new pull requests, merges, \
+         issues, advisories and releases of what you watch. Your inbox on this site shows the same news.",
     ));
     out.push_str(&step(
         mark(f.system),
@@ -381,7 +372,6 @@ mod tests {
             queue: 0,
             reviewed: 0,
             feed: false,
-            inbox: false,
             system: false,
             actions: false,
             llm: false,
@@ -394,7 +384,6 @@ mod tests {
         assert!(html.contains("/review?tab=unowned"));
         assert!(html.contains(MAINTAINERS_README));
         assert!(!html.contains("/me/watch/maintained"));
-        assert!(!html.contains("inbox"));
         for (name, url, _) in GUIDES {
             assert!(html.contains(url), "{name} is missing");
         }
@@ -405,13 +394,11 @@ mod tests {
         let f = Facts {
             maintained: 3,
             maintained_watched: 1,
-            inbox: true,
             ..facts()
         };
         let html = checklist(&f);
         assert!(html.contains("/packages?filter=maintain"));
         assert!(html.contains("/me/watch/maintained"));
-        assert!(html.contains("inbox"));
         let all = Facts {
             maintained_watched: 3,
             ..f
@@ -423,7 +410,7 @@ mod tests {
     fn the_checklist_reads_the_state_of_the_login() {
         let app = crate::sets::tests::app(&["hello"]);
         let f = Facts::of(&app, "alice");
-        assert!(f.index_ready && !f.feed && !f.llm && !f.actions && f.inbox);
+        assert!(f.index_ready && !f.feed && !f.llm && !f.actions);
         app.store.set_feed_token("alice", "t").unwrap();
         app.store.watch("alice", "pkg:hello").unwrap();
         app.store

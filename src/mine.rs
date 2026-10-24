@@ -131,7 +131,7 @@ impl Why {
             if on {
                 let _ = write!(
                     out,
-                    " <span class=\"Label Label--accent why\">{} {text}</span>",
+                    " <span class=\"Label Label--accent\">{} {text}</span>",
                     icon(svg)
                 );
             }
@@ -472,7 +472,7 @@ pub(crate) fn hosts_html(hosts: &[(String, String)]) -> String {
         n => format!(" and {n} more"),
     };
     format!(
-        " <span class=\"f6 color-fg-muted hosts\">on {}{more}</span>",
+        " <span class=\"f6 color-fg-muted\">on {}{more}</span>",
         links.join(", ")
     )
 }
@@ -509,7 +509,7 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
         String::new()
     } else {
         format!(
-            "<div class=\"callout step mb-3\">{} <a class=\"text-bold\" href=\"{UPLOAD}\">Upload the packages of your machines</a> \
+            "<div class=\"callout mb-3\">{} <a class=\"text-bold\" href=\"{UPLOAD}\">Upload the packages of your machines</a> \
              <span class=\"color-fg-muted\">to see them first here.</span></div>",
             icon(octicon!("upload"))
         )
@@ -599,7 +599,7 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> String {
         })
         .collect();
     format!(
-        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3 outputs-nav\" aria-label=\"Outputs of {}\">\
+        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"Outputs of {}\">\
          <span class=\"f6 color-fg-muted\">{} Where it runs:</span>{chips}</nav>",
         esc(set),
         icon(octicon!("device-desktop"))

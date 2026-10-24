@@ -13,7 +13,7 @@ use crate::ui::{Page, Section, Tab, empty, pager, section};
 use crate::web::{Shared, esc, octicon, review_bucket, review_rows, watched_of};
 
 pub(crate) const PAGE: usize = 50;
-const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
+use crate::web::NIXPKGS;
 
 pub(crate) const TABS: [(&str, &str); 6] = [
     ("foryou", "For you"),

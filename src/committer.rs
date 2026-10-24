@@ -24,7 +24,7 @@ pub const SECURITY: &str = "1.severity: security";
 const PREVIEW: usize = 5;
 /// Rows of "Ready to merge" on the first page; later pages hold `review::PAGE`.
 const FIRST: usize = 20;
-const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
+use crate::web::CONTRIBUTING as GUIDE;
 
 /// Logins are kept in lower case: `meta.maintainers` and GitHub disagree on case.
 #[derive(Debug, Default)]
