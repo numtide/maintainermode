@@ -31,8 +31,9 @@ pub fn routes() -> Router<Shared> {
         )
 }
 
-/// Every answer under /me and /inbox, a redirect or an error too, is for
-/// one person. So is /packages with a session: its filters are private.
+/// Every answer for one person, a redirect or an error too: /me, /inbox,
+/// /needs, the private API, the CLI login, and /packages with a session,
+/// whose filters are private.
 pub async fn no_store(req: Request, next: Next) -> Response {
     let path = req.uri().path();
     let private = path == "/me"

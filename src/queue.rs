@@ -37,7 +37,7 @@ pub struct Queues {
 }
 
 /// The label the nixpkgs bot puts on the pull request of a new contributor.
-pub const FIRST_LABEL: &str = "12.first-time contribution";
+const FIRST_LABEL: &str = "12.first-time contribution";
 
 pub fn is_first_contribution(pr: &Pr) -> bool {
     matches!(

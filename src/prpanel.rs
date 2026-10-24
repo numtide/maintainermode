@@ -12,9 +12,9 @@ use crate::committer::Committers;
 use crate::health::{Health, Hydra, Last};
 use crate::model::Pr;
 use crate::prpage::{File, Touched, ci_text, github_url};
-use crate::web::{ago, esc, icon, octicon};
+use crate::web::{ago, esc, icon, octicon, people};
 
-const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
+use crate::web::NIXPKGS;
 const MASS: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#changes-causing-mass-rebuilds";
 /// nixpkgs asks to consider staging from this many rebuilds on.
@@ -504,7 +504,7 @@ pub(crate) fn diff_checks(kind: Kind, files: &[File]) -> Vec<Check> {
 }
 
 /// The facts the index reads from master for one package.
-pub(crate) fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
+fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
     let mut out = Vec::new();
     let name = format!("<code>{}</code>", esc(attr));
     match crate::hygiene::gaps(attr, p) {
@@ -620,14 +620,6 @@ pub(crate) struct Ctx<'a> {
     pub buttons: String,
     /// Buttons another feature adds at the end of the actions row, like Next.
     pub extra_actions: String,
-}
-
-fn people(logins: &[String]) -> String {
-    logins
-        .iter()
-        .map(|l| format!("<a href=\"/u/{0}\">{0}</a>", esc(l)))
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// A long error, like a failed connection with its URL, shows as a short

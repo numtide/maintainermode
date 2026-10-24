@@ -115,11 +115,13 @@ const FLAKE_PACKAGES: usize = 200;
 /// A link to the source of a `github:` reference.
 fn flake_href(reference: &str) -> Option<String> {
     let rest = reference.strip_prefix("github:")?;
+    let rest = rest.split(['?', '#']).next()?;
     let mut parts = rest.split('/');
     let (owner, repo) = (parts.next()?, parts.next()?);
     let mut url = format!("https://github.com/{owner}/{repo}");
-    if let Some(branch) = parts.next() {
-        let _ = write!(url, "/tree/{branch}");
+    let reference: Vec<&str> = parts.collect();
+    if !reference.is_empty() {
+        let _ = write!(url, "/tree/{}", reference.join("/"));
     }
     Some(url)
 }
@@ -534,7 +536,7 @@ fn open_row(p: &Pr, now: DateTime<Utc>) -> String {
     if waiting(p, now) {
         badges.push(badge(
             Tone::Attention,
-            &format!("waiting {}", ago(p.created_at)),
+            &format!("waiting {}", crate::web::age_words(p.created_at)),
         ));
     }
     if p.mergeable == "CONFLICTING" {
@@ -829,6 +831,23 @@ async fn page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flake_reference_links_to_its_source() {
+        assert_eq!(
+            flake_href("github:o/r").as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(
+            flake_href("github:o/r?dir=x").as_deref(),
+            Some("https://github.com/o/r")
+        );
+        assert_eq!(
+            flake_href("github:o/r/feat/x").as_deref(),
+            Some("https://github.com/o/r/tree/feat/x")
+        );
+        assert_eq!(flake_href("path:/x"), None);
+    }
     use crate::ledger::tests::{pr, review, t};
 
     #[test]

@@ -1,5 +1,6 @@
 //! What keeps the pages small and cheap to load again: the icon sprite,
-//! style sheets under content-hash names, and `ETag`s on public pages.
+//! style sheets and the script under content-hash names, and `ETag`s on
+//! public pages.
 
 use axum::Router;
 use axum::extract::{Path, Request};
@@ -60,12 +61,12 @@ pub(crate) fn scripts() -> String {
 }
 
 pub(crate) fn routes() -> Router<Shared> {
-    Router::new().route("/static/:file", get(stylesheet))
+    Router::new().route("/static/:file", get(static_file))
 }
 
 /// A name carries the hash of its content, so a browser may keep it for
 /// a year: new content gets a new name.
-async fn stylesheet(Path(file): Path<String>) -> Response {
+async fn static_file(Path(file): Path<String>) -> Response {
     match [&*PRIMER, &*CLUB, &*KEYS]
         .into_iter()
         .find(|a| a.path == file)

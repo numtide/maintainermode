@@ -443,6 +443,15 @@ pub(crate) struct Kind {
 }
 
 impl Kind {
+    /// The icon of a pull request in GitHub's `state`: OPEN, CLOSED or MERGED.
+    pub(crate) fn of_pr(state: &str) -> Kind {
+        match state {
+            "MERGED" => Kind::PR_MERGED,
+            "CLOSED" => Kind::PR_CLOSED,
+            _ => Kind::PR_OPEN,
+        }
+    }
+
     pub(crate) const PR_OPEN: Kind = Kind {
         svg: octicon!("git-pull-request"),
         class: "color-fg-open",

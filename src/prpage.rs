@@ -30,7 +30,7 @@ use crate::web::{App, Shared, Snapshot, ago, esc, icon, octicon};
 
 const PULL: &str = "https://github.com/NixOS/nixpkgs/pull/";
 const API: &str = "https://api.github.com";
-const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
+use crate::web::NIXPKGS;
 /// GitHub's REST API serves at most 3000 files of a pull request; a review
 /// page needs far fewer.
 const FILE_CAP: usize = 100;
@@ -66,7 +66,7 @@ pub(crate) fn github_url(n: u64) -> String {
 }
 
 /// The small GitHub mark that sits next to a pull request title.
-pub(crate) fn github_icon(n: u64) -> String {
+fn github_icon(n: u64) -> String {
     format!(
         " <a class=\"color-fg-muted ml-1\" href=\"{}\" title=\"Open on GitHub\" aria-label=\"Open #{n} on GitHub\">{}</a>",
         github_url(n),
@@ -1110,11 +1110,7 @@ fn people(logins: &[String]) -> String {
     if logins.is_empty() {
         return "<span class=\"color-fg-muted\">none</span>".into();
     }
-    logins
-        .iter()
-        .map(|l| format!("<a href=\"/u/{0}\">{0}</a>", esc(l)))
-        .collect::<Vec<_>>()
-        .join(", ")
+    crate::web::people(logins)
 }
 
 fn about(pr: &Pr) -> String {

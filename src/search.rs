@@ -21,7 +21,7 @@ use crate::web::{App, Shared, Snapshot, esc, icon, octicon};
 const PEOPLE: usize = 20;
 const PRS: usize = 30;
 /// Shorter words match too many pull request titles to help.
-const PR_WORDS: usize = 3;
+const PR_MIN_CHARS: usize = 3;
 
 pub fn routes() -> Router<Shared> {
     Router::new().route("/search", get(page))
@@ -122,7 +122,7 @@ pub(crate) fn at_word(text: &str, ql: &str) -> bool {
 
 /// Open ones first, then the most recently updated.
 fn prs(s: &Snapshot, ql: &str) -> Vec<Pr> {
-    if ql.chars().count() < PR_WORDS {
+    if ql.chars().count() < PR_MIN_CHARS {
         return Vec::new();
     }
     let mut out: Vec<&crate::model::Pr> = s
@@ -287,11 +287,7 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
             .prs
             .iter()
             .map(|p| {
-                let kind = match p.state.as_str() {
-                    "MERGED" => Kind::PR_MERGED,
-                    "CLOSED" => Kind::PR_CLOSED,
-                    _ => Kind::PR_OPEN,
-                };
+                let kind = Kind::of_pr(&p.state);
                 let draft = if p.draft { " · draft" } else { "" };
                 item_row(
                     Some(kind),

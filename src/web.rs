@@ -314,11 +314,6 @@ pub(crate) fn ago(t: DateTime<Utc>) -> String {
 pub(crate) const CONTRIBUTING: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md";
 
-/// Maintainer Mode finds the work; these say how nixpkgs wants it done.
-pub(crate) fn nixpkgs_guides() -> String {
-    guide_box()
-}
-
 pub(crate) fn ci_label(e: &Entry) -> String {
     ci_icon(e.ci.as_deref())
 }
@@ -349,7 +344,7 @@ pub(crate) fn person_link(login: &str) -> String {
     )
 }
 
-fn people(logins: &[String]) -> String {
+pub(crate) fn people(logins: &[String]) -> String {
     logins
         .iter()
         .map(|l| person_link(l))
@@ -359,18 +354,7 @@ fn people(logins: &[String]) -> String {
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
 pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
-    rows(entries, act, false, |_| Default::default())
-}
-
-/// As [`entry_rows`], with the age as the wait when `waiting`; `extra` gives each row HTML
-/// under its meta line and after its buttons.
-pub(crate) fn review_rows(
-    entries: &[&Entry],
-    act: crate::actions::Act,
-    waiting: bool,
-    extra: impl Fn(&Entry) -> (String, String),
-) -> String {
-    rows(entries, act, waiting, extra)
+    review_rows(entries, act, false, |_| Default::default())
 }
 
 /// "11 months", "3 weeks": for a sentence, where `ago` is for a column.
@@ -386,7 +370,9 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
-fn rows(
+/// As [`entry_rows`], with the age as the wait when `waiting`; `extra`
+/// gives each row HTML under its meta line and after its buttons.
+pub(crate) fn review_rows(
     entries: &[&Entry],
     act: crate::actions::Act,
     waiting: bool,
@@ -448,8 +434,6 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
     }
 }
 
-/// `own` holds the subscription keys of `viewer`, and is `Some` only when
-/// the person asks for their own queue: subscriptions and tags are private.
 /// What makes a pull request "for you": an area of the person (what they
 /// maintain, own, changed or tagged), or what they watch.
 pub(crate) struct Interest<'a> {
@@ -703,7 +687,8 @@ async fn login(State(app): State<Shared>, Query(q): Query<LoginQuery>) -> Respon
 
 #[derive(Deserialize)]
 struct Callback {
-    code: String,
+    /// Missing when the person cancels on GitHub.
+    code: Option<String>,
     state: String,
 }
 
@@ -718,7 +703,10 @@ async fn callback(
     if cookie(&headers, "oauth_state").as_deref() != Some(cb.state.as_str()) {
         return (StatusCode::BAD_REQUEST, "state mismatch, try again").into_response();
     }
-    let (login, token) = match oauth.exchange(&cb.code).await {
+    let Some(code) = cb.code.as_deref() else {
+        return Redirect::to("/").into_response();
+    };
+    let (login, token) = match oauth.exchange(code).await {
         Ok(v) => v,
         Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
     };
@@ -837,11 +825,11 @@ pub fn load_health(store: &Store) -> crate::health::Health {
         .unwrap_or_default()
 }
 
-const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
+pub(crate) const NIXPKGS: &str = "https://github.com/NixOS/nixpkgs/blob/master";
 
 /// The rules below say what this site shows; how to work on
 /// nixpkgs is nixpkgs' own guide.
-fn guide_box() -> String {
+pub(crate) fn nixpkgs_guides() -> String {
     let links = [
         (
             "CONTRIBUTING.md",

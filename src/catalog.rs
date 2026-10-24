@@ -261,7 +261,7 @@ pub(crate) fn attached<'a>(
 /// Advisories whose nixpkgs issue is still open, or not synced yet. The sync
 /// keeps only issues open or updated in its window, so once every open issue
 /// is read, an issue it does not have closed long ago.
-pub(crate) fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
+fn open_advisories<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
     h.advisories
         .get(attr)
         .into_iter()
@@ -289,7 +289,7 @@ pub(crate) fn judged<'a>(
 }
 
 /// The open advisories that can affect master: affected, or range unknown.
-pub(crate) fn affecting<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
+fn affecting<'a>(h: &'a Health, s: &Snapshot, attr: &str) -> Vec<&'a Advisory> {
     judged(h, s, attr)
         .into_iter()
         .filter(|(_, v)| v.open())
@@ -320,8 +320,8 @@ pub(crate) fn upstream<'a>(
     upstream_from(s, index, h, attr).map(|(v, _)| v)
 }
 
-/// The text of the upstream badge, the same on every page.
-pub(crate) fn upstream_badge(version: &str) -> String {
+/// The text of the upstream badge of a row.
+fn upstream_badge(version: &str) -> String {
     format!(
         "<span title=\"Upstream released a newer version than nixpkgs has\">{} available</span>",
         esc(version)
@@ -512,7 +512,8 @@ pub(crate) struct Flags {
     pub(crate) open_issues: usize,
     /// Packages only.
     pub(crate) score: Option<Score>,
-    /// The last Hydra build failed, as far as a page view learned it.
+    /// A jobset's last Hydra build failed. Only the views of your packages
+    /// set it.
     pub(crate) build_failed: bool,
 }
 
@@ -640,11 +641,7 @@ impl Flags {
 
 pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
     use crate::ui::Kind;
-    let kind = match p.state.as_str() {
-        "MERGED" => Kind::PR_MERGED,
-        "CLOSED" => Kind::PR_CLOSED,
-        _ => Kind::PR_OPEN,
-    };
+    let kind = Kind::of_pr(&p.state);
     let ci = match p.ci.as_deref() {
         Some("SUCCESS") if p.is_open() => " · checks pass",
         Some("FAILURE" | "ERROR") if p.is_open() => " · checks fail",
@@ -822,7 +819,6 @@ fn watching(app: &crate::web::App, viewer: Option<&str>, subject: &Subject) -> O
     )
 }
 
-/// The last build of a package on master and on each channel's jobset.
 /// The last build of a package on master and on each channel's jobset,
 /// and whether the job is one Hydra no longer builds.
 async fn channel_builds(
@@ -1178,7 +1174,7 @@ fn issue_link(a: &Advisory) -> String {
 }
 
 /// What a verdict asks of a maintainer, as one line.
-pub(crate) fn verdict_html(a: &Advisory, v: &Verdict, master: &str) -> String {
+fn verdict_html(a: &Advisory, v: &Verdict, master: &str) -> String {
     match v {
         Verdict::Affects => format!(
             "<span class=\"color-fg-danger\">affects {}</span>",

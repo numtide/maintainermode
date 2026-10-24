@@ -387,8 +387,15 @@ pub(crate) fn body(app: &App) -> String {
             minutes(n["walk_every_seconds"].as_i64().unwrap_or(600)),
             if healthy {
                 "the notifications poller is healthy, so the walk is only the safety net"
+                    .to_string()
             } else {
-                "it runs every 30 minutes while the notifications poller is healthy"
+                format!(
+                    "it runs every {} while the notifications poller is healthy",
+                    minutes(
+                        crate::notifications::WALK_EVERY_WHEN_HEALTHY
+                            .max(n["walk_every_seconds"].as_i64().unwrap_or(600))
+                    )
+                )
             }
         ),
     ));
@@ -568,12 +575,13 @@ pub(crate) fn body(app: &App) -> String {
             "<p>A bot account watches nixpkgs, and GitHub notifies it of each issue and pull request that changes. \
              This server reads those notifications every {}, and reads each changed item again at once. \
              A review, push or merge on GitHub shows here in <strong>about a minute</strong>{}. \
-             The full walk runs every 30 minutes, for anything the notifications miss.</p>",
+             The full walk runs every {}, for anything the notifications miss.</p>",
             minutes(n["interval_seconds"].as_i64().unwrap_or(60)),
             n["average_delay_seconds"]
                 .as_i64()
                 .map(|d| format!(" ({} on average in the last hour)", minutes(d)))
-                .unwrap_or_default()
+                .unwrap_or_default(),
+            minutes(n["walk_every_seconds"].as_i64().unwrap_or(1800))
         )
     } else if on {
         format!(
