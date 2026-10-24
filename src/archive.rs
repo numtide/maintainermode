@@ -782,6 +782,19 @@ struct Pass<'a> {
     remaining: i64,
 }
 
+/// GitHub drops an item at the boundary when it pages a filtered timeline
+/// from a small first page (a page of 10 lost a commit of NixOS/nixpkgs
+/// #575334). A connection whose first page was smaller than a full page is
+/// read again from the start in full pages.
+fn restart_small_page(conn: &mut Value) {
+    let more = conn["pageInfo"]["hasNextPage"].as_bool() == Some(true);
+    let small = conn["nodes"].as_array().is_some_and(|n| n.len() < 100);
+    if more && small {
+        conn["nodes"] = json!([]);
+        conn["pageInfo"]["endCursor"] = Value::Null;
+    }
+}
+
 impl Pass<'_> {
     async fn query(&mut self, query: &str, vars: Value, allowed: &[&str]) -> Result<Value> {
         let data = self
@@ -917,6 +930,7 @@ impl Pass<'_> {
         let typename = item["__typename"].as_str().unwrap_or("").to_string();
         for more in more_of(&typename) {
             let mut conn = item[more.field].take();
+            restart_small_page(&mut conn);
             self.rest(&id, &more, &mut conn).await?;
             item[more.field] = conn;
         }
@@ -1477,6 +1491,24 @@ mod tests {
     }
 
     #[test]
+    fn a_small_first_page_is_read_again_in_full_pages() {
+        let page = |n: usize, more: bool| {
+            json!({ "totalCount": 23, "pageInfo": { "hasNextPage": more, "endCursor": "c" },
+                    "nodes": vec![json!({}); n] })
+        };
+        let mut small = page(10, true);
+        restart_small_page(&mut small);
+        assert_eq!(small["nodes"], json!([]));
+        assert_eq!(small["pageInfo"]["endCursor"], Value::Null);
+        assert_eq!(small["pageInfo"]["hasNextPage"], true);
+        for mut kept in [page(100, true), page(10, false)] {
+            let before = kept.clone();
+            restart_small_page(&mut kept);
+            assert_eq!(kept, before);
+        }
+    }
+
+    #[test]
     fn queries_name_every_kind() {
         let q = batch_query(&[1, 2], 100, 30);
         assert!(q.contains("n1: issueOrPullRequest(number: 1)"));
@@ -1570,8 +1602,13 @@ mod tests {
         fn answer(&self, query: &str, vars: &Value) -> Value {
             let rate = json!({ "cost": 1, "remaining": 4000 });
             if query.contains("node(id: $id)") {
+                let nodes = if vars["after"].is_null() {
+                    json!([{ "body": "first" }, { "body": "second" }])
+                } else {
+                    json!([{ "body": "second" }])
+                };
                 return json!({ "data": { "rateLimit": rate, "node": { "comments": {
-                    "pageInfo": { "hasNextPage": false }, "nodes": [{ "body": "second" }] } } } });
+                    "pageInfo": { "hasNextPage": false }, "nodes": nodes } } } });
             }
             if query.contains("issueOrPullRequest") {
                 let numbers: Vec<u64> = query
