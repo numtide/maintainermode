@@ -640,6 +640,24 @@ impl Flags {
     }
 }
 
+/// A package, a module or a directory in a list of the API.
+#[derive(Serialize)]
+pub(crate) struct SubjectRow {
+    pub(crate) key: String,
+    pub(crate) name: String,
+    pub(crate) flags: Value,
+}
+
+impl SubjectRow {
+    pub(crate) fn new(sub: &Subject, f: &Flags) -> Self {
+        SubjectRow {
+            key: sub.key(),
+            name: sub.label(),
+            flags: f.json(),
+        }
+    }
+}
+
 pub(crate) fn pr_row(p: &Pr, act: Act) -> Html {
     use crate::ui::Kind;
     let kind = Kind::of_pr(&p.state);
@@ -2657,7 +2675,7 @@ pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
         let index = app.index.read().unwrap();
         contents(&index, &s, &h, path)
             .into_iter()
-            .map(|(sub, f)| json!({ "key": sub.key(), "name": sub.label(), "flags": f.json() }))
+            .map(|(sub, f)| json!(SubjectRow::new(&sub, &f)))
             .collect()
     };
     Some(subject_json(
@@ -2665,6 +2683,15 @@ pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
         &Subject::Area(path.to_string()),
         json!({ "contents": contents }),
     ))
+}
+
+#[derive(Serialize)]
+struct MaintainedRow<'a> {
+    #[serde(flatten)]
+    row: SubjectRow,
+    version: Option<String>,
+    via_team: Option<&'a str>,
+    channels_behind: Vec<&'a str>,
 }
 
 pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
@@ -2691,10 +2718,11 @@ pub(crate) fn maintains_value(app: &crate::web::App, login: &str) -> Value {
                     }
                     _ => vec![],
                 };
-                json!({
-                    "key": sub.key(), "name": sub.label(), "version": version,
-                    "via_team": how, "flags": f.json(),
-                    "channels_behind": behind,
+                json!(MaintainedRow {
+                    row: SubjectRow::new(sub, &f),
+                    version,
+                    via_team: how.as_deref(),
+                    channels_behind: behind,
                 })
             })
             .collect()
@@ -2713,9 +2741,7 @@ pub(crate) fn subject_list(app: &crate::web::App, subjects: &[Subject]) -> Vec<V
     let index = app.index.read().unwrap();
     subjects
         .iter()
-        .map(|sub| {
-            json!({ "key": sub.key(), "name": sub.label(), "flags": Flags::of(&s, &index, &h, sub).json() })
-        })
+        .map(|sub| json!(SubjectRow::new(sub, &Flags::of(&s, &index, &h, sub))))
         .collect()
 }
 

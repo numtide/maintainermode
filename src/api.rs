@@ -868,7 +868,7 @@ pub(crate) async fn answer(
         "/api/v1/need-help" => {
             let rows: Vec<Value> = crate::home::need_help(app)
                 .iter()
-                .map(|(sub, f)| json!({ "key": sub.key(), "name": sub.label(), "flags": f.json() }))
+                .map(|(sub, f)| json!(crate::catalog::SubjectRow::new(sub, f)))
                 .collect();
             paged(&rows)?
         }

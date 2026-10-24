@@ -777,6 +777,17 @@ pub(crate) fn view(
     }
 }
 
+#[derive(serde::Serialize)]
+struct MineItem<'a> {
+    #[serde(flatten)]
+    row: crate::catalog::SubjectRow,
+    version: Option<String>,
+    machine_version: Option<String>,
+    why: Vec<&'static str>,
+    via_team: Option<&'a str>,
+    outputs: Vec<serde_json::Value>,
+}
+
 /// What [`view`] lists, as JSON: one filter of `/packages` for its owner.
 /// `Filter::All` is the public catalog, so it is not here.
 pub(crate) fn value(
@@ -810,7 +821,7 @@ pub(crate) fn value(
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
     let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
-    let items: Vec<serde_json::Value> = rows
+    let items: Vec<MineItem> = rows
         .iter()
         .map(|r| {
             let why: Vec<&str> = [
@@ -828,16 +839,18 @@ pub(crate) fn value(
                 ),
                 _ => (None, None),
             };
-            serde_json::json!({
-                "key": r.sub.key(),
-                "name": r.sub.label(),
-                "version": version,
-                "machine_version": machine_version,
-                "why": why,
-                "via_team": r.via,
-                "flags": r.flags.json(),
-                "outputs": r.hosts.iter().map(|(set, output)| serde_json::json!({ "set": set, "output": output })).collect::<Vec<_>>(),
-            })
+            MineItem {
+                row: crate::catalog::SubjectRow::new(&r.sub, &r.flags),
+                version,
+                machine_version,
+                why,
+                via_team: r.via.as_deref(),
+                outputs: r
+                    .hosts
+                    .iter()
+                    .map(|(set, output)| serde_json::json!({ "set": set, "output": output }))
+                    .collect(),
+            }
         })
         .collect();
     let mut out = crate::api::page(&items, limit, cursor)?;

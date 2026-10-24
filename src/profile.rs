@@ -422,34 +422,51 @@ fn checks(ci: Option<&str>) -> Option<&'static str> {
     }
 }
 
-pub(crate) fn pr_json(p: &Pr, now: DateTime<Utc>) -> Value {
-    json!({
-        "number": p.number,
-        "title": p.title,
-        "url": p.url,
-        "state": p.state,
-        "base": p.base,
-        "created_at": p.created_at,
-        "merged_at": p.merged_at,
-        "closed_at": p.closed_at,
-        "review": review_state(p),
-        "checks": checks(p.ci.as_deref()),
-        "waiting_for_first_review": p.is_open() && waiting(p, now),
-    })
+/// A pull request on a profile, as the API gives it.
+#[derive(Serialize)]
+pub(crate) struct PrSummary<'a> {
+    number: u64,
+    title: &'a str,
+    url: &'a str,
+    state: &'a str,
+    base: &'a str,
+    created_at: DateTime<Utc>,
+    merged_at: Option<DateTime<Utc>>,
+    closed_at: Option<DateTime<Utc>>,
+    review: ReviewState,
+    checks: Option<&'static str>,
+    waiting_for_first_review: bool,
 }
 
+impl<'a> PrSummary<'a> {
+    pub(crate) fn new(p: &'a Pr, now: DateTime<Utc>) -> Self {
+        PrSummary {
+            number: p.number,
+            title: &p.title,
+            url: &p.url,
+            state: &p.state,
+            base: &p.base,
+            created_at: p.created_at,
+            merged_at: p.merged_at,
+            closed_at: p.closed_at,
+            review: review_state(p),
+            checks: checks(p.ci.as_deref()),
+            waiting_for_first_review: p.is_open() && waiting(p, now),
+        }
+    }
+}
 /// The public profile for the API, beside the review record.
 pub(crate) fn profile_value(app: &App, login: &str) -> Value {
     let s = app.snap();
     let now = Utc::now();
     let f = facts(app, &s, login);
-    let open: Vec<Value> = open_prs(&s.pr_data, login, now)
+    let open: Vec<PrSummary> = open_prs(&s.pr_data, login, now)
         .into_iter()
-        .map(|p| pr_json(p, now))
+        .map(|p| PrSummary::new(p, now))
         .collect();
-    let recent: Vec<Value> = recent_prs(&s.pr_data, login, now)
+    let recent: Vec<PrSummary> = recent_prs(&s.pr_data, login, now)
         .into_iter()
-        .map(|p| pr_json(p, now))
+        .map(|p| PrSummary::new(p, now))
         .collect();
     let areas: Vec<Value> = top_areas(&s.pr_data, login, now)
         .into_iter()
