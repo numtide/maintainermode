@@ -1089,25 +1089,11 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                 return Err("queue=foryou needs login, a session or an MCP token".into());
             }
             private = own;
-            let mut why: std::collections::HashMap<u64, Vec<String>> = Default::default();
-            let entries = match login {
-                Some(l) if own && queue == "foryou" => crate::mine::for_you_why(app, &s, l)
-                    .into_iter()
-                    .map(|(e, w)| {
-                        why.insert(e.number, w);
-                        e
-                    })
-                    .collect(),
-                _ => crate::web::review_bucket(&s, login, None, queue),
-            };
+            let src = crate::review::source(app, &s, login, own, queue);
             let hidden = match login {
                 Some(l) if own => app.store.hidden_prs(l).unwrap_or_default(),
                 _ => Default::default(),
             };
-            let n_hidden = entries
-                .iter()
-                .filter(|e| hidden.contains(&e.number))
-                .count();
             let opts = crate::review::Opts {
                 sort: q.sort.clone(),
                 checks: q.checks.clone(),
@@ -1116,26 +1102,11 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                 base: q.base.clone(),
                 q: q.q.clone(),
             };
-            let entries = opts.apply(
-                entries
-                    .into_iter()
-                    .filter(|e| !hidden.contains(&e.number))
-                    .collect(),
-            );
-            let rows: Vec<Value> = entries
-                .iter()
-                .map(|e| {
-                    let mut v = json!(e);
-                    if let Some(w) = why.get(&e.number) {
-                        v["why"] = json!(w);
-                    }
-                    v
-                })
-                .collect();
-            out = page(&rows, q.limit, q.cursor.as_deref())?;
+            let list = crate::review::ReviewList::new(&src, &hidden, false, &opts);
+            out = page(&list.rows, q.limit, q.cursor.as_deref())?;
             out["login"] = json!(login);
             if own {
-                out["hidden"] = json!(n_hidden);
+                out["hidden"] = json!(list.hidden);
             }
         }
     }
