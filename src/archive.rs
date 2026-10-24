@@ -548,6 +548,25 @@ impl Archive {
         Ok(out)
     }
 
+    /// The open listing is done, and every item it marked is stored or
+    /// failed.
+    pub fn open_complete(&self) -> Result<bool> {
+        if !Listing::Open.done(self)? {
+            return Ok(false);
+        }
+        let mut last = None;
+        for f in FIELDS {
+            last = last.max(self.time(&Listing::Open.keys(f).2)?);
+        }
+        let Some(last) = last else {
+            return Ok(false);
+        };
+        Ok(self.count(
+            "SELECT COUNT(*) FROM due WHERE at <= ?1",
+            &last.to_rfc3339(),
+        )? == 0)
+    }
+
     fn count(&self, sql: &str, arg: &str) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         Ok(conn.query_row(sql, [arg], |r| r.get(0))?)
@@ -609,6 +628,8 @@ impl Archive {
             "top": top,
             "oldest": self.num("cursor")?,
             "complete": done,
+            "open_listed": Listing::Open.done(self)?,
+            "open_complete": self.open_complete()?,
             "percent": top
                 .filter(|t| *t > 0)
                 .map(|t| ((items + none) as f64 * 100.0 / t as f64).min(100.0)),
@@ -691,6 +712,42 @@ fn transient(e: &anyhow::Error) -> bool {
     })
 }
 
+#[derive(Clone, Copy)]
+enum Listing {
+    Recent,
+    Open,
+}
+
+const FIELDS: [&str; 2] = ["pullRequests", "issues"];
+
+impl Listing {
+    /// The meta keys of the cursor, of the start of the listing, and of the
+    /// mark that a finished listing leaves.
+    fn keys(self, field: &str) -> (String, String, String) {
+        match self {
+            Listing::Recent => (
+                format!("list_cursor_{field}"),
+                format!("list_started_{field}"),
+                format!("watermark_{field}"),
+            ),
+            Listing::Open => (
+                format!("open_cursor_{field}"),
+                format!("open_started_{field}"),
+                format!("open_listed_{field}"),
+            ),
+        }
+    }
+
+    fn done(self, a: &Archive) -> Result<bool> {
+        for f in FIELDS {
+            if a.get(&self.keys(f).2)?.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 struct Pass<'a> {
     store: &'a Store,
     a: &'a Archive,
@@ -714,16 +771,13 @@ impl Pass<'_> {
         self.remaining < RESERVE
     }
 
-    /// Reads the numbers of one kind updated since the last listing,
-    /// newest first, and marks the changed ones due. Resumes from its
+    /// Reads the numbers of one kind, newest update first, and marks the
+    /// changed ones due. `Recent` reads the updates since the last listing;
+    /// `Open` reads every open item, once per archive. Resumes from its
     /// cursor after `LIST_PAGES`.
-    async fn list(&mut self, field: &str, now: DateTime<Utc>) -> Result<usize> {
+    async fn list(&mut self, field: &str, listing: Listing, now: DateTime<Utc>) -> Result<usize> {
         let a = self.a;
-        let (cursor_key, started_key, mark_key) = (
-            format!("list_cursor_{field}"),
-            format!("list_started_{field}"),
-            format!("watermark_{field}"),
-        );
+        let (cursor_key, started_key, mark_key) = listing.keys(field);
         let mut cursor = a.get(&cursor_key)?;
         let started = match a.time(&started_key)? {
             Some(t) if cursor.is_some() => t,
@@ -732,15 +786,20 @@ impl Pass<'_> {
                 now
             }
         };
-        let floor = a
-            .time(&mark_key)?
-            .unwrap_or(now - Duration::days(RECENT_DAYS));
+        let (floor, states) = match listing {
+            Listing::Recent => (
+                a.time(&mark_key)?
+                    .unwrap_or(now - Duration::days(RECENT_DAYS)),
+                "",
+            ),
+            Listing::Open => (DateTime::<Utc>::MIN_UTC, "states: OPEN, "),
+        };
         let query = format!(
             "query($owner: String!, $name: String!, $after: String) {{
                rateLimit {{ cost remaining resetAt }}
                repository(owner: $owner, name: $name) {{
                  isPrivate
-                 {field}(first: 100, after: $after, orderBy: {{ field: UPDATED_AT, direction: DESC }}) {{
+                 {field}(first: 100, after: $after, {states}orderBy: {{ field: UPDATED_AT, direction: DESC }}) {{
                    pageInfo {{ hasNextPage endCursor }}
                    nodes {{ number updatedAt }}
                  }}
@@ -793,7 +852,11 @@ impl Pass<'_> {
                     cursor = Some(c);
                 }
                 _ => {
-                    a.set(&mark_key, &(started - Duration::minutes(2)).to_rfc3339())?;
+                    let mark = match listing {
+                        Listing::Recent => started - Duration::minutes(2),
+                        Listing::Open => now,
+                    };
+                    a.set(&mark_key, &mark.to_rfc3339())?;
                     a.delete_key(&cursor_key)?;
                     return Ok(marked);
                 }
@@ -959,14 +1022,19 @@ async fn pass(
         client,
         remaining: i64::MAX,
     };
-    for field in ["pullRequests", "issues"] {
-        p.list(field, now).await?;
+    for field in FIELDS {
+        if a.get(&Listing::Open.keys(field).2)?.is_none() {
+            p.list(field, Listing::Open, now).await?;
+        }
+    }
+    for field in FIELDS {
+        p.list(field, Listing::Recent, now).await?;
     }
     let due = a.due_now(Utc::now(), a.budget)?;
     let mut done = 0;
     p.fetch(&due, &mut done).await?;
     let mut fetched = done;
-    let listed = a.get("watermark_pullRequests")?.is_some() && a.get("watermark_issues")?.is_some();
+    let listed = Listing::Recent.done(a)? && a.open_complete()?;
     let left = a.budget.saturating_sub(due.len());
     if listed && left > 0 && a.get("backfill_done")?.is_none() && !p.low() {
         let Some(top) = a.num("top")? else {
@@ -1300,6 +1368,7 @@ mod tests {
         now: DateTime<Utc>,
         page: usize,
         gone: Vec<u64>,
+        closed: Vec<u64>,
         broken: Mutex<Vec<u64>>,
         bumped: Mutex<Vec<(u64, DateTime<Utc>)>>,
         private: AtomicBool,
@@ -1312,6 +1381,7 @@ mod tests {
                 now: Utc::now(),
                 page,
                 gone: vec![],
+                closed: vec![],
                 broken: Mutex::new(vec![]),
                 bumped: Mutex::new(vec![]),
                 private: AtomicBool::new(false),
@@ -1343,7 +1413,12 @@ mod tests {
                 v["__typename"] = "Issue".into();
             } else {
                 v["__typename"] = "PullRequest".into();
-                v["pullRequestState"] = "OPEN".into();
+                v["pullRequestState"] = if self.closed.contains(&k) {
+                    "CLOSED"
+                } else {
+                    "OPEN"
+                }
+                .into();
                 v["files"] = empty.clone();
                 v["reviews"] = empty;
             }
@@ -1384,6 +1459,7 @@ mod tests {
                 }
                 return out;
             }
+            let open = query.contains("states: OPEN");
             let field = if query.contains("pullRequests(first") {
                 "pullRequests"
             } else {
@@ -1391,6 +1467,7 @@ mod tests {
             };
             let mut all: Vec<u64> = (1..=self.top)
                 .filter(|k| !self.gone.contains(k) && (k.is_multiple_of(5)) == (field == "issues"))
+                .filter(|k| !open || !self.closed.contains(k))
                 .collect();
             all.sort_by_key(|k| std::cmp::Reverse(self.updated(*k)));
             let from: usize = vars["after"].as_str().map_or(0, |c| c.parse().unwrap());
@@ -1506,6 +1583,31 @@ mod tests {
         let a = rig.pass(4).await;
         let v: Value = serde_json::from_str(&a.item(40).unwrap().unwrap().json.unwrap()).unwrap();
         assert_eq!(v["updatedAt"], fake.updated(40));
+        std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn open_items_come_before_the_backfill() {
+        let mut fake = Fake::new(60, 100);
+        fake.closed = (1..=40).collect();
+        let fake = Arc::new(fake);
+        let rig = Rig::new("open", fake.clone()).await;
+        let old = |a: &Archive| (1..30).filter(|k| a.item(*k).unwrap().is_some()).count();
+        let mut passes = 0;
+        loop {
+            let a = rig.pass(10).await;
+            passes += 1;
+            assert!(passes < 10, "the open items are never all stored");
+            let p = a.progress(Utc::now()).unwrap();
+            assert_eq!(p["open_listed"], true);
+            if p["open_complete"] == true {
+                assert!((41..=60).all(|k| a.item(k).unwrap().is_some()));
+                break;
+            }
+            assert_eq!(old(&a), 0, "pass {passes}");
+        }
+        let a = rig.pass(10).await;
+        assert!(old(&a) > 0);
         std::fs::remove_dir_all(&rig.dir).unwrap();
     }
 

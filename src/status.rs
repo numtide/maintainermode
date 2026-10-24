@@ -189,6 +189,13 @@ fn archive_row(a: &Value) -> String {
         (Some(_), None) => parts.push("recent updates first".into()),
         (Some(_), Some(o)) => parts.push(format!("oldest number reached #{o}")),
     }
+    if a["open_complete"].as_bool() == Some(false) {
+        parts.push(if a["open_listed"].as_bool() == Some(true) {
+            "open items listed, not all stored yet".into()
+        } else {
+            "listing the open items".into()
+        });
+    }
     if let Some(p) = a["percent"].as_f64() {
         parts.push(format!("{p:.1} % of the repository"));
     }

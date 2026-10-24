@@ -53,14 +53,20 @@ repository:
 
 1. **Event hints** (nixpkgs only). Read the new events of the event log.
    Each issue or pull request that got an event is due 5 minutes later.
-2. **Recent updates.** List the issues and the pull requests by
+2. **Open items.** Until it is complete once, list every open issue and
+   pull request, 100 numbers per page, at most 20 pages per kind per pass.
+   A number whose `updatedAt` differs from the stored copy becomes due.
+   `/api/v1/sync` gives `archive[].open_listed` when the listing is done,
+   and `archive[].open_complete` when every item it marked is stored or
+   failed.
+3. **Recent updates.** List the issues and the pull requests by
    `updatedAt`, newest first, 100 numbers per page, down to the last
    watermark. On the first pass, the watermark is 30 days ago. A number
    whose `updatedAt` differs from the stored copy becomes due. The listing
    reads at most 20 pages per kind per pass, and continues from its cursor.
-3. **Due items.** Fetch the due numbers, oldest due first.
-4. **History.** When the first listing is complete, use the rest of the
-   budget to walk back from the highest number to #1. The walk skips the
+4. **Due items.** Fetch the due numbers, oldest due first.
+5. **History.** When the first listing of recent updates is complete and
+   every open item is stored, use the rest of the budget to walk back from the highest number to #1. The walk skips the
    numbers that are stored already.
 
 The budget is a fixed number of items per repository per pass
