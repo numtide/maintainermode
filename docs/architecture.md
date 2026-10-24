@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1, B1 and B4 are done.
+Status: A1 to A3, B1 and B4 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -60,16 +60,19 @@ association, checked_at)`, kept by the
    count the items where the projection and the `pr` row differ, and show
    the count on `/state?tab=status`. Done.
 2. **Open items first.** Add an "open" listing to the fetcher, so a new
-   deployment reads every open PR and issue first. `issues_complete`
-   depends on it.
-3. **Due marks.** The poller marks due with no delay and wakes the
-   fetcher. The fetcher triggers `recompute`, at most once every 30 s.
+   deployment reads every open PR and issue first. The archive gives
+   `open_complete`. Done.
+3. **Due marks.** The poller and the event log mark due with no delay
+   and wake the fetcher. Done.
 4. **`pr_live`.** Move `mergeable` and CI out of the PR JSON into
    `pr_live`. The live refresh covers all open PRs, oldest check first.
 5. **Switch.** The projection writes `pr`, `issue` and `history`. Delete
    the sync walk, the history walk and the poller's fetch. Write
    projections only when `updated_at` is newer, so that two writers
-   cannot race.
+   cannot race. `issues_complete` becomes the archive's
+   `open_complete`. A fetch of due items triggers `recompute`, at most
+   once every 30 s. Before the switch, `recompute` reads nothing from the
+   archive, so it is not triggered.
 6. **Prune.** The projection writes to `pr` only open PRs and PRs
    updated in the last 60 days (`WINDOW_DAYS`). `recompute` loads less.
 7. **API and docs.** `/api/v1/sync` shows one fetcher, not three walks.
@@ -96,8 +99,8 @@ association, checked_at)`, kept by the
 ### Risks
 
 - A full fetch of a busy item reads every connection to its end and can
-  get 502 errors. A failed item waits one day today; a due open item must
-  retry sooner.
+  get 502 errors. A due item that fails waits one hour, then one day; an
+  item of the backfill waits one day.
 - The backfill and the live fetches share the App budget. Live items go
   first; the backfill uses only what is left above `RESERVE`.
 

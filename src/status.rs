@@ -213,7 +213,7 @@ fn archive_row(a: &Value) -> String {
     ));
     if let Some(n) = a["failed"].as_i64().filter(|n| *n > 0) {
         parts.push(format!(
-            "<span class=\"color-fg-attention\">{n} items fail; the server tries each again a day later</span>"
+            "<span class=\"color-fg-attention\">{n} items fail; the server tries each again an hour later, then a day later</span>"
         ));
     }
     if let Some(s) = a["shadow"].as_object() {

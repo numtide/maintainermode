@@ -157,6 +157,10 @@ impl Log {
         *self.head.borrow()
     }
 
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.head.subscribe()
+    }
+
     fn writer(&self, now: DateTime<Utc>) -> Result<std::sync::MutexGuard<'_, Writer>> {
         let month = month_of(now);
         let mut w = self.writer.lock().unwrap();

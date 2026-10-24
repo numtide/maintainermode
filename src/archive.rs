@@ -24,10 +24,14 @@ pub(crate) const RESERVE: i64 = 1000;
 /// On the first pass, "recent" reaches this far back.
 const RECENT_DAYS: i64 = 30;
 const LIST_PAGES: usize = 20;
-/// An event makes its item due after this delay, so a burst of events on
-/// one item costs one fetch.
-const HINT_DELAY: i64 = 5;
+/// A due mark wakes the walk after this delay, so a burst of events on one
+/// item costs one fetch.
+const SETTLE: StdDuration = StdDuration::from_secs(10);
 const HINT_BATCH: usize = 5000;
+/// A due item that fails at the smallest size: it changed, and people may
+/// look at it, so it is asked again sooner than an item of the backfill.
+const RETRY_DUE: i64 = 1;
+const RETRY_BACKFILL: i64 = 24;
 /// Items per query, then the first page of comments, timeline items and
 /// files, then the first page of reviews and of the inline comments of each.
 /// GitHub answers 502 after 10 s, so a failed batch is asked again smaller.
@@ -305,6 +309,7 @@ pub struct Archive {
     /// Items fetched per pass.
     pub budget: usize,
     conn: Mutex<Connection>,
+    wake: tokio::sync::Notify,
 }
 
 pub struct Item {
@@ -327,6 +332,7 @@ impl Archive {
             name,
             budget,
             conn: Mutex::new(conn),
+            wake: tokio::sync::Notify::new(),
         })
     }
 
@@ -351,6 +357,7 @@ impl Archive {
             name,
             budget: 0,
             conn: Mutex::new(conn),
+            wake: tokio::sync::Notify::new(),
         })
     }
 
@@ -490,6 +497,18 @@ impl Archive {
         Ok(())
     }
 
+    /// Marks numbers due now and wakes the walk.
+    pub fn mark(&self, numbers: &[u64]) -> Result<()> {
+        let now = Utc::now();
+        for n in numbers {
+            self.due(*n, now)?;
+        }
+        if !numbers.is_empty() {
+            self.wake.notify_one();
+        }
+        Ok(())
+    }
+
     /// Moves a number to `at`, also when it was due earlier.
     fn put_off(&self, number: u64, at: DateTime<Utc>) -> Result<()> {
         let conn = self.conn.lock().unwrap();
@@ -498,6 +517,14 @@ impl Archive {
             params![number as i64, at.to_rfc3339()],
         )?;
         Ok(())
+    }
+
+    fn has_failed(&self, number: u64) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let found = conn
+            .prepare("SELECT 1 FROM failed WHERE number = ?1")?
+            .exists([number as i64])?;
+        Ok(found)
     }
 
     fn fail(&self, number: u64, error: &str, now: DateTime<Utc>) -> Result<()> {
@@ -936,7 +963,7 @@ impl Pass<'_> {
 
     /// Fetches `numbers` in order. `done` counts the ones handled, stored or
     /// put off, so the caller can move its cursor even after an error.
-    async fn fetch(&mut self, numbers: &[u64], done: &mut usize) -> Result<()> {
+    async fn fetch(&mut self, numbers: &[u64], done: &mut usize, retry_hours: i64) -> Result<()> {
         let (mut level, mut calm) = (0, 0);
         while *done < numbers.len() && !self.low() {
             let (size, n, r) = LEVELS[level];
@@ -959,14 +986,19 @@ impl Pass<'_> {
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "archive {} #{}: {e:#}; next try in a day",
+                        "archive {} #{}: {e:#}; next try in {retry_hours} h or more",
                         self.a.repo,
                         chunk[0]
                     );
                     let error = format!("{e:#}");
                     for k in chunk {
+                        let hours = if self.a.has_failed(*k)? {
+                            RETRY_BACKFILL
+                        } else {
+                            retry_hours
+                        };
                         self.a.fail(*k, &error, Utc::now())?;
-                        self.a.put_off(*k, Utc::now() + Duration::days(1))?;
+                        self.a.put_off(*k, Utc::now() + Duration::hours(hours))?;
                     }
                     *done += chunk.len();
                 }
@@ -994,7 +1026,7 @@ fn hints(log: &crate::events::Log, a: &Archive, now: DateTime<Utc>) -> Result<us
             .or_else(|| p["pull_request"]["number"].as_u64())
             .or_else(|| p["issue"]["number"].as_u64())
         {
-            a.due(number, now + Duration::minutes(HINT_DELAY))?;
+            a.due(number, now)?;
             n += 1;
         }
     }
@@ -1032,7 +1064,7 @@ async fn pass(
     }
     let due = a.due_now(Utc::now(), a.budget)?;
     let mut done = 0;
-    p.fetch(&due, &mut done).await?;
+    p.fetch(&due, &mut done, RETRY_DUE).await?;
     let mut fetched = done;
     let listed = Listing::Recent.done(a)? && a.open_complete()?;
     let left = a.budget.saturating_sub(due.len());
@@ -1043,7 +1075,7 @@ async fn pass(
         let cursor = a.num("cursor")?.unwrap_or(top + 1).max(1) as u64;
         let back = a.missing_below(cursor, left)?;
         let mut done = 0;
-        let r = p.fetch(&back, &mut done).await;
+        let r = p.fetch(&back, &mut done, RETRY_BACKFILL).await;
         fetched += done;
         let reached = match done {
             0 if back.is_empty() => 1,
@@ -1153,11 +1185,65 @@ pub(crate) async fn tokens(app: &App) -> Vec<String> {
     tokens
 }
 
-/// The background walk, in its own task so it never delays the sync.
+/// Between two passes: the event hints and the due items only.
+async fn due_pass(
+    store: &Store,
+    events: &crate::events::Log,
+    a: &Archive,
+    client: &mut github::Client,
+) -> Result<usize> {
+    if a.is_private() {
+        return Ok(0);
+    }
+    if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
+        hints(events, a, Utc::now())?;
+    }
+    let due = a.due_now(Utc::now(), a.budget)?;
+    let mut done = 0;
+    let mut p = Pass {
+        store,
+        a,
+        client,
+        remaining: i64::MAX,
+    };
+    p.fetch(&due, &mut done, RETRY_DUE).await?;
+    Ok(done)
+}
+
+/// Marks numbers of `repo` due now, when this server archives it.
+pub(crate) fn mark_due(app: &App, repo: &str, numbers: &[u64]) {
+    for a in app
+        .archive
+        .iter()
+        .filter(|a| a.repo.eq_ignore_ascii_case(repo))
+    {
+        if let Err(e) = a.mark(numbers) {
+            tracing::warn!("archive {}: mark due: {e:#}", a.repo);
+        }
+    }
+}
+
+/// Waits for a due mark on any archive.
+async fn marked(archives: &[Arc<Archive>]) {
+    if archives.is_empty() {
+        return std::future::pending().await;
+    }
+    futures_util::future::select_all(archives.iter().map(|a| Box::pin(a.wake.notified()))).await;
+}
+
+/// The background walk, in its own task so it never delays the sync. A
+/// full pass runs every `PASS_EVERY`; a new event or a due mark runs a due
+/// pass in between.
 pub async fn walk(app: Arc<App>) {
     let mut said = false;
+    let mut events = app.events.subscribe();
+    let mut last_full: Option<std::time::Instant> = None;
     loop {
-        let round = std::time::Instant::now();
+        let every = StdDuration::from_secs(PASS_EVERY);
+        let full = last_full.is_none_or(|t| t.elapsed() >= every);
+        if full {
+            last_full = Some(std::time::Instant::now());
+        }
         let mut client = github::Client::new(tokens(&app).await);
         if !client.has_token() {
             if !said {
@@ -1166,6 +1252,17 @@ pub async fn walk(app: Arc<App>) {
             }
             for a in &app.archive {
                 let _ = a.set("last_error", NO_TOKEN);
+            }
+        } else if !full {
+            for a in &app.archive {
+                match due_pass(&app.store, &app.events, a, &mut client).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!("archive {}: {n} due items", a.repo),
+                    Err(e) => {
+                        tracing::warn!("archive {}: {e:#}", a.repo);
+                        let _ = a.set("last_error", &format!("{e:#}"));
+                    }
+                }
             }
         } else {
             for a in &app.archive {
@@ -1202,8 +1299,16 @@ pub async fn walk(app: Arc<App>) {
                 }
             }
         }
-        let wait = StdDuration::from_secs(PASS_EVERY).saturating_sub(round.elapsed());
-        tokio::time::sleep(wait.max(StdDuration::from_secs(30))).await;
+        let since = last_full.map_or(every, |t| t.elapsed());
+        let mut wait = every.saturating_sub(since);
+        if full {
+            wait = wait.max(StdDuration::from_secs(30));
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(wait) => {}
+            _ = marked(&app.archive) => tokio::time::sleep(SETTLE).await,
+            Ok(()) = events.changed() => tokio::time::sleep(SETTLE).await,
+        }
     }
 }
 
@@ -1529,6 +1634,15 @@ mod tests {
                 .unwrap();
             a
         }
+
+        async fn due_pass(&self) -> (Archive, usize) {
+            let a = Archive::open(&self.dir, "NixOS/nixpkgs", 100).unwrap();
+            let mut client = github::Client::at(&self.url, vec!["t".into()]);
+            let n = due_pass(&self.store, &self.events, &a, &mut client)
+                .await
+                .unwrap();
+            (a, n)
+        }
     }
 
     #[tokio::test]
@@ -1608,6 +1722,45 @@ mod tests {
         }
         let a = rig.pass(10).await;
         assert!(old(&a) > 0);
+        std::fs::remove_dir_all(&rig.dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_mark_wakes_the_walk_and_a_due_failure_backs_off() {
+        let fake = Arc::new(Fake::new(12, 100));
+        let rig = Rig::new("mark", fake.clone()).await;
+        let a = rig.pass(100).await;
+        let next = |a: &Archive, k: u64| {
+            let conn = a.conn.lock().unwrap();
+            let at: String = conn
+                .query_row("SELECT at FROM due WHERE number = ?1", [k as i64], |r| {
+                    r.get(0)
+                })
+                .unwrap();
+            (DateTime::parse_from_rfc3339(&at)
+                .unwrap()
+                .with_timezone(&Utc)
+                - Utc::now())
+            .num_minutes()
+        };
+
+        fake.broken.lock().unwrap().push(4);
+        a.mark(&[4]).unwrap();
+        tokio::time::timeout(StdDuration::from_secs(1), marked(&[Arc::new(a)]))
+            .await
+            .expect("a mark wakes the walk");
+        let (a, _) = rig.due_pass().await;
+        assert!((55..=60).contains(&next(&a, 4)), "{}", next(&a, 4));
+
+        a.mark(&[4]).unwrap();
+        let (a, _) = rig.due_pass().await;
+        assert!(next(&a, 4) > 23 * 60);
+
+        fake.broken.lock().unwrap().clear();
+        a.mark(&[4, 6]).unwrap();
+        let (a, n) = rig.due_pass().await;
+        assert_eq!(n, 2);
+        assert_eq!(a.progress(Utc::now()).unwrap()["failed"], 0);
         std::fs::remove_dir_all(&rig.dir).unwrap();
     }
 
@@ -1707,9 +1860,7 @@ mod tests {
         log.insert(&[event(2, 12), event(3, 13)]).unwrap();
         assert_eq!(hints(&log, &a, now).unwrap(), 2);
         assert_eq!(hints(&log, &a, now).unwrap(), 0);
-        assert!(a.due_now(now, 10).unwrap().is_empty());
-        let later = now + Duration::minutes(HINT_DELAY);
-        assert_eq!(a.due_now(later, 10).unwrap(), vec![12, 13]);
+        assert_eq!(a.due_now(now, 10).unwrap(), vec![12, 13]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
