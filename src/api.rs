@@ -874,7 +874,7 @@ pub(crate) async fn answer(
         }
         "/api/v1/packages/:name" => {
             let n = text(&a.name);
-            crate::catalog::package_value(app, &n)
+            crate::catalog::package::value(app, &n)
                 .await
                 .ok_or_else(|| Fail::Missing(format!("{n} is not in the nixpkgs index")))?
         }

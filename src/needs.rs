@@ -347,7 +347,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
             Serious::of(
                 id,
                 crate::osv::Vuln::url(id),
-                &crate::catalog::osv_worst(i.h, v),
+                &crate::catalog::package::osv_worst(i.h, v),
             )
         }))
         .collect();
