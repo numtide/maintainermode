@@ -671,9 +671,29 @@ pub async fn refresh_member(app: &App, login: &str, token: &str) -> Result<()> {
     app.recompute()
 }
 
-async fn settle(app: &App, client: &mut github::Client) -> Result<usize> {
+/// Open pull requests whose live fields one sync pass reads, after the
+/// merge candidates: 10 queries of 50.
+const LIVE_BATCH: usize = 500;
+
+/// Reads the live fields of the merge candidates, then of the open pull
+/// requests checked longest ago. With no server token, `fallback` reads
+/// the merge candidates only.
+async fn settle(
+    app: &App,
+    server: &mut github::Client,
+    fallback: &mut github::Client,
+) -> Result<usize> {
     app.recompute()?;
-    github::settle_mergeable(&app.store, client, &app.merge_candidates()).await
+    let mut numbers = app.merge_candidates();
+    if !server.has_token() {
+        return github::refresh_live(&app.store, fallback, &numbers).await;
+    }
+    for n in app.store.live_due(LIVE_BATCH)? {
+        if !numbers.contains(&n) {
+            numbers.push(n);
+        }
+    }
+    github::refresh_live(&app.store, server, &numbers).await
 }
 
 /// About ten minutes of walking per pass; the full walk back to 2020 takes
@@ -800,7 +820,8 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
                     Err(e) => tracing::warn!("issues: {e:#}"),
                 }
             }
-            if let Err(e) = settle(&app, &mut client).await {
+            let mut server = github::Client::new(server_tokens.clone());
+            if let Err(e) = settle(&app, &mut server, &mut client).await {
                 tracing::warn!("mergeable: {e:#}");
             }
             match github::history(
@@ -1101,7 +1122,7 @@ async fn run(cli: Cli) -> Result<i32> {
             eprintln!("synced {n} issues");
             eprintln!(
                 "settled {} merge candidates",
-                settle(&app, &mut client).await?
+                settle(&app, &mut github::Client::new(Vec::new()), &mut client).await?
             );
             while history && app.store.get("history_done")?.is_none() {
                 let n =

@@ -1116,7 +1116,7 @@ impl Shadow {
         a: &Archive,
         number: u64,
         updated_at: DateTime<Utc>,
-        project: fn(&Value) -> Option<T>,
+        project: impl Fn(&Value) -> Option<(T, &'static [&'static str])>,
         stored: &T,
     ) -> Result<()> {
         let Some(json) = a.item(number)?.and_then(|i| i.json) else {
@@ -1131,7 +1131,7 @@ impl Shadow {
         }
         self.compared += 1;
         let fields = match project(&item) {
-            Some(p) => crate::project::differ(&p, stored),
+            Some((p, skip)) => crate::project::differ(&p, stored, skip),
             None => vec!["kind".into()],
         };
         if !fields.is_empty() {
@@ -1149,15 +1149,26 @@ impl Shadow {
 /// and `history` rows that the walks wrote, and keeps the counts in the
 /// archive file. It writes nothing to the main database.
 fn shadow(store: &Store, a: &Archive, now: DateTime<Utc>) -> Result<()> {
+    use crate::project::NOT_ARCHIVED;
     let mut s = Shadow::default();
+    let live = store.live()?;
     for p in store.recent_prs(SHADOW_SAMPLE)? {
-        s.check(a, p.number, p.updated_at, crate::project::pr, &p)?;
+        let l = live.get(&p.number);
+        let project = |item: &Value| {
+            let got = crate::project::pr_live(item, l)?;
+            let known = l.is_some_and(|l| l.head_oid == got.head_oid);
+            Some((got, if known { &[][..] } else { &NOT_ARCHIVED[..] }))
+        };
+        s.check(a, p.number, p.updated_at, project, &p)?;
     }
     for i in store.recent_issues(SHADOW_SAMPLE)? {
-        s.check(a, i.number, i.updated_at, crate::project::issue, &i)?;
+        let project = |item: &Value| Some((crate::project::issue(item)?, &[][..]));
+        s.check(a, i.number, i.updated_at, project, &i)?;
     }
     for f in store.recent_facts(SHADOW_SAMPLE)? {
-        s.check(a, f.number, f.updated_at, crate::project::facts, &f)?;
+        let l = live.get(&f.number);
+        let project = |item: &Value| Some((crate::project::facts_live(item, l)?, &[][..]));
+        s.check(a, f.number, f.updated_at, project, &f)?;
     }
     let v = json!({
         "at": now.to_rfc3339(),

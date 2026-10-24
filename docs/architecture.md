@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A3, and B1 to B6 are done.
+Status: A1 to A4, and B1 to B6 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -18,7 +18,7 @@ Five paths read the same items from GitHub:
 | history walk (`github::history`)          | `history`                       | 100 pages per pass                        |
 | notifications poller (`by_number`)        | `pr`, `issue`                   | about 60 s                                |
 | archive walk                              | `archive/<owner>/<name>.sqlite` | 300 s                                     |
-| `settle_mergeable`                        | `pr.data.$.mergeable`           | each pass                                 |
+| live refresh (`github::refresh_live`)     | `pr_live`, `pr.data`            | each pass, 500 open PRs                   |
 
 The archive holds every field of `model::Pr`, `model::Issue` and
 `metrics::Facts`, with no caps. Three fields change without a change to
@@ -36,7 +36,7 @@ one fetcher ──► archive (raw JSON, the record)
         ▼
 projection ──► pr, issue, history tables ──► recompute ──► Snapshot
                      ▲
-pr_live (mergeable, ci) ◄── live refresh of open PRs
+pr_live (mergeable, ci, association) ◄── live refresh of open PRs
 ```
 
 - The poller and the event poll only mark numbers due. They fetch nothing.
@@ -46,9 +46,10 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
   `Facts`. It runs on each archive write and writes the main DB tables.
   `recompute` and every page stay as they are.
 - `mergeable`, CI and `authorAssociation` change without a change to
-  `updatedAt`. They go in a new table `pr_live (number, mergeable, ci,
-association, checked_at)`, kept by the
-  refresh that `settle_mergeable` does today. The projection joins it.
+  `updatedAt`. The table `pr_live (number, head_oid, mergeable, ci,
+association, checked_at)` keeps them. `project::pr_live` and
+  `project::facts_live` join it; `mergeable` and CI apply only to the same
+  head.
 
 ### Steps
 
@@ -64,8 +65,12 @@ association, checked_at)`, kept by the
    `open_complete`. Done.
 3. **Due marks.** The poller and the event log mark due with no delay
    and wake the fetcher. Done.
-4. **`pr_live`.** Move `mergeable` and CI out of the PR JSON into
-   `pr_live`. The live refresh covers all open PRs, oldest check first.
+4. **`pr_live`.** The live refresh writes `mergeable`, CI and
+   `authorAssociation` of the merge candidates and then of 500 open PRs,
+   oldest check first, to `pr_live` and to the `pr` row of the same head.
+   A full read by the sync or the poller writes `pr_live` too. The shadow
+   check compares the live fields where `pr_live` has the same head.
+   Done.
 5. **Switch.** The projection writes `pr`, `issue` and `history`. Delete
    the sync walk, the history walk and the poller's fetch. Write
    projections only when `updated_at` is newer, so that two writers

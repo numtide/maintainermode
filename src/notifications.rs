@@ -240,6 +240,7 @@ pub async fn apply(
             match github::by_number(store, client, prs, issues).await {
                 Ok((prs, issues)) => {
                     store.put_prs(&prs)?;
+                    store.note_live(&prs, Utc::now())?;
                     store.put_issues(&issues)?;
                     stored += prs.len() + issues.len();
                     status.seen(chunk.iter().map(|t| t.updated_at), Utc::now());

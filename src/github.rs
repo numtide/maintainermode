@@ -444,6 +444,7 @@ pub async fn sync(store: &Store, client: &mut Client, window_days: i64) -> Resul
             let (prs, next) = page(client, store, true, cursor.as_deref()).await?;
             count += prs.len();
             store.put_prs(&prs)?;
+            store.note_live(&prs, Utc::now())?;
             match next {
                 Some(c) => {
                     store.set("open_cursor", &c)?;
@@ -474,6 +475,7 @@ pub async fn sync(store: &Store, client: &mut Client, window_days: i64) -> Resul
         let reached = prs.iter().any(|p| p.updated_at < floor);
         count += prs.len();
         store.put_prs(&prs)?;
+        store.note_live(&prs, Utc::now())?;
         match next {
             Some(c) if !reached => {
                 store.set("recent_cursor", &c)?;
@@ -786,19 +788,34 @@ pub async fn history(
     Ok(count)
 }
 
-/// GitHub computes `mergeable` lazily: a bulk read mostly returns UNKNOWN, and
-/// the read itself starts the computation. Asking again for the few merge
-/// candidates, one aliased field each, settles them for the next pass.
-pub async fn settle_mergeable(
-    store: &Store,
-    client: &mut Client,
-    numbers: &[u64],
-) -> Result<usize> {
-    let mut settled = 0;
+fn live_of(pr: &Value, at: DateTime<Utc>) -> Option<crate::store::Live> {
+    Some(crate::store::Live {
+        number: pr["number"].as_u64()?,
+        head_oid: pr["headRefOid"].as_str()?.to_string(),
+        mergeable: pr["mergeable"].as_str().unwrap_or("UNKNOWN").to_string(),
+        ci: pr["commits"]["nodes"][0]["commit"]["statusCheckRollup"]["state"]
+            .as_str()
+            .map(String::from),
+        association: pr["authorAssociation"].as_str().unwrap_or("").to_string(),
+        checked_at: at,
+    })
+}
+
+/// Reads the live fields of `numbers` into `pr_live`, one aliased field
+/// each. GitHub computes `mergeable` lazily, and the read itself starts the
+/// computation, so an UNKNOWN settles by the next read. Returns the number
+/// of rows written.
+pub async fn refresh_live(store: &Store, client: &mut Client, numbers: &[u64]) -> Result<usize> {
+    let mut written = 0;
     for chunk in numbers.chunks(50) {
         let fields: String = chunk
             .iter()
-            .map(|n| format!("p{n}: pullRequest(number: {n}) {{ number mergeable }} "))
+            .map(|n| {
+                format!(
+                    "p{n}: pullRequest(number: {n}) {{ number headRefOid mergeable authorAssociation \
+                     commits(last: 1) {{ nodes {{ commit {{ statusCheckRollup {{ state }} }} }} }} }} "
+                )
+            })
             .collect();
         let query = format!(
             "{{ rateLimit {{ remaining }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
@@ -806,20 +823,17 @@ pub async fn settle_mergeable(
         let data = client
             .graphql_allowing(store, &query, Value::Null, &["NOT_FOUND"])
             .await?;
-        for pr in data["repository"]
+        let now = Utc::now();
+        let rows: Vec<crate::store::Live> = data["repository"]
             .as_object()
             .into_iter()
             .flat_map(|o| o.values())
-        {
-            if let (Some(n), Some(m)) = (pr["number"].as_u64(), pr["mergeable"].as_str()) {
-                if m != "UNKNOWN" {
-                    store.set_mergeable(n, m)?;
-                    settled += 1;
-                }
-            }
-        }
+            .filter_map(|pr| live_of(pr, now))
+            .collect();
+        store.put_live(&rows)?;
+        written += rows.len();
     }
-    Ok(settled)
+    Ok(written)
 }
 
 /// Pages of 100 pull requests that [`committed_paths`] reads at most.
