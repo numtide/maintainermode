@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: B1 and B4 are done.
+Status: A1, B1 and B4 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -20,9 +20,10 @@ Five paths read the same items from GitHub:
 | archive walk                              | `archive/<owner>/<name>.sqlite` | 300 s                                     |
 | `settle_mergeable`                        | `pr.data.$.mergeable`           | each pass                                 |
 
-The archive already holds every field of `model::Pr`, `model::Issue` and
-`metrics::Facts`, with no caps, except two: `mergeable` and the CI state
-(`statusCheckRollup`).
+The archive holds every field of `model::Pr`, `model::Issue` and
+`metrics::Facts`, with no caps. Three fields change without a change to
+`updatedAt`, so the archive copy goes stale: `mergeable`, the CI state
+(`statusCheckRollup`) and `authorAssociation`.
 
 ### Target
 
@@ -44,8 +45,9 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
 - The projection is a pure function: archive JSON to `Pr`, `Issue` or
   `Facts`. It runs on each archive write and writes the main DB tables.
   `recompute` and every page stay as they are.
-- `mergeable` and CI change without a change to `updatedAt`. They go in a
-  new table `pr_live (number, mergeable, ci, checked_at)`, kept by the
+- `mergeable`, CI and `authorAssociation` change without a change to
+  `updatedAt`. They go in a new table `pr_live (number, mergeable, ci,
+association, checked_at)`, kept by the
   refresh that `settle_mergeable` does today. The projection joins it.
 
 ### Steps
@@ -56,7 +58,7 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
    files), so the ledger and the queues do not change. A test compares
    the projection with the sync result for recorded items. On the server,
    count the items where the projection and the `pr` row differ, and show
-   the count on `/state?tab=status`.
+   the count on `/state?tab=status`. Done.
 2. **Open items first.** Add an "open" listing to the fetcher, so a new
    deployment reads every open PR and issue first. `issues_complete`
    depends on it.
