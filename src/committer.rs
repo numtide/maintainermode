@@ -5,7 +5,6 @@ use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::Subject;
@@ -16,7 +15,7 @@ use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
 use crate::ui::{Kind, empty, item_row, note, pager, section};
-use crate::web::{Snapshot, ago, ci_label, entry_rows, esc, person_link};
+use crate::web::{Snapshot, ago, ci_label, entry_rows, person_link};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
@@ -151,42 +150,38 @@ pub enum Reason {
 }
 
 impl Reason {
-    fn say(&self, base: &str, person: fn(&str) -> String, text: fn(&str) -> String) -> String {
+    fn say(&self, base: &str, person: fn(&str) -> Html) -> Html {
         let approval = |logins: &[String]| {
-            format!(
+            html!(
                 "checks pass, approved by {}",
-                logins
-                    .iter()
-                    .map(|l| person(l))
-                    .collect::<Vec<_>>()
-                    .join(", ")
+                crate::html::join(logins.iter().map(|l| person(l)), ", ")
             )
         };
         match self {
             Reason::Maintainer(by) => {
-                let mut out = by
-                    .iter()
-                    .take(3)
-                    .map(|(l, label)| format!("{} for {}", person(l), text(label)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let mut out = crate::html::join(
+                    by.iter()
+                        .take(3)
+                        .map(|(l, label)| html!("{} for {label}", person(l))),
+                    ", ",
+                );
                 if by.len() > 3 {
-                    let _ = write!(out, " and {} more", by.len() - 3);
+                    out.push(&html!(" and {} more", by.len() - 3));
                 }
-                format!("A maintainer approved the current head: {out}.")
+                html!("A maintainer approved the current head: {out}.")
             }
-            Reason::Security(l) => format!("Labelled \"{}\"; {}.", text(SECURITY), approval(l)),
-            Reason::Backport(l) => format!("A backport to {}; {}.", text(base), approval(l)),
-            Reason::Ready(l) => format!("Ready: {}.", approval(l)),
+            Reason::Security(l) => html!("Labelled \"{SECURITY}\"; {}.", approval(l)),
+            Reason::Backport(l) => html!("A backport to {base}; {}.", approval(l)),
+            Reason::Ready(l) => html!("Ready: {}.", approval(l)),
         }
     }
 
     pub fn text(&self, base: &str) -> String {
-        self.say(base, str::to_string, str::to_string)
+        crate::html::to_text(&self.say(base, Html::text))
     }
 
     pub(crate) fn html(&self, base: &str) -> Html {
-        Html::from(self.say(base, person_link, esc))
+        self.say(base, person_link)
     }
 }
 
@@ -354,7 +349,7 @@ struct Line<'a> {
     since: Option<DateTime<Utc>>,
 }
 
-fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> Html {
+fn lines(list: &[Line], empty_text: &'static str, act: crate::actions::Act) -> Html {
     if list.is_empty() {
         return empty(empty_text);
     }
@@ -372,13 +367,13 @@ fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> Html {
         if let Some(t) = l.since {
             meta.push(&html!(" · waiting {} since the approval", ago(t)));
         }
-        out.push_str(&item_row(
+        out.push(&item_row(
             Some(Kind::PR_OPEN),
-            crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            crate::prpage::title_link(e.number, Html::text(&e.title), "Link--primary text-bold"),
             "",
             meta,
             &[],
-            format!(
+            html!(
                 "<span class=\"ml-2\">{}</span>{}",
                 ci_label(e),
                 act.buttons(e.number)
@@ -406,10 +401,10 @@ pub(crate) fn ready_tab(
     s: &Snapshot,
     viewer: Option<&str>,
     after: Option<u64>,
-) -> String {
+) -> Html {
     let act = crate::actions::Act::of(app, viewer);
     let first = after.is_none();
-    let mut out = format!(
+    let mut out = html!(
         "<p class=\"f6\">Maintainer Mode never merges. Each row links to GitHub, and you decide. \
          Read <a href=\"{GUIDE}#how-to-merge-pull-requests-yourself\">how nixpkgs merges</a>. \
          <a href=\"/state?tab=rules\">The rules</a> of this site only decide which pull requests are in the queues.</p>"
@@ -417,10 +412,10 @@ pub(crate) fn ready_tab(
     match viewer.filter(|v| s.committers.is(v)) {
         Some(login) if first => {
             let list = in_your_areas(app, s, login);
-            let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&amp;section=yours", "see all"));
-            out.push_str(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more, act));
+            let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&section=yours", "see all"));
+            out.push(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more, act));
         }
-        None if first => out.push_str(&note(format!(
+        None if first => out.push(&note(html!(
             "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
              when it merged a pull request in the last {MERGED_DAYS} days, or when it is in the team {TEAM}."
         ))),
@@ -438,33 +433,34 @@ pub(crate) fn ready_tab(
     } else {
         entry_rows(page, act)
     };
-    out.push_str(&section(
+    out.push(&section(
         "Ready to merge",
         Some(all.len()),
         None,
-        format!(
+        html!(
             "<div class=\"Box-row f6 color-fg-muted\">Checks pass, there is no conflict, someone approved the current head, \
              and a review on it led to a change, a reply or a merge. Authors with more recent reviews of this kind come first.</div>{rows}"
         ),
     ));
-    out.push_str(&pager("/review?tab=ready", next.as_deref()));
+    out.push(&pager("/review?tab=ready", next.as_deref()));
     if !first {
         return out;
     }
     for (id, title, sub, rows, empty) in board_lists(&s.board) {
-        let href = format!("/review?tab=ready&amp;section={id}");
+        let href = format!("/review?tab=ready&section={id}");
         let more = (rows.len() > PREVIEW).then_some((href.as_str(), "see all"));
-        out.push_str(&section(
+        out.push(&section(
             title,
             Some(rows.len()),
             more,
-            format!(
-                "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
+            html!(
+                "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
+                Html::from(sub),
                 lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty, act)
             ),
         ));
     }
-    out.push_str(&api_links());
+    out.push(&api_links());
     out
 }
 
@@ -519,14 +515,15 @@ pub(crate) fn board_page(
     viewer: Option<&str>,
     id: &str,
     after: Option<u64>,
-) -> Option<String> {
+) -> Option<Html> {
     let act = crate::actions::Act::of(app, viewer);
-    let back = "<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>";
+    let back =
+        Html::from("<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>");
     if id == "yours" {
         let login = viewer.filter(|v| s.committers.is(v))?;
         let list = in_your_areas(app, s, login);
         let (page, next) = crate::review::paged_by_offset(&list, after);
-        return Some(format!(
+        return Some(html!(
             "{back}{}{}",
             yours_section(page, list.len(), None, act),
             pager("/review?tab=ready&section=yours", next.as_deref())
@@ -535,14 +532,15 @@ pub(crate) fn board_page(
     let (id, title, sub, rows, empty_text) =
         board_lists(&s.board).into_iter().find(|l| l.0 == id)?;
     let (page, next) = crate::review::paged_by_offset(rows, after);
-    Some(format!(
+    Some(html!(
         "{back}{}{}",
         section(
             title,
             Some(rows.len()),
             None,
-            format!(
-                "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
+            html!(
+                "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
+                Html::from(sub),
                 lines(&rows_of(page), empty_text, act)
             ),
         ),
@@ -596,7 +594,7 @@ fn yours_section(
         "In your areas",
         Some(total),
         more,
-        format!(
+        html!(
             "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
              Only you see this section.</div>{}",
             lines(
@@ -608,17 +606,14 @@ fn yours_section(
     )
 }
 
-fn api_links() -> String {
-    let links: Vec<String> = crate::api::SECTIONS
+fn api_links() -> Html {
+    let links = crate::api::SECTIONS
         .iter()
         .filter(|s| **s != "yours")
-        .map(|s| {
-            format!("<a href=\"/api/v1/prs?queue=ready&amp;section={s}\"><code>{s}</code></a>")
-        })
-        .collect();
-    format!(
+        .map(|s| html!("<a href=\"/api/v1/prs?queue=ready&amp;section={s}\"><code>{s}</code></a>"));
+    html!(
         "<p class=\"f6\">The lists without the personal part are in the JSON API, one section each: {}.</p>",
-        links.join(", ")
+        crate::html::join(links, ", ")
     )
 }
 

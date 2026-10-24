@@ -10,12 +10,12 @@ use axum::routing::get;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use std::fmt::Write;
 
 use crate::dossier::{self, Outcome, Row};
+use crate::html::{Html, html};
 use crate::ledger::{Credit, MIN_COUNTERPARTIES, WINDOW_DAYS};
 use crate::ui::{Page, Section, Tone, badge, section};
-use crate::web::{App, Shared, esc, icon, octicon};
+use crate::web::{App, Shared, icon, octicon};
 
 const GOAL: &str = "weekly_goal";
 pub const MAX_GOAL: u32 = 50;
@@ -167,14 +167,14 @@ pub fn of(app: &App, login: &str, with_badges: bool) -> Progress {
     p
 }
 
-fn goal_line(p: &Progress) -> String {
+fn goal_line(p: &Progress) -> Html {
     match p.goal {
-        Some(g) => format!(
+        Some(g) => html!(
             "<progress max=\"{g}\" value=\"{}\" aria-label=\"weekly goal\"></progress> {} of your goal of {g} this week",
             p.reviews_week.min(g as usize),
             p.reviews_week
         ),
-        None => "No weekly goal yet.".to_string(),
+        None => "No weekly goal yet.".into(),
     }
 }
 
@@ -193,9 +193,9 @@ fn listing_line(p: &Progress) -> String {
 }
 
 /// The small box on /review, for the signed-in person only.
-pub fn widget(app: &App, login: &str) -> String {
+pub(crate) fn widget(app: &App, login: &str) -> Html {
     let p = of(app, login, false);
-    format!(
+    html!(
         "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center gap-3\">\
          <span class=\"text-bold\">{} Your progress</span>\
          <span>{} reviews this week</span><span class=\"f6\">{}</span>\
@@ -206,8 +206,8 @@ pub fn widget(app: &App, login: &str) -> String {
     )
 }
 
-fn stat(n: usize, label: &str) -> String {
-    format!(
+fn stat(n: usize, label: &str) -> Html {
+    html!(
         "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"f6\">{label}</div></div>"
     )
 }
@@ -217,74 +217,75 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         return Redirect::to("/auth/login").into_response();
     };
     let p = of(&app, &login, true);
-    let mut out = format!(
+    let mut out = html!(
         "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(p.reviews_week, "pull requests reviewed this week"),
         stat(p.reviews_month, "pull requests reviewed this month"),
     );
-    out.push_str(&section(
+    out.push(&section(
         "Your weekly goal",
         None,
         Some(("/me/settings#goal", "change it")),
-        format!("<div class=\"Box-row\">{}</div>", goal_line(&p)),
+        html!("<div class=\"Box-row\">{}</div>", goal_line(&p)),
     ));
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<div id=\"listing\">{}</div>",
         section(
             "In the queues",
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\">{} <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Why</a></div>",
                 listing_line(&p)
             )
         )
-    );
-    let mut badges = String::new();
+    ));
+    let mut badges = Html::new();
     for b in &p.badges {
         let state = match b.earned {
-            Some(t) => badge(Tone::Success, format!("earned {}", t.format("%Y-%m-%d"))),
+            Some(t) => badge(
+                Tone::Success,
+                Html::text(&format!("earned {}", t.format("%Y-%m-%d"))),
+            ),
             None => badge(Tone::Neutral, "not yet"),
         };
-        let _ = write!(
-            badges,
+        badges.push(&html!(
             "<div class=\"Box-row d-flex\"><div class=\"flex-auto\"><span class=\"text-bold\">{}</span>\
              <div class=\"f6 color-fg-muted\">{}</div></div><div>{state}</div></div>",
-            b.name, b.how
-        );
+            b.name,
+            b.how
+        ));
     }
-    let _ = write!(
-        out,
+    out.push(&html!(
         "<div id=\"badges\">{}</div>",
-        section("Badges", None, None, &badges)
-    );
-    out.push_str(&crate::web::nixpkgs_guides());
+        section("Badges", None, None, badges)
+    ));
+    out.push(&crate::web::nixpkgs_guides());
     Page::new(
         Section::Personal(crate::ui::Personal::Progress),
         "Your progress",
     )
     .icon(octicon!("pulse"))
-    .sub(format!(
+    .sub(html!(
         "Only you see this page. \
              It counts the reviews of the last {WINDOW_DAYS} days and on every open pull request. \
              Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
-        l = esc(&login)
+        l = login
     ))
     .body(out)
     .render(&app, Some(&login))
 }
 
 /// The `#goal` section of `/me/settings`.
-pub fn goal_box(app: &App, login: &str) -> String {
+pub(crate) fn goal_box(app: &App, login: &str) -> Html {
     let goal = goal_of(app, login).unwrap_or(0);
-    format!(
+    html!(
         "<div id=\"goal\">{}</div>",
         section(
-            format!("{} Weekly goal", icon(octicon!("pulse"))),
+            html!("{} Weekly goal", icon(octicon!("pulse"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
                  <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
                  <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{goal}\">\

@@ -9,8 +9,9 @@ use axum::routing::get;
 use serde::Deserialize;
 use std::fmt::Write;
 
+use crate::html::{Html, html};
 use crate::ui::{Page, Section, Tab};
-use crate::web::{Shared, esc, octicon};
+use crate::web::{Shared, octicon};
 
 const RULES: &str = include_str!("../docs/rules.md");
 
@@ -163,7 +164,7 @@ async fn state_page(
             .body(crate::web::numbers(&app)),
         View::Rules => {
             let (title, html) = markdown(RULES);
-            Page::new(Section::Nixpkgs, title).body(format!(
+            Page::new(Section::Nixpkgs, title).body(html!(
                 "{}<article class=\"markdown-body\">{html}</article>",
                 crate::web::nixpkgs_guides()
             ))
@@ -185,17 +186,17 @@ fn docs(doc: Option<&str>) -> Page {
     if let Some((id, _, src)) = DOCS.iter().find(|(id, ..)| Some(*id) == doc) {
         let (title, html) = markdown(src);
         return Page::new(Section::Nixpkgs, title)
-            .sub(format!(
+            .sub(html!(
                 "<a href=\"/state?tab=docs\">All docs</a> · The source is \
                  <a href=\"{REPO}/docs/{id}.md\">docs/{id}.md</a>."
             ))
-            .body(format!("<article class=\"markdown-body\">{html}</article>"));
+            .body(html!("<article class=\"markdown-body\">{html}</article>"));
     }
     let missing = match doc {
-        Some(d) => crate::ui::note(format!("There is no doc named <code>{}</code>.", esc(d))),
-        None => crate::html::Html::new(),
+        Some(d) => crate::ui::note(html!("There is no doc named <code>{d}</code>.")),
+        None => Html::new(),
     };
-    let rows: String = DOCS
+    let rows: Html = DOCS
         .iter()
         .map(|(id, what, src)| {
             let title = src
@@ -204,8 +205,8 @@ fn docs(doc: Option<&str>) -> Page {
                 .unwrap_or(id);
             crate::ui::item_row(
                 None,
-                esc(title),
-                format!("/state?tab=docs&amp;doc={id}"),
+                Html::text(title),
+                &format!("/state?tab=docs&doc={id}"),
                 *what,
                 &[],
                 "",
@@ -213,13 +214,13 @@ fn docs(doc: Option<&str>) -> Page {
         })
         .collect();
     Page::new(Section::Nixpkgs, "Docs")
-        .sub(format!(
+        .sub(html!(
             "How Maintainer Mode works, from the <a href=\"{REPO}/docs\">docs</a> in its source. \
              The rules have <a href=\"/state?tab=rules\">their own tab</a>."
         ))
-        .body(format!(
+        .body(html!(
             "{missing}{}",
-            crate::ui::section("Docs", Some(DOCS.len()), None, &rows)
+            crate::ui::section("Docs", Some(DOCS.len()), None, rows)
         ))
 }
 
@@ -249,7 +250,7 @@ fn doc_link(dest: &str) -> String {
 }
 
 /// Splits off the `# ` title, so the page header shows it once.
-fn markdown(src: &str) -> (String, String) {
+fn markdown(src: &str) -> (String, Html) {
     use pulldown_cmark::{Event, Options, Parser, Tag};
     let (title, rest) = match src.strip_prefix("# ") {
         Some(s) => s.split_once('\n').unwrap_or((s, "")),
@@ -271,7 +272,11 @@ fn markdown(src: &str) -> (String, String) {
     });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
-    (title.trim().to_string(), anchor_headings(&html))
+    // the docs are files of this repository, built into the binary.
+    (
+        title.trim().to_string(),
+        Html::trusted(anchor_headings(&html)),
+    )
 }
 
 /// The id GitHub gives a heading, from its inner HTML: tags and entities
@@ -354,9 +359,9 @@ mod tests {
     fn every_anchor_between_docs_lands_on_a_heading() {
         let mut html: std::collections::HashMap<String, String> = DOCS
             .iter()
-            .map(|(id, _, src)| (id.to_string(), markdown(src).1))
+            .map(|(id, _, src)| (id.to_string(), markdown(src).1.into_string()))
             .collect();
-        html.insert("rules".into(), markdown(RULES).1);
+        html.insert("rules".into(), markdown(RULES).1.into_string());
         for (from, page) in &html {
             for href in page.split("<a href=\"").skip(1) {
                 let href = href.split('"').next().unwrap().replace("&amp;", "&");

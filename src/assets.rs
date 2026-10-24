@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicI64, Ordering};
 
+use crate::html::{Html, html};
 use crate::web::Shared;
 
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
@@ -48,16 +49,17 @@ static KEYS: LazyLock<Asset> =
     LazyLock::new(|| asset("keys", "js", "text/javascript; charset=utf-8", KEYS_JS));
 
 /// The `<link>` tags of the two style sheets.
-pub(crate) fn stylesheets() -> String {
-    format!(
+pub(crate) fn stylesheets() -> Html {
+    html!(
         "<link rel=\"stylesheet\" href=\"/static/{}\">\n<link rel=\"stylesheet\" href=\"/static/{}\">",
-        PRIMER.path, CLUB.path
+        PRIMER.path,
+        CLUB.path
     )
 }
 
 /// The keyboard shortcuts of every page.
-pub(crate) fn scripts() -> String {
-    format!("<script src=\"/static/{}\" defer></script>", KEYS.path)
+pub(crate) fn scripts() -> Html {
+    html!("<script src=\"/static/{}\" defer></script>", KEYS.path)
 }
 
 pub(crate) fn routes() -> Router<Shared> {
@@ -85,14 +87,14 @@ async fn static_file(Path(file): Path<String>) -> Response {
 
 /// The hidden sprite with each icon the parts of a page use, for
 /// `<use href="#i-…">`.
-pub(crate) fn sprite(parts: &[&str]) -> String {
+pub(crate) fn sprite(parts: &[&str]) -> Html {
     let used: BTreeSet<&str> = parts
         .iter()
         .flat_map(|html| html.split("href=\"#i-").skip(1))
         .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
         .collect();
     if used.is_empty() {
-        return String::new();
+        return Html::new();
     }
     let mut out = String::from(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" aria-hidden=\"true\" style=\"display:none\">",
@@ -107,7 +109,8 @@ pub(crate) fn sprite(parts: &[&str]) -> String {
         }
     }
     out.push_str("</svg>");
-    out
+    // only symbols of ICONS, a file in the binary, with names from it.
+    Html::trusted(out)
 }
 
 /// Milliseconds of the last change to the data the public pages show.

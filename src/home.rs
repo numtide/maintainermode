@@ -8,12 +8,12 @@ use axum::http::{HeaderMap, HeaderValue, header};
 use axum::response::Response;
 use axum::routing::get;
 use serde::Deserialize;
-use std::fmt::Write;
 
 use crate::catalog::{Flags, Subject, person_events, subject_row};
+use crate::html::{Html, html};
 use crate::queue::Entry;
 use crate::ui::{Kind, Page, Section, empty, item_row};
-use crate::web::{App, Shared, ago, esc, icon, octicon};
+use crate::web::{App, Shared, ago, icon, octicon};
 
 const SHOWN: usize = 8;
 
@@ -21,24 +21,28 @@ pub fn routes() -> Router<Shared> {
     Router::new().route("/", get(home))
 }
 
-fn section(title: &str, more: Option<(&str, &str)>, body: &str) -> crate::html::Html {
+fn section(title: impl Into<Html>, more: Option<(&str, &str)>, body: impl Into<Html>) -> Html {
     crate::ui::section(title, None, more, body)
 }
 
-fn entry_rows(entries: &[&Entry]) -> String {
+fn entry_rows(entries: &[&Entry]) -> Html {
     entries
         .iter()
         .take(SHOWN)
         .map(|e| {
             item_row(
                 Some(Kind::PR_OPEN),
-                crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+                crate::prpage::title_link(
+                    e.number,
+                    Html::text(&e.title),
+                    "Link--primary text-bold",
+                ),
                 "",
-                format!(
+                html!(
                     "#{} by <a href=\"/u/{a}\">{a}</a> · {} old",
                     e.number,
                     ago(e.created_at),
-                    a = esc(&e.author)
+                    a = e.author
                 ),
                 &[],
                 "",
@@ -47,7 +51,7 @@ fn entry_rows(entries: &[&Entry]) -> String {
         .collect()
 }
 
-fn subject_rows(rows: &[(Subject, Flags)]) -> String {
+fn subject_rows(rows: &[(Subject, Flags)]) -> Html {
     rows.iter()
         .take(SHOWN)
         .map(|(sub, f)| subject_row(sub, f, "", ""))
@@ -79,47 +83,47 @@ pub(crate) fn need_help(app: &App) -> Vec<(Subject, Flags)> {
     help
 }
 
-fn visitor(app: &App, headers: &HeaderMap) -> String {
+fn visitor(app: &App, headers: &HeaderMap) -> Html {
     let s = app.snap();
     let mut out = crate::welcome::intro(app, headers);
     if out.is_empty() {
-        out.push_str("<h1 class=\"sr-only\">Maintainer Mode</h1>");
+        out.push(&Html::from("<h1 class=\"sr-only\">Maintainer Mode</h1>"));
     }
     let first: Vec<&Entry> = s.queues.review.iter().filter(|e| e.unowned).collect();
-    out.push_str(&section(
+    out.push(&section(
         "Pull requests with no maintainer",
         Some(("/review?tab=unowned", "all of them")),
-        &if first.is_empty() {
+        if first.is_empty() {
             empty("None right now.")
         } else {
-            crate::html::Html::from(format!(
+            html!(
                 "<div class=\"Box-row f6 color-fg-muted\">No maintainer, team or ci/OWNERS line covers their files. A first review helps most here. \
                  Read <a href=\"{}#how-to-review-pull-requests\">how nixpkgs reviews</a> first.</div>{}",
                 crate::web::CONTRIBUTING,
                 entry_rows(&first)
-            ))
+            )
         },
     ));
-    out.push_str(&crate::first::section(app));
+    out.push(&crate::first::section(app));
     let help = need_help(app);
-    out.push_str(&section(
+    out.push(&section(
         "Packages that need help",
         Some(("/packages", "search all")),
-        &if help.is_empty() {
+        if help.is_empty() {
             empty(if app.health.read().unwrap().tracker_at.is_none() {
                 "The health data is not read yet."
             } else {
                 "None right now."
             })
         } else {
-            subject_rows(&help).into()
+            subject_rows(&help)
         },
     ));
     let p = app.packages.read().unwrap().clone();
-    out.push_str(&section(
+    out.push(&section(
         "nixpkgs in numbers",
         Some(("/state", "the state of nixpkgs")),
-        &format!(
+        html!(
             "<div class=\"Box-row d-flex flex-wrap gap-4\">\
              <span><strong>{}</strong> open pull requests need review</span>\
              <span><strong>{}</strong> packages behind upstream</span>\
@@ -136,46 +140,46 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
     out
 }
 
-fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderMap) -> String {
+fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderMap) -> Html {
     let s = app.snap();
-    let mut out = String::from("<h1 class=\"sr-only\">Home</h1>");
-    out.push_str(&crate::needs::section(app, login, mood, headers));
-    out.push_str(&crate::welcome::card(app, login));
+    let mut out = Html::from("<h1 class=\"sr-only\">Home</h1>");
+    out.push(&crate::needs::section(app, login, mood, headers));
+    out.push(&crate::welcome::card(app, login));
 
     let unread = app.inbox.get(login);
     let events = person_events(app, login);
-    let news: String = events
+    let news: Html = events
         .iter()
         .take(5)
         .map(|e| {
-            format!(
+            html!(
                 "<div class=\"Box-row f6\"><span class=\"color-fg-muted\">{} ago · {}</span> {}</div>",
                 ago(e.at),
-                esc(&e.subject),
-                crate::prpage::link(&e.url, &esc(&e.title), "")
+                e.subject,
+                crate::prpage::link(&e.url, Html::text(&e.title), "")
             )
         })
         .collect();
-    out.push_str(&section(
-        &format!(
+    out.push(&section(
+        html!(
             "{} Inbox{}",
             icon(octicon!("inbox")),
             if unread > 0 {
-                format!(" <span class=\"Counter\">{unread}</span>")
+                html!(" <span class=\"Counter\">{unread}</span>")
             } else {
-                String::new()
+                Html::new()
             }
         ),
         Some(("/inbox", "open the inbox")),
-        &if news.is_empty() {
+        if news.is_empty() {
             empty("Nothing new. <a href=\"/packages?filter=watch\">Watch</a> packages, modules or directories to hear about them.")
         } else {
-            news.into()
+            news
         },
     ));
 
     let mine = crate::mine::needs_you(app, login);
-    let mine_html: String = {
+    let mine_html: Html = {
         let ch = app.channels.read().unwrap().clone();
         let index = app.index.read().unwrap();
         mine.iter()
@@ -183,16 +187,16 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
             .map(|r| crate::mine::row_html(&index, &ch, r, r.why, ""))
             .collect()
     };
-    out.push_str(&section(
-        &format!(
+    out.push(&section(
+        html!(
             "{} Your packages that need you",
             icon(octicon!("package"))
         ),
         Some(("/packages?filter=mine", "all your packages")),
-        &if mine_html.is_empty() {
+        if mine_html.is_empty() {
             empty("Nothing needs you now. The packages of your machines, what you maintain and what you watch show here when they get an advisory, a new release, a failed build or a pull request.")
         } else {
-            mine_html.into()
+            mine_html
         },
     ));
 
@@ -202,7 +206,7 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
         .filter(|p| p.is_open() && p.author.eq_ignore_ascii_case(login))
         .collect();
     own.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
-    let own_html: String = own
+    let own_html: Html = own
         .iter()
         .take(SHOWN)
         .map(|p| {
@@ -221,33 +225,30 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
             } else {
                 "in review"
             };
-            let mut line = String::new();
-            let _ = write!(
-                line,
+            html!(
                 "<div class=\"Box-row d-flex flex-items-start gap-2\"><span class=\"flex-auto min-width-0\">{}</span>\
                  <span class=\"Label flex-shrink-0\">{state}</span></div>",
                 crate::prpage::title_link(
                     p.number,
-                    &format!("#{} {}", p.number, esc(&p.title)),
+                    html!("#{} {}", p.number, p.title),
                     "Link--primary"
                 )
-            );
-            line
+            )
         })
         .collect();
-    out.push_str(&section(
-        &format!(
+    out.push(&section(
+        html!(
             "{} Your open pull requests",
             icon(octicon!("git-pull-request"))
         ),
         Some((
-            &format!("https://github.com/NixOS/nixpkgs/pulls/{}", esc(login)),
+            &format!("https://github.com/NixOS/nixpkgs/pulls/{login}"),
             "on GitHub",
         )),
-        &if own_html.is_empty() {
+        if own_html.is_empty() {
             empty("You have no open pull request.")
         } else {
-            own_html.into()
+            own_html
         },
     ));
 
@@ -259,14 +260,14 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
         .get(login)
         .is_some_and(|m| !m.is_empty());
     if !maintains {
-        out.push_str(&crate::first::section(app));
+        out.push(&crate::first::section(app));
     }
 
     if s.committers.is(login) {
-        out.push_str(&section(
-            &format!("{} You can merge", icon(octicon!("git-merge"))),
+        out.push(&section(
+            html!("{} You can merge", icon(octicon!("git-merge"))),
             Some(("/review?tab=ready", "Ready to merge")),
-            &format!(
+            html!(
                 "<div class=\"Box-row\">{} pull requests are ready to merge. \
                  <a href=\"/review?tab=ready\">See them</a>. The ones on what you maintain come first.</div>",
                 s.queues.merge.len()

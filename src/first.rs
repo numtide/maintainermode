@@ -7,8 +7,9 @@ use chrono::{DateTime, Duration, Utc};
 use crate::area::Index;
 use crate::catalog::{Flags, Subject};
 use crate::health::Health;
+use crate::html::{Html, html};
 use crate::ui::{empty, item_row};
-use crate::web::{App, Snapshot, ago, esc};
+use crate::web::{App, Snapshot, ago};
 use crate::welcome::MAINTAINERS_README;
 
 /// Older open items are stuck, not a place to start.
@@ -144,44 +145,39 @@ pub(crate) fn rows(app: &App) -> Vec<serde_json::Value> {
 }
 
 /// The home page section.
-pub(crate) fn section(app: &App) -> String {
+pub(crate) fn section(app: &App) -> Html {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let list = {
         let index = app.index.read().unwrap();
         picks(&s, &index, &h, Utc::now())
     };
-    let rows: String = list
+    let rows: Html = list
         .iter()
         .take(SHOWN)
         .map(|p| {
             let sub = Subject::Pkg(p.attr.clone());
             let task = match &p.task {
-                Task::Review { number, title } => format!(
+                Task::Review { number, title } => html!(
                     "Review {}, opened {} ago",
-                    crate::prpage::title_link(
-                        *number,
-                        &format!("#{number} {}", esc(title)),
-                        ""
-                    ),
+                    crate::prpage::title_link(*number, html!("#{number} {title}"), ""),
                     ago(p.at)
                 ),
-                Task::Fix { number, title } => format!(
-                    "Fix <a href=\"https://github.com/NixOS/nixpkgs/issues/{number}\">#{number} {}</a>, opened {} ago",
-                    esc(title),
+                Task::Fix { number, title } => html!(
+                    "Fix <a href=\"https://github.com/NixOS/nixpkgs/issues/{number}\">#{number} {title}</a>, opened {} ago",
                     ago(p.at)
                 ),
             };
             item_row(
                 None,
-                format!(
+                html!(
                     "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>",
                     sub.href(),
                     sub.icon(),
-                    esc(&sub.label())
+                    sub.label()
                 ),
                 "",
-                &task,
+                task,
                 &p.flags.badges(),
                 "",
             )
@@ -190,15 +186,15 @@ pub(crate) fn section(app: &App) -> String {
     let body = if rows.is_empty() {
         empty("None right now.")
     } else {
-        crate::html::Html::from(format!(
+        html!(
             "<div class=\"Box-row f6 color-fg-muted\">Small packages with no maintainer and an issue or a pull request from the last {RECENT_DAYS} days. \
              Fix it or review it, then add yourself to <code>meta.maintainers</code>. \
              Read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a> first.</div>{rows}"
-        ))
+        )
     };
-    format!(
+    html!(
         "<div id=\"first\">{}</div>",
-        crate::ui::section("A first package to work on", None, None, &body)
+        crate::ui::section("A first package to work on", None, None, body)
     )
 }
 

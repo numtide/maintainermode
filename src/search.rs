@@ -10,13 +10,13 @@ use axum::routing::get;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
-use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::{Flags, Subject, valid_login};
 use crate::health::Health;
+use crate::html::{Html, html};
 use crate::ui::{Kind, Page, Section, item_row, section};
-use crate::web::{App, Shared, Snapshot, esc, icon, octicon};
+use crate::web::{App, Shared, Snapshot, icon, octicon};
 
 const PEOPLE: usize = 20;
 const PRS: usize = 30;
@@ -234,31 +234,28 @@ const HELP: &str = "<ul class=\"ml-3\">\
 </ul><p class=\"f6 color-fg-muted mt-2\">Press <kbd>/</kbd> on any page to search.</p>";
 
 /// On a phone the header has no box, so the page brings its own.
-fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
-    let mut out = format!(
+fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
+    let help = Html::from(HELP);
+    let mut out = html!(
         "<form class=\"search-inline inline-form mb-4\" role=\"search\" method=\"get\" action=\"/search\">\
-         <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{}\" aria-label=\"Search\" autocomplete=\"off\" data-search>\
+         <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{q}\" placeholder=\"{}\" aria-label=\"Search\" autocomplete=\"off\" data-search>\
          <button class=\"btn\" type=\"submit\">Search</button></form>",
-        esc(q),
         crate::ui::SEARCH_PLACEHOLDER
     );
     if q.is_empty() {
-        let _ = write!(
-            out,
-            "<div class=\"Box p-3 mb-4\"><p>Type one of these in the search box:</p>{HELP}</div>"
-        );
+        out.push(&html!(
+            "<div class=\"Box p-3 mb-4\"><p>Type one of these in the search box:</p>{help}</div>"
+        ));
         return out;
     }
     if hits.is_empty() {
-        let _ = write!(
-            out,
-            "<div class=\"blankslate\"><p>Nothing matches <strong>{}</strong>.</p></div><div class=\"Box p-3 mb-4\"><p>You can search for:</p>{HELP}</div>",
-            esc(q)
-        );
+        out.push(&html!(
+            "<div class=\"blankslate\"><p>Nothing matches <strong>{q}</strong>.</p></div><div class=\"Box p-3 mb-4\"><p>You can search for:</p>{help}</div>"
+        ));
         return out;
     }
     if !rows.is_empty() {
-        out.push_str(&section(
+        out.push(&section(
             "Packages, modules and directories",
             Some(rows.len()),
             None,
@@ -266,24 +263,24 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
         ));
     }
     if !hits.people.is_empty() {
-        let list: String = hits
+        let list: Html = hits
             .people
             .iter()
             .map(|l| {
                 item_row(
                     None,
-                    format!("{} {}", icon(octicon!("person")), esc(l)),
-                    format!("/u/{}", esc(l)),
+                    html!("{} {l}", icon(octicon!("person"))),
+                    &format!("/u/{l}"),
                     "",
                     &[],
                     "",
                 )
             })
             .collect();
-        out.push_str(&section("People", Some(hits.people.len()), None, &list));
+        out.push(&section("People", Some(hits.people.len()), None, list));
     }
     if !hits.prs.is_empty() {
-        let list: String = hits
+        let list: Html = hits
             .prs
             .iter()
             .map(|p| {
@@ -291,51 +288,52 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
                 let draft = if p.draft { " · draft" } else { "" };
                 item_row(
                     Some(kind),
-                    esc(&p.title),
-                    format!("/pr/{}", p.number),
-                    format!("#{}{draft}", p.number),
+                    Html::text(&p.title),
+                    &format!("/pr/{}", p.number),
+                    html!("#{}{draft}", p.number),
                     &[],
                     "",
                 )
             })
             .collect();
-        out.push_str(&section("Pull requests", Some(hits.prs.len()), None, &list));
+        out.push(&section("Pull requests", Some(hits.prs.len()), None, list));
     }
     if !hits.advisories.is_empty() {
-        let list: String = hits
+        let list: Html = hits
             .advisories
             .iter()
             .map(|a| {
-                let pkgs: Vec<String> = a
-                    .packages
-                    .iter()
-                    .map(|p| format!("<a href=\"/p/{0}\">{0}</a>", esc(p)))
-                    .collect();
+                let pkgs = crate::html::join(
+                    a.packages
+                        .iter()
+                        .map(|p| html!("<a href=\"/p/{0}\">{0}</a>", p)),
+                    ", ",
+                );
                 let title = if a.title.is_empty() {
-                    String::new()
+                    Html::new()
                 } else {
-                    format!(" {}", esc(&a.title))
+                    html!(" {}", a.title)
                 };
                 item_row(
                     None,
-                    format!(
+                    html!(
                         "{} <a class=\"Link--primary text-bold\" href=\"{}\">{}</a>{title}",
                         icon(octicon!("shield")),
-                        esc(&a.url),
-                        esc(&a.id)
+                        a.url,
+                        a.id
                     ),
                     "",
-                    format!("affects {}", pkgs.join(", ")),
+                    html!("affects {pkgs}"),
                     &[],
                     "",
                 )
             })
             .collect();
-        out.push_str(&section(
+        out.push(&section(
             "Advisories",
             Some(hits.advisories.len()),
             None,
-            &list,
+            list,
         ));
     }
     out

@@ -12,10 +12,11 @@ use serde::Deserialize;
 use std::fmt::Write;
 
 use crate::github::urlencode;
+use crate::html::{Html, html};
 use crate::model::Pr;
 use crate::sets::token_hash;
 use crate::ui::{Page, Section, section};
-use crate::web::{App, Shared, esc, icon, octicon, random_id};
+use crate::web::{App, Shared, icon, octicon, random_id};
 
 const OPT_IN: &str = "llm_ok";
 const MCP_HASH: &str = "mcp_token_hash";
@@ -63,7 +64,7 @@ fn revoke(app: &App, login: &str) -> anyhow::Result<()> {
     app.store.set_setting(login, MCP_AT, "")
 }
 
-fn mcp_state(app: &App, login: &str) -> String {
+fn mcp_state(app: &App, login: &str) -> Html {
     if !opted_in(app, login) {
         return "<p class=\"mb-0\">Turn on LLMs first, in the section above.</p>".into();
     }
@@ -74,29 +75,29 @@ fn mcp_state(app: &App, login: &str) -> String {
         .flatten()
         .filter(|_| has_mcp_token(app, login));
     match at {
-        Some(at) => format!(
+        Some(at) => html!(
             "<p>You made an MCP token on {}. The server shows a token once and keeps only its hash.</p>\
              <form method=\"post\" action=\"/me/mcp-token\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">Replace the token</button></form> \
              <form method=\"post\" action=\"/me/mcp-token/delete\" class=\"d-inline\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Revoke the token</button></form>",
-            esc(at.get(..10).unwrap_or(&at))
+            at.get(..10).unwrap_or(&at)
         ),
         None => "<form method=\"post\" action=\"/me/mcp-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an MCP token</button></form>".into(),
     }
 }
 
 /// The `#mcp` section of `/me/settings`.
-pub fn mcp_box(app: &App, login: &str) -> String {
-    format!(
+pub fn mcp_box(app: &App, login: &str) -> Html {
+    html!(
         "<div id=\"mcp\">{}</div>",
         section(
-            format!("{} MCP server", icon(octicon!("key"))),
+            html!("{} MCP server", icon(octicon!("key"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\">\
                  <p>An agent reads this site at <code>{}</code>, with the Streamable HTTP transport. \
                  It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{}</div>",
-                esc(&mcp_url(app)),
+                mcp_url(app),
                 mcp_state(app, login),
             )
         )
@@ -104,14 +105,14 @@ pub fn mcp_box(app: &App, login: &str) -> String {
 }
 
 /// The `#llm` section of `/me/settings`.
-pub fn llm_box(app: &App, login: &str) -> String {
-    format!(
+pub fn llm_box(app: &App, login: &str) -> Html {
+    html!(
         "<div id=\"llm\">{}</div>",
         section(
-            format!("{} LLMs", icon(octicon!("comment"))),
+            html!("{} LLMs", icon(octicon!("comment"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row\">\
                  <form method=\"post\" action=\"/me/settings/llm\">\
                  <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \
@@ -174,15 +175,15 @@ async fn new_mcp_token(State(app): State<Shared>, headers: HeaderMap) -> Respons
         mcp_url(&app),
         token
     );
-    let out = format!(
+    let out = html!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <input class=\"form-control width-full mb-2 text-mono\" readonly value=\"{t}\" aria-label=\"MCP token\">\
          <p>To add the server to Claude Code on your machine:</p>\
          <pre class=\"p-2 color-bg-subtle pre-wrap\">{a}</pre>\
          <p>Any token you made before no longer works.</p>\
          <a class=\"btn btn-sm\" href=\"/me/settings#mcp\">Back to your settings</a></div></div>",
-        t = esc(&token),
-        a = esc(&add),
+        t = token,
+        a = add,
     );
     Page::new(
         Section::Personal(crate::ui::Personal::Settings),
@@ -208,8 +209,8 @@ const POLICY: &str =
     "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#automationai-policy";
 
 /// A small button for a pull request row, for a person who opted in.
-pub fn claude_button(number: u64) -> String {
-    format!(
+pub(crate) fn claude_button(number: u64) -> crate::html::Html {
+    crate::html::html!(
         "<a class=\"btn btn-sm ml-2\" href=\"/claude/pr/{number}\" title=\"open a Claude Code session on the web for this pull request\">Claude Code</a>"
     )
 }
@@ -305,7 +306,7 @@ async fn claude_page(
     }
     let s = app.snap();
     let Some(pr) = s.pr_at.get(&number).map(|&i| &s.pr_data[i]) else {
-        let body = format!(
+        let body = html!(
             "<div class=\"blankslate\"><p>Pull request #{number} is not in the data of this site.</p></div>"
         );
         return (
@@ -318,11 +319,11 @@ async fn claude_page(
     };
     let mcp = has_mcp_token(&app, &login).then(|| mcp_url(&app));
     let text = prompt(pr, mcp.as_deref());
-    let page = Page::new(Section::Review, format!("Claude Code on #{number}")).sub(format!(
+    let page = Page::new(Section::Review, format!("Claude Code on #{number}")).sub(html!(
         "{} · a session on the web, in your own Claude account",
-        crate::prpage::link(&pr.url, &esc(&pr.title), "")
+        crate::prpage::link(&pr.url, Html::text(&pr.title), "")
     ));
-    let out = format!(
+    let out = html!(
         "<div class=\"Box mb-4\"><div class=\"Box-row\">\
          <p>The button opens <a href=\"https://claude.ai/code\">claude.ai/code</a> with NixOS/nixpkgs selected and the prompt below filled in. \
          Nothing runs until you send it. Read it first.</p>\
@@ -330,9 +331,9 @@ async fn claude_page(
          <label class=\"f6 d-block\" for=\"prompt\">The prompt, to copy if the link does not fill it in</label>\
          <textarea class=\"form-control width-full text-mono f6\" id=\"prompt\" rows=\"24\" readonly>{t}</textarea>\
          </div></div>",
-        l = esc(&claude_link(&text)),
+        l = claude_link(&text),
         p = icon(octicon!("play")),
-        t = esc(&text),
+        t = text,
     );
     page.body(out).render(&app, Some(&login))
 }

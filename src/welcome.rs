@@ -9,6 +9,7 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 use std::collections::HashSet;
 
+use crate::html::{Html, html};
 use crate::web::{App, Shared, icon, octicon};
 
 const DONE: &str = "welcome_done";
@@ -69,16 +70,16 @@ pub fn pending(app: &App, login: &str) -> bool {
     app.store.setting(login, DONE).ok().flatten().as_deref() != Some("1")
 }
 
-pub fn intro(app: &App, headers: &HeaderMap) -> String {
+pub fn intro(app: &App, headers: &HeaderMap) -> Html {
     if crate::web::cookie(headers, INTRO_COOKIE).as_deref() == Some("hidden") {
-        return String::new();
+        return Html::new();
     }
-    let yours = if app.oauth.is_some() {
+    let yours = Html::from(if app.oauth.is_some() {
         "<a href=\"/auth/login\">Sign in with GitHub</a> to see"
     } else {
         "Signed in, you see"
-    };
-    format!(
+    });
+    html!(
         "<div class=\"Box mb-4\" id=\"intro\"><div class=\"Box-body\">\
          <div class=\"d-flex flex-items-start\"><h1 class=\"f3 flex-auto\">Tools that make it easier to contribute to nixpkgs</h1>\
          <form method=\"post\" action=\"/intro/dismiss\"><button class=\"btn btn-sm\" type=\"submit\">Hide</button></form></div>\
@@ -111,7 +112,8 @@ enum Mark {
     Optional,
 }
 
-fn step(mark: Mark, title: &str, body: &str) -> String {
+fn step(mark: Mark, title: &str, body: impl Into<Html>) -> Html {
+    let body = body.into();
     let (class, ic, word) = match mark {
         Mark::Done => (
             "color-fg-success",
@@ -121,7 +123,7 @@ fn step(mark: Mark, title: &str, body: &str) -> String {
         Mark::Todo => ("color-fg-attention", icon(octicon!("circle")), "to do"),
         Mark::Optional => ("color-fg-muted", icon(octicon!("circle")), "optional"),
     };
-    format!(
+    html!(
         "<div class=\"Box-row d-flex flex-items-start\">\
          <span class=\"{class} mr-2\" title=\"{word}\">{ic}</span>\
          <div class=\"flex-auto\"><div class=\"text-bold\">{title} <span class=\"Label ml-1\">{word}</span></div>\
@@ -191,19 +193,19 @@ fn mark(done: bool) -> Mark {
     if done { Mark::Done } else { Mark::Todo }
 }
 
-fn checklist(f: &Facts) -> String {
-    let mut out = String::new();
+fn checklist(f: &Facts) -> Html {
+    let mut out = Html::new();
     if !f.index_ready {
-        out.push_str(&step(
+        out.push(&step(
             Mark::Todo,
             "What you maintain",
             "The first nixpkgs index is still being built. Come back in a few minutes.",
         ));
     } else if f.maintained == 0 {
-        out.push_str(&step(
+        out.push(&step(
             mark(f.reviewed > 0),
             "Start as a reviewer",
-            &format!(
+            html!(
                 "No package or module names you in <code>meta.maintainers</code> yet. \
                  Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>. Nobody watches them, \
                  and a first review needs no domain knowledge. Is <code>meta</code> complete? Are the hashes pinned? \
@@ -213,26 +215,26 @@ fn checklist(f: &Facts) -> String {
             ),
         ));
     } else {
-        let button = if f.maintained_watched < f.maintained {
+        let button = Html::from(if f.maintained_watched < f.maintained {
             "<form method=\"post\" action=\"/me/watch/maintained\" class=\"mt-2\">\
              <button class=\"btn btn-sm btn-primary\" type=\"submit\">Watch all of it</button></form>"
         } else {
             ""
-        };
-        out.push_str(&step(
+        });
+        out.push(&step(
             mark(f.maintained_watched == f.maintained),
             "What you maintain",
-            &format!(
+            html!(
                 "nixpkgs names you on <a href=\"/packages?filter=maintain\">{} packages and modules</a>. \
                  You watch {} of them.{button}",
                 f.maintained, f.maintained_watched
             ),
         ));
     }
-    out.push_str(&step(
+    out.push(&step(
         mark(f.watched > 0),
         "What you watch",
-        &format!(
+        html!(
             "You watch {}. Watch any package, module or nixpkgs directory.\
              <form method=\"post\" action=\"/me/watch\" class=\"inline-form mt-2\">\
              <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
@@ -240,58 +242,58 @@ fn checklist(f: &Facts) -> String {
             f.watched
         ),
     ));
-    out.push_str(&step(
+    out.push(&step(
         mark(f.reviewed > 0),
         "The review queue for you",
-        &format!(
+        html!(
             "<a href=\"/review\">{} pull requests</a> touch your machines, or what you maintain, own, changed this year, tagged or watch. \
              You reviewed {} pull requests. <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Your reviews also put your own pull requests in the queues.</a>",
             f.queue, f.reviewed
         ),
     ));
-    out.push_str(&step(
+    out.push(&step(
         mark(f.feed),
         "Notifications",
         "Make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>. It tells you about new pull requests, merges, \
          issues, advisories and releases of what you watch. Your inbox on this site shows the same news.",
     ));
-    out.push_str(&step(
+    out.push(&step(
         mark(f.system),
         "Your system",
         "<a href=\"/me/settings#upload\">Upload the packages of your machines</a>, and see them first in <a href=\"/packages?filter=mine\">your packages</a>. \
          Your feed then tells you about advisories and releases of the packages you really run. It stays private.",
     ));
-    out.push_str(&step(
+    out.push(&step(
         mark(f.actions),
         "Actions",
         "Fork <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, install the GitHub App on it, \
          and save your repositories in <a href=\"/me/settings#workflows\">your settings</a>. \
          Then \"Review in CI\" and \"Update with nix-update\" run in your own GitHub Actions.",
     ));
-    out.push_str(&step(
+    out.push(&step(
         if f.llm { Mark::Done } else { Mark::Optional },
         "LLMs",
-        &format!(
+        html!(
             "Off by default. Turn them on in <a href=\"/me/settings#llm\">your settings</a> to get a Claude Code button on \
              pull requests and an MCP server. Follow the <a href=\"{CONTRIBUTING}#automationai-policy\">nixpkgs policy on AI</a>."
         ),
     ));
-    let guides: String = GUIDES
+    let guides: Html = GUIDES
         .iter()
-        .map(|(name, url, what)| format!("<li><a href=\"{url}\">{name}</a>: {what}</li>"))
+        .map(|(name, url, what)| html!("<li><a href=\"{url}\">{name}</a>: {what}</li>"))
         .collect();
-    out.push_str(&step(
+    out.push(&step(
         Mark::Optional,
         "Read the nixpkgs guides",
-        &format!(
+        html!(
             "Maintainer Mode helps you find work. nixpkgs decides how the work is done.<ul class=\"ml-3 mt-1\">{guides}</ul>"
         ),
     ));
     out
 }
 
-fn done_form(done: bool, label: &str) -> String {
-    format!(
+fn done_form(done: bool, label: &str) -> Html {
+    html!(
         "<form method=\"post\" action=\"/me/start\"><input type=\"hidden\" name=\"done\" value=\"{}\">\
          <button class=\"btn btn-sm\" type=\"submit\">{label}</button></form>",
         if done { "1" } else { "" },
@@ -299,11 +301,11 @@ fn done_form(done: bool, label: &str) -> String {
 }
 
 /// The Get started card of the home page, until the person hides it.
-pub fn card(app: &App, login: &str) -> String {
+pub fn card(app: &App, login: &str) -> Html {
     if !pending(app, login) {
-        return String::new();
+        return Html::new();
     }
-    format!(
+    html!(
         "<section class=\"Box mb-4\" id=\"start\"><div class=\"Box-header d-flex flex-items-center\">\
          <h2 class=\"Box-title flex-auto\">Get started</h2>{}</div>\
          <div class=\"Box-row f6 color-fg-muted\">Your first steps, from your real state. Only you see this card.</div>{}</section>",
@@ -313,7 +315,7 @@ pub fn card(app: &App, login: &str) -> String {
 }
 
 /// The `#start` section of `/me/settings`.
-pub fn settings_box(app: &App, login: &str) -> String {
+pub fn settings_box(app: &App, login: &str) -> Html {
     let (text, form) = if pending(app, login) {
         (
             "The home page shows the Get started card.",
@@ -325,13 +327,13 @@ pub fn settings_box(app: &App, login: &str) -> String {
             done_form(false, "Show the card again"),
         )
     };
-    format!(
+    html!(
         "<div id=\"start\">{}</div>",
         crate::ui::section(
-            format!("{} Get started", icon(octicon!("checklist"))),
+            html!("{} Get started", icon(octicon!("checklist"))),
             None,
             None,
-            format!(
+            html!(
                 "<div class=\"Box-row d-flex flex-wrap flex-items-center gap-2\"><span class=\"flex-auto\">{text}</span>{form}</div>"
             )
         )

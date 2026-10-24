@@ -5,7 +5,6 @@
 
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::Subject;
@@ -14,7 +13,7 @@ use crate::health::{Health, Hydra, Last};
 use crate::html::{Html, html};
 use crate::model::Pr;
 use crate::prpage::{File, Touched, ci_text, github_url};
-use crate::web::{ago, esc, icon, octicon, people};
+use crate::web::{ago, icon, octicon, people};
 
 use crate::web::NIXPKGS;
 const MASS: &str =
@@ -358,7 +357,7 @@ impl Blocker {
             }
             Blocker::ChecksFail => "Checks fail.".into(),
             Blocker::ChangesRequested { by } => {
-                html!("Changes requested by {}.", Html::from(people(by)))
+                html!("Changes requested by {}.", people(by))
             }
             Blocker::MassRebuild { rebuild, base } => html!(
                 "A mass rebuild ({}) that targets <span class=\"branch-name\">{base}</span>: \
@@ -473,7 +472,7 @@ pub(crate) fn blockers(pr: &Pr, rebuilds: &[Rebuild]) -> Vec<Blocker> {
 pub(crate) struct Check {
     /// `Some(true)` passes, `Some(false)` fails, `None` is unknown.
     pub ok: Option<bool>,
-    pub text: String,
+    pub text: Html,
     pub guide: Option<&'static str>,
 }
 
@@ -500,7 +499,7 @@ impl Serialize for Check {
     }
 }
 
-fn check(ok: Option<bool>, text: impl Into<String>, guide: Option<&'static str>) -> Check {
+fn check(ok: Option<bool>, text: impl Into<Html>, guide: Option<&'static str>) -> Check {
     Check {
         ok,
         text: text.into(),
@@ -581,7 +580,7 @@ pub(crate) fn diff_checks(kind: Kind, files: &[File]) -> Vec<Check> {
             if !has(word) {
                 out.push(check(
                     Some(false),
-                    format!("The new package sets no <code>{what}</code>."),
+                    html!("The new package sets no <code>{what}</code>."),
                     Some(G_META),
                 ));
             }
@@ -615,16 +614,16 @@ pub(crate) fn diff_checks(kind: Kind, files: &[File]) -> Vec<Check> {
 /// The facts the index reads from master for one package.
 fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
     let mut out = Vec::new();
-    let name = format!("<code>{}</code>", esc(attr));
+    let name = html!("<code>{attr}</code>");
     match crate::hygiene::gaps(attr, p) {
         None => out.push(check(
             None,
-            format!("{name}: meta is not read yet."),
+            html!("{name}: meta is not read yet."),
             Some(G_META),
         )),
         Some(g) if g.is_empty() => out.push(check(
             Some(true),
-            format!(
+            html!(
                 "{name}: meta is complete{}.",
                 if crate::hygiene::program(attr, p) {
                     ", with versionCheckHook"
@@ -638,7 +637,7 @@ fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
             for gap in g {
                 out.push(check(
                     Some(false),
-                    format!("{name}: {}.", esc(gap)),
+                    html!("{name}: {gap}."),
                     Some(if gap.contains("versionCheckHook") {
                         VERSION_CHECK
                     } else {
@@ -652,7 +651,7 @@ fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
         out.push(match &m.platforms {
             Some(pl) => check(
                 Some(true),
-                format!(
+                html!(
                     "{name}: meta.platforms names {} platform{}.",
                     pl.count,
                     if pl.count == 1 { "" } else { "s" }
@@ -661,7 +660,7 @@ fn package_checks(attr: &str, p: &crate::area::Package) -> Vec<Check> {
             ),
             None => check(
                 Some(false),
-                format!("{name}: no meta.platforms."),
+                html!("{name}: no meta.platforms."),
                 Some(G_META),
             ),
         });
@@ -726,50 +725,40 @@ pub(crate) struct Ctx<'a> {
     pub notes: Option<&'a Notes>,
     /// The packages of the viewer's machines; `None` for a visitor.
     pub mine: Option<&'a BTreeSet<String>>,
-    pub buttons: String,
+    pub buttons: Html,
     /// Buttons another feature adds at the end of the actions row, like Next.
-    pub extra_actions: String,
+    pub extra_actions: Html,
 }
 
 /// A long error, like a failed connection with its URL, shows as a short
 /// reason; the whole text is in the tooltip.
-fn reason(why: &str) -> String {
+fn reason(why: &str) -> Html {
     if why.chars().count() <= REASON_CHARS {
-        esc(why)
+        Html::text(why)
     } else {
-        format!(
-            "<span title=\"{}\">GitHub could not be read</span>",
-            esc(why)
-        )
+        html!("<span title=\"{why}\">GitHub could not be read</span>")
     }
 }
 
-fn unknown(why: &str) -> String {
-    format!(
+fn unknown(why: &str) -> Html {
+    html!(
         "<span class=\"color-fg-muted\">unknown: {}</span>",
         reason(why)
     )
 }
 
-fn line(label: &str, value: &str) -> String {
-    format!("<li><span class=\"decide-label\">{label}</span> {value}</li>")
+fn line(label: impl Into<Html>, value: impl Into<Html>) -> Html {
+    let (label, value) = (label.into(), value.into());
+    html!("<li><span class=\"decide-label\">{label}</span> {value}</li>")
 }
 
-fn block(id: &str, title: &str, lines: &str) -> String {
-    format!(
+fn block(id: &str, title: &str, lines: Html) -> Html {
+    html!(
         "<div class=\"decide-block\" id=\"decide-{id}\"><h3 class=\"decide-title\">{title}</h3><ul class=\"decide-list\">{lines}</ul></div>"
     )
 }
 
-fn rebuild_text(r: &Rebuild) -> String {
-    if r.count.is_empty() {
-        esc(&r.platform)
-    } else {
-        format!("{} {}", esc(&r.platform), esc(&r.count))
-    }
-}
-
-/// [`rebuild_text`] as plain text.
+/// The platform and count of a rebuild label, as text.
 fn rebuild_words(r: &Rebuild) -> String {
     if r.count.is_empty() {
         r.platform.clone()
@@ -804,39 +793,33 @@ pub(crate) fn bumped<'a>(index: &'a Index, touched: &[Touched], b: &Bump) -> Opt
     pkgs.next().is_none().then_some(first)
 }
 
-fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> String {
+fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
     let pr = c.pr;
-    let mut lines = String::new();
-    let mut what = format!("<span class=\"Label\">{}</span>", kind.word());
+    let mut lines = Html::new();
+    let mut what = html!("<span class=\"Label\">{}</span>", kind.word());
     if pr.base.starts_with("release-") {
-        let _ = write!(
-            what,
+        what.push(&html!(
             " <span class=\"Label\">backport to {}</span>",
-            esc(&pr.base)
-        );
+            pr.base
+        ));
     }
-    lines.push_str(&line("Kind", &what));
+    lines.push(&line("Kind", what));
     if let Some(b) = b {
-        let mut v = format!(
-            "<code>{}</code> → <code>{}</code>",
-            esc(&b.from),
-            esc(&b.to)
-        );
+        let mut v = html!("<code>{}</code> → <code>{}</code>", b.from, b.to);
         if let Some(p) = bumped(c.index, c.touched, b).and_then(|a| c.index.pkgs.get(a)) {
             if !p.version.is_empty() && p.version != b.from {
-                let _ = write!(
-                    v,
+                v.push(&html!(
                     " <span class=\"color-fg-attention f6\">master has {}</span>",
-                    esc(&p.version)
-                );
+                    p.version
+                ));
             }
         }
-        lines.push_str(&line("Version", &v));
+        lines.push(&line("Version", v));
     }
     let touched = if c.touched.is_empty() {
         unknown("no package or module in the index matches its files or title")
     } else {
-        let mut s: Vec<String> = c
+        let mut s: Vec<Html> = c
             .touched
             .iter()
             .take(SHOWN_SUBJECTS)
@@ -847,37 +830,32 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> String {
                         .pkgs
                         .get(a)
                         .filter(|p| !p.version.is_empty())
-                        .map(|p| {
-                            format!(
-                                " <span class=\"color-fg-muted f6\">{}</span>",
-                                esc(&p.version)
-                            )
-                        })
+                        .map(|p| html!(" <span class=\"color-fg-muted f6\">{}</span>", p.version))
                         .unwrap_or_default(),
-                    _ => String::new(),
+                    _ => Html::new(),
                 };
-                let mine = match (&t.subject, c.mine) {
+                let mine = Html::from(match (&t.subject, c.mine) {
                     (Subject::Pkg(a), Some(m)) if m.contains(a) => {
                         " <span class=\"Label Label--attention\">on your machines</span>"
                     }
                     _ => "",
-                };
-                format!(
+                });
+                html!(
                     "<a href=\"{}\">{}</a>{version}{mine}",
                     t.subject.href(),
-                    esc(&t.subject.label())
+                    t.subject.label()
                 )
             })
             .collect();
         if c.touched.len() > SHOWN_SUBJECTS {
-            s.push(format!("{} more", c.touched.len() - SHOWN_SUBJECTS));
+            s.push(html!("{} more", c.touched.len() - SHOWN_SUBJECTS));
         }
-        s.join(", ")
+        crate::html::join(s, ", ")
     };
-    lines.push_str(&line("Touches", &touched));
-    lines.push_str(&line(
+    lines.push(&line("Touches", touched));
+    lines.push(&line(
         "Size",
-        &format!(
+        html!(
             "<span class=\"color-fg-success\">+{}</span> <span class=\"color-fg-danger\">−{}</span> in {} file{}",
             pr.additions,
             pr.deletions,
@@ -885,62 +863,56 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> String {
             if pr.changed_files == 1 { "" } else { "s" }
         ),
     ));
-    block("change", "What changes", &lines)
+    block("change", "What changes", lines)
 }
 
-fn risk_block(pr: &Pr, rebuilds: &[Rebuild]) -> String {
-    let mut lines = String::new();
+fn risk_block(pr: &Pr, rebuilds: &[Rebuild]) -> Html {
+    let mut lines = Html::new();
     let counts = if rebuilds.is_empty() {
         unknown("no 10.rebuild label yet; the nixpkgs eval adds them")
     } else {
-        rebuilds
-            .iter()
-            .map(|r| {
-                let text = rebuild_text(r);
+        crate::html::join(
+            rebuilds.iter().map(|r| {
+                let text = rebuild_words(r);
                 if r.mass() {
-                    format!("<span class=\"Label Label--danger\">{text}</span>")
+                    html!("<span class=\"Label Label--danger\">{text}</span>")
                 } else if r.large() {
-                    format!("<span class=\"Label Label--attention\">{text}</span>")
+                    html!("<span class=\"Label Label--attention\">{text}</span>")
                 } else {
-                    format!("<span class=\"Label\">{text}</span>")
+                    html!("<span class=\"Label\">{text}</span>")
                 }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
+            }),
+            " ",
+        )
     };
-    lines.push_str(&line("Rebuilds", &counts));
-    let mut base = format!("<span class=\"branch-name\">{}</span>", esc(&pr.base));
+    lines.push(&line("Rebuilds", counts));
+    let mut base = html!("<span class=\"branch-name\">{}</span>", pr.base);
     if pr.base.starts_with("staging") {
-        base.push_str(
+        base.push(&Html::from(
             " <span class=\"color-fg-muted f6\">reaches master with the next staging cycle</span>",
-        );
+        ));
     }
-    lines.push_str(&line("Base", &base));
+    lines.push(&line("Base", base));
     if rebuilds.iter().any(Rebuild::mass) {
-        lines.push_str(&line(
+        lines.push(&line(
             "Scale",
             "<span class=\"color-fg-danger\">mass rebuild</span>",
         ));
     }
-    block("risk", "Risk", &lines)
+    block("risk", "Risk", lines)
 }
 
-fn upstream_block(c: &Ctx, b: &Bump) -> String {
-    let mut lines = String::new();
+fn upstream_block(c: &Ctx, b: &Bump) -> Html {
+    let mut lines = Html::new();
     let attr = bumped(c.index, c.touched, b);
     let p = attr.and_then(|a| c.index.pkgs.get(a));
-    let mut links: Vec<String> = Vec::new();
+    let mut links: Vec<Html> = Vec::new();
     if let Some(n) = c.notes {
         if let Some(u) = &n.release_url {
-            links.push(format!("<a href=\"{}\">release {}</a>", esc(u), esc(&b.to)));
+            links.push(html!("<a href=\"{u}\">release {}</a>", b.to));
         }
         if let Some(u) = &n.compare_url {
-            links.push(format!(
-                "<a href=\"{}\">compare {} → {}</a>",
-                esc(u),
-                esc(&b.from),
-                esc(&b.to)
-            ));
+            links.push(html!("<a href=\"{u}\">compare {} → {}</a>", b.from, b.to));
         }
     }
     if let Some(log) = p
@@ -948,14 +920,13 @@ fn upstream_block(c: &Ctx, b: &Bump) -> String {
         .and_then(|m| m.changelog.first())
     {
         if log.contains(&b.from) && !log.contains(&b.to) {
-            links.push(format!(
+            links.push(html!(
                 "<a href=\"{}\">changelog</a>",
-                esc(&log.replace(&b.from, &b.to))
+                log.replace(&b.from, &b.to)
             ));
         } else {
-            links.push(format!(
-                "<a href=\"{}\">changelog</a> <span class=\"color-fg-muted f6\">as master names it</span>",
-                esc(log)
+            links.push(html!(
+                "<a href=\"{log}\">changelog</a> <span class=\"color-fg-muted f6\">as master names it</span>"
             ));
         }
     }
@@ -965,21 +936,20 @@ fn upstream_block(c: &Ctx, b: &Bump) -> String {
         .and_then(github_repo);
     if let Some(r) = &repo {
         if c.notes.is_none_or(|n| n.release_url.is_none()) {
-            links.push(format!(
-                "<a href=\"https://github.com/{}/releases\">releases</a>",
-                esc(r)
+            links.push(html!(
+                "<a href=\"https://github.com/{r}/releases\">releases</a>"
             ));
         }
     }
-    lines.push_str(&line(
+    lines.push(&line(
         "Notes",
-        &if links.is_empty() {
+        if links.is_empty() {
             unknown("no meta.changelog and no GitHub source in the index")
         } else {
-            links.join(" · ")
+            crate::html::join(links, " · ")
         },
     ));
-    let mut flags: Vec<String> = Vec::new();
+    let mut flags: Vec<Html> = Vec::new();
     if c.notes.is_some_and(|n| n.breaking) {
         flags.push(
             "<span class=\"Label Label--danger\">the release notes say breaking</span>".into(),
@@ -989,16 +959,14 @@ fn upstream_block(c: &Ctx, b: &Bump) -> String {
         flags.push("<span class=\"Label Label--attention\">major version: may break</span>".into());
     }
     if let Some((v, from)) = attr.and_then(|a| c.health.newest(a, &b.to)) {
-        flags.push(format!(
-            "<span class=\"color-fg-muted f6\">upstream also has {} ({})</span>",
-            esc(v),
-            esc(from)
+        flags.push(html!(
+            "<span class=\"color-fg-muted f6\">upstream also has {v} ({from})</span>"
         ));
     }
     if !flags.is_empty() {
-        lines.push_str(&line("Flags", &flags.join(" ")));
+        lines.push(&line("Flags", crate::html::join(flags, " ")));
     }
-    block("upstream", "Upstream", &lines)
+    block("upstream", "Upstream", lines)
 }
 
 /// `owner/repo` of a GitHub `src` URL.
@@ -1012,9 +980,9 @@ pub(crate) fn github_repo(src_url: &str) -> Option<String> {
     }
 }
 
-fn builds_block(c: &Ctx) -> String {
-    let mut lines = String::new();
-    lines.push_str(&line("Checks", &ci_text(c.pr.ci.as_deref())));
+fn builds_block(c: &Ctx) -> Html {
+    let mut lines = Html::new();
+    lines.push(&line("Checks", ci_text(c.pr.ci.as_deref())));
     if let Some(run) = c.run {
         let v = match run {
             Run::Found(r) => {
@@ -1023,27 +991,23 @@ fn builds_block(c: &Ctx) -> String {
                     ("completed", Some(x)) => ("color-fg-danger", x.replace('_', " ")),
                     (s, _) => ("color-fg-attention", s.replace('_', " ")),
                 };
-                format!(
-                    "<a class=\"{class}\" href=\"{}\">{}</a>{}",
-                    esc(&r.url),
-                    esc(&word),
+                html!(
+                    "<a class=\"{class}\" href=\"{}\">{word}</a>{}",
+                    r.url,
                     r.created_at
-                        .map(|t| format!(
-                            " <span class=\"color-fg-muted f6\">{} ago</span>",
-                            ago(t)
-                        ))
+                        .map(|t| html!(" <span class=\"color-fg-muted f6\">{} ago</span>", ago(t)))
                         .unwrap_or_default()
                 )
             }
             Run::None => "<span class=\"color-fg-muted\">none in your last runs</span>".into(),
             Run::Unknown(e) => unknown(e),
         };
-        lines.push_str(&line("Your nixpkgs-review", &v));
+        lines.push(&line("Your nixpkgs-review", v));
     }
     for (attr, last) in c.hydra.iter().take(SHOWN_HYDRA) {
         let job = Hydra::package_job(attr);
         let v = match last {
-            Some(Last::Build(b)) => format!(
+            Some(Last::Build(b)) => html!(
                 "<a class=\"{}\" href=\"{}\">{}</a>{}",
                 if b.ok {
                     "color-fg-success"
@@ -1052,23 +1016,23 @@ fn builds_block(c: &Ctx) -> String {
                 },
                 b.url(),
                 b.status,
-                b.at.map(|t| format!(" <span class=\"color-fg-muted f6\">{} ago</span>", ago(t)))
+                b.at.map(|t| html!(" <span class=\"color-fg-muted f6\">{} ago</span>", ago(t)))
                     .unwrap_or_default()
             ),
             Some(Last::Missing) => "<span class=\"color-fg-muted\">no finished build</span>".into(),
-            _ => format!(
+            _ => html!(
                 "<span class=\"color-fg-muted\">unknown: no page read it in the last hour; <a href=\"{}\">see Hydra</a></span>",
-                esc(&Hydra::job_url(&job))
+                Hydra::job_url(&job)
             ),
         };
-        lines.push_str(&line(&format!("Hydra <code>{}</code>", esc(attr)), &v));
+        lines.push(&line(html!("Hydra <code>{attr}</code>"), v));
     }
-    block("builds", "Builds", &lines)
+    block("builds", "Builds", lines)
 }
 
-fn people_block(c: &Ctx) -> String {
+fn people_block(c: &Ctx) -> Html {
     let pr = c.pr;
-    let mut lines = String::new();
+    let mut lines = Html::new();
     let author_l = pr.author.to_lowercase();
     let maintainers: Vec<String> = {
         let mut seen = BTreeSet::new();
@@ -1079,16 +1043,16 @@ fn people_block(c: &Ctx) -> String {
             .cloned()
             .collect()
     };
-    let mut facts: Vec<String> = Vec::new();
+    let mut facts: Vec<Html> = Vec::new();
     let first = crate::queue::is_first_contribution(pr);
     if pr.author_is_bot {
         facts.push("<span class=\"Label\">bot</span>".into());
     } else if first {
         facts.push("<span class=\"Label Label--attention\">first contribution</span>".into());
     } else if let Some(t) = c.author.first_pr_at.filter(|t| *t < pr.created_at) {
-        facts.push(format!(
+        facts.push(html!(
             "<span class=\"f6 color-fg-muted\">contributes since {}</span>",
-            t.format("%Y")
+            t.format("%Y").to_string()
         ));
     }
     if c.author.committer {
@@ -1097,18 +1061,18 @@ fn people_block(c: &Ctx) -> String {
     if maintainers.iter().any(|m| m.to_lowercase() == author_l) {
         facts.push("<span class=\"Label Label--success\">maintains it</span>".into());
     } else if c.author.packages > 0 {
-        facts.push(format!(
+        facts.push(html!(
             "<span class=\"f6 color-fg-muted\">maintains {} package{}</span>",
             c.author.packages,
             if c.author.packages == 1 { "" } else { "s" }
         ));
     }
-    lines.push_str(&line(
+    lines.push(&line(
         "Author",
-        &format!(
+        html!(
             "<a href=\"/u/{0}\">{0}</a> {1}",
-            esc(&pr.author),
-            facts.join(" ")
+            pr.author,
+            crate::html::join(facts, " ")
         ),
     ));
     let m = if c.touched.is_empty() {
@@ -1118,9 +1082,9 @@ fn people_block(c: &Ctx) -> String {
         if teams.is_empty() {
             "<span class=\"Label Label--attention\">no maintainer</span>".into()
         } else {
-            format!(
+            html!(
                 "teams {}",
-                teams.iter().map(|t| esc(t)).collect::<Vec<_>>().join(", ")
+                crate::html::join(teams.iter().map(|t| Html::text(t)), ", ")
             )
         }
     } else {
@@ -1132,71 +1096,74 @@ fn people_block(c: &Ctx) -> String {
                 .collect::<Vec<_>>(),
         );
         if maintainers.len() > SHOWN_MAINTAINERS {
-            let _ = write!(s, " and {} more", maintainers.len() - SHOWN_MAINTAINERS);
+            s.push(&html!(
+                " and {} more",
+                maintainers.len() - SHOWN_MAINTAINERS
+            ));
         }
         s
     };
-    lines.push_str(&line("Maintainers", &m));
+    lines.push(&line("Maintainers", m));
     let approvals = crate::committer::approvals(pr);
     let a = if approvals.is_empty() {
-        "<span class=\"color-fg-muted\">none on the current head</span>".to_string()
+        "<span class=\"color-fg-muted\">none on the current head</span>".into()
     } else {
-        approvals
-            .iter()
-            .map(|(l, _)| {
-                let mut tags = String::new();
+        crate::html::join(
+            approvals.iter().map(|(l, _)| {
+                let mut tags = Html::new();
                 if maintainers.iter().any(|m| m.eq_ignore_ascii_case(l))
                     || c.touched
                         .iter()
                         .any(|t| t.approved_by.iter().any(|x| x.eq_ignore_ascii_case(l)))
                 {
-                    tags.push_str(" <span class=\"Label Label--success\">maintainer</span>");
+                    tags.push(&Html::from(
+                        " <span class=\"Label Label--success\">maintainer</span>",
+                    ));
                 }
                 if c.committers.is(l) {
-                    tags.push_str(" <span class=\"Label\">committer</span>");
+                    tags.push(&Html::from(" <span class=\"Label\">committer</span>"));
                 }
-                format!("<a href=\"/u/{0}\">{0}</a>{tags}", esc(l))
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
+                html!("<a href=\"/u/{0}\">{0}</a>{tags}", l)
+            }),
+            ", ",
+        )
     };
-    lines.push_str(&line("Approved", &a));
-    block("people", "People", &lines)
+    lines.push(&line("Approved", a));
+    block("people", "People", lines)
 }
 
 /// A tracker advisory on a package, with what nixpkgs already fixes.
-fn advisory_ref(c: &Ctx, attr: &str, a: &crate::health::Advisory) -> String {
+fn advisory_ref(c: &Ctx, attr: &str, a: &crate::health::Advisory) -> Html {
     use crate::affected::Verdict;
     let status = match c.health.verdict(attr, &a.code) {
-        Verdict::Affects => String::new(),
+        Verdict::Affects => Html::new(),
         Verdict::Unknown => " <span class=\"color-fg-muted f6\">range unknown</span>".into(),
-        Verdict::Behind { channels, .. } => format!(
+        Verdict::Behind { channels, .. } => html!(
             " <span class=\"color-fg-attention f6\">fixed in master, still in {}</span>",
-            esc(&channels
+            channels
                 .iter()
                 .map(|l| l.channel.as_str())
                 .collect::<Vec<_>>()
-                .join(", "))
+                .join(", ")
         ),
-        Verdict::Fixed { fixed_in } => format!(
+        Verdict::Fixed { fixed_in } => html!(
             " <span class=\"color-fg-success f6\">{}, the tracker issue can be closed</span>",
             fixed_in.as_deref().map_or_else(
                 || "fixed everywhere".to_string(),
-                |f| format!("fixed in {}", esc(f))
+                |f| format!("fixed in {f}")
             )
         ),
     };
-    format!(
-        "<a href=\"{}\">{}</a> on <code>{}</code>{status}",
-        esc(&a.url()),
-        esc(&a.code),
-        esc(attr)
+    html!(
+        "<a href=\"{}\">{}</a> on <code>{attr}</code>{status}",
+        a.url(),
+        a.code
     )
 }
 
 /// The block, or nothing when no CVE, security label or open advisory
 /// relates to the pull request.
-fn security_block(c: &Ctx) -> String {
+fn security_block(c: &Ctx) -> Html {
     let mut text = c.pr.title.clone();
     if let Some(b) = c.body {
         text.push('\n');
@@ -1220,20 +1187,20 @@ fn security_block(c: &Ctx) -> String {
         .iter()
         .any(|(attr, a)| !c.health.verdict(attr, &a.code).fixed());
     if named.is_empty() && !label && !live {
-        return String::new();
+        return Html::new();
     }
-    let mut lines = String::new();
+    let mut lines = Html::new();
     if label {
-        lines.push_str(&line(
+        lines.push(&line(
             "Label",
             "<span class=\"Label Label--danger\">security</span>",
         ));
     }
-    let mut fixes: Vec<String> = Vec::new();
+    let mut fixes: Vec<Html> = Vec::new();
     for id in &named {
         let w = crate::severity::worst(c.health, std::iter::once(id));
         let band = match w.band {
-            Some(b) => format!(
+            Some(b) => html!(
                 " <span class=\"Label {}\">{}{}</span>",
                 b.label_class(),
                 b.word(),
@@ -1244,20 +1211,20 @@ fn security_block(c: &Ctx) -> String {
         let adv = tracked
             .iter()
             .find(|(_, a)| a.cves.iter().any(|x| x.eq_ignore_ascii_case(id)))
-            .map(|(attr, a)| format!(" · {}", advisory_ref(c, attr, a)))
+            .map(|(attr, a)| html!(" · {}", advisory_ref(c, attr, a)))
             .unwrap_or_default();
-        fixes.push(format!(
+        fixes.push(html!(
             "<a href=\"https://nvd.nist.gov/vuln/detail/{0}\">{0}</a>{band}{adv}",
-            esc(id)
+            id
         ));
     }
     let fixes = if fixes.is_empty() {
-        "<span class=\"color-fg-muted\">it names no CVE</span>".to_string()
+        "<span class=\"color-fg-muted\">it names no CVE</span>".into()
     } else {
-        fixes.join("<br>")
+        crate::html::join(fixes, "<br>")
     };
-    lines.push_str(&line("Fixes", &fixes));
-    let (fixed, other): (Vec<String>, Vec<String>) = {
+    lines.push(&line("Fixes", fixes));
+    let (fixed, other): (Vec<Html>, Vec<Html>) = {
         let (f, o): (Vec<_>, Vec<_>) = tracked
             .iter()
             .filter(|(_, a)| {
@@ -1274,13 +1241,13 @@ fn security_block(c: &Ctx) -> String {
         (refs(f), refs(o))
     };
     if !other.is_empty() {
-        lines.push_str(&line("Not named", &other.join(", ")));
+        lines.push(&line("Not named", crate::html::join(other, ", ")));
     }
     if !fixed.is_empty() {
-        lines.push_str(&line("Already fixed", &fixed.join(", ")));
+        lines.push(&line("Already fixed", crate::html::join(fixed, ", ")));
     }
     if c.body.is_none() {
-        lines.push_str(&line(
+        lines.push(&line(
             "Read",
             "<span class=\"color-fg-muted\">the title only: the description could not be read</span>",
         ));
@@ -1288,19 +1255,19 @@ fn security_block(c: &Ctx) -> String {
     if let Some(mine) = c.mine {
         let hit: Vec<&str> = pkgs.iter().copied().filter(|a| mine.contains(*a)).collect();
         if !hit.is_empty() {
-            lines.push_str(&line(
+            lines.push(&line(
                 "You",
-                &format!(
+                html!(
                     "<span class=\"Label Label--attention\">on your machines: {}</span>",
-                    hit.iter().map(|a| esc(a)).collect::<Vec<_>>().join(", ")
+                    hit.join(", ")
                 ),
             ));
         }
     }
-    block("security", "Security", &lines)
+    block("security", "Security", lines)
 }
 
-fn check_li(c: &Check) -> String {
+fn check_li(c: &Check) -> Html {
     let (ic, class) = match c.ok {
         Some(true) => (octicon!("check-circle-fill"), "color-fg-success"),
         Some(false) => (octicon!("x-circle-fill"), "color-fg-danger"),
@@ -1308,9 +1275,9 @@ fn check_li(c: &Check) -> String {
     };
     let guide = c
         .guide_url()
-        .map(|href| format!(" <a class=\"f6\" href=\"{}\">Guide</a>", esc(&href)))
+        .map(|href| html!(" <a class=\"f6\" href=\"{href}\">Guide</a>"))
         .unwrap_or_default();
-    format!(
+    html!(
         "<li><span class=\"{class}\">{}</span> {}{guide}</li>",
         icon(ic),
         c.text
@@ -1335,7 +1302,7 @@ pub(crate) fn checks_of(
         Ok(f) => all.extend(diff_checks(kind, f)),
         Err(why) => all.push(check(
             None,
-            format!("Checks on the diff: unknown, {}.", reason(why)),
+            html!("Checks on the diff: unknown, {}.", reason(why)),
             None,
         )),
     }
@@ -1362,30 +1329,29 @@ pub(crate) fn checks_of(
     all
 }
 
-fn missing_block(list: &[Check]) -> String {
+fn missing_block(list: &[Check]) -> Html {
     let failed: Vec<&Check> = list.iter().filter(|c| c.ok == Some(false)).collect();
     let open: Vec<&Check> = list.iter().filter(|c| c.ok.is_none()).collect();
     let passed: Vec<&Check> = list.iter().filter(|c| c.ok == Some(true)).collect();
-    let mut lines: String = failed
+    let mut lines: Html = failed
         .iter()
         .chain(open.iter())
         .map(|c| check_li(c))
         .collect();
     if failed.is_empty() && open.is_empty() {
-        lines.push_str(
+        lines.push(&Html::from(
             "<li class=\"color-fg-success\">Nothing missing that these checks can see.</li>",
-        );
+        ));
     }
     if !passed.is_empty() {
-        let _ = write!(
-            lines,
+        lines.push(&html!(
             "<li><details><summary class=\"f6 color-fg-muted\">{} check{} pass</summary><ul class=\"decide-list\">{}</ul></details></li>",
             passed.len(),
             if passed.len() == 1 { "" } else { "s" },
-            passed.iter().map(|c| check_li(c)).collect::<String>()
-        );
+            passed.iter().map(|c| check_li(c)).collect::<Html>()
+        ));
     }
-    format!(
+    html!(
         "<div class=\"decide-block decide-wide\" id=\"decide-missing\"><h3 class=\"decide-title\">What is missing \
          <span class=\"text-normal\">· packages as on master</span></h3><ul class=\"decide-list\">{lines}</ul></div>"
     )
@@ -1418,12 +1384,12 @@ fn blockers_html(list: &[Blocker]) -> Html {
     )
 }
 
-fn actions_html(c: &Ctx) -> String {
+fn actions_html(c: &Ctx) -> Html {
     if !c.pr.is_open() {
-        return String::new();
+        return Html::new();
     }
     let review = format!("{}/files", github_url(c.pr.number));
-    format!(
+    html!(
         "<div class=\"Box-footer d-flex flex-items-center flex-wrap gap-2\" id=\"decide-actions\">\
          <a class=\"btn btn-sm btn-primary\" href=\"{review}\" title=\"opens the diff on GitHub; choose Review changes, then Approve\">{} Approve on GitHub</a>\
          <a class=\"btn btn-sm\" href=\"{review}\" title=\"opens the diff on GitHub; choose Review changes, then Request changes\">{} Request changes on GitHub</a>\
@@ -1453,30 +1419,30 @@ pub(crate) fn summary(pr: &Pr, body: Option<&str>, files: Option<&[File]>) -> se
     })
 }
 
-pub(crate) fn render(c: &Ctx) -> String {
+pub(crate) fn render(c: &Ctx) -> Html {
     let kind = kind(c.pr, c.files.ok());
     let b = bump(&c.pr.title);
     let rebuilds = rebuilds(&c.pr.labels);
-    let mut out = String::from(
+    let mut out = Html::from(
         "<section class=\"Box mb-4\" id=\"decide\" aria-labelledby=\"decide-heading\">\
          <div class=\"Box-header\"><h2 class=\"Box-title\" id=\"decide-heading\">At a glance</h2></div>",
     );
-    out.push_str(&blockers_html(&blockers(c.pr, &rebuilds)));
-    out.push_str("<div class=\"decide-grid\">");
-    out.push_str(&change_block(c, kind, b.as_ref()));
-    out.push_str(&risk_block(c.pr, &rebuilds));
+    out.push(&blockers_html(&blockers(c.pr, &rebuilds)));
+    out.push(&Html::from("<div class=\"decide-grid\">"));
+    out.push(&change_block(c, kind, b.as_ref()));
+    out.push(&risk_block(c.pr, &rebuilds));
     if let Some(b) = b.as_ref().filter(|_| kind == Kind::Update) {
-        out.push_str(&upstream_block(c, b));
+        out.push(&upstream_block(c, b));
     }
-    out.push_str(&builds_block(c));
-    out.push_str(&people_block(c));
-    out.push_str(&security_block(c));
-    out.push_str(&missing_block(&checks(c, kind)));
-    out.push_str("</div>");
-    out.push_str(&actions_html(c));
-    out.push_str(
+    out.push(&builds_block(c));
+    out.push(&people_block(c));
+    out.push(&security_block(c));
+    out.push(&missing_block(&checks(c, kind)));
+    out.push(&Html::from("</div>"));
+    out.push(&actions_html(c));
+    out.push(&Html::from(
         "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You approve or ask for changes on GitHub.</div></section>",
-    );
+    ));
     out
 }
 
@@ -1795,10 +1761,10 @@ mod tests {
             run: None,
             notes: None,
             mine: None,
-            buttons: String::new(),
-            extra_actions: String::new(),
+            buttons: Html::new(),
+            extra_actions: Html::new(),
         };
-        assert_eq!(security_block(&c), "");
+        assert_eq!(security_block(&c).as_str(), "");
         let body = "Fixes CVE-2026-26001 again.";
         c.body = Some(body);
         let html = security_block(&c);
@@ -1837,8 +1803,8 @@ mod tests {
             run: None,
             notes: None,
             mine: None,
-            buttons: String::new(),
-            extra_actions: String::new(),
+            buttons: Html::new(),
+            extra_actions: Html::new(),
         };
         let html = render(&visitor);
         let order = [
@@ -1922,8 +1888,8 @@ mod tests {
             run: None,
             notes: None,
             mine: None,
-            buttons: String::new(),
-            extra_actions: String::new(),
+            buttons: Html::new(),
+            extra_actions: Html::new(),
         };
         let html = render(&c);
         assert!(html.contains("It is closed."));
