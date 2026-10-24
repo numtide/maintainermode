@@ -15,7 +15,7 @@ use std::fmt::Write;
 
 use crate::actions::Act;
 use crate::affected::Verdict;
-use crate::area::{Index, area_key, under};
+use crate::area::{Index, under};
 use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Health, Hydra, Last};
@@ -105,9 +105,9 @@ pub(crate) fn valid_login(l: &str) -> bool {
     !l.is_empty() && l.len() <= 39 && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
-/// A directory only when something lives under it, so a typo still lists
-/// what contains it.
-pub(crate) fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
+/// What `q` names, with a directory only when something lives under it, so
+/// a typo still lists what contains it.
+fn known(s: &Snapshot, index: &Index, q: &str) -> Option<Subject> {
     match Subject::resolve(index, q)? {
         Subject::Area(p)
             if !s.open_by_dir.contains_key(&p)
@@ -119,8 +119,12 @@ pub(crate) fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
         {
             None
         }
-        sub => Some(sub.href()),
+        sub => Some(sub),
     }
+}
+
+pub(crate) fn exact(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
+    known(s, index, q).map(|sub| sub.href())
 }
 
 /// `ci/OWNERS` names files too; their last segment has an extension.
@@ -1690,9 +1694,7 @@ async fn module_page(
         "Directory",
         &format!(
             "<a href=\"/a/{0}\">{0}/</a>",
-            esc(area_key(&file)
-                .rsplit_once('/')
-                .map_or("nixos/modules", |(d, _)| d))
+            esc(file.rsplit_once('/').map_or("nixos/modules", |(d, _)| d))
         ),
     ));
     out.push_str(&crate::ui::section("Health", None, None, &health));
@@ -1975,7 +1977,7 @@ fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
 pub(crate) fn search(s: &Snapshot, index: &Index, q: &str) -> Vec<Subject> {
     let ql = q.to_lowercase();
     let mut hits: Vec<Subject> = Vec::new();
-    if let Some(sub) = Subject::resolve(index, q) {
+    if let Some(sub) = known(s, index, q) {
         hits.push(sub);
     }
     let mut pkgs: Vec<&String> = index

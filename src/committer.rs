@@ -154,7 +154,8 @@ fn ready(e: &Entry) -> bool {
     e.ci.as_deref() == Some("SUCCESS") && e.mergeable != "CONFLICTING" && !e.approved_by.is_empty()
 }
 
-/// Approvals on the current head by someone other than the author, oldest first.
+/// Approvals on the current head by someone other than the author, oldest
+/// first, one per login.
 pub(crate) fn approvals(pr: &Pr) -> Vec<(&str, DateTime<Utc>)> {
     let mut out: Vec<(&str, DateTime<Utc>)> = pr
         .reviews
@@ -168,10 +169,12 @@ pub(crate) fn approvals(pr: &Pr) -> Vec<(&str, DateTime<Utc>)> {
         .map(|r| (r.author.as_str(), r.submitted_at))
         .collect();
     out.sort_by_key(|(_, t)| *t);
+    let mut seen = HashSet::new();
+    out.retain(|(l, _)| seen.insert(l.to_lowercase()));
     out
 }
 
-fn maintainers_of(index: &Index, key: &str) -> Vec<String> {
+pub(crate) fn maintainers_of(index: &Index, key: &str) -> Vec<String> {
     let found = match Subject::parse(key) {
         Some(Subject::Pkg(a)) => index.pkgs.get(&a).map(|p| (&p.maintainers, &p.teams)),
         Some(Subject::Module(f)) => index.modules.get(&f).map(|m| (&m.maintainers, &m.teams)),

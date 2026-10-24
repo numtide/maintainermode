@@ -670,13 +670,14 @@ struct LoginQuery {
     next: Option<String>,
 }
 
-/// A path on this site, so the sign-in cannot send a person elsewhere.
-fn local_path(next: &str) -> bool {
+/// A path on this site, so a sign-in or a form cannot send a person
+/// elsewhere. The allow-list also keeps out what makes `Redirect::to` panic.
+pub(crate) fn local_path(next: &str) -> bool {
     next.starts_with('/')
         && !next.starts_with("//")
         && next
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b"/?=&#_.-".contains(&b))
+            .all(|b| b.is_ascii_alphanumeric() || b"/?=&#_.-%+".contains(&b))
 }
 
 async fn login(State(app): State<Shared>, Query(q): Query<LoginQuery>) -> Response {

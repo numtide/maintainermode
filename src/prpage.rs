@@ -1033,18 +1033,12 @@ fn touched(s: &Snapshot, index: &Index, h: &crate::health::Health, pr: &Pr) -> V
                 Subject::Area(_) => None,
             }
             .unwrap_or_default();
-            let all: Vec<String> = maintainers
-                .iter()
-                .cloned()
-                .chain(index.team_members(&teams))
-                .map(|l| l.to_lowercase())
-                .collect();
-            let mut approved_by: Vec<String> = approvals
+            let all = crate::committer::maintainers_of(index, &subject.key());
+            let approved_by: Vec<String> = approvals
                 .iter()
                 .filter(|(l, _)| all.contains(&l.to_lowercase()))
                 .map(|(l, _)| l.to_string())
                 .collect();
-            approved_by.dedup();
             Touched {
                 flags: Flags::of(s, index, h, &subject),
                 subject,

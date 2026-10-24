@@ -238,7 +238,10 @@ async fn master_rev(http: &reqwest::Client) -> Result<String> {
         .error_for_status()?
         .text()
         .await?;
-    anyhow::ensure!(sha.len() == 40, "unexpected master revision {sha:?}");
+    anyhow::ensure!(
+        sha.len() == 40 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "unexpected master revision {sha:?}"
+    );
     Ok(sha)
 }
 
@@ -250,7 +253,11 @@ fn unpack(bytes: &[u8], dir: &Path) -> Result<()> {
         let mut entry = entry?;
         let path = entry.path()?.into_owned();
         let rel: PathBuf = path.components().skip(1).collect();
-        if rel.as_os_str().is_empty() {
+        if rel.as_os_str().is_empty()
+            || !rel
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+        {
             continue;
         }
         entry.unpack(dir.join(rel))?;
