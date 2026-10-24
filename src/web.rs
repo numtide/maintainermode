@@ -1430,13 +1430,23 @@ pub(crate) mod ux_pages {
     const LIST: &str = include_str!("../nix/ux-pages.txt");
 
     pub(crate) fn get_routes() -> Vec<String> {
-        let dir = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/src")).unwrap();
-        let mut routes = Vec::new();
-        for entry in dir {
-            let path = entry.unwrap().path();
-            if path.extension().is_none_or(|e| e != "rs") {
-                continue;
+        let mut dirs = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        let mut files = Vec::new();
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    files.push(path);
+                }
             }
+        }
+        let mut routes = Vec::new();
+        for path in files {
             let src = std::fs::read_to_string(&path).unwrap();
             let src = src.split("#[cfg(test)]").next().unwrap();
             for call in src.split(".route(").skip(1) {

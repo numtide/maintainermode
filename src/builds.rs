@@ -1280,13 +1280,13 @@ mod tests {
         let lines = asked.lock().unwrap().clone();
         assert_eq!(lines.len(), 3);
         assert!(lines[2].contains("32h5slqkza0zwjz2ycvkpwm391vzz68p"));
-        let rows = crate::catalog::binary_cache(&app, "hello");
+        let rows = crate::catalog::package::binary_cache(&app, "hello");
         assert_eq!(rows.len(), 1);
         assert_eq!(
             (rows[0].channel.as_str(), rows[0].cached),
             ("nixos-unstable", Some(true))
         );
-        assert!(crate::catalog::binary_cache(&app, "jq").is_empty());
+        assert!(crate::catalog::package::binary_cache(&app, "jq").is_empty());
         {
             let mut list = app.channels.read().unwrap().list.clone();
             list[0].out_paths.remove("hello");
