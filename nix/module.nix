@@ -78,7 +78,7 @@ in
     githubClientId = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
-      description = "Client id of the GitHub OAuth app. Without it, login is off and the sync waits for a bot token.";
+      description = "Client id of the GitHub OAuth app. Without it, login is off, and the sync needs the GitHub App or a bot token.";
     };
 
     githubClientSecretFile = lib.mkOption {
@@ -375,10 +375,19 @@ in
         NoNewPrivileges = true;
         # bubblewrap cannot mount a new /proc over a /proc with read-only
         # submounts, and sets up the loopback of its network namespace
-        # over netlink
+        # over netlink. Its own /dev and UTS namespace are not checked in
+        # the VM test, so the options near them stay off with rescans too.
         ProtectKernelTunables = !cfg.rescan.enable;
+        PrivateDevices = !cfg.rescan.enable;
+        ProtectHostname = !cfg.rescan.enable;
         ProtectKernelModules = true;
+        ProtectKernelLogs = true;
         ProtectControlGroups = true;
+        ProtectClock = true;
+        RestrictRealtime = true;
+        SystemCallArchitectures = "native";
+        CapabilityBoundingSet = "";
+        UMask = "0077";
         RestrictAddressFamilies = [
           "AF_INET"
           "AF_INET6"

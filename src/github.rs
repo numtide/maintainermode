@@ -48,6 +48,19 @@ pub enum Outcome {
     BadToken(String),
 }
 
+/// The error of a call whose token has no budget left: the client loop
+/// moves to the next token on it.
+#[derive(Debug)]
+struct Exhausted;
+
+impl std::fmt::Display for Exhausted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the GitHub token has no budget left")
+    }
+}
+
+impl std::error::Error for Exhausted {}
+
 impl Client {
     pub fn new(tokens: Vec<String>) -> Self {
         Self {
@@ -91,12 +104,14 @@ impl Client {
                     "no GitHub token with budget left; sync resumes when someone logs in or the limit resets"
                 );
             };
-            match graphql_call(&self.http, &self.endpoint, &token, query, &vars, allowed).await? {
-                Outcome::BadToken(t) => {
+            match graphql_call(&self.http, &self.endpoint, &token, query, &vars, allowed).await {
+                Err(e) if e.is::<Exhausted>() => self.current += 1,
+                Err(e) => return Err(e),
+                Ok(Outcome::BadToken(t)) => {
                     store.forget_token(&t)?;
                     self.current += 1;
                 }
-                Outcome::Data(v) => {
+                Ok(Outcome::Data(v)) => {
                     let remaining = v["rateLimit"]["remaining"].as_i64().unwrap_or(i64::MAX);
                     if remaining < 200 {
                         self.current += 1;
@@ -125,6 +140,16 @@ pub async fn graphql_once(
     graphql_call(http, GRAPHQL, token, query, vars, &[]).await
 }
 
+/// A primary limit answers 200 with a `RATE_LIMITED` error; a secondary
+/// limit answers 403 or 429.
+fn exhausted(status: reqwest::StatusCode, remaining: Option<&str>, body: &Value) -> bool {
+    let limited = matches!(status.as_u16(), 403 | 429) && remaining.is_none_or(|r| r == "0");
+    limited
+        || body["errors"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|e| e["type"] == "RATE_LIMITED"))
+}
+
 async fn graphql_call(
     http: &reqwest::Client,
     endpoint: &str,
@@ -143,7 +168,19 @@ async fn graphql_call(
         return Ok(Outcome::BadToken(token.to_string()));
     }
     let status = resp.status();
-    let body: Value = resp.json().await.context("graphql response")?;
+    let remaining = resp
+        .headers()
+        .get("x-ratelimit-remaining")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let body: Value = match resp.json().await {
+        Ok(b) => b,
+        Err(_) if matches!(status.as_u16(), 403 | 429) => Value::Null,
+        Err(e) => return Err(e).context("graphql response"),
+    };
+    if exhausted(status, remaining.as_deref(), &body) {
+        return Err(Exhausted.into());
+    }
     if let Some(errors) = body.get("errors") {
         let all_allowed = errors.as_array().is_some_and(|e| {
             e.iter()
@@ -173,6 +210,15 @@ fn login(v: &Value) -> (String, bool) {
 
 fn nodes(v: &Value) -> impl Iterator<Item = &Value> {
     v["nodes"].as_array().into_iter().flatten()
+}
+
+/// The cursor of the next page of a connection, if it has one.
+fn next_cursor(conn: &Value) -> Option<String> {
+    conn["pageInfo"]["hasNextPage"]
+        .as_bool()
+        .unwrap_or(false)
+        .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
+        .flatten()
 }
 
 /// A committer voids a review with a line `maintainer-mode: void <review link>`
@@ -322,7 +368,6 @@ fn ai_marker(n: &Value) -> Option<String> {
 /// `opencode (model glm-5.3-flash)`, and the Linux kernel form
 /// `claude:claude-opus-5-5`: the tool is the text before the first version,
 /// bracket or colon.
-/// version or bracket.
 fn tool_name(trailer: &str) -> String {
     let head = trailer.split(['(', '<', ':', '[']).next().unwrap_or("");
     let name = head
@@ -364,12 +409,7 @@ async fn page_of(
     let data = client.graphql(store, &query, vars).await?;
     let conn = &data["repository"]["pullRequests"];
     let prs = nodes(conn).filter_map(normalize).collect();
-    let next = conn["pageInfo"]["hasNextPage"]
-        .as_bool()
-        .unwrap_or(false)
-        .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
-        .flatten();
-    Ok((prs, next))
+    Ok((prs, next_cursor(conn)))
 }
 
 async fn page(
@@ -540,12 +580,7 @@ async fn issue_page(
             Ok(data) => {
                 let conn = &data["repository"]["issues"];
                 let issues = nodes(conn).filter_map(normalize_issue).collect();
-                let next = conn["pageInfo"]["hasNextPage"]
-                    .as_bool()
-                    .unwrap_or(false)
-                    .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
-                    .flatten();
-                return Ok((issues, next));
+                return Ok((issues, next_cursor(conn)));
             }
             Err(e) if client.has_token() => {
                 tracing::warn!("issue page of {n}: {e:#}");
@@ -690,13 +725,8 @@ async fn history_page(
         match client.graphql(store, &query, vars).await {
             Ok(data) => {
                 let conn = &data["repository"]["pullRequests"];
-                let next = conn["pageInfo"]["hasNextPage"]
-                    .as_bool()
-                    .unwrap_or(false)
-                    .then(|| conn["pageInfo"]["endCursor"].as_str().map(String::from))
-                    .flatten();
                 *level = i;
-                return Ok((nodes(conn).filter_map(facts).collect(), next));
+                return Ok((nodes(conn).filter_map(facts).collect(), next_cursor(conn)));
             }
             Err(e) if client.has_token() => {
                 tracing::warn!("history page of {n}: {e:#}");
@@ -773,7 +803,9 @@ pub async fn settle_mergeable(
         let query = format!(
             "{{ rateLimit {{ remaining }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
         );
-        let data = client.graphql(store, &query, Value::Null).await?;
+        let data = client
+            .graphql_allowing(store, &query, Value::Null, &["NOT_FOUND"])
+            .await?;
         for pr in data["repository"]
             .as_object()
             .into_iter()
@@ -790,22 +822,38 @@ pub async fn settle_mergeable(
     Ok(settled)
 }
 
+/// Pages of 100 pull requests that [`committed_paths`] reads at most.
+const COMMITTED_PAGES: usize = 5;
+
 /// Directories a person changed in merged pull requests over the last year,
-/// read with that person's own token.
+/// read with that person's own token, from the newest 500 pull requests.
 pub async fn committed_paths(token: &str, login: &str) -> Result<Vec<String>> {
     let since = (Utc::now() - Duration::days(365)).format("%Y-%m-%d");
-    let query = "query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes {
+    let query = "query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {
+        pageInfo { hasNextPage endCursor } nodes {
         ... on PullRequest { files(first: 30) { nodes { path } } } } } }";
-    let vars = json!({ "q": format!("repo:{OWNER}/{REPO} is:pr is:merged author:{login} merged:>={since}") });
-    let Outcome::Data(data) = graphql_once(&http(), token, query, &vars).await? else {
-        bail!("token rejected");
-    };
-    let mut out: Vec<String> = nodes(&data["search"])
-        .flat_map(|pr| nodes(&pr["files"]))
-        .filter_map(|f| f["path"].as_str())
-        .map(|p| p.rsplit_once('/').map_or("", |(d, _)| d).to_string())
-        .filter(|d| !d.is_empty())
-        .collect();
+    let q = format!("repo:{OWNER}/{REPO} is:pr is:merged author:{login} merged:>={since}");
+    let http = http();
+    let mut out: Vec<String> = Vec::new();
+    let mut after: Option<String> = None;
+    for _ in 0..COMMITTED_PAGES {
+        let vars = json!({ "q": q, "after": after });
+        let Outcome::Data(data) = graphql_once(&http, token, query, &vars).await? else {
+            bail!("token rejected");
+        };
+        let search = &data["search"];
+        out.extend(
+            nodes(search)
+                .flat_map(|pr| nodes(&pr["files"]))
+                .filter_map(|f| f["path"].as_str())
+                .map(|p| p.rsplit_once('/').map_or("", |(d, _)| d).to_string())
+                .filter(|d| !d.is_empty()),
+        );
+        after = next_cursor(search);
+        if after.is_none() {
+            break;
+        }
+    }
     out.sort();
     out.dedup();
     Ok(out)
@@ -822,7 +870,8 @@ impl OAuth {
         format!("{}/auth/callback", self.public_url.trim_end_matches('/'))
     }
 
-    /// No scope: the token reads public data only, which is all the club needs.
+    /// No scope: the token reads public data, and starts workflows only in
+    /// the repositories where the person installed the GitHub App.
     pub fn authorize_url(&self, state: &str) -> String {
         format!(
             "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&state={}&allow_signup=false",
@@ -877,6 +926,62 @@ pub fn urlencode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A GraphQL stand-in: token `limited` is out of budget the way
+    /// `status` says, any other token gets data.
+    async fn graphql(status: &'static str, body: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/graphql", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let mut buf = [0u8; 8192];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_lowercase();
+                let (status, body) = if req.contains("bearer limited") {
+                    (status, body)
+                } else {
+                    (
+                        "200 OK",
+                        r#"{"data":{"ok":1,"rateLimit":{"remaining":4000}}}"#,
+                    )
+                };
+                let _ = s
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\nx-ratelimit-remaining: 0\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            }
+        });
+        url
+    }
+
+    #[tokio::test]
+    async fn a_token_out_of_budget_hands_over_to_the_next() {
+        let store = Store::open(std::path::Path::new(":memory:")).unwrap();
+        for (status, body) in [
+            (
+                "200 OK",
+                r#"{"data":null,"errors":[{"type":"RATE_LIMITED","message":"API rate limit exceeded"}]}"#,
+            ),
+            ("403 Forbidden", r#"{"message":"secondary rate limit"}"#),
+            ("429 Too Many Requests", "slow down"),
+        ] {
+            let url = graphql(status, body).await;
+            let mut c = Client::at(&url, vec!["limited".into(), "fresh".into()]);
+            let v = c.graphql(&store, "{ ok }", Value::Null).await.unwrap();
+            assert_eq!(v["ok"], 1, "{status}");
+            assert_eq!(c.current, 1, "{status}");
+        }
+        let url = graphql("429 Too Many Requests", "slow down").await;
+        let mut c = Client::at(&url, vec!["limited".into()]);
+        assert!(c.graphql(&store, "{ ok }", Value::Null).await.is_err());
+        assert!(!c.has_token());
+    }
 
     #[test]
     fn void_line_names_a_review() {

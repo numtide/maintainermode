@@ -214,26 +214,22 @@ pub fn compute(prs: &[Pr], orphan: impl Fn(&Pr) -> bool, now: DateTime<Utc>) -> 
         p.score += c.value;
         p.credits += 1;
     }
+    let mut weights: HashMap<&str, (f64, f64)> = HashMap::new();
+    for c in earned.iter().filter(live).filter(in_window) {
+        let w = weights.entry(c.reviewer.as_str()).or_default();
+        w.0 += c.weight;
+        if gave_to
+            .get(c.pr_author.as_str())
+            .is_some_and(|s| s.contains(c.reviewer.as_str()))
+        {
+            w.1 += c.weight;
+        }
+    }
     for p in people.values_mut() {
         let authors = gave_to.get(p.login.as_str());
         p.counterparties = authors.map_or(0, |a| a.len());
         p.listed = p.counterparties >= MIN_COUNTERPARTIES;
-        let mut total = 0.0;
-        let mut mutual = 0.0;
-        for c in earned
-            .iter()
-            .filter(live)
-            .filter(in_window)
-            .filter(|c| c.reviewer == p.login)
-        {
-            total += c.weight;
-            let returned = gave_to
-                .get(c.pr_author.as_str())
-                .is_some_and(|s| s.contains(p.login.as_str()));
-            if returned {
-                mutual += c.weight;
-            }
-        }
+        let (total, mutual) = weights.get(p.login.as_str()).copied().unwrap_or_default();
         p.reciprocity = if total > 0.0 { mutual / total } else { 0.0 };
     }
 

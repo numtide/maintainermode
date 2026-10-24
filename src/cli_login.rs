@@ -108,21 +108,18 @@ async fn poll(Json(p): Json<Poll>) -> Response {
     let now = Instant::now();
     let mut guard = PENDING.lock().unwrap();
     let pending = guard.get_or_insert_with(HashMap::new);
-    match pending.get(&p.device_code) {
-        Some(e) if e.expires <= now => {
-            pending.remove(&p.device_code);
-            refuse(StatusCode::GONE, "the code expired, run login again")
-        }
-        Some(Pending { done: None, .. }) => {
+    let Some(mut e) = pending.remove(&p.device_code) else {
+        return refuse(StatusCode::NOT_FOUND, "unknown or expired code");
+    };
+    if e.expires <= now {
+        return refuse(StatusCode::GONE, "the code expired, run login again");
+    }
+    match e.done.take() {
+        Some((login, token)) => Json(json!({ "login": login, "token": token })).into_response(),
+        None => {
+            pending.insert(p.device_code, e);
             (StatusCode::ACCEPTED, Json(json!({ "status": "pending" }))).into_response()
         }
-        Some(_) => {
-            let Some((login, token)) = pending.remove(&p.device_code).and_then(|e| e.done) else {
-                return refuse(StatusCode::NOT_FOUND, "unknown code");
-            };
-            Json(json!({ "login": login, "token": token })).into_response()
-        }
-        None => refuse(StatusCode::NOT_FOUND, "unknown or expired code"),
     }
 }
 
@@ -155,18 +152,27 @@ async fn page(
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to(&sign_in_href(&code)).into_response();
     };
+    let named = if code.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p>The link names the code <code>{}</code>. Type it only if your terminal shows the same code.</p>",
+            esc(&code)
+        )
+    };
+    // RFC 8628 §5.4: the person types the code, so a link alone cannot
+    // hand the token to the person who sent it.
     let body = format!(
         "<div class=\"Box\"><div class=\"Box-row\">\
          <p>A <code>maintainer-mode login</code> asks for an upload token for <strong>{who}</strong>. \
-         Confirm only a code that your own terminal shows now. A person who sent you this link gets the token.</p>\
+         Confirm only a code that your own terminal shows now. A person who sent you this link gets the token.</p>{named}\
          <form method=\"post\" action=\"/login/cli\">\
          <label for=\"code\" class=\"d-block mb-1\">The code in your terminal</label>\
-         <input id=\"code\" name=\"code\" class=\"form-control text-mono mb-3\" value=\"{code}\" autocomplete=\"off\" required>\
+         <input id=\"code\" name=\"code\" class=\"form-control text-mono mb-3\" autocomplete=\"off\" required>\
          <p class=\"color-fg-muted\">The token can only send your package sets. Any upload token you made before stops working.</p>\
          <button class=\"btn btn-primary\" type=\"submit\">Confirm</button> \
          <a class=\"btn\" href=\"/\">Cancel</a></form></div></div>",
         who = esc(&login),
-        code = esc(&code),
     );
     render(&app, &login, body)
 }
@@ -187,36 +193,31 @@ async fn confirm(
     let code = normalize(&f.code);
     let now = Instant::now();
     let token = random_id();
-    let found = {
+    {
         let mut guard = PENDING.lock().unwrap();
         let pending = guard.get_or_insert_with(HashMap::new);
-        match pending
+        let Some(p) = pending
             .values_mut()
             .find(|p| p.user_code == code && p.done.is_none() && p.expires > now)
+        else {
+            return (
+                StatusCode::NOT_FOUND,
+                render(
+                    &app,
+                    &login,
+                    "<div class=\"flash flash-error\">No sign-in waits for this code. It can have expired after 10 minutes. Run <code>maintainer-mode login</code> again.</div>".into(),
+                ),
+            )
+                .into_response();
+        };
+        // The tool must never get a token that the store did not keep.
+        if let Err(e) = app
+            .store
+            .set_upload_token(&login, &crate::sets::token_hash(&token))
         {
-            Some(p) => {
-                p.done = Some((login.clone(), token.clone()));
-                true
-            }
-            None => false,
+            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
         }
-    };
-    if !found {
-        return (
-            StatusCode::NOT_FOUND,
-            render(
-                &app,
-                &login,
-                "<div class=\"flash flash-error\">No sign-in waits for this code. It can have expired after 10 minutes. Run <code>maintainer-mode login</code> again.</div>".into(),
-            ),
-        )
-            .into_response();
-    }
-    if let Err(e) = app
-        .store
-        .set_upload_token(&login, &crate::sets::token_hash(&token))
-    {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
+        p.done = Some((login.clone(), token));
     }
     render(
         &app,
@@ -276,5 +277,31 @@ mod tests {
             Some("alice")
         );
         assert_eq!(ask().await.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_link_never_fills_in_the_code() {
+        let app = crate::sets::tests::app(&[]);
+        let h = crate::notify::tests::signed_in(&app, "alice");
+        let r = page(
+            State(app.clone()),
+            h,
+            Query(CodeQuery {
+                code: Some("bcdf-ghjk".into()),
+            }),
+        )
+        .await;
+        let html = String::from_utf8(
+            axum::body::to_bytes(r.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .to_vec(),
+        )
+        .unwrap();
+        assert!(
+            html.contains("names the code <code>BCDF-GHJK</code>"),
+            "{html}"
+        );
+        assert!(!html.contains("value=\"BCDF-GHJK\""));
     }
 }
