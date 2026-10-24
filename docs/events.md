@@ -105,7 +105,7 @@ Measured on 16 Oct 2026.
 - About 220 events per hour at 3 kB is about 16 MB of JSON per day. With
   `zstd` at 11 : 1, a daily file is about 1.5 MB and a month is about 45 MB.
   Each row is compressed alone, so a month file on the host is larger.
-- Both sources now send a short `pull_request` object (`base`, `head`, `id`,
+- Both sources send a short `pull_request` object (`base`, `head`, `id`,
   `number`, `url`), not the full pull request.
 
 ## Order
