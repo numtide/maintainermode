@@ -423,6 +423,8 @@ async fn poll_once(
             newest,
         } => (interval, last_modified, threads, newest),
     };
+    let numbers: Vec<u64> = threads.iter().map(|t| t.number).collect();
+    crate::archive::mark_due(app, REPO, &numbers);
     let mut client = client(app, bot).await;
     let applied = apply(
         api,

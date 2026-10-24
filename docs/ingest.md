@@ -52,7 +52,7 @@ A pass starts every 5 minutes. Each pass does these steps for each
 repository:
 
 1. **Event hints** (nixpkgs only). Read the new events of the event log.
-   Each issue or pull request that got an event is due 5 minutes later.
+   Each issue or pull request that got an event is due at once.
 2. **Open items.** Until it is complete once, list every open issue and
    pull request, 100 numbers per page, at most 20 pages per kind per pass.
    A number whose `updatedAt` differs from the stored copy becomes due.
@@ -69,6 +69,11 @@ repository:
    every open item is stored, use the rest of the budget to walk back from the highest number to #1. The walk skips the
    numbers that are stored already.
 
+Between two passes, a due pass runs steps 1 and 4 only. It starts 10
+seconds after a new event in the event log, or after the notifications
+poller marks the numbers of its threads due. The 10 seconds let a burst
+of events on one item cost one fetch.
+
 The budget is a fixed number of items per repository per pass
 (`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses only the
 GitHub App token and the bot token of the server, through
@@ -81,8 +86,9 @@ All state is in the archive file, so the walk continues after a restart.
 
 A query asks for 10 items. GitHub answers 502 after 10 seconds, so a
 failed query is asked again with 5 items, then with 1 item and smaller
-first pages. An item that fails at the smallest size is due again one day
-later. The `failed` table keeps it, with the error, until a fetch
+first pages. A due item that fails at the smallest size is due again one
+hour later. After a second failure, and for an item of the history walk,
+the wait is one day. The `failed` table keeps it, with the error, until a fetch
 succeeds. `/state?tab=status` shows the count of failed items. The walk is complete
 only when every number up to the highest has a row. A failed item keeps the
 walk from completion.
