@@ -47,6 +47,7 @@ lettre = { version = "0.11", default-features = false, features = [
 ] }
 ring = "0.17"
 zstd = "0.13"
+html-macro = { path = "html-macro" }
 
 [profile.release]
 strip = true

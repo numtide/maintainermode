@@ -34,8 +34,8 @@ macro_rules! octicon {
 pub(crate) use octicon;
 
 /// The page adds the symbol it points to: see [`crate::assets::sprite`].
-pub(crate) fn icon(name: &str) -> String {
-    format!(
+pub(crate) fn icon(name: &str) -> crate::html::Html {
+    crate::html::html!(
         "<svg class=\"octicon\" width=\"16\" height=\"16\" aria-hidden=\"true\"><use href=\"#i-{name}\"></use></svg>"
     )
 }
@@ -286,10 +286,7 @@ pub(crate) fn random_id() -> String {
 }
 
 pub(crate) fn esc(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+    crate::html::Html::text(s).into_string()
 }
 
 /// Coarser as it grows: nobody needs the day of something five years old.
@@ -353,7 +350,7 @@ pub(crate) fn people(logins: &[String]) -> String {
 }
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
-pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> String {
+pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> crate::html::Html {
     review_rows(entries, act, false, |_| Default::default())
 }
 
@@ -377,9 +374,9 @@ pub(crate) fn review_rows(
     act: crate::actions::Act,
     waiting: bool,
     extra: impl Fn(&Entry) -> (String, String),
-) -> String {
+) -> crate::html::Html {
     use crate::ui::{Kind, Tone, badge, item_row};
-    let mut out = String::new();
+    let mut out = crate::html::Html::new();
     for e in entries {
         let mut badges = Vec::new();
         if e.mergeable == "CONFLICTING" {
@@ -409,11 +406,11 @@ pub(crate) fn review_rows(
         meta.push_str(&why);
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
-            &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
             "",
             &meta,
             &badges,
-            &format!(
+            format!(
                 "<span class=\"ml-2\">{}</span>{}{end}",
                 ci_label(e),
                 act.buttons(e.number)
@@ -583,10 +580,10 @@ pub(crate) fn tags_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"tags\">{}</div>",
         crate::ui::section(
-            &format!("{} Tags", icon(octicon!("tag"))),
+            format!("{} Tags", icon(octicon!("tag"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row f6\">For you on <a href=\"/review\">/review</a> holds {} paths you maintain, \
                  {} you own in ci/OWNERS, {} you changed this year, and your tags.</div>\
                  <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\

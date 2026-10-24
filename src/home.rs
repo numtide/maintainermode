@@ -21,7 +21,7 @@ pub fn routes() -> Router<Shared> {
     Router::new().route("/", get(home))
 }
 
-fn section(title: &str, more: Option<(&str, &str)>, body: &str) -> String {
+fn section(title: &str, more: Option<(&str, &str)>, body: &str) -> crate::html::Html {
     crate::ui::section(title, None, more, body)
 }
 
@@ -32,9 +32,9 @@ fn entry_rows(entries: &[&Entry]) -> String {
         .map(|e| {
             item_row(
                 Some(Kind::PR_OPEN),
-                &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+                crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
                 "",
-                &format!(
+                format!(
                     "#{} by <a href=\"/u/{a}\">{a}</a> · {} old",
                     e.number,
                     ago(e.created_at),
@@ -92,12 +92,12 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
         &if first.is_empty() {
             empty("None right now.")
         } else {
-            format!(
+            crate::html::Html::from(format!(
                 "<div class=\"Box-row f6 color-fg-muted\">No maintainer, team or ci/OWNERS line covers their files. A first review helps most here. \
                  Read <a href=\"{}#how-to-review-pull-requests\">how nixpkgs reviews</a> first.</div>{}",
                 crate::web::CONTRIBUTING,
                 entry_rows(&first)
-            )
+            ))
         },
     ));
     out.push_str(&crate::first::section(app));
@@ -112,7 +112,7 @@ fn visitor(app: &App, headers: &HeaderMap) -> String {
                 "None right now."
             })
         } else {
-            subject_rows(&help)
+            subject_rows(&help).into()
         },
     ));
     let p = app.packages.read().unwrap().clone();
@@ -170,7 +170,7 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
         &if news.is_empty() {
             empty("Nothing new. <a href=\"/packages?filter=watch\">Watch</a> packages, modules or directories to hear about them.")
         } else {
-            news
+            news.into()
         },
     ));
 
@@ -192,7 +192,7 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
         &if mine_html.is_empty() {
             empty("Nothing needs you now. The packages of your machines, what you maintain and what you watch show here when they get an advisory, a new release, a failed build or a pull request.")
         } else {
-            mine_html
+            mine_html.into()
         },
     ));
 
@@ -247,7 +247,7 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
         &if own_html.is_empty() {
             empty("You have no open pull request.")
         } else {
-            own_html
+            own_html.into()
         },
     ));
 

@@ -577,10 +577,10 @@ pub(crate) fn settings_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"followup\">{}</div>",
         crate::ui::section(
-            &format!("{} Your pull requests", icon(octicon!("git-pull-request"))),
+            format!("{} Your pull requests", icon(octicon!("git-pull-request"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\"><p>The default follow-up plan of each pull request you open. \
                  Change the plan of one pull request on its page.</p>\
                  <form method=\"post\" action=\"/me/settings/followup\" class=\"d-flex flex-wrap flex-items-center gap-2\">\

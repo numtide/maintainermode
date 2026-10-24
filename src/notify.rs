@@ -122,7 +122,7 @@ impl Kind {
         }
     }
 
-    fn icon(self) -> String {
+    fn icon(self) -> crate::html::Html {
         match self {
             Kind::Mine => icon(octicon!("person")),
             Kind::PullRequest => icon(octicon!("git-pull-request")),
@@ -508,10 +508,10 @@ pub fn settings_box(app: &App, login: &str, mail: Option<&str>) -> String {
     format!(
         "<div id=\"email\">{}</div>",
         crate::ui::section(
-            &format!("{} Notifications", icon(octicon!("bell"))),
+            format!("{} Notifications", icon(octicon!("bell"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\">{note}\
                  <form method=\"post\" action=\"/me/notify\">\
                  <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\

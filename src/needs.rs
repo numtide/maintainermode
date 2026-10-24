@@ -892,7 +892,7 @@ fn row(it: &Item, mood: Mood) -> String {
     let labels: String = it
         .labels
         .iter()
-        .map(|(t, l)| format!(" {}", badge(*t, &esc(l))))
+        .map(|(t, l)| format!(" {}", badge(*t, esc(l))))
         .collect();
     let more = it
         .more
@@ -961,7 +961,7 @@ fn render(shown: &[Item], mood: Mood, done: usize) -> String {
     let body = if rows.is_empty() {
         crate::ui::empty(empty_text(mood))
     } else {
-        rows
+        rows.into()
     };
     let start = if list.is_empty() {
         String::new()

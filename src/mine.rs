@@ -419,7 +419,13 @@ pub(crate) fn rank_prs_why<'a>(
 
 /// A row with its version, the team that names the person, and why it is
 /// in the list. `status` sits on the right.
-pub(crate) fn row_html(index: &Index, ch: &Channels, r: &Row, marks: Why, status: &str) -> String {
+pub(crate) fn row_html(
+    index: &Index,
+    ch: &Channels,
+    r: &Row,
+    marks: Why,
+    status: &str,
+) -> crate::html::Html {
     let version = match &r.sub {
         Subject::Pkg(a) => index
             .pkgs
@@ -726,7 +732,11 @@ pub(crate) fn view(
         &title,
         Some(rows.len()),
         None,
-        &if list.is_empty() { empty(&blank) } else { list },
+        &if list.is_empty() {
+            empty(&blank)
+        } else {
+            list.into()
+        },
     ));
     out.push_str(&pager(&href(f, q, set, output), next.as_deref()));
     if f == Filter::Watch {

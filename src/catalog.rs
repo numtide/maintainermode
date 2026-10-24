@@ -19,6 +19,7 @@ use crate::area::{Index, under};
 use crate::attrs::{License, Meta};
 use crate::channels::{Channel, Channels};
 use crate::health::{Advisory, Health, Hydra, Last};
+use crate::html::Html;
 use crate::hygiene;
 use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
@@ -193,7 +194,7 @@ impl Subject {
         }
     }
 
-    pub(crate) fn icon(&self) -> String {
+    pub(crate) fn icon(&self) -> Html {
         match self {
             Subject::Pkg(_) => icon(octicon!("package")),
             Subject::Module(_) => icon(octicon!("gear")),
@@ -328,7 +329,7 @@ fn upstream_badge(version: &str) -> String {
     )
 }
 
-fn score_label(s: &Score) -> String {
+fn score_label(s: &Score) -> Html {
     let why = if s.reasons.is_empty() {
         "nothing to fix".to_string()
     } else {
@@ -339,10 +340,10 @@ fn score_label(s: &Score) -> String {
             .join("; ")
     };
     let why = format!("Maintainer Mode's own score: {why}");
-    format!(
+    crate::html::html!(
         "<span class=\"Label {}\" title=\"{}\">risk {}</span>",
         s.label_class(),
-        esc(&why),
+        why,
         s.risk
     )
 }
@@ -566,7 +567,7 @@ impl Flags {
         )
     }
 
-    pub(crate) fn badges(&self) -> Vec<String> {
+    pub(crate) fn badges(&self) -> Vec<Html> {
         let mut out = Vec::new();
         if let Some(s) = &self.score {
             out.push(score_label(s));
@@ -574,7 +575,7 @@ impl Flags {
         if self.advisories > 0 {
             out.push(badge(
                 Tone::Danger,
-                &format!(
+                format!(
                     "{} {} advisor{}",
                     icon(octicon!("shield")),
                     self.advisories,
@@ -585,11 +586,11 @@ impl Flags {
         if self.build_failed {
             out.push(badge(
                 Tone::Danger,
-                &format!("{} build fails", icon(octicon!("x-circle-fill"))),
+                format!("{} build fails", icon(octicon!("x-circle-fill"))),
             ));
         }
         if let Some(u) = &self.upstream {
-            out.push(badge(Tone::Attention, &upstream_badge(u)));
+            out.push(badge(Tone::Attention, upstream_badge(u)));
         }
         out
     }
@@ -619,7 +620,7 @@ impl Flags {
         let upstream = self.upstream.as_ref().and_then(|_| out.pop());
         let meta = self.meta();
         if !meta.is_empty() {
-            out.push(format!("<span class=\"f6 color-fg-muted\">{meta}</span>"));
+            out.push(format!("<span class=\"f6 color-fg-muted\">{meta}</span>").into());
         }
         out.extend(upstream);
         out.join(" · ")
@@ -639,7 +640,7 @@ impl Flags {
     }
 }
 
-pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
+pub(crate) fn pr_row(p: &Pr, act: Act) -> Html {
     use crate::ui::Kind;
     let kind = Kind::of_pr(&p.state);
     let ci = match p.ci.as_deref() {
@@ -659,9 +660,9 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
     };
     item_row(
         Some(kind),
-        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         "",
-        &format!(
+        format!(
             "#{n} by <a href=\"/u/{a}\">{a}</a> · {when}{ci}",
             n = p.number,
             a = esc(&p.author)
@@ -675,17 +676,17 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> String {
     )
 }
 
-fn issue_row(i: &Issue) -> String {
+fn issue_row(i: &Issue) -> Html {
     use crate::ui::Kind;
     let when = match i.closed_at {
         Some(t) if !i.is_open() => format!("closed {} ago", ago(t)),
         _ => format!("opened {} ago", ago(i.created_at)),
     };
-    let labels: Vec<String> = i
+    let labels: Vec<Html> = i
         .labels
         .iter()
         .filter(|l| !l.starts_with("0.kind:") && !l.starts_with("9."))
-        .map(|l| badge(Tone::Neutral, &esc(l)))
+        .map(|l| badge(Tone::Neutral, esc(l)))
         .collect();
     item_row(
         Some(if i.is_open() {
@@ -693,9 +694,9 @@ fn issue_row(i: &Issue) -> String {
         } else {
             Kind::ISSUE_CLOSED
         }),
-        &esc(&i.title),
-        &esc(&i.url),
-        &format!(
+        esc(&i.title),
+        esc(&i.url),
+        format!(
             "#{} by {} · {when} · {} comments",
             i.number,
             crate::web::person_link(&i.author),
@@ -711,10 +712,10 @@ fn section<T>(
     title: &str,
     items: &[&T],
     open: impl Fn(&T) -> bool,
-    row: impl Fn(&T) -> String,
-) -> String {
+    row: impl Fn(&T) -> Html,
+) -> Html {
     let (o, c): (Vec<&&T>, Vec<&&T>) = items.iter().partition(|x| open(x));
-    let mut body: String = o.iter().take(LIST).map(|x| row(x)).collect();
+    let mut body: Html = o.iter().take(LIST).map(|x| row(x)).collect();
     if o.is_empty() {
         body = empty("None open.");
     }
@@ -742,17 +743,17 @@ fn section<T>(
 }
 
 /// `after_title` is HTML that follows the link, such as a version.
-pub(crate) fn subject_row(sub: &Subject, f: &Flags, after_title: &str, status: &str) -> String {
+pub(crate) fn subject_row(sub: &Subject, f: &Flags, after_title: &str, status: &str) -> Html {
     item_row(
         None,
-        &format!(
+        format!(
             "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>{after_title}",
             sub.href(),
             sub.icon(),
             esc(&sub.label())
         ),
         "",
-        &f.meta(),
+        f.meta(),
         &f.badges(),
         status,
     )
@@ -911,7 +912,7 @@ fn cache_html(rows: &[CacheRow]) -> String {
         .join(" · ")
 }
 
-fn dead_row(label: &str, job: &str, last: &Last) -> String {
+fn dead_row(label: &str, job: &str, last: &Last) -> Html {
     let since = last
         .build()
         .and_then(|b| b.history.iter().filter_map(|p| p.at).max())
@@ -919,7 +920,7 @@ fn dead_row(label: &str, job: &str, last: &Last) -> String {
         .unwrap_or_default();
     kv(
         label,
-        &format!(
+        format!(
             "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
             esc(&Hydra::job_url(job)),
             esc(job)
@@ -959,7 +960,7 @@ fn history_strip(job: &str, h: &[crate::builds::Past]) -> String {
     )
 }
 
-fn build_row(label: &str, job: &str, last: &Last) -> String {
+fn build_row(label: &str, job: &str, last: &Last) -> Html {
     let link = format!("<a href=\"{}\">{}</a>", esc(&Hydra::job_url(job)), esc(job));
     let body = match last {
         Last::Build(b) => format!(
@@ -1408,7 +1409,7 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
     let description = p.facts.as_ref().and_then(|f| f.description.as_deref());
     out.push_str(&kv(
         "Description",
-        &description
+        description
             .map(esc)
             .unwrap_or_else(|| "<span class=\"color-fg-muted\">none</span>".into()),
     ));
@@ -1421,7 +1422,7 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
             if let Some(d) = &m.long_description {
                 out.push_str(&kv(
                     "Long description",
-                    &format!("<div class=\"f6 pre-wrap\">{}</div>", esc(d.trim_end())),
+                    format!("<div class=\"f6 pre-wrap\">{}</div>", esc(d.trim_end())),
                 ));
             }
             let none = "<span class=\"color-fg-muted\">none</span>";
@@ -1434,10 +1435,10 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
                 },
             ));
             if let Some(d) = &m.download_page {
-                out.push_str(&kv("Download page", &url_html(d)));
+                out.push_str(&kv("Download page", url_html(d)));
             }
             if !m.changelog.is_empty() {
-                out.push_str(&kv("Changelog", &urls_html(&m.changelog)));
+                out.push_str(&kv("Changelog", urls_html(&m.changelog)));
             }
             out.push_str(&kv(
                 "License",
@@ -1451,9 +1452,9 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
                         .join(", ")
                 },
             ));
-            out.push_str(&kv("Platforms", &platforms_html(m)));
+            out.push_str(&kv("Platforms", platforms_html(m)));
             if let Some(b) = &m.main_program {
-                out.push_str(&kv("Main program", &format!("<code>{}</code>", esc(b))));
+                out.push_str(&kv("Main program", format!("<code>{}</code>", esc(b))));
             }
             out.push_str(&kv(
                 "Source provenance",
@@ -1464,14 +1465,14 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
                 },
             ));
             if !m.outputs.is_empty() {
-                out.push_str(&kv("Outputs", &codes(&m.outputs)));
+                out.push_str(&kv("Outputs", codes(&m.outputs)));
             }
-            out.push_str(&kv("Status", &status_html(p.facts.as_ref(), m)));
+            out.push_str(&kv("Status", status_html(p.facts.as_ref(), m)));
             if let Some((file, line)) = m.file_line() {
                 let r = if rev.is_empty() { "master" } else { rev };
                 out.push_str(&kv(
                     "Position",
-                    &format!(
+                    format!(
                         "<a class=\"branch-name\" href=\"https://github.com/NixOS/nixpkgs/blob/{}/{}#L{line}\">{}:{line}</a>",
                         esc(r),
                         esc(file),
@@ -1481,9 +1482,9 @@ fn package_box(index: &Index, rev: &str, p: &crate::area::Package) -> String {
             }
         }
     }
-    out.push_str(&kv("Maintainers", &people_links(&p.maintainers)));
+    out.push_str(&kv("Maintainers", people_links(&p.maintainers)));
     if !p.teams.is_empty() {
-        out.push_str(&kv("Teams", &teams_html(index, &p.teams)));
+        out.push_str(&kv("Teams", teams_html(index, &p.teams)));
     }
     out.push_str("</div>");
     out
@@ -1555,7 +1556,7 @@ async fn package_page(
             .collect();
         health.push_str(&kv(
             "Risk",
-            &format!(
+            format!(
                 "{} {}{}",
                 score_label(&sc),
                 sc.band(),
@@ -1593,7 +1594,7 @@ async fn package_page(
     };
     health.push_str(&kv("Version", &version));
     let ch = app.channels.read().unwrap().clone();
-    health.push_str(&kv("Channels", &channels_html(&ch, &attr, &p.version)));
+    health.push_str(&kv("Channels", channels_html(&ch, &attr, &p.version)));
     for (j, job, build, dead) in &builds {
         let label = if j.key() == crate::builds::Jobset::master().key() {
             "Hydra".to_string()
@@ -1608,11 +1609,11 @@ async fn package_page(
     }
     let cache = binary_cache(&app, &attr);
     if !cache.is_empty() {
-        health.push_str(&kv("Binary cache", &cache_html(&cache)));
+        health.push_str(&kv("Binary cache", cache_html(&cache)));
     }
     health.push_str(&kv(
         "Advisories",
-        &advisories_html(
+        advisories_html(
             &h,
             &judged(&h, &s, &attr),
             &h.osv_extra(&attr),
@@ -1622,11 +1623,11 @@ async fn package_page(
             &p.version,
         ),
     ));
-    health.push_str(&kv("Packaging", &packaging_html(&attr, &p)));
+    health.push_str(&kv("Packaging", packaging_html(&attr, &p)));
     if let Some(v) = viewer.as_deref() {
         health.push_str(&kv(
             "Update",
-            &crate::actions::update_form(
+            crate::actions::update_form(
                 &attr,
                 upstream(&s, &index, &h, &attr),
                 crate::actions::ready(&app, v, crate::workflows::Needed::Update),
@@ -1682,13 +1683,13 @@ async fn module_page(
     let mut out = String::new();
     let mut health = String::new();
     health.push_str(&build_row("NixOS test", &job, &build));
-    health.push_str(&kv("Maintainers", &people_links(&m.maintainers)));
+    health.push_str(&kv("Maintainers", people_links(&m.maintainers)));
     if !m.teams.is_empty() {
-        health.push_str(&kv("Teams", &teams_html(&index, &m.teams)));
+        health.push_str(&kv("Teams", teams_html(&index, &m.teams)));
     }
     health.push_str(&kv(
         "Directory",
-        &format!(
+        format!(
             "<a href=\"/a/{0}\">{0}/</a>",
             esc(file.rsplit_once('/').map_or("nixos/modules", |(d, _)| d))
         ),
@@ -1805,7 +1806,7 @@ async fn area_page(
     if !owners.is_empty() || !children.is_empty() {
         out.push_str("<div class=\"Box mb-4\">");
         if !owners.is_empty() {
-            out.push_str(&kv("ci/OWNERS", &owners.join("<br>")));
+            out.push_str(&kv("ci/OWNERS", owners.join("<br>")));
         }
         if !children.is_empty() {
             let list: Vec<String> = children
@@ -1819,7 +1820,7 @@ async fn area_page(
                     )
                 })
                 .collect();
-            out.push_str(&kv("Most open pull requests", &list.join(" · ")));
+            out.push_str(&kv("Most open pull requests", list.join(" · ")));
         }
         out.push_str("</div>");
     }
@@ -1828,7 +1829,7 @@ async fn area_page(
             "Packages and modules",
             Some(rows.len()),
             None,
-            &subject_rows(&rows),
+            subject_rows(&rows),
         ));
     }
     let act = Act::of(&app, viewer.as_deref());
@@ -1955,8 +1956,8 @@ fn catalog_body(app: &crate::web::App, signed_in: bool) -> String {
                 };
                 item_row(
                     None,
-                    &format!("{} {}/", icon(octicon!("file-directory")), esc(a)),
-                    &format!("/a/{}", esc(a)),
+                    format!("{} {}/", icon(octicon!("file-directory")), esc(a)),
+                    format!("/a/{}", esc(a)),
                     &meta,
                     &[],
                     "",
@@ -2133,16 +2134,16 @@ pub(crate) fn maintains_body(app: &crate::web::App, login: &str) -> String {
         })
     );
     out.push_str(&crate::ui::section(
-        &format!("{} Packages", icon(octicon!("package"))),
+        format!("{} Packages", icon(octicon!("package"))),
         Some(m.packages.len()),
         None,
-        &maintained_rows(&s, &index, &h, &ch, &m.packages),
+        maintained_rows(&s, &index, &h, &ch, &m.packages),
     ));
     out.push_str(&crate::ui::section(
-        &format!("{} NixOS modules", icon(octicon!("gear"))),
+        format!("{} NixOS modules", icon(octicon!("gear"))),
         Some(m.modules.len()),
         None,
-        &maintained_rows(&s, &index, &h, &ch, &m.modules),
+        maintained_rows(&s, &index, &h, &ch, &m.modules),
     ));
     out
 }
@@ -2265,10 +2266,10 @@ pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> String {
     format!(
         "<div id=\"feed\">{}</div>",
         crate::ui::section(
-            &format!("{} Atom feed", icon(octicon!("rss"))),
+            format!("{} Atom feed", icon(octicon!("rss"))),
             None,
             None,
-            &format!("<div class=\"Box-row\">{feed}</div>")
+            format!("<div class=\"Box-row\">{feed}</div>")
         )
     )
 }

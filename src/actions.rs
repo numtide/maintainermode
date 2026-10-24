@@ -267,7 +267,7 @@ async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
         let _ = write!(out, "<div class=\"flash mb-3\">{}</div>", esc(&m));
     }
     let r = repos(&app, login);
-    out.push_str(&crate::ui::note(&format!(
+    out.push_str(&crate::ui::note(format!(
         "Runs start in {} and {}. <a href=\"/me/settings#workflows\">Change the repositories</a>.",
         esc(&r.review),
         esc(&r.update)
@@ -309,7 +309,7 @@ async fn runs_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
             ),
         };
         out.push_str(&crate::ui::section(
-            &format!(
+            format!(
                 "{title} <span class=\"color-fg-muted text-normal f6\">{} · {file}</span>",
                 esc(repo)
             ),
@@ -385,7 +385,7 @@ async fn setup(app: &App, login: &str) -> Option<Check> {
 
 const SETUP: &str = "/me/settings#workflows";
 
-fn mark_html(mark: Mark) -> (&'static str, String, &'static str) {
+fn mark_html(mark: Mark) -> (&'static str, crate::html::Html, &'static str) {
     match mark {
         Mark::Ok => (
             "color-fg-success",
@@ -517,10 +517,10 @@ pub async fn repos_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"workflows\">{}</div>",
         crate::ui::section(
-            &format!("{} Workflows", icon(octicon!("play"))),
+            format!("{} Workflows", icon(octicon!("play"))),
             None,
             Some((DOCS, "docs/actions.md")),
-            &format!(
+            format!(
                 "{flash}{steps}<div class=\"Box-row d-flex flex-items-center\">\
                  <span class=\"flex-auto f6 color-fg-muted\">{status}</span>\
                  <form method=\"post\" action=\"/me/settings/workflows/check\">\

@@ -1142,10 +1142,10 @@ fn about(pr: &Pr) -> String {
     let mut out = String::from(
         "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">About</h2></div>",
     );
-    out.push_str(&kv("State", &state_label(pr)));
+    out.push_str(&kv("State", state_label(pr)));
     out.push_str(&kv(
         "Author",
-        &format!(
+        format!(
             "<a href=\"/u/{a}\">{a}</a>{}",
             if pr.association.is_empty() {
                 String::new()
@@ -1160,13 +1160,13 @@ fn about(pr: &Pr) -> String {
     ));
     out.push_str(&kv(
         "Base",
-        &format!("<span class=\"branch-name\">{}</span>", esc(&pr.base)),
+        format!("<span class=\"branch-name\">{}</span>", esc(&pr.base)),
     ));
     out.push_str(&kv("Labels", &labels));
     out.push_str(&kv("Age", &when));
     out.push_str(&kv(
         "Size",
-        &format!(
+        format!(
             "<span class=\"color-fg-success\">+{}</span> <span class=\"color-fg-danger\">−{}</span> in {} file{}",
             pr.additions,
             pr.deletions,
@@ -1175,10 +1175,10 @@ fn about(pr: &Pr) -> String {
         ),
     ));
     if pr.is_open() {
-        out.push_str(&kv("Checks", &ci_text(pr.ci.as_deref())));
+        out.push_str(&kv("Checks", ci_text(pr.ci.as_deref())));
         out.push_str(&kv("Mergeable", mergeable_text(&pr.mergeable)));
     }
-    out.push_str(&kv("AI use", &ai_text(pr.ai.as_deref())));
+    out.push_str(&kv("AI use", ai_text(pr.ai.as_deref())));
     out.push_str("</div>");
     out
 }
@@ -1210,9 +1210,9 @@ fn place_html(
         }
         _ => "<span class=\"color-fg-muted\">in no queue</span>".to_string(),
     };
-    out.push_str(&kv("Queue", &format!("{queue}{hide}")));
+    out.push_str(&kv("Queue", format!("{queue}{hide}")));
     if !here.is_empty() {
-        out.push_str(&kv("Why it is here", &esc(&here.join("; "))));
+        out.push_str(&kv("Why it is here", esc(&here.join("; "))));
     }
     if !p.why.is_empty() {
         out.push_str(&kv(
@@ -1221,7 +1221,7 @@ fn place_html(
             } else {
                 "Why not ready"
             },
-            &esc(&p.why.join("; ")),
+            esc(&p.why.join("; ")),
         ));
     }
     if p.unowned {
@@ -1230,7 +1230,7 @@ fn place_html(
             "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files.",
         ));
     }
-    out.push_str(&kv("Approved head", &people(&p.approved_by)));
+    out.push_str(&kv("Approved head", people(&p.approved_by)));
     let mut rows = String::new();
     for c in credits {
         let status = match &c.dropped {
@@ -1255,7 +1255,7 @@ fn place_html(
     }
     out.push_str(&kv(
         "Reviews that moved it",
-        &format!(
+        format!(
             "{rows}<div class=\"f6 color-fg-muted\">A change, a reply or a merge followed in {} days. \
              <a href=\"/state?tab=rules#1-a-review-that-moves-a-pull-request\">Why it matters</a></div>",
             ledger::MOVE_DAYS

@@ -18,6 +18,7 @@ rustPlatform.buildRustPackage {
     fileset = lib.fileset.unions [
       ./Cargo.toml
       ./Cargo.lock
+      ./html-macro
       ./src
       ./docs
       ./nix/ux-pages.txt

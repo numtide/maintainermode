@@ -262,7 +262,7 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
             "Packages, modules and directories",
             Some(rows.len()),
             None,
-            &crate::catalog::subject_rows(rows),
+            crate::catalog::subject_rows(rows),
         ));
     }
     if !hits.people.is_empty() {
@@ -272,8 +272,8 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
             .map(|l| {
                 item_row(
                     None,
-                    &format!("{} {}", icon(octicon!("person")), esc(l)),
-                    &format!("/u/{}", esc(l)),
+                    format!("{} {}", icon(octicon!("person")), esc(l)),
+                    format!("/u/{}", esc(l)),
                     "",
                     &[],
                     "",
@@ -291,9 +291,9 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
                 let draft = if p.draft { " · draft" } else { "" };
                 item_row(
                     Some(kind),
-                    &esc(&p.title),
-                    &format!("/pr/{}", p.number),
-                    &format!("#{}{draft}", p.number),
+                    esc(&p.title),
+                    format!("/pr/{}", p.number),
+                    format!("#{}{draft}", p.number),
                     &[],
                     "",
                 )
@@ -318,14 +318,14 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> String {
                 };
                 item_row(
                     None,
-                    &format!(
+                    format!(
                         "{} <a class=\"Link--primary text-bold\" href=\"{}\">{}</a>{title}",
                         icon(octicon!("shield")),
                         esc(&a.url),
                         esc(&a.id)
                     ),
                     "",
-                    &format!("affects {}", pkgs.join(", ")),
+                    format!("affects {}", pkgs.join(", ")),
                     &[],
                     "",
                 )
