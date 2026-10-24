@@ -884,6 +884,7 @@ impl Store {
         Ok(())
     }
 
+    #[cfg(test)]
     pub fn delete_package_sets(&self, login: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM package_set WHERE login = ?1", [login])?;
