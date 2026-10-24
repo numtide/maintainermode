@@ -75,11 +75,14 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
 
 ### Decisions
 
-- **Lent tokens.** A token that a person lends pays only for reads that
+- **Lent tokens.** A token that a person lends pays for reads that
   benefit that person: items in their interest (their own PRs, the PRs
   and issues of what they maintain, watch or run on their machines, and
-  their review queue) and the pages they open. Everything else uses the
-  App and bot tokens. The backfill never uses a lent token. Today the
+  their review queue) and the pages they open. Shared work uses the App
+  and bot tokens. A lent token pays for shared freshness only when the
+  App and bot budgets are below `RESERVE`, and then for at most 10% of
+  its remaining budget. The backfill never uses a lent token. The page
+  where a person lends a token states this. Today the
   sync walk and the poller spread all reads over every lent token; the
   fetcher replaces that.
 - **Caps.** The projection keeps the caps of the sync. Removing them
