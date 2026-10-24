@@ -137,6 +137,41 @@ async fn every_signed_in_page_answers_and_stays_private() {
 }
 
 #[tokio::test]
+async fn text_from_github_and_people_is_escaped() {
+    let app = signed_in_app();
+    {
+        let mut index = app.index.write().unwrap();
+        let p = index.pkgs.get_mut("hello").unwrap();
+        p.facts = Some(crate::attrs::Facts {
+            description: Some("<x> says hello".into()),
+            ..Default::default()
+        });
+    }
+    let mut p = crate::ledger::tests::pr(7, "alice", 0);
+    p.title = "hello: <x> \"q\" & more".into();
+    p.state = "OPEN".into();
+    p.labels = vec!["<x>".into()];
+    p.base = "<x>".into();
+    app.store.put_prs(&[p]).unwrap();
+    app.recompute().unwrap();
+    let site = serve(app.clone()).await;
+    site.post("/me/tags", SID, &[("tags", "<x>")]).await;
+    for (path, raw) in [
+        ("/pr/7", "hello: <x>"),
+        ("/u/alice", "hello: <x>"),
+        ("/", "hello: <x>"),
+        ("/p/hello", "<x> says hello"),
+        ("/me/settings", "<x></textarea>"),
+    ] {
+        let a = site.get(path, Some(SID)).await;
+        assert_eq!(a.status, StatusCode::OK, "{path}");
+        assert!(!a.body.contains(raw), "{path} has raw {raw}");
+        assert!(!a.body.contains("<x>"), "{path} has <x>");
+        assert!(a.body.contains("&lt;x&gt;"), "{path} has no escaped <x>");
+    }
+}
+
+#[tokio::test]
 async fn me_pages_show_their_parts() {
     let app = signed_in_app();
     let site = serve(app.clone()).await;
