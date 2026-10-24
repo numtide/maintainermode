@@ -124,12 +124,6 @@ in
       description = "Slug of the public GitHub App that people install on their workflow repository, to start workflows with the Actions buttons. /me/settings#workflows links to its installation page.";
     };
 
-    historySince = lib.mkOption {
-      type = lib.types.str;
-      default = "2020-01-01";
-      description = "The first day of the pull requests whose facts the archive writes for `/state`, as YYYY-MM-DD.";
-    };
-
     indexSets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
@@ -303,7 +297,6 @@ in
         MAINTAINER_MODE_PUBLIC_URL = cfg.publicUrl;
         MAINTAINER_MODE_INDEX_SETS = lib.concatStringsSep "," cfg.indexSets;
         MAINTAINER_MODE_CHANNELS = lib.concatStringsSep "," cfg.channels;
-        MAINTAINER_MODE_HISTORY_SINCE = cfg.historySince;
         MAINTAINER_MODE_ARCHIVE_REPOS = lib.concatStringsSep "," cfg.archive.repositories;
         MAINTAINER_MODE_ARCHIVE_ITEMS = toString cfg.archive.itemsPerPass;
         HOME = state;

@@ -140,14 +140,6 @@ struct Cli {
         default_value = "nixos-unstable,stable"
     )]
     channels: Vec<String>,
-    /// How far back the history walk for the metrics goes.
-    #[arg(
-        long,
-        global = true,
-        env = "MAINTAINER_MODE_HISTORY_SINCE",
-        default_value = "2020-01-01"
-    )]
-    history_since: chrono::NaiveDate,
     #[arg(long, global = true)]
     json: bool,
     /// The server that the client commands use.
@@ -1020,7 +1012,7 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             tokio::spawn(events::archive(app.clone()));
             if !app.archive.is_empty() {
-                tokio::spawn(archive::walk(app.clone(), cli.history_since));
+                tokio::spawn(archive::walk(app.clone()));
             }
             tokio::spawn(rescan::run(app.clone()));
             tokio::spawn(notify::run(app.clone()));
@@ -1083,16 +1075,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 items,
             )?;
             let mut client = github::Client::new(vec![token]);
-            let history_from = cli.history_since.and_hms_opt(0, 0, 0).unwrap().and_utc();
-            let d = archive::sync_once(
-                &app.store,
-                &app.events,
-                &a,
-                &mut client,
-                history_from,
-                history,
-            )
-            .await?;
+            let d = archive::sync_once(&app.store, &app.events, &a, &mut client, history).await?;
             eprintln!(
                 "{} items of {} stored, {} rows written{}",
                 d.fetched,

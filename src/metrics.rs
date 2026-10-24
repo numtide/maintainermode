@@ -200,7 +200,7 @@ pub struct Month {
     pub merged: usize,
     pub merged_bot_authored: usize,
     pub closed_unmerged: usize,
-    /// Open at the end of the month. A floor before the history walk's start.
+    /// Open at the end of the month.
     pub open_at_end: usize,
     pub reviews: usize,
     pub reviewers: usize,
