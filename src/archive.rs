@@ -1222,6 +1222,26 @@ pub(crate) fn backfill(store: &Store, a: &Archive, rows: crate::project::Rows) -
     Ok(written)
 }
 
+/// Items stored before the walk read small first pages again can miss a
+/// timeline item (see `restart_small_page`). The open ones matter for the
+/// queues, so each is read once more. Delete with the key once every
+/// public server has run it.
+const REFETCH_OPEN: &str = "refetched_open_after_paging_fix";
+/// Between two of those reads, so the live items keep going first.
+const REFETCH_GAP_MS: i64 = 1200;
+
+pub(crate) fn refetch_open_once(store: &Store, a: &Archive, now: DateTime<Utc>) -> Result<usize> {
+    if a.get(REFETCH_OPEN)?.is_some() {
+        return Ok(0);
+    }
+    let open = store.open_numbers()?;
+    for (i, n) in open.iter().enumerate() {
+        a.due(*n, now + Duration::milliseconds(i as i64 * REFETCH_GAP_MS))?;
+    }
+    a.set(REFETCH_OPEN, &now.to_rfc3339())?;
+    Ok(open.len())
+}
+
 /// The state of the sync walk and the history walk, which the archive
 /// replaces.
 const OLD_WALK_KEYS: [&str; 15] = [
@@ -1418,6 +1438,11 @@ pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
                 Err(e) => tracing::warn!("archive {}: rows from the archive: {e}", a.repo),
             }
             recompute(&app).await;
+        }
+        match refetch_open_once(&app.store, a, Utc::now()) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!("archive {}: {n} open items to read again", a.repo),
+            Err(e) => tracing::warn!("archive {}: read open items again: {e:#}", a.repo),
         }
     } else {
         tracing::warn!(
@@ -1625,6 +1650,31 @@ mod tests {
             0,
             "a closed pull request out of the window and before history writes nothing"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn open_items_are_read_again_once_and_spread_out() {
+        let dir = tmp("refetch");
+        let a = Archive::open(&dir, "NixOS/nixpkgs", 10).unwrap();
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let f = crate::project::tests::fixtures();
+        let mut open = crate::project::pr(&f["archive"]["300123"]).unwrap();
+        open.state = "OPEN".into();
+        let mut closed = crate::project::pr(&f["archive"]["350000"]).unwrap();
+        closed.state = "MERGED".into();
+        store.put_prs(&[open, closed]).unwrap();
+        let mut issue = crate::project::issue(&f["archive"]["453372"]).unwrap();
+        issue.state = "OPEN".into();
+        store.put_issues(&[issue]).unwrap();
+        let now = Utc::now();
+        assert_eq!(refetch_open_once(&store, &a, now).unwrap(), 2);
+        assert_eq!(a.due_now(now, 10).unwrap(), [453372]);
+        assert_eq!(
+            a.due_now(now + Duration::seconds(2), 10).unwrap(),
+            [453372, 300123]
+        );
+        assert_eq!(refetch_open_once(&store, &a, now).unwrap(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -430,6 +430,19 @@ impl Store {
         )?)
     }
 
+    /// The numbers of the open pull requests and issues.
+    pub fn open_numbers(&self) -> Result<Vec<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT number FROM pr WHERE state = 'OPEN'
+             UNION SELECT number FROM issue WHERE state = 'OPEN' ORDER BY number DESC",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        Ok(rows
+            .map(|r| r.map(|n| n as u64))
+            .collect::<Result<_, _>>()?)
+    }
+
     /// Deletes the closed pull requests and issues last updated before
     /// `from`. The archive keeps them; the `history` table keeps the facts.
     pub fn prune(&self, from: DateTime<Utc>) -> Result<(usize, usize)> {
