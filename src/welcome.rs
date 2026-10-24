@@ -328,10 +328,10 @@ pub fn settings_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"start\">{}</div>",
         crate::ui::section(
-            &format!("{} Get started", icon(octicon!("checklist"))),
+            format!("{} Get started", icon(octicon!("checklist"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row d-flex flex-wrap flex-items-center gap-2\"><span class=\"flex-auto\">{text}</span>{form}</div>"
             )
         )

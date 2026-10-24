@@ -22,6 +22,7 @@ mod github;
 mod github_app;
 mod health;
 mod home;
+mod html;
 mod hygiene;
 mod ledger;
 mod links;

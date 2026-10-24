@@ -16,7 +16,7 @@ const RULES: &str = include_str!("../docs/rules.md");
 
 const REPO: &str = "https://github.com/numtide/maintainermode/blob/main";
 
-const DOCS: [(&str, &str, &str); 10] = [
+const DOCS: [(&str, &str, &str); 11] = [
     (
         "health",
         "Package pages, the risk score, upstream versions and channels.",
@@ -66,6 +66,11 @@ const DOCS: [(&str, &str, &str); 10] = [
         "file-matching",
         "Design: match pull requests and issues by the nixpkgs files a scan read.",
         include_str!("../docs/file-matching.md"),
+    ),
+    (
+        "architecture",
+        "Plan: one source for GitHub data, typed HTML, data apart from views.",
+        include_str!("../docs/architecture.md"),
     ),
 ];
 
@@ -187,8 +192,8 @@ fn docs(doc: Option<&str>) -> Page {
             .body(format!("<article class=\"markdown-body\">{html}</article>"));
     }
     let missing = match doc {
-        Some(d) => crate::ui::note(&format!("There is no doc named <code>{}</code>.", esc(d))),
-        None => String::new(),
+        Some(d) => crate::ui::note(format!("There is no doc named <code>{}</code>.", esc(d))),
+        None => crate::html::Html::new(),
     };
     let rows: String = DOCS
         .iter()
@@ -199,9 +204,9 @@ fn docs(doc: Option<&str>) -> Page {
                 .unwrap_or(id);
             crate::ui::item_row(
                 None,
-                &esc(title),
-                &format!("/state?tab=docs&amp;doc={id}"),
-                what,
+                esc(title),
+                format!("/state?tab=docs&amp;doc={id}"),
+                *what,
                 &[],
                 "",
             )

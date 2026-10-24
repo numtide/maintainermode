@@ -197,7 +197,7 @@ fn upstream_html(r: &Row) -> String {
     )
 }
 
-fn row_html(r: &Row, act: Act) -> String {
+fn row_html(r: &Row, act: Act) -> crate::html::Html {
     let p = r.pr;
     let package = r
         .attr
@@ -218,12 +218,12 @@ fn row_html(r: &Row, act: Act) -> String {
     if p.is_draft {
         badges.push(badge(Tone::Neutral, "draft"));
     }
-    badges.push(upstream_html(r));
+    badges.push(upstream_html(r).into());
     item_row(
         Some(Kind::PR_OPEN),
-        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         "",
-        &format!(
+        format!(
             "#{n} by <a href=\"/u/{a}\">{a}</a> · {age} old{package}{base} · {checks} · {approved}",
             n = p.number,
             a = esc(&p.author),
@@ -231,7 +231,7 @@ fn row_html(r: &Row, act: Act) -> String {
             checks = checks(p),
         ),
         &badges,
-        &act.buttons(p.number),
+        act.buttons(p.number),
     )
 }
 
@@ -336,10 +336,10 @@ pub(crate) fn package_section(
     attr: &str,
     prs: &[&Pr],
     act: Act,
-) -> String {
+) -> crate::html::Html {
     let pname = index.pkgs.get(attr).map_or("", |p| p.pname.as_str());
     let list = of_package(attr, pname, prs);
-    let mut body: String = list.iter().map(|p| pr_row(p, act)).collect();
+    let mut body: crate::html::Html = list.iter().map(|p| pr_row(p, act)).collect();
     if list.is_empty() {
         let hint = match upstream(s, index, h, attr) {
             Some(u) => format!(
@@ -348,7 +348,7 @@ pub(crate) fn package_section(
             ),
             None => String::new(),
         };
-        body = empty(&format!("None open.{hint}"));
+        body = empty(format!("None open.{hint}"));
     }
     section(
         "Version bumps",

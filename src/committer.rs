@@ -339,11 +339,11 @@ struct Line<'a> {
     since: Option<DateTime<Utc>>,
 }
 
-fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> String {
+fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> crate::html::Html {
     if list.is_empty() {
         return empty(empty_text);
     }
-    let mut out = String::new();
+    let mut out = crate::html::Html::new();
     for l in list {
         let e = l.entry;
         let mut meta = format!(
@@ -359,11 +359,11 @@ fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> String {
         }
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
-            &crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
+            crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
             "",
             &meta,
             &[],
-            &format!(
+            format!(
                 "<span class=\"ml-2\">{}</span>{}",
                 ci_label(e),
                 act.buttons(e.number)
@@ -405,7 +405,7 @@ pub(crate) fn ready_tab(
             let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&amp;section=yours", "see all"));
             out.push_str(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more, act));
         }
-        None if first => out.push_str(&note(&format!(
+        None if first => out.push_str(&note(format!(
             "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
              when it merged a pull request in the last {MERGED_DAYS} days, or when it is in the team {TEAM}."
         ))),
@@ -427,7 +427,7 @@ pub(crate) fn ready_tab(
         "Ready to merge",
         Some(all.len()),
         None,
-        &format!(
+        format!(
             "<div class=\"Box-row f6 color-fg-muted\">Checks pass, there is no conflict, someone approved the current head, \
              and a review on it led to a change, a reply or a merge. Authors with more recent reviews of this kind come first.</div>{rows}"
         ),
@@ -443,7 +443,7 @@ pub(crate) fn ready_tab(
             title,
             Some(rows.len()),
             more,
-            &format!(
+            format!(
                 "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
                 lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty, act)
             ),
@@ -526,7 +526,7 @@ pub(crate) fn board_page(
             title,
             Some(rows.len()),
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row f6 color-fg-muted\">{sub}</div>{}",
                 lines(&rows_of(page), empty_text, act)
             ),
@@ -576,12 +576,12 @@ fn yours_section(
     total: usize,
     more: Option<(&str, &str)>,
     act: crate::actions::Act,
-) -> String {
+) -> crate::html::Html {
     section(
         "In your areas",
         Some(total),
         more,
-        &format!(
+        format!(
             "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
              Only you see this section.</div>{}",
             lines(

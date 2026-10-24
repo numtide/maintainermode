@@ -166,14 +166,14 @@ fn flakes_body(app: &App, login: &str, own: bool) -> String {
         } else {
             ""
         };
-        out.push_str(&note(&format!(
+        out.push_str(&note(format!(
             "Only the flakes that you mark \"Show on my profile\" show here. Your machine reports never do. \
              Change them on <a href=\"{}#sets\">your packages</a>.{off}",
             crate::mine::MACHINES
         )));
     }
     if sets.is_empty() {
-        out.push_str(&empty(&format!("{} shows no public flake.", esc(login))));
+        out.push_str(&empty(format!("{} shows no public flake.", esc(login))));
         return out;
     }
     for s in sets {
@@ -229,7 +229,7 @@ fn flakes_body(app: &App, login: &str, own: bool) -> String {
             }
         );
         out.push_str(&section(
-            &format!("{} {}", icon(octicon!("package")), esc(&s.name)),
+            format!("{} {}", icon(octicon!("package")), esc(&s.name)),
             Some(attrs.len()),
             None,
             &body,
@@ -263,7 +263,7 @@ impl ReviewState {
         }
     }
 
-    fn badge(self) -> String {
+    fn badge(self) -> crate::html::Html {
         let tone = match self {
             Self::Approved => Tone::Success,
             _ => Tone::Neutral,
@@ -469,7 +469,7 @@ fn header_facts(login: &str, f: &Facts) -> String {
     if f.committer {
         b.push(badge(
             Tone::Neutral,
-            &format!("{} committer", icon(octicon!("git-merge"))),
+            format!("{} committer", icon(octicon!("git-merge"))),
         ));
     }
     if f.packages + f.modules > 0 {
@@ -480,17 +480,17 @@ fn header_facts(login: &str, f: &Facts) -> String {
         if f.modules > 0 {
             what.push(plural(f.modules, "module", "modules"));
         }
-        b.push(format!(
+        b.push(crate::html::Html::from(format!(
             "<a class=\"Label\" href=\"{}\">maintains {}</a>",
             esc(&ProfileTab::Maintains.href(login)),
             what.join(" and ")
-        ));
+        )));
     }
     if !f.teams.is_empty() {
         let names: Vec<String> = f.teams.iter().map(|t| esc(t)).collect();
         b.push(badge(
             Tone::Neutral,
-            &format!(
+            format!(
                 "{} {}: {}",
                 icon(octicon!("people")),
                 if names.len() == 1 { "team" } else { "teams" },
@@ -501,7 +501,7 @@ fn header_facts(login: &str, f: &Facts) -> String {
     if let Some(t) = f.first_pr_at {
         b.push(badge(
             Tone::Neutral,
-            &format!("first pull request {}", t.format("%Y-%m-%d")),
+            format!("first pull request {}", t.format("%Y-%m-%d")),
         ));
     }
     if b.is_empty() {
@@ -530,13 +530,13 @@ fn avatar(login: &str) -> String {
     )
 }
 
-fn open_row(p: &Pr, now: DateTime<Utc>) -> String {
+fn open_row(p: &Pr, now: DateTime<Utc>) -> crate::html::Html {
     let state = review_state(p);
     let mut badges = vec![state.badge()];
     if waiting(p, now) {
         badges.push(badge(
             Tone::Attention,
-            &format!("waiting {}", crate::web::age_words(p.created_at)),
+            format!("waiting {}", crate::web::age_words(p.created_at)),
         ));
     }
     if p.mergeable == "CONFLICTING" {
@@ -544,9 +544,9 @@ fn open_row(p: &Pr, now: DateTime<Utc>) -> String {
     }
     item_row(
         Some(Kind::PR_OPEN),
-        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         "",
-        &format!(
+        format!(
             "#{} · opened {} ago · <span class=\"branch-name\">{}</span>",
             p.number,
             ago(p.created_at),
@@ -560,7 +560,7 @@ fn open_row(p: &Pr, now: DateTime<Utc>) -> String {
     )
 }
 
-fn recent_row(p: &Pr) -> String {
+fn recent_row(p: &Pr) -> crate::html::Html {
     let (kind, when) = match (p.merged_at, p.closed_at) {
         (Some(t), _) => (Kind::PR_MERGED, format!("merged {} ago", ago(t))),
         (None, Some(t)) => (Kind::PR_CLOSED, format!("closed {} ago", ago(t))),
@@ -574,9 +574,9 @@ fn recent_row(p: &Pr) -> String {
         .unwrap_or_default();
     item_row(
         Some(kind),
-        &crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
+        crate::prpage::title_link(p.number, &esc(&p.title), "Link--primary text-bold"),
         "",
-        &format!("#{} · {when}{merger}", p.number),
+        format!("#{} · {when}{merger}", p.number),
         &[],
         "",
     )
@@ -587,7 +587,7 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
     let waiting_n = open.iter().filter(|p| waiting(p, now)).count();
     let mut out = String::new();
     if waiting_n > 0 {
-        out.push_str(&note(&format!(
+        out.push_str(&note(format!(
             "{} of {} wait for a first review for {WAITING_DAYS} days or more. They come first. A review helps here.",
             plural(waiting_n, "pull request", "pull requests"),
             esc(login)
@@ -600,13 +600,13 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
         .map(|p| open_row(p, now))
         .collect();
     out.push_str(&section(
-        &format!("{} Open pull requests", icon(octicon!("git-pull-request"))),
+        format!("{} Open pull requests", icon(octicon!("git-pull-request"))),
         Some(open.len()),
         None,
         &if rows.is_empty() {
             empty("No open pull request in the synced data.")
         } else {
-            rows
+            rows.into()
         },
     ));
     let next = after + PAGE;
@@ -619,7 +619,7 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
     let recent = recent_prs(&s.pr_data, login, now);
     let rows: String = recent.iter().map(|p| recent_row(p)).collect();
     out.push_str(&section(
-        &format!(
+        format!(
             "{} Merged or closed in the last {RECENT_DAYS} days",
             icon(octicon!("git-merge"))
         ),
@@ -628,7 +628,7 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
         &if rows.is_empty() {
             empty("None in the synced data.")
         } else {
-            rows
+            rows.into()
         },
     ));
     let areas = top_areas(&s.pr_data, login, now);
@@ -637,16 +637,16 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
         .map(|(d, n)| {
             item_row(
                 None,
-                &format!("{} {}/", icon(octicon!("file-directory")), esc(d)),
-                &format!("/a/{}", esc(d)),
-                &plural(*n, "pull request", "pull requests"),
+                format!("{} {}/", icon(octicon!("file-directory")), esc(d)),
+                format!("/a/{}", esc(d)),
+                plural(*n, "pull request", "pull requests"),
                 &[],
                 "",
             )
         })
         .collect();
     out.push_str(&section(
-        &format!(
+        format!(
             "{} Where they work in nixpkgs",
             icon(octicon!("file-directory"))
         ),
@@ -655,7 +655,7 @@ fn overview(s: &Snapshot, login: &str, after: usize, now: DateTime<Utc>) -> Stri
         &if rows.is_empty() {
             empty("No pull request in the synced data.")
         } else {
-            rows
+            rows.into()
         },
     ));
     out
@@ -699,9 +699,9 @@ fn overlap(title: &str, list: &[(String, usize)]) -> String {
 }
 
 /// The review record: facts about reviews, not a judgement.
-fn reviews(s: &Snapshot, login: &str) -> String {
+fn reviews(s: &Snapshot, login: &str) -> crate::html::Html {
     let d = dossier::build(&s.pr_data, login);
-    let mut out = note(&format!(
+    let mut out = note(format!(
         "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
          It counts the reviews of the last {} days and on every open pull request.",
         ledger::WINDOW_DAYS,
@@ -746,10 +746,10 @@ fn reviews(s: &Snapshot, login: &str) -> String {
         );
     }
     if recent.is_empty() {
-        recent = empty("No reviews in the synced data.");
+        recent = empty("No reviews in the synced data.").into_string();
     }
     out.push_str(&section(
-        &format!("Last {} reviews, and what came of each", dossier::RECENT),
+        format!("Last {} reviews, and what came of each", dossier::RECENT),
         None,
         None,
         &recent,
@@ -796,7 +796,10 @@ async fn page(
             let after = q.after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(0);
             (login.clone(), overview(&s, &login, after, now))
         }
-        ProfileTab::Reviews => (format!("Reviews of {login}"), reviews(&s, &login)),
+        ProfileTab::Reviews => (
+            format!("Reviews of {login}"),
+            reviews(&s, &login).into_string(),
+        ),
         ProfileTab::Maintains => (
             format!("What {login} maintains"),
             crate::catalog::maintains_body(&app, &login),

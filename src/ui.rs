@@ -3,10 +3,10 @@
 //! body. One function turns it into HTML, so pages never copy the header.
 
 use axum::http::header;
-use axum::response::{Html, IntoResponse, Response};
-use std::fmt::Write;
+use axum::response::{IntoResponse, Response};
 
-use crate::web::{App, CONTRIBUTING, esc, icon, octicon};
+use crate::html::{Html, html};
+use crate::web::{App, CONTRIBUTING, icon, octicon};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub(crate) enum Section {
@@ -43,13 +43,13 @@ pub(crate) const NAV: [(Section, &str, &str, &str); 4] = [
 
 pub(crate) struct Tab {
     pub href: String,
-    pub label: String,
+    pub label: Html,
     pub count: Option<usize>,
     pub current: bool,
 }
 
 impl Tab {
-    pub(crate) fn new(href: impl Into<String>, label: impl Into<String>, current: bool) -> Self {
+    pub(crate) fn new(href: impl Into<String>, label: impl Into<Html>, current: bool) -> Self {
         Self {
             href: href.into(),
             label: label.into(),
@@ -64,19 +64,18 @@ impl Tab {
     }
 }
 
-/// `title` is plain text: it fills `<title>` and the `h1`. `sub`, `actions`
-/// and `body` are HTML.
+/// `title` is plain text: it fills `<title>` and the `h1`.
 #[derive(Default)]
 pub(crate) struct Page {
     pub title: String,
     pub section: Section,
     pub icon: &'static str,
-    pub sub: String,
+    pub sub: Html,
     pub subnav: Vec<Tab>,
-    pub actions: String,
-    pub body: String,
-    /// HTML for the `h1` in place of the escaped title.
-    pub heading: String,
+    pub actions: Html,
+    pub body: Html,
+    /// The `h1` in place of the title.
+    pub heading: Html,
     /// No page header: the body brings its own `h1`.
     pub bare: bool,
     /// The words in the search box of the header.
@@ -97,7 +96,7 @@ impl Page {
         self
     }
 
-    pub(crate) fn sub(mut self, html: impl Into<String>) -> Self {
+    pub(crate) fn sub(mut self, html: impl Into<Html>) -> Self {
         self.sub = html.into();
         self
     }
@@ -107,17 +106,17 @@ impl Page {
         self
     }
 
-    pub(crate) fn actions(mut self, html: impl Into<String>) -> Self {
+    pub(crate) fn actions(mut self, html: impl Into<Html>) -> Self {
         self.actions = html.into();
         self
     }
 
-    pub(crate) fn body(mut self, html: impl Into<String>) -> Self {
+    pub(crate) fn body(mut self, html: impl Into<Html>) -> Self {
         self.body = html.into();
         self
     }
 
-    pub(crate) fn heading(mut self, html: impl Into<String>) -> Self {
+    pub(crate) fn heading(mut self, html: impl Into<Html>) -> Self {
         self.heading = html.into();
         self
     }
@@ -135,7 +134,7 @@ impl Page {
     /// A page for a person who signed in carries their login and inbox
     /// count, so no cache may keep it.
     pub(crate) fn render(self, app: &App, viewer: Option<&str>) -> Response {
-        let html = Html(document(app, viewer, &self));
+        let html = document(app, viewer, &self);
         match viewer {
             Some(_) => ([(header::CACHE_CONTROL, "private, no-store")], html).into_response(),
             None => html.into_response(),
@@ -143,101 +142,95 @@ impl Page {
     }
 }
 
-fn nav(current: Section) -> String {
-    let mut out = String::new();
-    for (section, href, svg, label) in NAV {
-        let cur = if section == current {
-            " aria-current=\"page\""
-        } else {
-            ""
-        };
-        let _ = write!(
-            out,
-            "<li><a class=\"site-tab\" href=\"{href}\"{cur}>{}<span>{label}</span></a></li>",
-            icon(svg)
-        );
+fn current(yes: bool) -> Html {
+    if yes {
+        Html::from(" aria-current=\"page\"")
+    } else {
+        Html::new()
     }
-    out
 }
 
-pub(crate) fn subnav(tabs: &[Tab]) -> String {
+fn counter(n: Option<usize>) -> Html {
+    n.map(|n| html!(" <span class=\"Counter\">{n}</span>"))
+        .unwrap_or_default()
+}
+
+fn nav(section_now: Section) -> Html {
+    NAV.iter()
+        .map(|&(section, href, svg, label)| {
+            let cur = current(section == section_now);
+            html!(
+                "<li><a class=\"site-tab\" href=\"{href}\"{cur}>{}<span>{label}</span></a></li>",
+                icon(svg)
+            )
+        })
+        .collect()
+}
+
+pub(crate) fn subnav(tabs: &[Tab]) -> Html {
     if tabs.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    let mut out = String::from("<nav class=\"subnav mb-3\" aria-label=\"Views\">");
+    let mut out = Html::from("<nav class=\"subnav mb-3\" aria-label=\"Views\">");
     for t in tabs {
-        let (sel, cur) = if t.current {
-            (" selected", " aria-current=\"page\"")
-        } else {
-            ("", "")
-        };
-        let count = t
-            .count
-            .map(|n| format!(" <span class=\"Counter\">{n}</span>"))
-            .unwrap_or_default();
-        let _ = write!(
-            out,
+        let sel = if t.current { " selected" } else { "" };
+        let cur = current(t.current);
+        let count = counter(t.count);
+        out.push(&html!(
             "<a class=\"SegmentedControl-item btn btn-sm{sel}\" href=\"{}\"{cur}>{}{count}</a>",
-            esc(&t.href),
+            t.href,
             t.label
-        );
+        ));
     }
-    out.push_str("</nav>");
+    out.push(&"</nav>".into());
     out
 }
 
-fn menu(app: &App, viewer: Option<&str>, current: Section) -> String {
+fn menu(app: &App, viewer: Option<&str>, section_now: Section) -> Html {
     let Some(v) = viewer else {
         return if app.oauth.is_some() {
-            format!(
+            html!(
                 "<a class=\"btn btn-sm btn-primary\" href=\"/auth/login\">{} Sign in with GitHub</a>",
                 icon(octicon!("sign-in"))
             )
         } else {
-            String::new()
+            Html::new()
         };
     };
     let n = app.inbox.get(v);
     let bell = if n == 0 {
-        String::new()
+        Html::new()
     } else {
-        format!(
+        html!(
             "<a class=\"Header-link d-flex flex-items-center mr-3\" href=\"/inbox\" aria-label=\"Inbox: {n} unread\">{}<span class=\"Counter ml-1\">{n}</span></a>",
             icon(octicon!("inbox"))
         )
     };
     let start = if crate::welcome::pending(app, v) {
-        "<a href=\"/#start\">Get started</a>"
+        Html::from("<a href=\"/#start\">Get started</a>")
     } else {
-        ""
+        Html::new()
     };
-    let mut items = String::new();
-    for (item, href, svg, label) in MENU {
-        let cur = if current == Section::Personal(item) {
-            " aria-current=\"page\""
-        } else {
-            ""
-        };
-        let count = match item {
-            Personal::Inbox if n > 0 => {
-                format!(" <span class=\"Counter\" title=\"unread in your inbox\">{n}</span>")
-            }
-            _ => String::new(),
-        };
-        let _ = write!(
-            items,
-            "<a href=\"{href}\"{cur}>{} {label}{count}</a>",
-            icon(svg)
-        );
-    }
-    format!(
+    let items: Html = MENU
+        .iter()
+        .map(|&(item, href, svg, label)| {
+            let cur = current(section_now == Section::Personal(item));
+            let count = match item {
+                Personal::Inbox if n > 0 => {
+                    html!(" <span class=\"Counter\" title=\"unread in your inbox\">{n}</span>")
+                }
+                _ => Html::new(),
+            };
+            html!("<a href=\"{href}\"{cur}>{} {label}{count}</a>", icon(svg))
+        })
+        .collect();
+    html!(
         "{bell}<details class=\"menu\"><summary class=\"Header-link\" aria-label=\"Your menu\">{person}<span class=\"menu-login\">{v}</span></summary>\
          <div class=\"menu-list\">{start}{items}\
          <form method=\"post\" action=\"/auth/logout\" class=\"menu-sep\"><button type=\"submit\">{out} Sign out</button></form>\
          </div></details>",
         person = icon(octicon!("person")),
         out = icon(octicon!("sign-out")),
-        v = esc(v),
     )
 }
 
@@ -262,15 +255,13 @@ const ISSUES: &str = "https://github.com/numtide/maintainermode/issues";
 
 pub(crate) const SEARCH_PLACEHOLDER: &str = "Search packages, modules, @people, #PRs, CVEs";
 
-fn search_box(q: &str) -> String {
-    format!(
-        "<form class=\"site-search\" role=\"search\" method=\"get\" action=\"/search\">{}\
-         <input class=\"site-q\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{SEARCH_PLACEHOLDER}\" aria-label=\"Search\" aria-keyshortcuts=\"/\" autocomplete=\"off\" data-search>\
+fn search_box(q: &str) -> Html {
+    html!(
+        "<form class=\"site-search\" role=\"search\" method=\"get\" action=\"/search\">{search}\
+         <input class=\"site-q\" type=\"search\" name=\"q\" value=\"{q}\" placeholder=\"{SEARCH_PLACEHOLDER}\" aria-label=\"Search\" aria-keyshortcuts=\"/\" autocomplete=\"off\" data-search>\
          <kbd class=\"site-kbd\" aria-hidden=\"true\">/</kbd></form>\
-         <a class=\"Header-link site-search-link\" href=\"/search\" aria-label=\"Search\">{}</a>",
-        icon(octicon!("search")),
-        esc(q),
-        icon(octicon!("search")),
+         <a class=\"Header-link site-search-link\" href=\"/search\" aria-label=\"Search\">{search}</a>",
+        search = icon(octicon!("search")),
     )
 }
 
@@ -288,31 +279,39 @@ fn updated(app: &App) -> String {
     }
 }
 
-fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
+fn document(app: &App, viewer: Option<&str>, p: &Page) -> Html {
     let h1 = if p.heading.is_empty() {
-        esc(&p.title)
+        Html::text(&p.title)
     } else {
         p.heading.clone()
     };
     let head = if p.bare {
-        String::new()
+        Html::new()
     } else {
-        page_header(p.icon, &h1, &p.sub, &p.actions)
+        page_header(p.icon, h1, p.sub.clone(), p.actions.clone())
     };
     let title = if p.title.is_empty() || p.title == "Maintainer Mode" {
-        "Maintainer Mode".to_string()
+        Html::from("Maintainer Mode")
     } else {
-        format!("{} · Maintainer Mode", esc(&p.title))
+        html!("{} · Maintainer Mode", p.title)
     };
     let club = icon(octicon!("people"));
     let menu = menu(app, viewer, p.section);
     let nav = nav(p.section);
     let subnav = subnav(&p.subnav);
     let search = search_box(&p.query);
-    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &search, &head, &subnav, &p.body]);
-    let css = crate::assets::stylesheets();
-    let js = crate::assets::scripts();
-    format!(
+    let body = &p.body;
+    let sprite = Html::from(crate::assets::sprite(&[
+        &club, &menu, &nav, &search, &head, &subnav, body,
+    ]));
+    let css = Html::from(crate::assets::stylesheets());
+    let js = Html::from(crate::assets::scripts());
+    let nvd = if app.store.get("nvd_api").ok().flatten().is_some() {
+        Html::from("<br>This product uses the NVD API but is not endorsed or certified by the NVD.")
+    } else {
+        Html::new()
+    };
+    html!(
         r##"<!doctype html>
 <html lang="en" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark">
 <head>
@@ -339,69 +338,74 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> String {
 </footer>
 </body>
 </html>"##,
-        body = p.body,
         window = crate::ledger::WINDOW_DAYS,
         updated = updated(app),
-        nvd = if app.store.get("nvd_api").ok().flatten().is_some() {
-            "<br>This product uses the NVD API but is not endorsed or certified by the NVD."
-        } else {
-            ""
-        },
     )
 }
 
-/// `title` is HTML. On a phone the actions wrap below the title.
-pub(crate) fn page_header(svg: &str, title: &str, sub: &str, actions: &str) -> String {
+/// On a phone the actions wrap below the title.
+pub(crate) fn page_header(
+    svg: &str,
+    title: impl Into<Html>,
+    sub: impl Into<Html>,
+    actions: impl Into<Html>,
+) -> Html {
+    let (title, sub, actions) = (title.into(), sub.into(), actions.into());
     let ic = if svg.is_empty() {
-        String::new()
+        Html::new()
     } else {
-        format!("{} ", icon(svg))
+        html!("{} ", icon(svg))
     };
     let sub = if sub.is_empty() {
-        String::new()
+        sub
     } else {
-        format!("<div class=\"Subhead-description\">{sub}</div>")
+        html!("<div class=\"Subhead-description\">{sub}</div>")
     };
     let actions = if actions.is_empty() {
-        String::new()
+        actions
     } else {
-        format!("<div class=\"page-actions\">{actions}</div>")
+        html!("<div class=\"page-actions\">{actions}</div>")
     };
-    format!(
+    html!(
         "<div class=\"Subhead page-head\"><div class=\"page-head-main\"><h1 class=\"Subhead-heading\">{ic}{title}</h1>{sub}</div>{actions}</div>"
     )
 }
 
 /// A box with an `h2`. An empty `body` shows "None." in its place; pass
-/// [`empty`] for other words.
+/// [`empty`] for other words. `more` is a link: its href and its label, as
+/// HTML.
 pub(crate) fn section(
-    title: &str,
+    title: impl Into<Html>,
     count: Option<usize>,
     more: Option<(&str, &str)>,
-    body: &str,
-) -> String {
-    let count = count
-        .map(|n| format!(" <span class=\"Counter\">{n}</span>"))
-        .unwrap_or_default();
+    body: impl Into<Html>,
+) -> Html {
+    let (title, body) = (title.into(), body.into());
+    let count = counter(count);
     let more = more
-        .map(|(href, label)| format!("<a class=\"f6 ml-2\" href=\"{href}\">{label}</a>"))
+        .map(|(href, label)| {
+            let (href, label) = (Html::from(href), Html::from(label));
+            html!("<a class=\"f6 ml-2\" href=\"{href}\">{label}</a>")
+        })
         .unwrap_or_default();
     let body = if body.is_empty() {
         empty("None.")
     } else {
-        body.to_string()
+        body
     };
-    format!(
+    html!(
         "<section class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">{title}{count}</h2>{more}</div>{body}</section>"
     )
 }
 
-pub(crate) fn empty(text: &str) -> String {
-    format!("<div class=\"Box-row color-fg-muted\">{text}</div>")
+pub(crate) fn empty(text: impl Into<Html>) -> Html {
+    let text = text.into();
+    html!("<div class=\"Box-row color-fg-muted\">{text}</div>")
 }
 
-pub(crate) fn kv(label: &str, value: &str) -> String {
-    format!(
+pub(crate) fn kv(label: impl Into<Html>, value: impl Into<Html>) -> Html {
+    let (label, value) = (label.into(), value.into());
+    html!(
         "<div class=\"Box-row kv\"><div class=\"kv-label\">{label}</div><div class=\"flex-auto min-width-0\">{value}</div></div>"
     )
 }
@@ -419,20 +423,21 @@ pub(crate) enum Tone {
     Neutral,
 }
 
-/// `text` is HTML.
-pub(crate) fn badge(tone: Tone, text: &str) -> String {
+pub(crate) fn badge(tone: Tone, text: impl Into<Html>) -> Html {
+    let text = text.into();
     let class = match tone {
         Tone::Danger => "Label Label--danger",
         Tone::Attention => "Label Label--attention",
         Tone::Success => "Label Label--success",
         Tone::Neutral => "Label",
     };
-    format!("<span class=\"{class}\">{text}</span>")
+    html!("<span class=\"{class}\">{text}</span>")
 }
 
 /// A neutral callout. The yellow `flash` is for warnings only.
-pub(crate) fn note(html: &str) -> String {
-    format!("<div class=\"callout mb-3\">{html}</div>")
+pub(crate) fn note(html: impl Into<Html>) -> Html {
+    let html = html.into();
+    html!("<div class=\"callout mb-3\">{html}</div>")
 }
 
 #[derive(Clone, Copy)]
@@ -481,21 +486,21 @@ impl Kind {
 
 pub(crate) const MAX_BADGES: usize = 3;
 
-/// One row for a pull request, an issue or a package. `title` is HTML; with
-/// an empty `href` it is used as it is, so it can bring its own link.
-/// `status` sits on the right: the status icon must carry text or an
-/// `aria-label`.
+/// One row for a pull request, an issue or a package. With an empty `href`,
+/// `title` is used as it is, so it can bring its own link. `status` sits on
+/// the right: the status icon must carry text or an `aria-label`.
 pub(crate) fn item_row(
     kind: Option<Kind>,
-    title: &str,
-    href: &str,
-    meta: &str,
-    badges: &[String],
-    status: &str,
-) -> String {
+    title: impl Into<Html>,
+    href: impl Into<Html>,
+    meta: impl Into<Html>,
+    badges: &[Html],
+    status: impl Into<Html>,
+) -> Html {
+    let (title, href, meta, status) = (title.into(), href.into(), meta.into(), status.into());
     let ic = kind
         .map(|k| {
-            format!(
+            html!(
                 "<span class=\"mr-2 {}\" role=\"img\" aria-label=\"{}\">{}</span>",
                 k.class,
                 k.label,
@@ -504,37 +509,36 @@ pub(crate) fn item_row(
         })
         .unwrap_or_default();
     let title = if href.is_empty() {
-        title.to_string()
+        title
     } else {
-        format!("<a class=\"Link--primary text-bold\" href=\"{href}\">{title}</a>")
+        html!("<a class=\"Link--primary text-bold\" href=\"{href}\">{title}</a>")
     };
-    let badges: String = badges
+    let badges: Html = badges
         .iter()
         .filter(|b| !b.is_empty())
         .take(MAX_BADGES)
-        .map(|b| format!(" {b}"))
+        .map(|b| html!(" {b}"))
         .collect();
     let meta = if meta.is_empty() {
-        String::new()
+        meta
     } else {
-        format!("<div class=\"f6 color-fg-muted mt-1\">{meta}</div>")
+        html!("<div class=\"f6 color-fg-muted mt-1\">{meta}</div>")
     };
-    format!(
+    html!(
         "<div class=\"Box-row d-flex flex-items-start\">{ic}<div class=\"flex-auto min-width-0 wb-break-word\">{title}{badges}{meta}</div>{status}</div>"
     )
 }
 
 /// `href` already holds its query string, or none; `after` is the cursor of
 /// the next page.
-pub(crate) fn pager(href: &str, after: Option<&str>) -> String {
+pub(crate) fn pager(href: &str, after: Option<&str>) -> Html {
     let Some(after) = after else {
-        return String::new();
+        return Html::new();
     };
-    let sep = if href.contains('?') { "&amp;" } else { "?" };
-    format!(
-        "<nav class=\"d-flex flex-justify-center my-3\" aria-label=\"Pages\"><a class=\"btn btn-sm\" href=\"{}{sep}after={}\">Next page</a></nav>",
-        esc(href),
-        crate::github::urlencode(after)
+    let sep = Html::from(if href.contains('?') { "&amp;" } else { "?" });
+    let after = Html::from(crate::github::urlencode(after));
+    html!(
+        "<nav class=\"d-flex flex-justify-center my-3\" aria-label=\"Pages\"><a class=\"btn btn-sm\" href=\"{href}{sep}after={after}\">Next page</a></nav>"
     )
 }
 
@@ -571,8 +575,8 @@ mod tests {
 
     #[test]
     fn a_row_shows_at_most_three_badges() {
-        let b: Vec<String> = (0..5)
-            .map(|i| badge(Tone::Neutral, &i.to_string()))
+        let b: Vec<Html> = (0..5)
+            .map(|i| badge(Tone::Neutral, i.to_string()))
             .collect();
         let row = item_row(Some(Kind::PR_OPEN), "t", "/pr/1", "", &b, "");
         assert_eq!(row.matches("class=\"Label\"").count(), MAX_BADGES);

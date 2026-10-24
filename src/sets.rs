@@ -552,10 +552,10 @@ pub(crate) fn token_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"upload\">{}</div>",
         section(
-            &format!("{} Upload token", icon(octicon!("key"))),
+            format!("{} Upload token", icon(octicon!("key"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\"><p>Send the packages of your machines, and they show first in \
                  <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p></div>\
                  {}<div class=\"Box-row\"><ol class=\"ml-3\">{}</ol>{state}</div>",

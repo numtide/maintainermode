@@ -174,7 +174,7 @@ pub(crate) fn section(app: &App) -> String {
             };
             item_row(
                 None,
-                &format!(
+                format!(
                     "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>",
                     sub.href(),
                     sub.icon(),
@@ -190,11 +190,11 @@ pub(crate) fn section(app: &App) -> String {
     let body = if rows.is_empty() {
         empty("None right now.")
     } else {
-        format!(
+        crate::html::Html::from(format!(
             "<div class=\"Box-row f6 color-fg-muted\">Small packages with no maintainer and an issue or a pull request from the last {RECENT_DAYS} days. \
              Fix it or review it, then add yourself to <code>meta.maintainers</code>. \
              Read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a> first.</div>{rows}"
-        )
+        ))
     };
     format!(
         "<div id=\"first\">{}</div>",

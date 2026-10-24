@@ -89,10 +89,10 @@ pub fn mcp_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"mcp\">{}</div>",
         section(
-            &format!("{} MCP server", icon(octicon!("key"))),
+            format!("{} MCP server", icon(octicon!("key"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\">\
                  <p>An agent reads this site at <code>{}</code>, with the Streamable HTTP transport. \
                  It sends your token as <code>Authorization: Bearer</code>. Every tool only reads; none writes to GitHub.</p>{}</div>",
@@ -108,10 +108,10 @@ pub fn llm_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"llm\">{}</div>",
         section(
-            &format!("{} LLMs", icon(octicon!("comment"))),
+            format!("{} LLMs", icon(octicon!("comment"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\">\
                  <form method=\"post\" action=\"/me/settings/llm\">\
                  <div class=\"form-checkbox mt-0\"><label><input type=\"checkbox\" name=\"llm_ok\" value=\"1\"{checked}> \

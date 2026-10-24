@@ -226,7 +226,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         "Your weekly goal",
         None,
         Some(("/me/settings#goal", "change it")),
-        &format!("<div class=\"Box-row\">{}</div>", goal_line(&p)),
+        format!("<div class=\"Box-row\">{}</div>", goal_line(&p)),
     ));
     let _ = write!(
         out,
@@ -235,7 +235,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
             "In the queues",
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\">{} <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Why</a></div>",
                 listing_line(&p)
             )
@@ -244,7 +244,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     let mut badges = String::new();
     for b in &p.badges {
         let state = match b.earned {
-            Some(t) => badge(Tone::Success, &format!("earned {}", t.format("%Y-%m-%d"))),
+            Some(t) => badge(Tone::Success, format!("earned {}", t.format("%Y-%m-%d"))),
             None => badge(Tone::Neutral, "not yet"),
         };
         let _ = write!(
@@ -281,10 +281,10 @@ pub fn goal_box(app: &App, login: &str) -> String {
     format!(
         "<div id=\"goal\">{}</div>",
         section(
-            &format!("{} Weekly goal", icon(octicon!("pulse"))),
+            format!("{} Weekly goal", icon(octicon!("pulse"))),
             None,
             None,
-            &format!(
+            format!(
                 "<div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
                  <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
                  <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{goal}\">\

@@ -306,7 +306,7 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str("<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">GitHub</h2></div>");
     out.push_str(&kv(
         "Pull requests",
-        &format!(
+        format!(
             "{} stored · {} · updates read up to {}",
             p["stored"],
             done(
@@ -319,7 +319,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "Issues",
-        &format!(
+        format!(
             "{} stored · {} · updates read up to {}",
             i["stored"],
             done(
@@ -332,7 +332,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "History since 2020",
-        &done(
+        done(
             &v["history"]["done"],
             "complete",
             "in progress: the numbers on the state of nixpkgs grow while it reads",
@@ -340,7 +340,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "Tokens",
-        &format!(
+        format!(
             "{} · {} · {} lent by people who signed in",
             if v["tokens"]["app"].as_bool() == Some(true) {
                 "a GitHub App token"
@@ -357,7 +357,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "Updates",
-        &format!(
+        format!(
             "one every {} · the last took {} and ended {}",
             minutes(pass["every_seconds"].as_i64().unwrap_or(600)),
             pass["last_seconds"]
@@ -381,7 +381,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "Full walk",
-        &format!(
+        format!(
             "every update reads the pull requests and issues that changed since the last walk, \
              one every {} · {}",
             minutes(n["walk_every_seconds"].as_i64().unwrap_or(600)),
@@ -402,7 +402,7 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>");
     out.push_str(&kv(
         "Index",
-        &format!(
+        format!(
             "<code>{}</code> · {} packages, {} NixOS modules, {} teams · built {}",
             esc(x["rev"]
                 .as_str()
@@ -417,7 +417,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     for c in v["channels"]["list"].as_array().into_iter().flatten() {
         out.push_str(&kv(
-            &format!("Channel {}", esc(c["channel"].as_str().unwrap_or(""))),
+            format!("Channel {}", esc(c["channel"].as_str().unwrap_or(""))),
             &match c["rev"].as_str() {
                 Some(rev) => format!(
                     "<code>{}</code> · {} attributes · this revision first seen {}",
@@ -431,7 +431,7 @@ pub(crate) fn body(app: &App) -> String {
     }
     out.push_str(&kv(
         "Upstream versions",
-        &format!(
+        format!(
             "repology, read {} · {} attributes behind upstream",
             when(&h["repology_at"]),
             h["outdated"]
@@ -439,7 +439,7 @@ pub(crate) fn body(app: &App) -> String {
     ));
     out.push_str(&kv(
         "Advisories",
-        &format!(
+        format!(
             "security tracker, read {} · {} attributes with advisories",
             when(&h["tracker_at"]),
             h["attributes_with_advisories"]
@@ -458,11 +458,11 @@ pub(crate) fn body(app: &App) -> String {
         },
     ));
     for (key, label, what) in SOURCES {
-        out.push_str(&kv(label, &source(&h["sources"][key], what)));
+        out.push_str(&kv(label, source(&h["sources"][key], what)));
     }
     out.push_str(&kv(
         "Health task",
-        &format!(
+        format!(
             "its own task, one run every {}: a slow source does not delay the GitHub updates",
             minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
@@ -470,7 +470,7 @@ pub(crate) fn body(app: &App) -> String {
     let hy = &v["hydra"];
     out.push_str(&kv(
         "Hydra builds",
-        &format!(
+        format!(
             "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
              {} jobs kept · {} page views not asked since the start",
             hy["concurrent"], hy["per_minute"], hy["cached"], hy["not_asked"]
@@ -479,7 +479,7 @@ pub(crate) fn body(app: &App) -> String {
     let b = &v["hydra_builds"];
     out.push_str(&kv(
         "Hydra build watch",
-        &format!(
+        format!(
             "{} packages that someone maintains or watches · the feed of finished builds every {} ({} requests, {} rows, last {}) · \
              one job at a time, {} a minute, each job once a day ({} requests) · {} failed requests · {} state changes since the start · {} cache.nixos.org requests, {} paths known",
             b["tracked"],
@@ -515,7 +515,7 @@ pub(crate) fn body(app: &App) -> String {
     );
     out.push_str(&kv(
         "Events",
-        &format!(
+        format!(
             "{} stored · newest from {} · {}",
             e["stored"],
             when(&e["newest"]),
@@ -554,7 +554,7 @@ pub(crate) fn body(app: &App) -> String {
             "<div class=\"Box mb-4\" id=\"archive\"><div class=\"Box-header\"><h2 class=\"Box-title\">Archive of issues and pull requests</h2></div>",
         );
         for a in list {
-            out.push_str(&kv(&esc(a["repo"].as_str().unwrap_or("")), &archive_row(a)));
+            out.push_str(&kv(esc(a["repo"].as_str().unwrap_or("")), archive_row(a)));
         }
         out.push_str("</div>");
     }

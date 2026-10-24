@@ -1,0 +1,9 @@
+[package]
+name = "html-macro"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "The html! macro of Maintainer Mode: format! that escapes every argument"
+
+[lib]
+proc-macro = true
