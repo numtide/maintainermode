@@ -26,6 +26,7 @@ signed-in /review?tab=foryou
 signed-in /review?tab=foryou&hidden=1
 both /review?tab=all&sort=newest&checks=fail
 public /state
+public /state?range=all
 public /state?tab=rules
 public /state?tab=docs
 public /state?tab=docs&doc=health

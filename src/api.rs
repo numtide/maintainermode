@@ -483,6 +483,8 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
         By(&["/api/v1/prs?queue=ready&section=waiting"]),
     ),
     ("/state", By(&["/api/v1/metrics"])),
+    ("/state?range=2y", By(&["/api/v1/metrics"])),
+    ("/state?range=all", By(&["/api/v1/metrics"])),
     ("/state?tab=rules", By(&["/api/v1/status"])),
     (
         "/state?tab=docs",

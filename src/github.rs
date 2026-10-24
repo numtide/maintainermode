@@ -441,6 +441,7 @@ pub(crate) fn facts(n: &Value) -> Option<Facts> {
             .collect(),
         author,
         author_is_bot,
+        title: n["title"].as_str().unwrap_or("").to_string(),
         association: n["authorAssociation"].as_str().unwrap_or("").to_string(),
         state: n["state"].as_str()?.to_string(),
         is_draft: n["isDraft"].as_bool().unwrap_or(false),

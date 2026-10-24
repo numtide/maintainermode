@@ -229,13 +229,70 @@ problems.
 
 `/state` and `GET /api/v1/metrics` show how pull requests move through
 nixpkgs, month by month. Each number is a total. No number names a person.
+The page shows charts of complete months, for the last 2 years, the last 5
+years (the default) or all of history (`?range=2y`, `?range=all`). Each
+chart has a table with its values. The JSON has every month.
 
-- **Inflow.** The pull requests opened. Also how many came from bots,
-  first-time contributors, security fixes, new packages, backports and mass
-  rebuilds. "First-time" is the GitHub `authorAssociation` or the nixpkgs
-  label `12.first-time contribution`. The other kinds come from the nixpkgs
-  labels (`1.severity: security`, `8.has: package (new)`,
-  `10.rebuild-linux: 501+`) and from a `release-*` base branch.
+- **Bots.** A bot is an account that GitHub marks as a bot, or one of the
+  community automation accounts that GitHub lists as users: `r-ryantm` (the
+  update bot, nixpkgs-update), `nixpkgs-merge-bot`, `nixpkgs-ci` and
+  `github-actions`. The archive keeps only the login of the person who
+  merged, so this list is also the bot test for merges. "By people" leaves
+  bots out. A merge through the merge bot counts as a merge by a bot, not
+  by the maintainer who asked for it.
+- **Does nixpkgs keep up?** The pull requests opened and closed each month,
+  the change of the open backlog, the backlog at the end of each month by
+  age (under 7 days, 7 to 30, 30 to 90, 90 to 365, a year or more), and the
+  backlog in months of work: open at the end of the month, divided by the
+  pull requests closed per month over the last three months. Drafts count,
+  because nixpkgs keeps no record of when a draft became ready.
+- **How long does a pull request wait?** For pull requests by people, each
+  month counts the pull requests opened in it, the open ones too: the share
+  merged within 7, 30 and 90 days, closed with no merge within 90 days, and
+  still open after 365 days. A share shows once its days have passed for the
+  whole month, so a recent month does not look faster than it is. Also the
+  share with a first review by another person within 7 days. GitHub has
+  reviews since 2016-09, so the review numbers start in 2016-10.
+- **What changes the wait.** The same shares for kinds of pull requests
+  opened in the 12 months that end 90 days or more ago: all by people, the
+  first pull request of a new author, the update bot, version updates by
+  people (a title like `name: 1.0 -> 1.1`), new packages, NixOS modules with
+  no package, security fixes, backports, documentation only, lib or stdenv,
+  mass rebuilds, and four sizes of change. A kind with fewer than 20 pull
+  requests is left out.
+- **Who does the work?** Distinct people each month who opened, reviewed or
+  merged a pull request, and new authors (people whose first nixpkgs pull
+  request opened that month). The median and the 90th percentile of merges
+  per person who merged. The fewest people who did half of the merges, or of
+  the reviews, in the 12 months to each month. For new authors: the share
+  whose first pull request merged within 90 days, and the share who opened
+  another one within 365 days, by whether the first one merged. New-author
+  numbers start one year after the first month of the data, because before
+  that every author looks new.
+- **What arrives?** The pull requests opened by people, by the update bot and
+  by other bots; version updates; new packages, security fixes and
+  backports; and disclosed AI use. "First-time" is the GitHub
+  `authorAssociation` or the nixpkgs label `12.first-time contribution`. It
+  counts pull requests, not people: the association stays first-time until
+  the first merge. A new package has the label `8.has: package (new)` or a
+  title like `name: init at 1.0`; nixpkgs left out the label on most new
+  packages from 2025-01 to 2026-02. A security fix has the label
+  `1.severity: security`. A mass rebuild has a `10.rebuild-linux:` label of
+  501 or more. A backport has a `release-*` base branch.
+- **Disclosed AI use.** A pull request counts when its last commit or its
+  description has an `Assisted-by:` trailer, or when it has the
+  `llm-assisted` label. The site counts other forms of AI attribution, such
+  as a `Co-authored-by:` trailer, separately. The policy says that these
+  forms do not satisfy the disclosure rule. Nobody can see undisclosed use,
+  so each count is a minimum. Standard community automation, such as
+  `r-ryantm`, is exempt from the policy. It counts under bots.
+- **Where do pull requests wait?** For each part of the tree, from the files
+  that a pull request changes: open now, in months of merges (open now,
+  divided by the merges per month of the last 365 days), never reviewed, and
+  the share of pull requests by people opened from 395 to 30 days ago that
+  merged within 30 days. One pull request counts in each part it changes.
+- **Load.** In the last 365 days, how many people did half, and 80%, of the
+  merges, of the reviews and of the pull requests by people.
 - **Packages.** One package for each package name, from the nixpkgs index,
   the health sources and the open pull requests. The numbers are: packages;
   behind upstream; with an open advisory that can affect master (see
@@ -246,30 +303,16 @@ nixpkgs, month by month. Each number is a total. No number names a person.
   with their median age in days. The server calculates them after each change of rows
   and after each health update, not on each request. `GET /api/v1/metrics`
   gives them under `packages`. They contain no personal data.
-- **Disclosed AI use.** A pull request counts when its last commit or its
-  description has an `Assisted-by:` trailer, or when it has the
-  `llm-assisted` label. The site counts other forms of AI attribution, such
-  as a `Co-authored-by:` trailer, separately. The policy says that these
-  forms do not satisfy the disclosure rule. Nobody can see undisclosed use,
-  so each count is a minimum. Standard community automation, such as
-  `r-ryantm`, is exempt from the policy. It counts under bots.
-- **Outflow.** Merged, closed with no merge, the backlog that is open at the
-  end of each month, merges with no approval, and self-merges.
-- **Latency.** The hours to the first review by another person, and the part
-  that got a review in seven days, both for human authors. The days to merge,
-  at the median and the 90th percentile.
-- **Outcomes by cohort.** Of the pull requests opened in a month and closed
-  since, the part that merged: for all, for first-time contributors and for
-  disclosed AI use.
-- **Load.** In the last 365 days, how many people did half, and 80%, of the
-  merges, of the reviews and of the pull requests by humans. This shows how
-  few people do the work of nixpkgs, and it names nobody.
-- **Directories.** Open, never reviewed, opened and merged pull requests for
-  each part of the tree, from the files that a pull request changes.
+
+So that no number points at a person, a share or a percentile of fewer than
+20 pull requests or people is null, and a count of people below 3 is null.
+The JSON keeps older fields too, such as the days to merge of the pull
+requests merged in a month. Those count only merged pull requests, so a
+clean-up of old pull requests makes them look slower.
 
 The ledger reads only the pull requests updated in the last 60 days and all
 open ones. These numbers read the facts of every pull request in the
-archive: the first 10 reviews, the first 50 files, the labels and
-the last commit message, but not the description. They are in a separate
-table, so they never go into the ledger. Until the archive walk reaches the
-first number, the older months are not complete.
+archive: the title, the first 30 reviews, the first 50 files, the first 30
+labels and the last commit message, but not the description. They are in a
+separate table, so they never go into the ledger. Until the archive walk
+reaches the first number, the older months are not complete.

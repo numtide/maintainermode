@@ -23,7 +23,6 @@ const REVIEWS: usize = 30;
 const REVIEW_COMMENTS: usize = 5;
 const COMMENTS: usize = 30;
 const PUSHES: usize = 30;
-const HISTORY_REVIEWS: usize = 10;
 
 fn list(v: &Value) -> &[Value] {
     v["nodes"].as_array().map_or(&[], Vec::as_slice)
@@ -147,6 +146,7 @@ pub(crate) fn facts(item: &Value) -> Option<Facts> {
         item,
         &[
             "number",
+            "title",
             "state",
             "isDraft",
             "createdAt",
@@ -165,7 +165,7 @@ pub(crate) fn facts(item: &Value) -> Option<Facts> {
     n.insert("labels".into(), first(&item["labels"], PR_LABELS));
     n.insert("files".into(), first(&item["files"], FILES));
     n.insert("commits".into(), last_commit(item));
-    n.insert("reviews".into(), first(&item["reviews"], HISTORY_REVIEWS));
+    n.insert("reviews".into(), first(&item["reviews"], REVIEWS));
     crate::github::facts(&Value::Object(n))
 }
 
@@ -264,7 +264,9 @@ pub(crate) mod tests {
 
     /// With `pr_live` joined in, the projection equals the sync in every
     /// field. Without it, `authorAssociation` can be stale: the author of
-    /// #444470 joined the organization after the archive read it.
+    /// #444470 joined the organization after the archive read it. The facts
+    /// equal those cut from the sync, so both sources of `history` keep the
+    /// same reviews.
     #[test]
     fn the_projection_matches_the_sync() {
         let f = fixtures();
@@ -281,7 +283,7 @@ pub(crate) mod tests {
                 assert_eq!(d, none, "#{number}");
                 let got = pr_live(item, Some(&live)).unwrap();
                 assert_eq!(differ(&got, &want, &[]), none, "#{number}");
-                let want = crate::github::facts(&github[format!("h{number}")]).unwrap();
+                let want = Facts::from(&want);
                 let got = facts_live(item, Some(&live)).unwrap();
                 assert_eq!(differ(&got, &want, &[]), none, "#{number}");
                 prs += 1;
