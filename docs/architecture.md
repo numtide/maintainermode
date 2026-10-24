@@ -80,7 +80,8 @@ association, checked_at)` keeps them. `project::pr_live` and
    deletes the keys of the old walks and sets `archive_projected`. The sync
    walk, the history walk and the poller's fetch are deleted; the CLI
    `sync` runs archive passes. `issues_complete` is the archive's
-   `open_complete`, and the history is complete at `backfill_done`. The
+   `open_complete`, and the history is complete when the walk reaches #1; items that fail and
+   wait for a retry do not hold it back. The
    walk recomputes at most once every 30 s after rows change. Lent tokens
    pay for the listings and due items, and for the live fields of the merge
    candidates, only below `RESERVE` or with no server token, each at most a

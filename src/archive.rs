@@ -593,6 +593,12 @@ impl Archive {
         Ok(out)
     }
 
+    /// The backfill reached #1. Unlike `backfill_done`, items that failed
+    /// and wait for a retry do not count.
+    pub fn walked_back(&self) -> Result<bool> {
+        Ok(self.get("backfill_done")?.is_some() || self.num("cursor")? == Some(1))
+    }
+
     /// The open listing is done, and every item it marked is stored or
     /// failed.
     pub fn open_complete(&self) -> Result<bool> {
@@ -1975,6 +1981,7 @@ mod tests {
         assert!(a.item(5).unwrap().is_none());
         assert_eq!(a.num("items").unwrap(), Some(11));
         assert!(a.get("backfill_done").unwrap().is_none());
+        assert!(a.walked_back().unwrap());
         let p = a.progress(Utc::now()).unwrap();
         assert_eq!(p["failed"], 1);
         assert_eq!(p["complete"], false);
