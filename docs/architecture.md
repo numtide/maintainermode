@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A3, B1 and B4 are done.
+Status: A1 to A3, and B1 to B5 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -152,10 +152,10 @@ several places today:
    `heading` become `Html`. A temporary `Html::trusted(String)` lets the
    other modules compile unchanged.
 2. **needs.** It is already split. Make `Item` `Serialize` and render it
-   with `Html`.
-3. **committer.** Remove `why_html`; render `why` in the view.
+   with `Html`. Done.
+3. **committer.** Remove `why_html`; render `why` in the view. Done.
 4. **review and `api::prs_value`.** One `ReviewList`. Done.
-5. **notify, sets, mine.**
+5. **notify, sets, mine.** `Inbox`, `SetView`, `Interests::picked`. Done.
 6. **profile, home.** Add `SubjectRow`.
 7. **prpanel, then prpage.** Blockers and checks reach the API.
 8. **catalog.** Split it into package, module, area and maintains, one

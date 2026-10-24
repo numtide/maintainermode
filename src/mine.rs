@@ -4,15 +4,15 @@
 //! review queue. Only the owner sees it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::{Flags, Subject, maintained, subject_row, subscriptions};
 use crate::channels::Channels;
 use crate::health::{Hydra, Last};
+use crate::html::{Html, html};
 use crate::queue::Entry;
 use crate::ui::{Tab, empty, pager, section};
-use crate::web::{App, Snapshot, esc, icon, octicon};
+use crate::web::{App, Snapshot, icon, octicon};
 
 pub(crate) const MACHINES: &str = "/packages?filter=machines";
 const UPLOAD: &str = "/me/settings#upload";
@@ -121,19 +121,18 @@ impl Why {
         }
     }
 
-    pub(crate) fn labels(self) -> String {
-        let mut out = String::new();
+    pub(crate) fn labels(self) -> Html {
+        let mut out = Html::new();
         for (on, svg, text) in [
             (self.machine, octicon!("device-desktop"), "on your machines"),
             (self.maintain, octicon!("tools"), "you maintain"),
             (self.watch, octicon!("eye"), "you watch"),
         ] {
             if on {
-                let _ = write!(
-                    out,
+                out.push(&html!(
                     " <span class=\"Label Label--accent\">{} {text}</span>",
                     icon(svg)
-                );
+                ));
             }
         }
         out
@@ -277,6 +276,33 @@ impl Interests {
     }
 
     /// The rows of one filter whose name holds `q`, in [`order`].
+    /// [`Interests::rows`], narrowed to one set and one output of it.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn picked(
+        &self,
+        s: &Snapshot,
+        index: &Index,
+        h: &crate::health::Health,
+        hydra: Option<&Hydra>,
+        f: Filter,
+        q: &str,
+        set: Option<&str>,
+        output: Option<&str>,
+    ) -> Vec<Row> {
+        let mut rows = self.rows(s, index, h, hydra, f, q);
+        if let Some(name) = set {
+            let keys = &self.sets[name];
+            rows.retain(|r| keys.contains(&r.sub.key()));
+            for r in &mut rows {
+                r.hosts.retain(|(s, _)| s == name);
+            }
+        }
+        if let (Some(name), Some(o)) = (set, output) {
+            rows.retain(|r| r.hosts.iter().any(|(s, l)| s == name && l == o));
+        }
+        rows
+    }
+
     pub(crate) fn rows(
         &self,
         s: &Snapshot,
@@ -424,33 +450,34 @@ pub(crate) fn row_html(
     ch: &Channels,
     r: &Row,
     marks: Why,
-    status: &str,
-) -> crate::html::Html {
+    status: impl Into<Html>,
+) -> Html {
+    let status: Html = status.into();
     let version = match &r.sub {
         Subject::Pkg(a) => index
             .pkgs
             .get(a)
             .filter(|p| !p.version.is_empty())
             .map(|p| {
-                format!(
+                html!(
                     " <span class=\"color-fg-muted f6\">{}</span>{}",
-                    esc(&p.version),
-                    crate::catalog::lag_label(ch, a, &p.version)
+                    p.version,
+                    Html::from(crate::catalog::lag_label(ch, a, &p.version))
                 )
             })
             .unwrap_or_default(),
-        _ => String::new(),
+        _ => Html::new(),
     };
     let via = r
         .via
         .as_ref()
-        .map(|t| format!(" <span class=\"Label\">via {}</span>", esc(t)))
+        .map(|t| html!(" <span class=\"Label\">via {t}</span>"))
         .unwrap_or_default();
     subject_row(
         &r.sub,
         &r.flags,
-        &format!("{version}{via}{}{}", marks.labels(), hosts_html(&r.hosts)),
-        status,
+        &html!("{version}{via}{}{}", marks.labels(), hosts_html(&r.hosts)),
+        &status,
     )
 }
 
@@ -458,29 +485,25 @@ const HOSTS_SHOWN: usize = 3;
 
 /// Where a package runs, "on web-1, laptop and 2 more", each a link to the
 /// filter of that output.
-pub(crate) fn hosts_html(hosts: &[(String, String)]) -> String {
+pub(crate) fn hosts_html(hosts: &[(String, String)]) -> Html {
     if hosts.is_empty() {
-        return String::new();
+        return Html::new();
     }
-    let links: Vec<String> = hosts
-        .iter()
-        .take(HOSTS_SHOWN)
-        .map(|(s, l)| {
-            format!(
-                "<a class=\"Link--secondary\" href=\"{}\">{}</a>",
-                esc(&href(Filter::Machines, "", Some(s), Some(l))),
-                esc(l)
-            )
-        })
-        .collect();
+    let mut links = Html::new();
+    for (i, (s, l)) in hosts.iter().take(HOSTS_SHOWN).enumerate() {
+        if i > 0 {
+            links.push(&Html::from(", "));
+        }
+        links.push(&html!(
+            "<a class=\"Link--secondary\" href=\"{}\">{l}</a>",
+            href(Filter::Machines, "", Some(s), Some(l))
+        ));
+    }
     let more = match hosts.len().saturating_sub(HOSTS_SHOWN) {
-        0 => String::new(),
-        n => format!(" and {n} more"),
+        0 => Html::new(),
+        n => html!(" and {n} more"),
     };
-    format!(
-        " <span class=\"f6 color-fg-muted\">on {}{more}</span>",
-        links.join(", ")
-    )
+    html!(" <span class=\"f6 color-fg-muted\">on {links}{more}</span>")
 }
 
 fn href(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
@@ -523,24 +546,18 @@ pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Stri
     (tabs, step)
 }
 
-fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
+fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> Html {
     let hidden = |name: &str, v: Option<&str>| {
-        v.map(|v| {
-            format!(
-                "<input type=\"hidden\" name=\"{name}\" value=\"{}\">",
-                esc(v)
-            )
-        })
-        .unwrap_or_default()
+        v.map(|v| html!("<input type=\"hidden\" name=\"{name}\" value=\"{v}\">"))
+            .unwrap_or_default()
     };
-    let set = format!("{}{}", hidden("set", set), hidden("output", output));
-    format!(
+    let set = html!("{}{}", hidden("set", set), hidden("output", output));
+    html!(
         "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-3\">\
          <input type=\"hidden\" name=\"filter\" value=\"{}\">{set}\
-         <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"filter by name\" aria-label=\"filter by name\">\
+         <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{q}\" placeholder=\"filter by name\" aria-label=\"filter by name\">\
          <button class=\"btn\" type=\"submit\">{} Filter</button></form>",
         f.key(),
-        esc(q),
         icon(octicon!("search"))
     )
 }
@@ -559,14 +576,14 @@ These attributes expire 90 days after the last good scan or your last visit. \"D
 /// What one filter of `/packages` shows for a person: `sub`, `actions`
 /// and `body` are HTML.
 pub(crate) struct View {
-    pub(crate) sub: String,
-    pub(crate) actions: String,
-    pub(crate) body: String,
+    pub(crate) sub: Html,
+    pub(crate) actions: Html,
+    pub(crate) body: Html,
 }
 
 /// The outputs of one set, each with its count of packages, as links to
 /// the filter of each one. Nothing for a set without labels.
-fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> String {
+fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> Html {
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for (s, l) in i.hosts.values().flatten() {
         if s == set {
@@ -574,7 +591,7 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> String {
         }
     }
     if counts.is_empty() {
-        return String::new();
+        return Html::new();
     }
     let mut links = vec![(
         href(Filter::Machines, "", Some(set), None),
@@ -590,24 +607,23 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> String {
             current == Some(l),
         )
     }));
-    let chips: String = links
+    let chips: Html = links
         .into_iter()
         .map(|(href, label, n, on)| {
-            format!(
-                "<a class=\"Label tap-label{}\" href=\"{}\"{}>{}{}</a>",
-                if on { " Label--accent" } else { "" },
-                esc(&href),
-                if on { " aria-current=\"page\"" } else { "" },
-                esc(&label),
-                n.map(|n| format!(" <span class=\"Counter\">{n}</span>"))
-                    .unwrap_or_default()
+            let accent = if on { " Label--accent" } else { "" };
+            let cur = if on { " aria-current=\"page\"" } else { "" };
+            let count = n
+                .map(|n| html!(" <span class=\"Counter\">{n}</span>"))
+                .unwrap_or_default();
+            html!(
+                "<a class=\"Label tap-label{accent}\" href=\"{href}\"{}>{label}{count}</a>",
+                Html::from(cur)
             )
         })
         .collect();
-    format!(
-        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"Outputs of {}\">\
+    html!(
+        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"Outputs of {set}\">\
          <span class=\"f6 color-fg-muted\">{} Where it runs:</span>{chips}</nav>",
-        esc(set),
         icon(octicon!("device-desktop"))
     )
 }
@@ -646,25 +662,15 @@ pub(crate) fn view(
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
-    if let Some(name) = set {
-        let keys = &i.sets[name];
-        rows.retain(|r| keys.contains(&r.sub.key()));
-        for r in &mut rows {
-            r.hosts.retain(|(s, _)| s == name);
-        }
-    }
-    if let (Some(name), Some(o)) = (set, output) {
-        rows.retain(|r| r.hosts.iter().any(|(s, l)| s == name && l == o));
-    }
-    let mut out = String::new();
-    let mut actions = String::new();
+    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    let mut out = Html::new();
+    let mut actions = Html::new();
     match f {
         Filter::Machines => {
-            out.push_str(&crate::sets::summary(app, login, set));
-            out.push_str(NOTICE);
+            out.push(&crate::sets::summary(app, login, set));
+            out.push(&Html::from(NOTICE));
             if let Some(name) = set {
-                out.push_str(&outputs_nav(i, name, output));
+                out.push(&outputs_nav(i, name, output));
             }
         }
         Filter::Maintain => {
@@ -674,7 +680,7 @@ pub(crate) fn view(
                 .filter(|(_, w, _)| w.maintain && !w.watch)
                 .count();
             if missing > 0 {
-                actions = format!(
+                actions = html!(
                     "<form method=\"post\" action=\"/me/watch/maintained\" class=\"d-inline\">\
                      <button class=\"btn btn-sm btn-primary\" type=\"submit\">{} Watch everything I maintain</button></form>",
                     icon(octicon!("bell"))
@@ -684,39 +690,39 @@ pub(crate) fn view(
         Filter::Watch | Filter::Mine | Filter::All => {}
     }
     if !(rows.is_empty() && q.is_empty()) {
-        out.push_str(&search_form(f, q, set, output));
+        out.push(&search_form(f, q, set, output));
     }
     let (page, next) = crate::review::paged_by_offset(&rows, after);
-    let list: String = page
+    let list: Html = page
         .iter()
         .map(|r| {
             let status = if f == Filter::Watch && r.why.watch {
-                format!(
+                html!(
                     "<form method=\"post\" action=\"/me/watch/remove\" class=\"d-inline ml-2\"><input type=\"hidden\" name=\"key\" value=\"{}\">\
                      <button class=\"btn btn-sm\" type=\"submit\">Stop watching</button></form>",
-                    esc(&r.sub.key())
+                    r.sub.key()
                 )
             } else {
-                String::new()
+                Html::new()
             };
-            row_html(&index, &ch, r, f.marks(r.why), &status)
+            row_html(&index, &ch, r, f.marks(r.why), status)
         })
         .collect();
-    let blank = if !q.is_empty() {
-        "Nothing matches.".to_string()
+    let blank: Html = if !q.is_empty() {
+        "Nothing matches.".into()
     } else {
         match f {
-            Filter::Mine => format!(
+            Filter::Mine => html!(
                 "Nothing yet. <a href=\"{UPLOAD}\">Upload the packages of your machines</a>, or watch a package in <a href=\"/packages?filter=watch\">I watch</a>."
             ),
             Filter::Machines if i.has_machines => {
                 "This set has no package that the nixpkgs index of this server knows.".into()
             }
-            Filter::Machines => format!(
+            Filter::Machines => html!(
                 "No report yet. Make an <a href=\"{UPLOAD}\">upload token</a>, then run <code>maintainer-mode scan</code> and \
                  <code>maintainer-mode submit</code> on your machine."
             ),
-            Filter::Maintain => format!(
+            Filter::Maintain => html!(
                 "nixpkgs does not name you in <code>meta.maintainers</code> yet. Read <a href=\"{}\">maintainers/README.md</a> to become a maintainer.",
                 crate::welcome::MAINTAINERS_README
             ),
@@ -724,23 +730,19 @@ pub(crate) fn view(
         }
     };
     let title = match (set, output) {
-        (Some(n), Some(o)) => format!("Packages of {} on {}", esc(n), esc(o)),
-        (Some(n), None) => format!("Packages of {}", esc(n)),
-        (None, _) => f.title().to_string(),
+        (Some(n), Some(o)) => html!("Packages of {n} on {o}"),
+        (Some(n), None) => html!("Packages of {n}"),
+        (None, _) => f.title().into(),
     };
-    out.push_str(&section(
-        &title,
+    out.push(&section(
+        title,
         Some(rows.len()),
         None,
-        &if list.is_empty() {
-            empty(&blank)
-        } else {
-            list.into()
-        },
+        if list.is_empty() { empty(blank) } else { list },
     ));
-    out.push_str(&pager(&href(f, q, set, output), next.as_deref()));
+    out.push(&pager(&href(f, q, set, output), next.as_deref()));
     if f == Filter::Watch {
-        out.push_str(&section(
+        out.push(&section(
             "Watch more",
             None,
             None,
@@ -750,27 +752,26 @@ pub(crate) fn view(
         ));
     }
     if f == Filter::Machines {
-        out.push_str(&crate::rescan::panel(app, login));
+        out.push(&Html::from(crate::rescan::panel(app, login)));
     }
-    let sub = match f {
+    let sub: Html = match f {
         Filter::Mine => "The packages of your machines first, then what you maintain, then what you watch. \
                          In each group, those that need attention come first."
-            .to_string(),
+            .into(),
         Filter::Machines => "The packages of your sets: your machine reports and your flakes. \
                              Pick one set, or see all of them. A set that you show on your profile is public. \
                              New advisories and upstream releases for them reach your inbox and your Atom feed."
-            .to_string(),
-        Filter::Maintain => format!(
+            .into(),
+        Filter::Maintain => html!(
             "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name you. \
-             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{0}?tab=maintains\">your public profile</a>.",
-            esc(login)
+             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{login}?tab=maintains\">your public profile</a>."
         ),
         Filter::Watch | Filter::All => "The packages, modules and directories you watch. \
                           Their news reaches your <a href=\"/inbox\">inbox</a> and your <a href=\"/me/settings#feed\">Atom feed</a>."
-            .to_string(),
+            .into(),
     };
     View {
-        sub: format!("{sub} Only you see this list."),
+        sub: html!("{sub} Only you see this list."),
         actions,
         body: out,
     }
@@ -808,17 +809,7 @@ pub(crate) fn value(
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), f, q);
-    if let Some(name) = set {
-        let keys = &i.sets[name];
-        rows.retain(|r| keys.contains(&r.sub.key()));
-        for r in &mut rows {
-            r.hosts.retain(|(s, _)| s == name);
-        }
-    }
-    if let (Some(name), Some(o)) = (set, output) {
-        rows.retain(|r| r.hosts.iter().any(|(s, l)| s == name && l == o));
-    }
+    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
     let items: Vec<serde_json::Value> = rows
         .iter()
         .map(|r| {

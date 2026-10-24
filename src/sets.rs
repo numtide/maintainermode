@@ -11,11 +11,12 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{DateTime, Duration, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt::Write;
 use std::sync::{Arc, Mutex};
 
+use crate::html::{Html, html};
 use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
 use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put, SetOutputs};
@@ -298,6 +299,84 @@ pub(crate) fn outputs_value(o: &SetOutputs) -> (serde_json::Value, serde_json::V
     (json!(o.labels), serde_json::Value::Object(of))
 }
 
+/// One set as the API gives it and as the sets box shows it.
+#[derive(Serialize)]
+pub(crate) struct SetView<'a> {
+    #[serde(skip)]
+    set: &'a NamedSet,
+    #[serde(skip)]
+    flake_ref: Option<&'a crate::store::FlakeRef>,
+    name: &'a str,
+    source: &'static str,
+    public: bool,
+    reference: Option<&'a str>,
+    output: Option<&'a str>,
+    updated_at: Option<DateTime<Utc>>,
+    scanned_at: Option<&'a str>,
+    expires_at: Option<DateTime<Utc>>,
+    nixpkgs_rev: Option<&'a str>,
+    dropped: usize,
+    packages: Vec<&'a str>,
+    outputs: serde_json::Value,
+    package_outputs: serde_json::Value,
+    scan: Option<serde_json::Value>,
+}
+
+/// The sets of `sets`, or only `set`, with only the packages of `output`.
+/// The error is a set or an output that is not there.
+pub(crate) fn set_views<'a>(
+    sets: &'a [NamedSet],
+    scans: &'a std::collections::HashMap<String, crate::store::FlakeRef>,
+    set: Option<&str>,
+    output: Option<&str>,
+) -> Result<Vec<SetView<'a>>, String> {
+    if let Some(n) = set.filter(|n| !sets.iter().any(|s| s.name == *n)) {
+        return Err(format!("you have no set {n}"));
+    }
+    if output.is_some() && set.is_none() {
+        return Err("output needs set".into());
+    }
+    let empty = SetOutputs::default();
+    let mut list = Vec::new();
+    for s in sets.iter().filter(|s| set.is_none_or(|n| s.name == n)) {
+        let o = s.data.as_ref().map_or(&empty, |d| &d.outputs);
+        if let Some(l) = output.filter(|l| !o.labels.iter().any(|x| x == l)) {
+            return Err(format!("the set {} has no output {l}", s.name));
+        }
+        let packages = s
+            .data
+            .iter()
+            .flat_map(|d| &d.attrs)
+            .filter(|a| output.is_none_or(|l| o.labels_of(a).any(|x| x == l)))
+            .map(String::as_str)
+            .collect();
+        let (outputs, package_outputs) = outputs_value(o);
+        let flake_ref = scans.get(&s.name);
+        let d = s.data.as_ref();
+        list.push(SetView {
+            set: s,
+            flake_ref,
+            name: &s.name,
+            source: source(s),
+            public: s.public,
+            reference: s.flake.as_ref().map(|f| f.0.as_str()),
+            output: s.flake.as_ref().map(|f| f.1.as_str()),
+            updated_at: d.map(|d| d.uploaded_at),
+            scanned_at: d.and_then(|d| d.scanned_at.as_deref()),
+            expires_at: expires_at(s),
+            nixpkgs_rev: d.and_then(|d| d.nixpkgs_rev.as_deref()),
+            dropped: d.map_or(0, |d| d.dropped),
+            packages,
+            outputs,
+            package_outputs,
+            scan: flake_ref.map(
+                |r| json!({ "last_at": r.last_at, "scanned_at": r.scanned_at, "error": r.error }),
+            ),
+        });
+    }
+    Ok(list)
+}
+
 /// The caller's sets, private ones too, as `GET /api/v1/sets` and the MCP
 /// tool `my_sets` give them: one set with `set`, and only the packages of
 /// one output with `output`. The error is a set or an output that the
@@ -309,47 +388,8 @@ pub(crate) fn sets_value(
     output: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let sets = app.store.sets(login).unwrap_or_default();
-    if let Some(n) = set.filter(|n| !sets.iter().any(|s| s.name == *n)) {
-        return Err(format!("you have no set {n}"));
-    }
-    if output.is_some() && set.is_none() {
-        return Err("output needs set".into());
-    }
     let scans = scans_by_name(app, login);
-    let mut list = Vec::new();
-    for s in sets.iter().filter(|s| set.is_none_or(|n| s.name == n)) {
-        let empty = SetOutputs::default();
-        let o = s.data.as_ref().map_or(&empty, |d| &d.outputs);
-        if let Some(l) = output.filter(|l| !o.labels.iter().any(|x| x == l)) {
-            return Err(format!("the set {} has no output {l}", s.name));
-        }
-        let packages: Vec<&String> = s
-            .data
-            .iter()
-            .flat_map(|d| &d.attrs)
-            .filter(|a| output.is_none_or(|l| o.labels_of(a).any(|x| x == l)))
-            .collect();
-        let (labels, of) = outputs_value(o);
-        let scan = scans
-            .get(&s.name)
-            .map(|r| json!({ "last_at": r.last_at, "scanned_at": r.scanned_at, "error": r.error }));
-        list.push(json!({
-            "name": s.name,
-            "source": source(s),
-            "public": s.public,
-            "reference": s.flake.as_ref().map(|f| &f.0),
-            "output": s.flake.as_ref().map(|f| &f.1),
-            "updated_at": s.data.as_ref().map(|d| d.uploaded_at),
-            "scanned_at": s.data.as_ref().and_then(|d| d.scanned_at.clone()),
-            "expires_at": expires_at(s),
-            "nixpkgs_rev": s.data.as_ref().and_then(|d| d.nixpkgs_rev.clone()),
-            "dropped": s.data.as_ref().map_or(0, |d| d.dropped),
-            "packages": packages,
-            "outputs": labels,
-            "package_outputs": of,
-            "scan": scan,
-        }));
-    }
+    let list = set_views(&sets, &scans, set, output)?;
     Ok(json!({ "login": login, "sets": list }))
 }
 
@@ -435,106 +475,106 @@ fn facts(s: &NamedSet) -> String {
     out
 }
 
-fn small_form(action: &str, name: &str, extra: &str, class: &str, label: &str) -> String {
-    format!(
-        "<form method=\"post\" action=\"{action}\" class=\"d-inline\"><input type=\"hidden\" name=\"name\" value=\"{}\">{extra}\
-         <button class=\"btn btn-sm{class}\" type=\"submit\">{label}</button></form>",
-        esc(name)
+fn small_form(action: &str, name: &str, extra: &str, class: &str, label: &str) -> Html {
+    let extra = Html::from(extra);
+    html!(
+        "<form method=\"post\" action=\"{action}\" class=\"d-inline\"><input type=\"hidden\" name=\"name\" value=\"{name}\">{extra}\
+         <button class=\"btn btn-sm{class}\" type=\"submit\">{label}</button></form>"
     )
 }
 
 /// The sets box of the machines filter: a picker, then one row per set
 /// with its facts, its public switch and its Delete button. `current` is
 /// the set the list shows; `None` shows all of them.
-pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> String {
+pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> Html {
     let sets = app.store.sets(login).unwrap_or_default();
-    if sets.is_empty() {
-        return String::new();
-    }
     let scans = scans_by_name(app, login);
+    let views = set_views(&sets, &scans, None, None).unwrap_or_default();
     let index_at = app.store.get_time("index_at").ok().flatten();
-    let count = |s: &NamedSet| s.data.as_ref().map_or(0, |d| d.attrs.len());
+    summary_view(&views, login, current, index_at)
+}
+
+fn summary_view(
+    sets: &[SetView],
+    login: &str,
+    current: Option<&str>,
+    index_at: Option<DateTime<Utc>>,
+) -> Html {
+    if sets.is_empty() {
+        return Html::new();
+    }
     let mut tabs = vec![Tab::new(machines_href(None), "All sets", current.is_none())];
-    for s in &sets {
+    for s in sets {
         tabs.push(
             Tab::new(
-                machines_href(Some(&s.name)),
-                &s.name,
-                current == Some(s.name.as_str()),
+                machines_href(Some(s.name)),
+                Html::text(s.name),
+                current == Some(s.name),
             )
-            .count(count(s)),
+            .count(s.set.data.as_ref().map_or(0, |d| d.attrs.len())),
         );
     }
-    let mut out = format!(
+    let mut out = html!(
         "<div class=\"Box mb-3\" id=\"sets\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Your sets</h2></div>\
          <div class=\"Box-row pb-0\">{}</div>",
         icon(octicon!("device-desktop")),
         crate::ui::subnav_named(&tabs, "Sets")
     );
-    for s in &sets {
-        let mut labels = format!(
+    for s in sets {
+        let mut labels = html!(
             "<span class=\"Label\">{}</span>",
-            source(s).replace('_', " ")
+            s.source.replace('_', " ")
         );
         if s.public {
-            let _ = write!(
-                labels,
+            labels.push(&html!(
                 " <a class=\"Label Label--accent tap-label\" href=\"/u/{}?tab=flakes\">on your profile</a>",
                 crate::github::urlencode(login)
-            );
+            ));
         } else {
-            labels.push_str(" <span class=\"Label\">private</span>");
+            labels.push(&Html::from(" <span class=\"Label\">private</span>"));
         }
-        let flake = s
-            .flake
-            .as_ref()
-            .map(|(r, o)| {
-                format!(
-                    "<div class=\"f6 set-ref\"><code>{}#{}</code></div>",
-                    esc(r),
-                    esc(o)
-                )
-            })
-            .unwrap_or_default();
-        let scan = scans
-            .get(&s.name)
+        let flake = match (s.reference, s.output) {
+            (Some(r), Some(o)) => html!("<div class=\"f6 set-ref\"><code>{r}#{o}</code></div>"),
+            _ => Html::new(),
+        };
+        let scan = s
+            .flake_ref
             .map(|r| {
-                format!(
+                html!(
                     "<div class=\"f6 color-fg-muted\">{}</div>",
-                    crate::rescan::state(r, index_at)
+                    Html::from(crate::rescan::state(r, index_at))
                 )
             })
             .unwrap_or_default();
-        let switch = match (&s.flake, s.public) {
+        let switch = match (s.reference, s.public) {
             (Some(_), true) => small_form(
                 "/me/sets/public",
-                &s.name,
+                s.name,
                 "<input type=\"hidden\" name=\"public\" value=\"0\">",
                 "",
                 "Make private",
             ),
             (Some(_), false) => small_form(
                 "/me/sets/public",
-                &s.name,
+                s.name,
                 "<input type=\"hidden\" name=\"public\" value=\"1\">",
                 "",
                 "Show on my profile",
             ),
-            (None, _) => String::new(),
+            (None, _) => Html::new(),
         };
-        let _ = write!(
-            out,
+        out.push(&html!(
             "<div class=\"Box-row d-flex flex-items-center flex-wrap gap-2\"><div class=\"flex-auto set-ref\">\
              <a class=\"text-bold\" href=\"{}\">{}</a> {labels}\
              <div class=\"f6 color-fg-muted\">{}</div>{flake}{scan}</div>\
              <div class=\"d-flex flex-wrap gap-2\">{switch}{}</div></div>",
-            esc(&machines_href(Some(&s.name))),
-            esc(&s.name),
-            facts(s),
-            small_form("/me/sets/delete", &s.name, "", " btn-danger", "Delete"),
-        );
+            machines_href(Some(s.name)),
+            s.name,
+            Html::from(facts(s.set)),
+            small_form("/me/sets/delete", s.name, "", " btn-danger", "Delete"),
+        ));
     }
-    out.push_str("</div>");
+    out.push(&Html::from("</div>"));
     out
 }
 
@@ -1353,7 +1393,7 @@ pub(crate) mod tests {
             None,
             crate::mine::Pick { set, output },
         );
-        v.body
+        v.body.into_string()
     }
 
     #[tokio::test]
