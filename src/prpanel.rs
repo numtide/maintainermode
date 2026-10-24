@@ -3,6 +3,7 @@
 //! what the packaging lacks and what blocks a merge. Each block reads data
 //! the server already has; a missing source says "unknown".
 
+use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
@@ -10,6 +11,7 @@ use crate::area::Index;
 use crate::catalog::Subject;
 use crate::committer::Committers;
 use crate::health::{Health, Hydra, Last};
+use crate::html::{Html, html};
 use crate::model::Pr;
 use crate::prpage::{File, Touched, ci_text, github_url};
 use crate::web::{ago, esc, icon, octicon, people};
@@ -294,92 +296,176 @@ fn usual_base(base: &str) -> bool {
             .any(|p| base.strip_prefix(p).is_some_and(release))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum Level {
     Block,
     Warn,
 }
 
-/// What stops or slows a merge, the hard stops first, each as HTML.
-pub(crate) fn blockers(pr: &Pr, rebuilds: &[Rebuild]) -> Vec<(Level, String)> {
+/// What stops or slows a merge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Blocker {
+    Merged,
+    Closed,
+    Draft,
+    Conflict { base: String },
+    ChecksFail,
+    ChangesRequested { by: Vec<String> },
+    MassRebuild { rebuild: Rebuild, base: String },
+    LargeRebuild { rebuild: Rebuild, base: String },
+    NixosTests,
+    UnusualBase { base: String },
+    ChecksPending,
+}
+
+const NIXOS_TESTS: &str = "https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#changes-rebuilding-all-nixos-tests";
+
+impl Blocker {
+    pub(crate) fn level(&self) -> Level {
+        match self {
+            Blocker::LargeRebuild { .. }
+            | Blocker::NixosTests
+            | Blocker::UnusualBase { .. }
+            | Blocker::ChecksPending => Level::Warn,
+            _ => Level::Block,
+        }
+    }
+
+    fn key(&self) -> &'static str {
+        match self {
+            Blocker::Merged => "merged",
+            Blocker::Closed => "closed",
+            Blocker::Draft => "draft",
+            Blocker::Conflict { .. } => "conflict",
+            Blocker::ChecksFail => "checks_fail",
+            Blocker::ChangesRequested { .. } => "changes_requested",
+            Blocker::MassRebuild { .. } => "mass_rebuild",
+            Blocker::LargeRebuild { .. } => "large_rebuild",
+            Blocker::NixosTests => "nixos_tests",
+            Blocker::UnusualBase { .. } => "unusual_base",
+            Blocker::ChecksPending => "checks_pending",
+        }
+    }
+
+    pub(crate) fn html(&self) -> Html {
+        match self {
+            Blocker::Merged => "It is merged.".into(),
+            Blocker::Closed => "It is closed.".into(),
+            Blocker::Draft => "It is a draft.".into(),
+            Blocker::Conflict { base } => {
+                html!("It has a conflict with <span class=\"branch-name\">{base}</span>.")
+            }
+            Blocker::ChecksFail => "Checks fail.".into(),
+            Blocker::ChangesRequested { by } => {
+                html!("Changes requested by {}.", Html::from(people(by)))
+            }
+            Blocker::MassRebuild { rebuild, base } => html!(
+                "A mass rebuild ({}) that targets <span class=\"branch-name\">{base}</span>: \
+                 <a href=\"{MASS}\">nixpkgs sends it to staging</a>.",
+                rebuild_words(rebuild)
+            ),
+            Blocker::LargeRebuild { rebuild, base } => html!(
+                "{} rebuilds on <span class=\"branch-name\">{base}</span>: \
+                 <a href=\"{MASS}\">nixpkgs asks to consider staging</a>.",
+                rebuild_words(rebuild)
+            ),
+            Blocker::NixosTests => html!(
+                "It rebuilds all NixOS tests: <a href=\"{NIXOS_TESTS}\">nixpkgs may send it to staging-nixos</a>."
+            ),
+            Blocker::UnusualBase { base } => html!(
+                "The base branch <span class=\"branch-name\">{base}</span> is not master, staging or a release branch."
+            ),
+            Blocker::ChecksPending => "Checks are pending.".into(),
+        }
+    }
+
+    pub(crate) fn text(&self) -> String {
+        match self {
+            Blocker::ChangesRequested { by } => format!("Changes requested by {}.", by.join(", ")),
+            Blocker::MassRebuild { rebuild, base } => format!(
+                "A mass rebuild ({}) that targets {base}: nixpkgs sends it to staging.",
+                rebuild_words(rebuild)
+            ),
+            Blocker::LargeRebuild { rebuild, base } => format!(
+                "{} rebuilds on {base}: nixpkgs asks to consider staging.",
+                rebuild_words(rebuild)
+            ),
+            Blocker::NixosTests => {
+                "It rebuilds all NixOS tests: nixpkgs may send it to staging-nixos.".into()
+            }
+            Blocker::Conflict { base } => format!("It has a conflict with {base}."),
+            Blocker::UnusualBase { base } => {
+                format!("The base branch {base} is not master, staging or a release branch.")
+            }
+            b => b.html().into_string(),
+        }
+    }
+}
+
+impl Serialize for Blocker {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Blocker", 3)?;
+        st.serialize_field("kind", self.key())?;
+        st.serialize_field("level", &self.level())?;
+        st.serialize_field("text", &self.text())?;
+        st.end()
+    }
+}
+
+/// What stops or slows a merge, the hard stops first.
+pub(crate) fn blockers(pr: &Pr, rebuilds: &[Rebuild]) -> Vec<Blocker> {
     let mut out = Vec::new();
     if pr.state == "MERGED" {
-        out.push((Level::Block, "It is merged.".to_string()));
+        out.push(Blocker::Merged);
         return out;
     }
     if !pr.is_open() {
-        out.push((Level::Block, "It is closed.".to_string()));
+        out.push(Blocker::Closed);
         return out;
     }
     if pr.is_draft {
-        out.push((Level::Block, "It is a draft.".to_string()));
+        out.push(Blocker::Draft);
     }
+    let base = || pr.base.clone();
     if pr.mergeable == "CONFLICTING" {
-        out.push((
-            Level::Block,
-            format!(
-                "It has a conflict with <span class=\"branch-name\">{}</span>.",
-                esc(&pr.base)
-            ),
-        ));
+        out.push(Blocker::Conflict { base: base() });
     }
     if matches!(pr.ci.as_deref(), Some("FAILURE" | "ERROR")) {
-        out.push((Level::Block, "Checks fail.".to_string()));
+        out.push(Blocker::ChecksFail);
     }
     let asked = changes_requested(pr);
     if !asked.is_empty() {
-        out.push((
-            Level::Block,
-            format!("Changes requested by {}.", people(&asked)),
-        ));
+        out.push(Blocker::ChangesRequested { by: asked });
     }
     let staging = pr.base.starts_with("staging");
     if !staging {
         if let Some(r) = rebuilds.iter().find(|r| r.mass()) {
-            out.push((
-                Level::Block,
-                format!(
-                    "A mass rebuild ({}) that targets <span class=\"branch-name\">{}</span>: \
-                     <a href=\"{MASS}\">nixpkgs sends it to staging</a>.",
-                    rebuild_text(r),
-                    esc(&pr.base)
-                ),
-            ));
+            out.push(Blocker::MassRebuild {
+                rebuild: r.clone(),
+                base: base(),
+            });
         } else if let Some(r) = rebuilds.iter().find(|r| r.large()) {
-            out.push((
-                Level::Warn,
-                format!(
-                    "{} rebuilds on <span class=\"branch-name\">{}</span>: \
-                     <a href=\"{MASS}\">nixpkgs asks to consider staging</a>.",
-                    rebuild_text(r),
-                    esc(&pr.base)
-                ),
-            ));
+            out.push(Blocker::LargeRebuild {
+                rebuild: r.clone(),
+                base: base(),
+            });
         }
         if rebuilds
             .iter()
             .any(|r| r.platform == "nixos-tests" && pr.base == "master")
         {
-            out.push((
-                Level::Warn,
-                "It rebuilds all NixOS tests: <a href=\"https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#changes-rebuilding-all-nixos-tests\">nixpkgs may send it to staging-nixos</a>."
-                    .to_string(),
-            ));
+            out.push(Blocker::NixosTests);
         }
     }
     if !usual_base(&pr.base) {
-        out.push((
-            Level::Warn,
-            format!(
-                "The base branch <span class=\"branch-name\">{}</span> is not master, staging or a release branch.",
-                esc(&pr.base)
-            ),
-        ));
+        out.push(Blocker::UnusualBase { base: base() });
     }
     if matches!(pr.ci.as_deref(), Some("PENDING" | "EXPECTED")) {
-        out.push((Level::Warn, "Checks are pending.".to_string()));
+        out.push(Blocker::ChecksPending);
     }
-    out.sort_by_key(|(l, _)| *l);
+    out.sort_by_key(Blocker::level);
     out
 }
 
@@ -389,6 +475,29 @@ pub(crate) struct Check {
     pub ok: Option<bool>,
     pub text: String,
     pub guide: Option<&'static str>,
+}
+
+impl Check {
+    fn guide_url(&self) -> Option<String> {
+        self.guide.map(|g| {
+            if g.starts_with("https://") {
+                g.to_string()
+            } else {
+                format!("{NIXPKGS}/{g}")
+            }
+        })
+    }
+}
+
+impl Serialize for Check {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("Check", 3)?;
+        st.serialize_field("ok", &self.ok)?;
+        st.serialize_field("text", &crate::html::to_text(&self.text))?;
+        st.serialize_field("guide", &self.guide_url())?;
+        st.end()
+    }
 }
 
 fn check(ok: Option<bool>, text: impl Into<String>, guide: Option<&'static str>) -> Check {
@@ -657,6 +766,15 @@ fn rebuild_text(r: &Rebuild) -> String {
         esc(&r.platform)
     } else {
         format!("{} {}", esc(&r.platform), esc(&r.count))
+    }
+}
+
+/// [`rebuild_text`] as plain text.
+fn rebuild_words(r: &Rebuild) -> String {
+    if r.count.is_empty() {
+        r.platform.clone()
+    } else {
+        format!("{} {}", r.platform, r.count)
     }
 }
 
@@ -1189,15 +1307,8 @@ fn check_li(c: &Check) -> String {
         None => (octicon!("circle"), "color-fg-muted"),
     };
     let guide = c
-        .guide
-        .map(|g| {
-            let href = if g.starts_with("https://") {
-                g.to_string()
-            } else {
-                format!("{NIXPKGS}/{g}")
-            };
-            format!(" <a class=\"f6\" href=\"{}\">Guide</a>", esc(&href))
-        })
+        .guide_url()
+        .map(|href| format!(" <a class=\"f6\" href=\"{}\">Guide</a>", esc(&href)))
         .unwrap_or_default();
     format!(
         "<li><span class=\"{class}\">{}</span> {}{guide}</li>",
@@ -1207,8 +1318,20 @@ fn check_li(c: &Check) -> String {
 }
 
 pub(crate) fn checks(c: &Ctx, kind: Kind) -> Vec<Check> {
-    let mut all = title_checks(c.pr);
-    match c.files {
+    checks_of(c.pr, c.files, c.touched, c.index, kind)
+}
+
+/// What the page and the API check on a pull request: its title, its diff
+/// and the packages it touches, as on master.
+pub(crate) fn checks_of(
+    pr: &Pr,
+    files: Result<&[File], &str>,
+    touched: &[Touched],
+    index: &Index,
+    kind: Kind,
+) -> Vec<Check> {
+    let mut all = title_checks(pr);
+    match files {
         Ok(f) => all.extend(diff_checks(kind, f)),
         Err(why) => all.push(check(
             None,
@@ -1217,8 +1340,11 @@ pub(crate) fn checks(c: &Ctx, kind: Kind) -> Vec<Check> {
         )),
     }
     let mut seen = 0;
-    for a in packages(c) {
-        if let Some(p) = c.index.pkgs.get(a) {
+    for t in touched {
+        let Subject::Pkg(a) = &t.subject else {
+            continue;
+        };
+        if let Some(p) = index.pkgs.get(a) {
             all.extend(package_checks(a, p));
             seen += 1;
         }
@@ -1265,27 +1391,29 @@ fn missing_block(list: &[Check]) -> String {
     )
 }
 
-fn blockers_html(list: &[(Level, String)]) -> String {
+fn blockers_html(list: &[Blocker]) -> Html {
     if list.is_empty() {
-        return format!(
+        return html!(
             "<div class=\"Box-row color-fg-success\" id=\"decide-blockers\">{} No blocker found.</div>",
             icon(octicon!("check-circle-fill"))
         );
     }
-    let items: String = list
+    let items: Html = list
         .iter()
-        .map(|(l, h)| match l {
-            Level::Block => format!(
-                "<li><span class=\"color-fg-danger\">{}</span> {h}</li>",
-                icon(octicon!("x-circle-fill"))
+        .map(|b| match b.level() {
+            Level::Block => html!(
+                "<li><span class=\"color-fg-danger\">{}</span> {}</li>",
+                icon(octicon!("x-circle-fill")),
+                b.html()
             ),
-            Level::Warn => format!(
-                "<li><span class=\"color-fg-attention\">{}</span> {h}</li>",
-                icon(octicon!("dot-fill"))
+            Level::Warn => html!(
+                "<li><span class=\"color-fg-attention\">{}</span> {}</li>",
+                icon(octicon!("dot-fill")),
+                b.html()
             ),
         })
         .collect();
-    format!(
+    html!(
         "<div class=\"Box-row\" id=\"decide-blockers\"><h3 class=\"decide-title\">Blockers</h3><ul class=\"decide-list\">{items}</ul></div>"
     )
 }
@@ -1491,7 +1619,8 @@ mod tests {
         p.reviews = vec![r, ok, later];
         let r = rebuilds(&["10.rebuild-linux: 2501-5000".to_string()]);
         let b = blockers(&p, &r);
-        let text: Vec<&str> = b.iter().map(|(_, h)| h.as_str()).collect();
+        let html: Vec<Html> = b.iter().map(Blocker::html).collect();
+        let text: Vec<&str> = html.iter().map(Html::as_str).collect();
         assert!(text[0].contains("draft"), "{text:?}");
         assert!(text.iter().any(|t| t.contains("conflict")));
         assert!(
@@ -1500,19 +1629,24 @@ mod tests {
         );
         assert!(!text.iter().any(|t| t.contains("carol")));
         assert!(text.iter().any(|t| t.contains("mass rebuild")));
-        assert_eq!(b.last().unwrap().0, Level::Warn);
+        assert_eq!(b.last().unwrap().level(), Level::Warn);
+        assert_eq!(
+            serde_json::json!(b[0]),
+            serde_json::json!({ "kind": "draft", "level": "block", "text": "It is a draft." })
+        );
+        assert!(b.iter().any(|x| x.text() == "Changes requested by bob."));
         assert!(text.last().unwrap().contains("pending"));
         p.base = "staging".into();
         assert!(
             !blockers(&p, &r)
                 .iter()
-                .any(|(_, h)| h.contains("mass rebuild"))
+                .any(|b| matches!(b, Blocker::MassRebuild { .. }))
         );
         p.base = "my-branch".into();
         assert!(
             blockers(&p, &[])
                 .iter()
-                .any(|(_, h)| h.contains("not master"))
+                .any(|b| matches!(b, Blocker::UnusualBase { .. }))
         );
         for base in [
             "release-25.05",

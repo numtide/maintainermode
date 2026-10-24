@@ -191,7 +191,8 @@ the panel says "unknown". It never guesses a value.
   write the review there. Maintainer Mode writes nothing to nixpkgs.
 
 `GET /api/v1/prs/<n>` gives the facts of the panel that are the same for all
-people under `decision`.
+people: `decision`, `blockers` (each with `kind`, `level` and `text`) and
+`checks` (each with `ok`, `text` and `guide`).
 
 ## Routing: what you see, and what counts
 

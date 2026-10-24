@@ -1804,6 +1804,15 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         talk.as_ref().ok().map(|t| t.body.as_str()),
         files.as_ref().ok().map(|f| f.files.as_slice()),
     );
+    let blockers = crate::prpanel::blockers(pr, &crate::prpanel::rebuilds(&pr.labels));
+    let checks = {
+        let f = match &files {
+            Ok(f) => Ok(f.files.as_slice()),
+            Err(e) => Err(e.as_str()),
+        };
+        let kind = crate::prpanel::kind(pr, f.ok());
+        crate::prpanel::checks_of(pr, f, &list, &app.index.read().unwrap(), kind)
+    };
     let (files, files_error) = match files {
         Ok(f) => (json!(*f), Value::Null),
         Err(e) => (Value::Null, json!(e)),
@@ -1841,6 +1850,8 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "discussion": talk,
         "discussion_error": talk_error,
         "decision": decision,
+        "blockers": blockers,
+        "checks": checks,
         "review_on_github": format!("{}/files", github_url(n)),
     }))
 }
