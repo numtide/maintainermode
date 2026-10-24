@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A6, and B1 to B8 are done.
+Status: A1 to A6, and B1 to B9 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -171,8 +171,7 @@ several places today:
 ### Steps
 
 1. **`Html` and the ui.rs helpers.** `Page.sub`, `actions`, `body` and
-   `heading` become `Html`. A temporary `Html::trusted(String)` lets the
-   other modules compile unchanged.
+   `heading` become `Html`. Done.
 2. **needs.** It is already split. Make `Item` `Serialize` and render it
    with `Html`. Done.
 3. **committer.** Remove `why_html`; render `why` in the view. Done.
@@ -183,8 +182,9 @@ several places today:
 8. **catalog.** Split it into package, module, area and maintains, one
    at a time. `PackageView`, `ModuleView`, `AreaView`, `MaintainsView`,
    with `SubjectView` for what they share. Done.
-9. **Remove `Html::trusted` and `web::esc`.** Then a string with no
-   escaping does not compile.
+9. **Remove the bridges from `String` to `Html`, and `web::esc`.** A string
+   with no escaping does not compile as `Html`. `Html::trusted` stays for
+   the icon sprite and the two Markdown renderers. Done.
 
 ### Checks for each step
 
