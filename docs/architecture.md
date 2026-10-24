@@ -103,9 +103,8 @@ association, checked_at)` keeps them. `project::pr_live` and
   their review queue) and the pages they open. Shared work uses the App
   and bot tokens. A lent token pays for shared freshness only when the
   App and bot budgets are below `RESERVE`, and then for at most 10% of
-  its remaining budget. The backfill never uses a lent token. The page
-  where a person lends a token states this; that page does not exist yet,
-  and `docs/data.md` states the rule.
+  its remaining budget. The backfill never uses a lent token. The settings
+  page states this in `#github`, and `docs/data.md` states the rule.
 - **Caps.** The projection keeps the caps of the old sync. Removing them
   changes the ledger, voids and queues, so it is a separate change with
   its own review.
