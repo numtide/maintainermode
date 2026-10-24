@@ -880,13 +880,13 @@ pub(crate) async fn answer(
         }
         "/api/v1/modules/*file" => {
             let f = text(&a.file);
-            crate::catalog::module_value(app, &f)
+            crate::catalog::module::value(app, &f)
                 .await
                 .ok_or_else(|| Fail::Missing(format!("{f} is not a NixOS module in the index")))?
         }
         "/api/v1/areas/*path" => {
             let p = text(&a.path);
-            crate::catalog::area_value(app, &p)
+            crate::catalog::area::value(app, &p)
                 .ok_or_else(|| Fail::Bad(format!("{p} is not a nixpkgs path")))?
         }
         "/api/v1/metrics" => crate::web::metrics_value(app),
