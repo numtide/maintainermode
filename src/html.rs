@@ -148,6 +148,26 @@ pub(crate) fn escape_into(out: &mut String, s: &str) {
     }
 }
 
+/// The text of a fragment of our own HTML: tags out, entities decoded.
+/// Not for HTML from elsewhere: it knows only the entities we write.
+pub(crate) fn to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    for c in html.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            c if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+}
+
 /// How a value goes into `html!`: text is escaped, [`Html`] and numbers are
 /// written as they are.
 pub(crate) trait Render {
@@ -223,6 +243,14 @@ mod tests {
         assert_eq!(
             h.as_str(),
             "<p title=\"&lt;b&gt;&amp;&quot;x&quot;\"><b>ok</b> 2.2</p>"
+        );
+    }
+
+    #[test]
+    fn to_text_drops_tags_and_decodes_once() {
+        assert_eq!(
+            to_text("Use <code>hash = \"sha256-…\"</code> &amp;lt; <a href=\"/x\">a &gt; b</a>"),
+            "Use hash = \"sha256-…\" &lt; a > b"
         );
     }
 
