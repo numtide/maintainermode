@@ -130,13 +130,13 @@ plan uses 10 kB of JSON and 3.5 kB after zstd for each item.
 
 **Size of the archive:**
 
-| Figure                               | Estimate                   | Measured, 24 Oct 2026          |
-| ------------------------------------ | -------------------------- | ------------------------------ |
-| items                                | 575,000                    | 576,624                        |
-| JSON, not compressed                 | about 6 GB                 |                                |
-| JSON, zstd per item                  | 3.5 kB per item            | 1.80 GB, 3.1 kB per item       |
-| archive file (zstd per item, SQLite) | 2 to 3 GB                  | 2.52 GB                        |
-| export (zstd over 10 000 items)      | less than the archive file |                                |
+| Figure                               | Estimate                   | Measured, 24 Oct 2026    |
+| ------------------------------------ | -------------------------- | ------------------------ |
+| items                                | 575,000                    | 576,624                  |
+| JSON, not compressed                 | about 6 GB                 |                          |
+| JSON, zstd per item                  | 3.5 kB per item            | 1.80 GB, 3.1 kB per item |
+| archive file (zstd per item, SQLite) | 2 to 3 GB                  | 2.52 GB                  |
+| export (zstd over 10 000 items)      | less than the archive file |                          |
 
 A single busy item can be 60 kB or more. `/state?tab=status` and
 `/api/v1/sync` give the current figures.
