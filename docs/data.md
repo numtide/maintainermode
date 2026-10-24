@@ -5,53 +5,72 @@ its known limits.
 
 ## How the data is pulled
 
-- One GraphQL query reads 25 pull requests with their reviews, review
-  comments, author comments, pushes, files and check status. There is no
-  request per pull request.
-- The first pass reads every open pull request. After that, each pass walks
-  pull requests by `updatedAt`, newest first, and stops at the watermark of
-  the previous pass. Both walks store their cursor, so a pass that runs out
-  of budget resumes where it stopped.
+- **One fetcher.** The archive walk is the only reader of issues and pull
+  requests (see [the archive](#the-archive-of-issues-and-pull-requests)).
+  Each item that it stores in the NixOS/nixpkgs archive writes its rows of
+  the main database: `pr` and `issue` for the open items and the items
+  updated in the last 60 days, and `history` for the pull requests created
+  since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default
+  2020-01-01). The rows have the caps of the projection (30 reviews, 5
+  inline comments per review, 30 comments, 30 pushes, 50 files). A row with
+  a newer `updatedAt` stays. When rows change, the pages are computed again,
+  at most once every 30 seconds. Without an archive of NixOS/nixpkgs, the
+  server has no issues and no pull requests.
+- **The first start.** When the main database has no key
+  `archive_projected`, the walk first writes the rows of every item in the
+  archive, 1000 items at a time, then sets the key. It first copies the
+  `mergeable`, CI state and author association of the open `pr` rows into
+  `pr_live`, so the pages keep them, and it deletes the state of the old
+  sync and history walks. `/api/v1/sync` gives the time as
+  `rows_from_archive_at`.
 - **Mergeable, checks and author association** change with no change to
   `updatedAt`. The table `pr_live` keeps them for each open pull request,
   with the head they belong to and the time of the check. Each pass reads
   them for up to 500 open pull requests: first the merge candidates, then
   the ones checked longest ago, 50 to a query. GitHub computes `mergeable`
   lazily, so a bulk read mostly answers UNKNOWN; an UNKNOWN keeps the known
-  value of the same head. A full read of a pull request also writes
-  `pr_live`. These reads use only the GitHub App token and the bot token.
-  With neither, they use the sync tokens for the merge candidates only.
-  `/state?tab=status` shows how many open pull requests have a check, and
-  the oldest one; `/api/v1/sync` gives the same data as `live`.
-- **Issues** are read the same way, 100 to a query. The body is read but not
-  kept: only the paths and the package name it gives are. The first pass reads
-  every open issue, then each pass walks by `updatedAt`.
-- **Tokens.** When you log in, Maintainer Mode keeps your token and reads public
-  nixpkgs data with it. The rate limit grows with the number of people who use
-  it. The login asks for no scope. The token reads public data, and it can
-  start workflows only in the repositories where you install the Maintainer
-  Mode GitHub App (see [Actions](actions.md)). The sync uses it to read only.
-  Signing out deletes your session and its token. A session ends after 30
-  days, as its cookie does, and the server then deletes it with its token.
+  value of the same head. These reads use the GitHub App token and the bot
+  token. With neither, the lent tokens read the merge candidates only, with
+  the limit below. `/state?tab=status` shows how many open pull requests
+  have a check, and the oldest one; `/api/v1/sync` gives the same data as
+  `live`.
+- **Issues.** The body is read but not kept in the `issue` row: only the
+  paths and the package name it gives are.
+- **Tokens.** When you log in, Maintainer Mode keeps your token. It pays for
+  reads that benefit you: the pages you open, and the data of your own
+  pull requests and of what you maintain, watch or run. The login asks for
+  no scope. The token reads public data, and it can start workflows only in
+  the repositories where you install the Maintainer Mode GitHub App (see
+  [Actions](actions.md)). Signing out deletes your session and its token. A
+  session ends after 30 days, as its cookie does, and the server then
+  deletes it with its token.
+- **Lent tokens and shared work.** The archive walk and the live refresh
+  use the GitHub App token and the bot token. When these have less than
+  1000 points left, or the server has neither, the lent tokens pay for the
+  listings and the due items of the walk, and for the live fields of the
+  merge candidates. Each lent token pays at most a tenth of its budget in
+  one rate limit window for this shared work. The walk back through history
+  never uses a lent token. A server with no App token, no bot token and no
+  lent token reads nothing from GitHub.
 - **The bot token.** A deployment can give the server the classic token of
-  its bot account (`MAINTAINER_MODE_BOT_TOKEN_FILE`). The sync uses it before
-  the tokens that people lend. The same token reads the notifications of the
-  bot account (see [the notifications poller](#the-notifications-poller)) and
-  polls the Events API.
-- **A GitHub App.** A deployment can sync with the token of a GitHub App
-  installation (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`). The service signs a
-  JWT with the App's private key and exchanges it for an installation token.
-  That token expires after one hour, so the service gets a new one before
-  each pass that starts in its last 30 minutes. The App token is used first.
-  Install the App on the account that owns it. People also install the App on
-  their own repositories, so the service never takes their installations. Set
-  `GITHUB_APP_INSTALLATION_ID` to use a different installation.
-  The App token comes before the bot token.
+  its bot account (`MAINTAINER_MODE_BOT_TOKEN_FILE`). The archive walk uses
+  it after the GitHub App token. The same token reads the notifications of
+  the bot account (see [the notifications poller](#the-notifications-poller))
+  and polls the Events API.
+- **A GitHub App.** A deployment can read GitHub with the token of a GitHub
+  App installation (`GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`). The service
+  signs a JWT with the App's private key and exchanges it for an
+  installation token. That token expires after one hour, so the service gets
+  a new one before each pass that starts in its last 30 minutes. Install the
+  App on the account that owns it. People also install the App on their own
+  repositories, so the service never takes their installations. Set
+  `GITHUB_APP_INSTALLATION_ID` to use a different installation. The App
+  token comes before the bot token.
 - **No network yet.** On first boot, a pass can start before the network is
-  up. When the GitHub sync fails to connect, the pass stops and the next pass
-  starts after 5 seconds. The wait doubles after each failed pass, up to 5
-  minutes. The first pass that connects restores the normal interval. Only the
-  GitHub sync counts: when another source is down, the pass continues.
+  up. When GitHub cannot be reached, the pass stops and the next pass starts
+  after 5 seconds. The wait doubles after each failed pass, up to 5 minutes.
+  The first pass that connects restores the normal interval. Only GitHub
+  counts: when another source is down, the pass continues.
 - **The nixpkgs index is evaluated, with iets.** Once a day, Maintainer Mode
   unpacks the source tarball of nixpkgs `master` and evaluates every derivation
   in the top level and `python3Packages` (`--index-set`). For each one it keeps
@@ -86,8 +105,7 @@ its known limits.
   [build watch](health.md#the-build-watch) has its own task: a feed of
   finished builds every 5 minutes, and a sweep of at most 10 jobs a minute.
   The health sources run in their own
-  task, every 10 minutes. A slow source does not delay the pull request and
-  issue sync.
+  task, every 10 minutes. A slow source does not delay the archive walk.
 - **Advisory detail.** For each CVE that the tracker names:
   - The CVSS score and the CISA exploitation decision come from the
     [CVE Program's records](https://github.com/CVEProject/cvelistV5), one
@@ -115,8 +133,8 @@ its known limits.
 
 ## The notifications poller
 
-The poller makes a change on GitHub show here in about a minute. The full
-walk stays as the safety net.
+The poller makes a change on GitHub show here in about a minute. The
+listing of each archive pass stays as the safety net.
 
 - **The bot account.** `maintainermode-bot` is a GitHub account for the
   machine, not for a person. It watches NixOS/nixpkgs with "All activity".
@@ -133,26 +151,24 @@ walk stays as the safety net.
   gives in `X-Poll-Interval`, usually 60 seconds. It keeps only the threads
   of NixOS/nixpkgs whose subject is a pull request or an issue. The number
   comes from the subject URL.
-- **What it does with a thread.** The server reads that pull request or
-  issue again, with the same GraphQL fields as the walk. It uses the tokens
-  of the sync in their order: the GitHub App token, the bot token, then the
-  tokens that people lend. It stores the item and recomputes the pages and
-  inboxes. It recomputes at most once every 30 seconds.
+- **What it does with a thread.** The poller marks that pull request or
+  issue due in the archive and wakes the archive walk. The walk reads it
+  about 10 seconds later, writes its rows and recomputes the pages and
+  inboxes, at most once every 30 seconds. The poller reads nothing else
+  from GitHub.
 - **Read marks.** Then the poller marks the threads read, so the list stays
-  short. If a read fails, the threads from that read and newer stay unread,
-  and the next poll tries again.
+  short. If a mark fails, the threads stay unread, and the next poll tries
+  again.
 - **It never writes to nixpkgs.** The bot account makes no review, comment,
   label or merge. A read mark changes only the notifications of the bot
   account. It is not a write to nixpkgs.
-- **The rule for the full walk.** The poller is healthy when its last good
-  poll is at most three intervals old (at least 5 minutes). While it is
-  healthy, the walk of pull requests and issues runs every 30 minutes, not
-  on each pass. Before the first walk is complete, and when the poller is off
-  or fails, each pass walks as before. The other work of a pass keeps its
-  interval.
+- **Health.** The poller is healthy when its last good poll is at most
+  three intervals old (at least 5 minutes). When it is not healthy, a
+  change shows after the listing of the next archive pass, at most 5
+  minutes later.
 - **Status.** `/state?tab=status` shows whether the poller is on, its last
   poll, the threads of the last hour, the average time from a change on
-  GitHub to its read here, and the errors. `/api/v1/sync` gives the same data
+  GitHub to its mark here, and the errors. `/api/v1/sync` gives the same data
   under `notifications`. The counts start again when the server restarts.
 
 ## The nixpkgs event log
@@ -202,28 +218,19 @@ cost.
   review comments (with path, line and diff hunk), the files and the
   timeline.
 - **Storage.** One SQLite file per repository: `archive/<owner>/<name>.sqlite`,
-  next to the database. The JSON is zstd-compressed. The main database does
-  not change.
-- **The walk.** A background task, apart from the sync, starts a pass every
-  5 minutes. Each pass fetches a fixed number of items per repository. It
-  first fetches every open item, once, and what changed recently, then
-  walks back from the newest
-  number to #1. An item that gets an event in the event log, or a
-  notification of the bot, is fetched again about 10 seconds later. The walk keeps its cursors in the archive file, so it
-  continues after a restart. It uses only the GitHub App token and the sync
-  token of the server, never the tokens that people lend. It stops for the
-  pass when the token has less than 1000 points left.
-- **Projection check.** After each pass over NixOS/nixpkgs, the server
-  turns archived items into rows, with the caps of the sync, and compares
-  them with the rows that the sync and the history walk wrote: the 500 last
-  updated of each of `pr`, `issue` and `history`. It writes nothing. Only items archived at
-  the same `updatedAt` count. The projection takes `mergeable`, the CI
-  state and the author association from `pr_live`. When `pr_live` has no
-  row for the same head, `mergeable` and the CI state are not compared. `/state?tab=status` shows how many rows
-  differ and in which fields; `/api/v1/sync` gives the same data as
-  `archive[].shadow`. Its first 10 examples give the number, the fields
-  that differ and, for each short field, the projected and the stored
-  value.
+  next to the database. The JSON is zstd-compressed. Each stored item of
+  NixOS/nixpkgs also writes its rows of the main database (see
+  [How the data is pulled](#how-the-data-is-pulled)).
+- **The walk.** A background task starts a pass every 5 minutes. Each pass
+  fetches a fixed number of items per repository. It first fetches every
+  open item, once, and what changed recently, then walks back from the
+  newest number to #1. An item that gets an event in the event log, or a
+  notification of the bot, is fetched again about 10 seconds later. The
+  walk keeps its cursors in the archive file, so it continues after a
+  restart. It uses the GitHub App token and the bot token, and stops for the
+  pass when they have less than 1000 points left. Then, and on a server
+  with neither, the lent tokens pay for the listings and the due items
+  only (see the tokens above).
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
   JSON, or 404. `/state?tab=status` shows the progress. The endpoint has no
   authentication, so the archive keeps public repositories only: it refuses
@@ -256,17 +263,17 @@ An empty list turns the archive off.
 
 `/pr/<number>` shows one nixpkgs pull request in Maintainer Mode. Links to pull requests across the site open this page. A small GitHub icon next to each title opens GitHub.
 
-- **From the synced data.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the reviews that moved it, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
+- **From the `pr` row.** The page shows the title, author, state, draft, base branch, labels, age, size, checks, mergeable and the disclosed AI use. It shows the queue and why, the reviews that moved it, and the packages and modules the pull request touches. For each package or module, it shows the health, the maintainers, and whether a maintainer approved the current head.
 - **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the bot token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
 - **The conversation.** The description, the reviews, the inline comments and the comments come from the archive when it has a copy. If the copy is not current, one GraphQL query reads the first 100 of each kind. The page shows the latest 300 reviews and comments. A link opens the rest on GitHub.
 - **Who makes the server read GitHub.** Only signed-in people do. Anonymous visitors and the API get the cache or the archive copy. If neither has the data, they get a note and a link to GitHub.
-- **Budget.** The sync comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
+- **Budget.** The archive walk comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
 - **Cache.** The server keeps the files per head commit and the conversation per update. It keeps them in memory only, up to 32 MB. A restart clears them.
 - **Crawlers.** `/robots.txt` tells crawlers to stay off `/pr/` and `/api/v1/prs/`.
 - **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text, except `<details>`, `<summary>` and `<b>` with no attributes. The page closes each of these tags that the text leaves open. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
 - **To act**, use "Review the diff on GitHub" or "Open on GitHub" in the page header. Maintainer Mode writes nothing to nixpkgs.
-- A pull request that is not in the synced data gets a short page with a link to GitHub.
-- `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request that is not synced gets 404 and `{"error": …, "url": …}`.
+- A pull request that is not in the `pr` table gets a short page with a link to GitHub.
+- `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request with no `pr` row gets 404 and `{"error": …, "url": …}`.
 
 ```sh
 curl https://<host>/api/v1/prs/123456

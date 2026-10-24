@@ -9,30 +9,6 @@ use crate::store::Store;
 
 const OWNER: &str = "NixOS";
 const REPO: &str = "nixpkgs";
-/// GitHub times out on large nested pages and answers with an HTML error page
-/// rather than JSON. A failed page is asked again, smaller.
-const PAGES: [i64; 4] = [25, 10, 5, 5];
-
-const PR_FIELDS: &str = r#"
-  number title url isDraft state createdAt updatedAt mergedAt closedAt mergeable headRefOid baseRefName
-  additions deletions changedFiles authorAssociation body
-  mergedBy { login }
-  author { __typename login }
-  labels(first: 30) { nodes { name } }
-  commits(last: 1) { nodes { commit { message statusCheckRollup { state } } } }
-  files(first: 50) { nodes { path } }
-  reviews(first: 30) { nodes {
-    url state submittedAt author { __typename login } commit { oid }
-    comments(first: 5) { nodes { diffHunk } }
-  } }
-  comments(last: 30) { nodes { url createdAt body authorAssociation author { login } } }
-  timelineItems(last: 30, itemTypes: [PULL_REQUEST_COMMIT, HEAD_REF_FORCE_PUSHED_EVENT]) { nodes {
-    __typename
-    ... on PullRequestCommit { commit { committedDate } }
-    ... on HeadRefForcePushedEvent { createdAt }
-  } }
-"#;
-
 const GRAPHQL: &str = "https://api.github.com/graphql";
 
 pub struct Client {
@@ -40,6 +16,35 @@ pub struct Client {
     tokens: Vec<String>,
     current: usize,
     endpoint: String,
+    /// The tokens are lent, and the work is shared: each token pays at most
+    /// `LENT_SHARE` of its budget in one rate limit window.
+    lent: bool,
+}
+
+/// The part of a lent token's budget that shared work may use in one rate
+/// limit window, as a divisor: a tenth.
+const LENT_SHARE: i64 = 10;
+
+/// Per lent token hash: the reset time of the window it was first seen in
+/// for shared work, and the budget below which shared work stops using it.
+static LENT_FLOORS: std::sync::Mutex<std::collections::BTreeMap<String, (String, i64)>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// True when shared work has used its share of `token` in this window. An
+/// answer with no rate limit counts as used up.
+fn lent_share_used(token: &str, rate: &Value) -> bool {
+    let (Some(remaining), Some(reset)) = (rate["remaining"].as_i64(), rate["resetAt"].as_str())
+    else {
+        return true;
+    };
+    let mut floors = LENT_FLOORS.lock().unwrap();
+    let e = floors
+        .entry(crate::sets::token_hash(token))
+        .or_insert_with(|| (String::new(), 0));
+    if e.0 != reset {
+        *e = (reset.to_string(), remaining - remaining / LENT_SHARE);
+    }
+    remaining < e.1
 }
 
 pub enum Outcome {
@@ -68,7 +73,21 @@ impl Client {
             tokens,
             current: 0,
             endpoint: GRAPHQL.into(),
+            lent: false,
         }
+    }
+
+    /// A client for shared work on tokens that people lent: see
+    /// `LENT_SHARE`. Each query must ask for `rateLimit { remaining resetAt }`.
+    pub fn lent(tokens: Vec<String>) -> Self {
+        Self {
+            lent: true,
+            ..Self::new(tokens)
+        }
+    }
+
+    pub fn is_lent(&self) -> bool {
+        self.lent
     }
 
     #[cfg(test)]
@@ -113,7 +132,7 @@ impl Client {
                 }
                 Ok(Outcome::Data(v)) => {
                     let remaining = v["rateLimit"]["remaining"].as_i64().unwrap_or(i64::MAX);
-                    if remaining < 200 {
+                    if remaining < 200 || (self.lent && lent_share_used(&token, &v["rateLimit"])) {
                         self.current += 1;
                     }
                     return Ok(v);
@@ -239,6 +258,8 @@ fn on_change(hunk: &str) -> bool {
         .is_some_and(|l| l.starts_with('+') || l.starts_with('-'))
 }
 
+/// A pull request in the shape that `project::pr` cuts from an archived
+/// item.
 pub fn normalize(n: &Value) -> Option<Pr> {
     let (author, author_is_bot) = login(&n["author"]);
     let mut reviews = Vec::new();
@@ -383,123 +404,6 @@ fn tool_name(trailer: &str) -> String {
     }
 }
 
-async fn page_of(
-    client: &mut Client,
-    store: &Store,
-    open_only: bool,
-    after: Option<&str>,
-    n: i64,
-) -> Result<(Vec<Pr>, Option<String>)> {
-    let query = format!(
-        "query($owner: String!, $name: String!, $n: Int!, $after: String, $states: [PullRequestState!], $field: IssueOrderField!) {{
-           rateLimit {{ cost remaining resetAt }}
-           repository(owner: $owner, name: $name) {{
-             pullRequests(first: $n, after: $after, states: $states, orderBy: {{ field: $field, direction: DESC }}) {{
-               pageInfo {{ hasNextPage endCursor }}
-               nodes {{ {PR_FIELDS} }}
-             }}
-           }}
-         }}"
-    );
-    let vars = json!({
-        "owner": OWNER, "name": REPO, "n": n, "after": after,
-        "states": if open_only { json!(["OPEN"]) } else { Value::Null },
-        "field": if open_only { "CREATED_AT" } else { "UPDATED_AT" },
-    });
-    let data = client.graphql(store, &query, vars).await?;
-    let conn = &data["repository"]["pullRequests"];
-    let prs = nodes(conn).filter_map(normalize).collect();
-    Ok((prs, next_cursor(conn)))
-}
-
-async fn page(
-    client: &mut Client,
-    store: &Store,
-    open_only: bool,
-    after: Option<&str>,
-) -> Result<(Vec<Pr>, Option<String>)> {
-    let mut last = None;
-    for n in PAGES {
-        match page_of(client, store, open_only, after, n).await {
-            Ok(v) => return Ok(v),
-            Err(e) if client.has_token() => {
-                tracing::warn!("page of {n}: {e:#}");
-                last = Some(e);
-                tokio::time::sleep(StdDuration::from_secs(5)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Err(last.expect("at least one attempt"))
-}
-
-/// Brings the store up to date. Two walks, both resumable from a stored cursor:
-/// every open pull request once, then everything updated since the last pass,
-/// newest first, stopping at the watermark.
-pub async fn sync(store: &Store, client: &mut Client, window_days: i64) -> Result<usize> {
-    let mut count = 0;
-    if store.get("open_done")?.is_none() {
-        let mut cursor = store.get("open_cursor")?;
-        loop {
-            let (prs, next) = page(client, store, true, cursor.as_deref()).await?;
-            count += prs.len();
-            store.put_prs(&prs)?;
-            store.note_live(&prs, Utc::now())?;
-            match next {
-                Some(c) => {
-                    store.set("open_cursor", &c)?;
-                    cursor = Some(c);
-                }
-                None => {
-                    store.set("open_done", "1")?;
-                    break;
-                }
-            }
-        }
-    }
-
-    let started = match store.get_time("recent_started")? {
-        Some(t) if store.get("recent_cursor")?.is_some() => t,
-        _ => {
-            let now = Utc::now();
-            store.set("recent_started", &now.to_rfc3339())?;
-            now
-        }
-    };
-    let floor = store
-        .get_time("watermark")?
-        .unwrap_or_else(|| Utc::now() - Duration::days(window_days));
-    let mut cursor = store.get("recent_cursor")?;
-    loop {
-        let (prs, next) = page(client, store, false, cursor.as_deref()).await?;
-        let reached = prs.iter().any(|p| p.updated_at < floor);
-        count += prs.len();
-        store.put_prs(&prs)?;
-        store.note_live(&prs, Utc::now())?;
-        match next {
-            Some(c) if !reached => {
-                store.set("recent_cursor", &c)?;
-                cursor = Some(c);
-            }
-            _ => break,
-        }
-    }
-    // updates that land during the walk move to the top behind us; starting
-    // the next pass at our own start time picks them up
-    store.set("watermark", &(started - Duration::minutes(2)).to_rfc3339())?;
-    store.delete_key("recent_cursor")?;
-    store.set("last_sync", &Utc::now().to_rfc3339())?;
-    Ok(count)
-}
-
-const ISSUE_FIELDS: &str = r#"
-  number title url state createdAt updatedAt closedAt body
-  author { login }
-  labels(first: 20) { nodes { name } }
-  comments { totalCount }
-"#;
-const ISSUE_PAGES: [i64; 3] = [100, 50, 20];
-
 pub fn normalize_issue(n: &Value) -> Option<Issue> {
     Some(Issue {
         number: n["number"].as_u64()?,
@@ -518,155 +422,6 @@ pub fn normalize_issue(n: &Value) -> Option<Issue> {
 
 /// Pull requests and issues by number, with the fields of the walks, in one
 /// query. A number that GitHub does not know is left out.
-pub async fn by_number(
-    store: &Store,
-    client: &mut Client,
-    prs: &[u64],
-    issues: &[u64],
-) -> Result<(Vec<Pr>, Vec<Issue>)> {
-    if prs.is_empty() && issues.is_empty() {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let mut fields = String::new();
-    for n in prs {
-        fields.push_str(&format!(
-            "p{n}: pullRequest(number: {n}) {{ {PR_FIELDS} }} "
-        ));
-    }
-    for n in issues {
-        fields.push_str(&format!("i{n}: issue(number: {n}) {{ {ISSUE_FIELDS} }} "));
-    }
-    let query = format!(
-        "{{ rateLimit {{ cost remaining resetAt }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
-    );
-    let data = client
-        .graphql_allowing(store, &query, Value::Null, &["NOT_FOUND"])
-        .await?;
-    let repo = &data["repository"];
-    Ok((
-        prs.iter()
-            .filter_map(|n| normalize(&repo[format!("p{n}")]))
-            .collect(),
-        issues
-            .iter()
-            .filter_map(|n| normalize_issue(&repo[format!("i{n}")]))
-            .collect(),
-    ))
-}
-
-async fn issue_page(
-    client: &mut Client,
-    store: &Store,
-    open_only: bool,
-    after: Option<&str>,
-) -> Result<(Vec<Issue>, Option<String>)> {
-    let mut last = None;
-    for n in ISSUE_PAGES {
-        let query = format!(
-            "query($owner: String!, $name: String!, $n: Int!, $after: String, $states: [IssueState!], $field: IssueOrderField!) {{
-               rateLimit {{ cost remaining resetAt }}
-               repository(owner: $owner, name: $name) {{
-                 issues(first: $n, after: $after, states: $states, orderBy: {{ field: $field, direction: DESC }}) {{
-                   pageInfo {{ hasNextPage endCursor }}
-                   nodes {{ {ISSUE_FIELDS} }}
-                 }}
-               }}
-             }}"
-        );
-        let vars = json!({
-            "owner": OWNER, "name": REPO, "n": n, "after": after,
-            "states": if open_only { json!(["OPEN"]) } else { Value::Null },
-            "field": if open_only { "CREATED_AT" } else { "UPDATED_AT" },
-        });
-        match client.graphql(store, &query, vars).await {
-            Ok(data) => {
-                let conn = &data["repository"]["issues"];
-                let issues = nodes(conn).filter_map(normalize_issue).collect();
-                return Ok((issues, next_cursor(conn)));
-            }
-            Err(e) if client.has_token() => {
-                tracing::warn!("issue page of {n}: {e:#}");
-                last = Some(e);
-                tokio::time::sleep(StdDuration::from_secs(5)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Err(last.expect("at least one attempt"))
-}
-
-/// The same two walks as `sync`, over issues, with their own cursors.
-pub async fn sync_issues(store: &Store, client: &mut Client, window_days: i64) -> Result<usize> {
-    let mut count = 0;
-    if store.get("issues_open_done")?.is_none() {
-        let mut cursor = store.get("issues_open_cursor")?;
-        loop {
-            let (issues, next) = issue_page(client, store, true, cursor.as_deref()).await?;
-            count += issues.len();
-            store.put_issues(&issues)?;
-            match next {
-                Some(c) => {
-                    store.set("issues_open_cursor", &c)?;
-                    cursor = Some(c);
-                }
-                None => {
-                    store.set("issues_open_done", "1")?;
-                    break;
-                }
-            }
-        }
-    }
-    let started = match store.get_time("issues_recent_started")? {
-        Some(t) if store.get("issues_recent_cursor")?.is_some() => t,
-        _ => {
-            let now = Utc::now();
-            store.set("issues_recent_started", &now.to_rfc3339())?;
-            now
-        }
-    };
-    let floor = store
-        .get_time("issues_watermark")?
-        .unwrap_or_else(|| Utc::now() - Duration::days(window_days));
-    let mut cursor = store.get("issues_recent_cursor")?;
-    loop {
-        let (issues, next) = issue_page(client, store, false, cursor.as_deref()).await?;
-        let reached = issues.iter().any(|i| i.updated_at < floor);
-        count += issues.len();
-        store.put_issues(&issues)?;
-        match next {
-            Some(c) if !reached => {
-                store.set("issues_recent_cursor", &c)?;
-                cursor = Some(c);
-            }
-            _ => break,
-        }
-    }
-    store.set(
-        "issues_watermark",
-        &(started - Duration::minutes(2)).to_rfc3339(),
-    )?;
-    store.delete_key("issues_recent_cursor")?;
-    Ok(count)
-}
-
-const HISTORY_FIELDS: &str = r#"
-  number state isDraft createdAt updatedAt closedAt mergedAt baseRefName authorAssociation
-  additions deletions changedFiles
-  author { __typename login } mergedBy { login }
-  labels(first: 30) { nodes { name } }
-  files(first: 50) { nodes { path } }
-  commits(last: 1) { nodes { commit { message } } }
-  reviews(first: 10) { nodes { state submittedAt author { __typename login } } }
-"#;
-
-/// GitHub answers 502 after 10 s. A page of 100 with these nested fields
-/// passes that on older pull requests; the description alone adds 2 to 3 s to
-/// a page of 50, so the history reads the AI trailer from the commit only.
-const HISTORY_PAGES: [i64; 3] = [50, 25, 10];
-/// After a 502 the walk keeps the smaller page for this many pages; slow
-/// stretches of history come in runs.
-const HISTORY_CALM: usize = 20;
-
 pub(crate) fn facts(n: &Value) -> Option<Facts> {
     let (author, author_is_bot) = login(&n["author"]);
     let files: Vec<String> = nodes(&n["files"])
@@ -704,90 +459,6 @@ pub(crate) fn facts(n: &Value) -> Option<Facts> {
     })
 }
 
-async fn history_page(
-    client: &mut Client,
-    store: &Store,
-    after: Option<&str>,
-    level: &mut usize,
-) -> Result<(Vec<Facts>, Option<String>)> {
-    let query = format!(
-        "query($owner: String!, $name: String!, $n: Int!, $after: String) {{
-           rateLimit {{ cost remaining resetAt }}
-           repository(owner: $owner, name: $name) {{
-             pullRequests(first: $n, after: $after, orderBy: {{ field: CREATED_AT, direction: DESC }}) {{
-               pageInfo {{ hasNextPage endCursor }}
-               nodes {{ {HISTORY_FIELDS} }}
-             }}
-           }}
-         }}"
-    );
-    let mut last = None;
-    for (i, n) in HISTORY_PAGES.iter().enumerate().skip(*level) {
-        let vars = json!({ "owner": OWNER, "name": REPO, "n": n, "after": after });
-        match client.graphql(store, &query, vars).await {
-            Ok(data) => {
-                let conn = &data["repository"]["pullRequests"];
-                *level = i;
-                return Ok((nodes(conn).filter_map(facts).collect(), next_cursor(conn)));
-            }
-            Err(e) if client.has_token() => {
-                tracing::warn!("history page of {n}: {e:#}");
-                last = Some(e);
-                tokio::time::sleep(StdDuration::from_secs(1)).await;
-            }
-            Err(e) => return Err(e),
-        }
-    }
-    Err(last.expect("at least one attempt"))
-}
-
-/// Walks every pull request created since `since`, newest first, for the
-/// metrics. It stops after `max_pages` and resumes from a stored cursor, so a
-/// long first walk never holds up the regular sync. Later changes reach the
-/// metrics through the regular sync.
-pub async fn history(
-    store: &Store,
-    client: &mut Client,
-    since: DateTime<Utc>,
-    max_pages: usize,
-) -> Result<usize> {
-    let goal = since.to_rfc3339();
-    if store.get("history_done")?.as_deref() == Some(goal.as_str()) {
-        return Ok(0);
-    }
-    if store.get("history_since")?.as_deref() != Some(goal.as_str()) {
-        store.delete_key("history_cursor")?;
-        store.set("history_since", &goal)?;
-    }
-    let mut cursor = store.get("history_cursor")?;
-    let mut count = 0;
-    let mut level = 0;
-    let mut calm = 0;
-    for _ in 0..max_pages {
-        let (page, next) = history_page(client, store, cursor.as_deref(), &mut level).await?;
-        calm = if level == 0 { 0 } else { calm + 1 };
-        if calm >= HISTORY_CALM {
-            level -= 1;
-            calm = 0;
-        }
-        let reached = page.iter().any(|f| f.created_at < since);
-        count += page.len();
-        store.put_facts(&page)?;
-        match next {
-            Some(c) if !reached => {
-                store.set("history_cursor", &c)?;
-                cursor = Some(c);
-            }
-            _ => {
-                store.set("history_done", &goal)?;
-                store.delete_key("history_cursor")?;
-                break;
-            }
-        }
-    }
-    Ok(count)
-}
-
 fn live_of(pr: &Value, at: DateTime<Utc>) -> Option<crate::store::Live> {
     Some(crate::store::Live {
         number: pr["number"].as_u64()?,
@@ -818,7 +489,7 @@ pub async fn refresh_live(store: &Store, client: &mut Client, numbers: &[u64]) -
             })
             .collect();
         let query = format!(
-            "{{ rateLimit {{ remaining }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
+            "{{ rateLimit {{ remaining resetAt }} repository(owner: \"{OWNER}\", name: \"{REPO}\") {{ {fields} }} }}"
         );
         let data = client
             .graphql_allowing(store, &query, Value::Null, &["NOT_FOUND"])
@@ -995,6 +666,24 @@ mod tests {
         let mut c = Client::at(&url, vec!["limited".into()]);
         assert!(c.graphql(&store, "{ ok }", Value::Null).await.is_err());
         assert!(!c.has_token());
+    }
+
+    #[test]
+    fn a_lent_token_pays_a_tenth_of_its_budget_per_window() {
+        let rate =
+            |remaining: i64, reset: &str| json!({ "remaining": remaining, "resetAt": reset });
+        let t = "lent-share-test-token";
+        assert!(!lent_share_used(t, &rate(5000, "r1")));
+        assert!(!lent_share_used(t, &rate(4501, "r1")));
+        assert!(lent_share_used(t, &rate(4499, "r1")));
+        assert!(
+            !lent_share_used(t, &rate(4400, "r2")),
+            "a new window starts again"
+        );
+        assert!(
+            lent_share_used(t, &json!({})),
+            "no rate limit counts as used up"
+        );
     }
 
     #[test]

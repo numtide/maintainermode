@@ -233,7 +233,8 @@ enum Command {
         #[command(subcommand)]
         command: ArchiveCommand,
     },
-    /// One sync pass into a local database, then exit
+    /// Fill the archive of NixOS/nixpkgs and the local database from it:
+    /// every open item and the recent updates, then exit
     Sync {
         #[arg(
             long,
@@ -245,9 +246,12 @@ enum Command {
         token: String,
         #[arg(long)]
         index: bool,
-        /// Also walk the history for the metrics, to the end.
+        /// Also walk back through all of history, to the first number.
         #[arg(long)]
         history: bool,
+        /// Items fetched per pass.
+        #[arg(long, default_value_t = 300)]
+        items: usize,
     },
     /// Sweep nixpkgs master with the evaluator and store the index
     Sweep {
@@ -676,8 +680,8 @@ pub async fn refresh_member(app: &App, login: &str, token: &str) -> Result<()> {
 const LIVE_BATCH: usize = 500;
 
 /// Reads the live fields of the merge candidates, then of the open pull
-/// requests checked longest ago. With no server token, `fallback` reads
-/// the merge candidates only.
+/// requests checked longest ago. With no server token, `fallback` (lent
+/// tokens, see `github::Client::lent`) reads the merge candidates only.
 async fn settle(
     app: &App,
     server: &mut github::Client,
@@ -686,6 +690,9 @@ async fn settle(
     app.recompute()?;
     let mut numbers = app.merge_candidates();
     if !server.has_token() {
+        if !fallback.has_token() {
+            return Ok(0);
+        }
         return github::refresh_live(&app.store, fallback, &numbers).await;
     }
     for n in app.store.live_due(LIVE_BATCH)? {
@@ -694,14 +701,6 @@ async fn settle(
         }
     }
     github::refresh_live(&app.store, server, &numbers).await
-}
-
-/// About ten minutes of walking per pass; the full walk back to 2020 takes
-/// several hours.
-const HISTORY_PAGES_PER_PASS: usize = 100;
-
-fn since(date: chrono::NaiveDate) -> chrono::DateTime<Utc> {
-    date.and_hms_opt(0, 0, 0).unwrap().and_utc()
 }
 
 /// A connect error means the host has no network yet, as on first boot.
@@ -717,7 +716,7 @@ fn retry_wait(failures: u32, every: u64) -> u64 {
     (5u64 << failures.min(6)).min(300).min(every)
 }
 
-async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate) {
+async fn background(app: Arc<App>, every: u64) {
     let mut failures = 0;
     loop {
         let pass_started = Utc::now();
@@ -764,46 +763,32 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             Ok(n) => tracing::info!("{n} expired flake scans dropped"),
             Err(e) => tracing::warn!("flake scans: {e:#}"),
         }
-        // Only the GitHub sync decides whether the host is offline: one other
-        // host that stays down must not hold back the rest of the pass.
+        // Only GitHub decides whether the host is offline: one other host
+        // that stays down must not hold back the rest of the pass.
         let mut down = false;
-        let mut tokens = Vec::new();
+        let mut server_tokens = Vec::new();
         if let Some(a) = &app.github_app {
             match a.token().await {
-                Ok(t) => tokens.push(t),
+                Ok(t) => server_tokens.push(t),
                 Err(e) => {
                     down = offline(&e);
                     tracing::warn!("GitHub App token: {e:#}");
                 }
             }
         }
-        tokens.extend(app.bot_token.iter().map(|s| s.get()));
-        let server_tokens = tokens.clone();
-        tokens.extend(app.store.lent_tokens().unwrap_or_default());
-        let mut client = github::Client::new(tokens);
-        let walk = notifications::walk_due(
-            app.notifications.healthy(pass_started),
-            app.store.get("open_done").ok().flatten().is_some()
-                && app.store.get("issues_open_done").ok().flatten().is_some(),
-            app.store.get_time("walk_at").ok().flatten(),
-            pass_started,
-        );
-        if client.has_token() && !walk {
-            tracing::info!("the notifications poller is healthy; the full walk waits");
-        } else if client.has_token() {
-            match github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await {
-                Ok(n) => {
-                    down = false;
-                    let _ = app.store.set("walk_at", &pass_started.to_rfc3339());
-                    tracing::info!("synced {n} pull requests");
-                }
-                Err(e) => {
-                    down = offline(&e);
-                    tracing::warn!("sync: {e:#}");
-                }
+        server_tokens.extend(app.bot_token.iter().map(|s| s.get()));
+        let mut server = github::Client::new(server_tokens.clone());
+        let mut client = if server.has_token() {
+            github::Client::new(server_tokens.clone())
+        } else {
+            github::Client::lent(app.store.lent_tokens().unwrap_or_default())
+        };
+        match settle(&app, &mut server, &mut client).await {
+            Ok(_) => {}
+            Err(e) => {
+                down |= offline(&e);
+                tracing::warn!("mergeable: {e:#}");
             }
-        } else if !down {
-            tracing::info!("no token yet; the sync starts when someone logs in");
         }
         if down {
             let wait = retry_wait(failures, every);
@@ -813,30 +798,6 @@ async fn background(app: Arc<App>, every: u64, history_since: chrono::NaiveDate)
             continue;
         }
         failures = 0;
-        if client.has_token() {
-            if walk {
-                match github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await {
-                    Ok(n) => tracing::info!("synced {n} issues"),
-                    Err(e) => tracing::warn!("issues: {e:#}"),
-                }
-            }
-            let mut server = github::Client::new(server_tokens.clone());
-            if let Err(e) = settle(&app, &mut server, &mut client).await {
-                tracing::warn!("mergeable: {e:#}");
-            }
-            match github::history(
-                &app.store,
-                &mut client,
-                since(history_since),
-                HISTORY_PAGES_PER_PASS,
-            )
-            .await
-            {
-                Ok(0) => {}
-                Ok(n) => tracing::info!("history: {n} pull requests"),
-                Err(e) => tracing::warn!("history: {e:#}"),
-            }
-        }
         if let Err(e) = committer::refresh_team(&app.store, server_tokens).await {
             tracing::info!("committers team: {e:#}");
         }
@@ -1043,7 +1004,7 @@ async fn run(cli: Cli) -> Result<i32> {
             let a = app.clone();
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
-            tokio::spawn(background(app.clone(), sync_every, cli.history_since));
+            tokio::spawn(background(app.clone(), sync_every));
             tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
             tokio::spawn(channels::run(app.clone()));
             tokio::spawn(builds::run(app.clone()));
@@ -1059,7 +1020,7 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             tokio::spawn(events::archive(app.clone()));
             if !app.archive.is_empty() {
-                tokio::spawn(archive::walk(app.clone()));
+                tokio::spawn(archive::walk(app.clone(), cli.history_since));
             }
             tokio::spawn(rescan::run(app.clone()));
             tokio::spawn(notify::run(app.clone()));
@@ -1084,6 +1045,7 @@ async fn run(cli: Cli) -> Result<i32> {
             token,
             index,
             history,
+            items,
         } => {
             let store = Store::open(&db)?;
             let events = Arc::new(events::Log::open(&data_dir(&db).join("events"))?);
@@ -1115,20 +1077,37 @@ async fn run(cli: Cli) -> Result<i32> {
             if index {
                 web::refresh_index(&app).await?;
             }
+            let a = archive::Archive::open(
+                &data_dir(&db).join("archive"),
+                archive::DEFAULT_REPO,
+                items,
+            )?;
             let mut client = github::Client::new(vec![token]);
-            let n = github::sync(&app.store, &mut client, ledger::WINDOW_DAYS).await?;
-            eprintln!("synced {n} pull requests");
-            let n = github::sync_issues(&app.store, &mut client, ledger::WINDOW_DAYS).await?;
-            eprintln!("synced {n} issues");
+            let history_from = cli.history_since.and_hms_opt(0, 0, 0).unwrap().and_utc();
+            let d = archive::sync_once(
+                &app.store,
+                &app.events,
+                &a,
+                &mut client,
+                history_from,
+                history,
+            )
+            .await?;
+            eprintln!(
+                "{} items of {} stored, {} rows written{}",
+                d.fetched,
+                archive::DEFAULT_REPO,
+                d.written,
+                if d.low {
+                    "; the token is low on budget, run it again after its reset"
+                } else {
+                    ""
+                }
+            );
             eprintln!(
                 "settled {} merge candidates",
                 settle(&app, &mut github::Client::new(Vec::new()), &mut client).await?
             );
-            while history && app.store.get("history_done")?.is_none() {
-                let n =
-                    github::history(&app.store, &mut client, since(cli.history_since), 50).await?;
-                eprintln!("history: {n} pull requests");
-            }
             Ok(0)
         }
         Command::Sweep { db } => {

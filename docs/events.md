@@ -54,7 +54,7 @@ one.
   replays from that `seq`, then follows live. Filters: `type`, `number`,
   `actor`, and a path prefix for pull requests that touch it.
 - The queues read new events at once, so a review shows without waiting for
-  the next sync.
+  the next archive pass.
 
 ## Copy outside the host
 

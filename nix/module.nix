@@ -127,7 +127,7 @@ in
     historySince = lib.mkOption {
       type = lib.types.str;
       default = "2020-01-01";
-      description = "How far back the history walk for `/state` goes, as YYYY-MM-DD.";
+      description = "The first day of the pull requests whose facts the archive writes for `/state`, as YYYY-MM-DD.";
     };
 
     indexSets = lib.mkOption {

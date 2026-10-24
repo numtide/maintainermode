@@ -32,8 +32,9 @@ discussion) gets a row of kind `none`, so the walk does not ask again.
 ## Storage
 
 One SQLite file per repository: `archive/<owner>/<name>.sqlite`, next to the
-main database. The main database stays small, and the `pr` and `issue`
-tables and their sync do not change.
+main database. The archive is the one source of the `pr`, `issue` and
+`history` tables of the main database: each stored item of NixOS/nixpkgs
+writes its rows (see [data.md](data.md#how-the-data-is-pulled)).
 
 | Table    | Holds                                                                                                           |
 | -------- | --------------------------------------------------------------------------------------------------------------- |
@@ -47,8 +48,8 @@ scan the table.
 
 ## The walk
 
-The walk runs in its own task, apart from the pull request and issue sync.
-A pass starts every 5 minutes. Each pass does these steps for each
+The walk runs in its own task. It is the only reader of issues and pull
+requests. A pass starts every 5 minutes. Each pass does these steps for each
 repository:
 
 1. **Event hints** (nixpkgs only). Read the new events of the event log.
@@ -75,12 +76,17 @@ poller marks the numbers of its threads due. The 10 seconds let a burst
 of events on one item cost one fetch.
 
 The budget is a fixed number of items per repository per pass
-(`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses only the
-GitHub App token and the bot token of the server, through
-`github::Client`. It never uses the tokens that people lend when they sign
-in. With neither server token, the walk does not run, and `/state?tab=status` says so.
-It stops for the pass when the token has less than 1000 points left, so
-the sync keeps its budget.
+(`MAINTAINER_MODE_ARCHIVE_ITEMS`, default 300). The walk uses the GitHub
+App token and the bot token of the server, through `github::Client`. It
+stops for the pass when the token has less than 1000 points left, so the
+live refresh keeps its budget. Then, and on a server with neither token,
+the tokens that people lend pay for steps 1 to 4 only, never for step 5:
+each lent token pays at most a tenth of its budget in one rate limit
+window. With no token at all, the walk does not run, and
+`/state?tab=status` says so.
+
+After each change of rows, the walk computes the pages again, at most once
+every 30 seconds.
 
 All state is in the archive file, so the walk continues after a restart.
 

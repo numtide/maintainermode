@@ -213,7 +213,8 @@ impl Store {
             tx.execute(
                 "INSERT INTO pr (number, updated_at, state, data) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(number) DO UPDATE SET
-                   updated_at = excluded.updated_at, state = excluded.state, data = excluded.data",
+                   updated_at = excluded.updated_at, state = excluded.state, data = excluded.data
+                 WHERE julianday(excluded.updated_at) >= julianday(updated_at)",
                 params![
                     pr.number,
                     pr.updated_at.to_rfc3339(),
@@ -232,7 +233,8 @@ impl Store {
         for f in facts {
             tx.execute(
                 "INSERT INTO history (number, updated_at, data) VALUES (?1, ?2, ?3)
-                 ON CONFLICT(number) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data",
+                 ON CONFLICT(number) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
+                 WHERE julianday(excluded.updated_at) >= julianday(updated_at)",
                 params![f.number, f.updated_at.to_rfc3339(), serde_json::to_string(f)?],
             )?;
         }
@@ -382,6 +384,23 @@ impl Store {
         Ok(out)
     }
 
+    /// Copies the live fields of open `pr` rows that have no `pr_live` row,
+    /// as checked long ago, so the projection keeps them until the live
+    /// refresh reads them again.
+    pub fn seed_live(&self) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        Ok(conn.execute(
+            "INSERT OR IGNORE INTO pr_live (number, head_oid, mergeable, ci, association, checked_at)
+             SELECT number, json_extract(data, '$.head_oid'),
+                    coalesce(json_extract(data, '$.mergeable'), 'UNKNOWN'),
+                    json_extract(data, '$.ci'),
+                    coalesce(json_extract(data, '$.association'), ''),
+                    '1970-01-01T00:00:00+00:00'
+             FROM pr WHERE state = 'OPEN' AND json_extract(data, '$.head_oid') IS NOT NULL",
+            [],
+        )?)
+    }
+
     /// Open pull requests, the ones never checked first, then the oldest
     /// check.
     pub fn live_due(&self, limit: usize) -> Result<Vec<u64>> {
@@ -418,7 +437,8 @@ impl Store {
             tx.execute(
                 "INSERT INTO issue (number, updated_at, state, data) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(number) DO UPDATE SET
-                   updated_at = excluded.updated_at, state = excluded.state, data = excluded.data",
+                   updated_at = excluded.updated_at, state = excluded.state, data = excluded.data
+                 WHERE julianday(excluded.updated_at) >= julianday(updated_at)",
                 params![
                     i.number,
                     i.updated_at.to_rfc3339(),

@@ -357,7 +357,7 @@ gives at most that many of each kind; the suggestions of the box ask for 5.
   `flags`.
 - `people`: maintainers whose login holds the text, each with `login` and
   `url`.
-- `pull_requests`: synced pull requests whose title has the text at the start of a word (3
+- `pull_requests`: stored pull requests whose title has the text at the start of a word (3
   characters or more). Open ones come first. Each has `number`, `title`,
   `state`, `draft` and `url`.
 - `advisories`: advisories with that id: a security tracker code

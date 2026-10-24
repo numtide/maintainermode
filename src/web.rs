@@ -99,6 +99,20 @@ pub struct App {
 }
 
 impl App {
+    /// The archive that the rows of the main database come from.
+    pub(crate) fn nixpkgs_archive(&self) -> Option<&Arc<crate::archive::Archive>> {
+        self.archive
+            .iter()
+            .find(|a| a.repo.eq_ignore_ascii_case(crate::events::REPO))
+    }
+
+    /// The archive holds every number of nixpkgs, so the facts of every
+    /// pull request since `--history-since` are in the `history` table.
+    pub(crate) fn history_complete(&self) -> bool {
+        self.nixpkgs_archive()
+            .is_some_and(|a| a.get("backfill_done").ok().flatten().is_some())
+    }
+
     pub fn recompute(&self) -> Result<()> {
         let prs = self.store.prs()?;
         let index = self.index.read().unwrap();
@@ -142,7 +156,9 @@ impl App {
             pr_at,
             reviewed_by,
             issue_at,
-            issues_complete: self.store.get("issues_open_done")?.is_some(),
+            issues_complete: self
+                .nixpkgs_archive()
+                .is_some_and(|a| a.open_complete().unwrap_or(false)),
             open_by_dir,
             versions,
             committers,
@@ -1040,10 +1056,10 @@ pub(crate) fn numbers(app: &App) -> String {
             .map(|t| t.format("%Y-%m-%d").to_string())
             .unwrap_or_default(),
         ago(at),
-        match app.store.get("history_done").ok().flatten() {
-            Some(_) => "The history walk is complete.".to_string(),
-            None =>
-                "The history walk is still running, so older months are incomplete.".to_string(),
+        if app.history_complete() {
+            "The archive holds all of history."
+        } else {
+            "The archive still walks back through history, so older months are incomplete."
         }
     );
     let _ = write!(

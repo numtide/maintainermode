@@ -14,7 +14,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_CLIENT_ID`                     | OAuth app client id                                         |
 | `GITHUB_CLIENT_SECRET_FILE`            | file holding the OAuth app client secret                    |
 | `MAINTAINER_MODE_BOT_TOKEN_FILE`       | classic token of the bot account (scope `notifications`)    |
-| `GITHUB_APP_ID`                        | GitHub App whose installation token syncs first             |
+| `GITHUB_APP_ID`                        | GitHub App whose installation token reads GitHub first      |
 | `GITHUB_APP_KEY_FILE`                  | file holding the PEM private key of the GitHub App          |
 | `GITHUB_APP_INSTALLATION_ID`           | installation to use; else the one on the account of the App |
 | `MAINTAINER_MODE_GITHUB_APP_SLUG`      | the App people install on their workflow repository         |

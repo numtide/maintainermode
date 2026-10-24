@@ -1,17 +1,20 @@
 //! The archive JSON reduced to the rows of the main database: `Pr`, `Issue`
-//! and `Facts`. Each function cuts the full item down to the shape that the
-//! sync queries return, with their caps, and reads it with the same parser,
-//! so the ledger and the queues see the same data from either source.
+//! and `Facts`. Each function cuts the full item down to a fixed shape, with
+//! caps (30 reviews, 5 inline comments per review, 30 comments, 30 pushes,
+//! 50 files), and reads it with the parsers of `github`. The archive is the
+//! one source of these rows: [`write`] runs on each archive write.
 //!
 //! `mergeable` and the CI state are not in the archive, and the archived
 //! `authorAssociation` goes stale: [`pr_live`] and [`facts_live`] take them
 //! from `pr_live`. A plain projected `Pr` has UNKNOWN and no CI.
 
+use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde_json::{Map, Value, json};
 
 use crate::metrics::Facts;
 use crate::model::{Issue, Pr};
-use crate::store::Live;
+use crate::store::{Live, Store};
 
 const PR_LABELS: usize = 30;
 const ISSUE_LABELS: usize = 20;
@@ -184,12 +187,58 @@ pub(crate) fn facts_live(item: &Value, live: Option<&Live>) -> Option<Facts> {
     Some(f)
 }
 
+/// Which projected rows go to the main database: open items, items updated
+/// in the window of the ledger, and the facts of the pull requests created
+/// since `history_from`.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Rows {
+    pub(crate) window_from: DateTime<Utc>,
+    pub(crate) history_from: DateTime<Utc>,
+}
+
+impl Rows {
+    pub(crate) fn at(now: DateTime<Utc>, history_from: DateTime<Utc>) -> Self {
+        Rows {
+            window_from: now - chrono::Duration::days(crate::ledger::WINDOW_DAYS),
+            history_from,
+        }
+    }
+}
+
+/// Projects archived items and writes the rows that `rows` keeps. A stored
+/// row with a newer `updated_at` stays. Returns the rows written.
+pub(crate) fn write(store: &Store, rows: Rows, items: &[(u64, Value)]) -> Result<usize> {
+    let live = store.live()?;
+    let (mut prs, mut issues, mut facts) = (Vec::new(), Vec::new(), Vec::new());
+    for (n, item) in items {
+        let l = live.get(n);
+        if let Some(p) = pr_live(item, l) {
+            if let Some(f) = facts_live(item, l).filter(|f| f.created_at >= rows.history_from) {
+                facts.push(f);
+            }
+            if p.is_open() || p.updated_at >= rows.window_from {
+                prs.push(p);
+            }
+        } else if let Some(i) = issue(item) {
+            if i.state == "OPEN" || i.updated_at >= rows.window_from {
+                issues.push(i);
+            }
+        }
+    }
+    store.put_prs(&prs)?;
+    store.put_issues(&issues)?;
+    store.put_facts(&facts)?;
+    Ok(prs.len() + issues.len() + facts.len())
+}
+
 /// The fields a projection cannot know when `pr_live` has no row for the
 /// same head.
+#[cfg(test)]
 pub(crate) const NOT_ARCHIVED: [&str; 2] = ["mergeable", "ci"];
 
 /// The top-level fields where the projection and the stored row differ,
 /// apart from `skip`.
+#[cfg(test)]
 pub(crate) fn differ<T: serde::Serialize>(projected: &T, stored: &T, skip: &[&str]) -> Vec<String> {
     let (Ok(Value::Object(a)), Ok(Value::Object(b))) = (
         serde_json::to_value(projected),
