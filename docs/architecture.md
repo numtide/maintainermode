@@ -75,9 +75,13 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
 
 ### Decisions
 
-- **Lent tokens.** The fetcher may use the tokens that people lend for
-  due open items. It never uses them for the backfill. A deployment with
-  no App and no bot token still gets PR data.
+- **Lent tokens.** A token that a person lends pays only for reads that
+  benefit that person: items in their interest (their own PRs, the PRs
+  and issues of what they maintain, watch or run on their machines, and
+  their review queue) and the pages they open. Everything else uses the
+  App and bot tokens. The backfill never uses a lent token. Today the
+  sync walk and the poller spread all reads over every lent token; the
+  fetcher replaces that.
 - **Caps.** The projection keeps the caps of the sync. Removing them
   changes the ledger, voids and queues, so it is a separate change with
   its own review.
