@@ -20,7 +20,8 @@ its known limits.
   it. The login asks for no scope. The token reads public data, and it can
   start workflows only in the repositories where you install the Maintainer
   Mode GitHub App (see [Actions](actions.md)). The sync uses it to read only.
-  Signing out deletes your session and its token.
+  Signing out deletes your session and its token. A session ends after 30
+  days, as its cookie does, and the server then deletes it with its token.
 - **The bot token.** A deployment can give the server the classic token of
   its bot account (`MAINTAINER_MODE_BOT_TOKEN_FILE`). The sync uses it before
   the tokens that people lend. The same token reads the notifications of the

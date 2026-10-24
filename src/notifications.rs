@@ -11,19 +11,19 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
 use tokio::sync::Notify;
 
+use crate::events::REPO;
 use crate::github;
 use crate::secret::Secret;
 use crate::store::Store;
 use crate::web::App;
 
 const API: &str = "https://api.github.com";
-const REPO: &str = "NixOS/nixpkgs";
 const MAX_PAGES: usize = 20;
 const PRS_PER_QUERY: usize = 10;
 const ISSUES_PER_QUERY: usize = 50;
 const DEFAULT_INTERVAL: u64 = 60;
 const ERROR_WAIT: u64 = 60;
-pub const RECOMPUTE_EVERY: StdDuration = StdDuration::from_secs(30);
+const RECOMPUTE_EVERY: StdDuration = StdDuration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {

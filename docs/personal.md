@@ -394,8 +394,9 @@ The kind "Your pull requests" stays on until you turn it off.
 operator sets up SMTP (see [operations.md](operations.md#email)). Enter
 an address in `/me/settings#email` to get the digest. The server sends at most
 one email a day. The email lists the unread events of your chosen kinds
-since the last digest. "Send me a test email" sends one email, at most
-once in 10 minutes.
+that no digest listed before. An event that the server finds late, such as
+an old advisory on a package you start to watch, goes in the next digest.
+"Send me a test email" sends one email, at most once in 10 minutes.
 
 - The address is private. It shows only to you, in `/me/settings#email`.
 - The server accepts only a plain address, like `name@example.org`. It
