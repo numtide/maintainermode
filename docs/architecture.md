@@ -108,6 +108,11 @@ association, checked_at)` keeps them. `project::pr_live` and
   item of the backfill waits one day.
 - The backfill and the live fetches share the App budget. Live items go
   first; the backfill uses only what is left above `RESERVE`.
+- GitHub drops an item when it pages a filtered timeline from a first page
+  of fewer than 100 items. The walk now reads such a connection again in
+  pages of 100. Items stored before that can miss a timeline item; the
+  shadow check found 2 in 1132 rows, both in `pushes`. A new update of the
+  item fetches it again.
 
 ## Track B: typed HTML, and data apart from views
 
