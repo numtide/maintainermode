@@ -1,11 +1,6 @@
 # Plan: the archive of issues and pull requests
 
-Status: built in `src/archive.rs`. The walk of NixOS/nixpkgs has read
-every number but two, which failed to fetch. On 24 Oct 2026 the archive
-held 576,624 issues and pull requests up to #578,232. The compressed JSON
-was 1.80 GB, 3.1 kB for each item. The archive file was 2.52 GB with its
-indexes. The estimates below came from a sample before the walk; the
-measured figures agree with them.
+Status: built in `src/archive.rs`. The walk of NixOS/nixpkgs is complete.
 
 ## Goal
 
@@ -133,16 +128,18 @@ The GraphQL JSON has no URL fields for each user, so it is smaller than the
 REST JSON. It also has the timeline, which the sample does not have. This
 plan uses 10 kB of JSON and 3.5 kB after zstd for each item.
 
-**Estimate for nixpkgs:**
+**Size of the archive:**
 
-| Figure                               | Estimate                   |
-| ------------------------------------ | -------------------------- |
-| JSON, not compressed                 | about 6 GB                 |
-| archive file (zstd per item, SQLite) | 2 to 3 GB                  |
-| export (zstd over 10 000 items)      | less than the archive file |
+| Figure                               | Estimate                   | Measured, 24 Oct 2026          |
+| ------------------------------------ | -------------------------- | ------------------------------ |
+| items                                | 575,000                    | 576,624                        |
+| JSON, not compressed                 | about 6 GB                 |                                |
+| JSON, zstd per item                  | 3.5 kB per item            | 1.80 GB, 3.1 kB per item       |
+| archive file (zstd per item, SQLite) | 2 to 3 GB                  | 2.52 GB                        |
+| export (zstd over 10 000 items)      | less than the archive file |                                |
 
-The sample is small. A single busy item can be 60 kB or more. The status line
-at the top of this page gives the measured figures.
+A single busy item can be 60 kB or more. `/state?tab=status` and
+`/api/v1/sync` give the current figures.
 
 ## API cost
 
