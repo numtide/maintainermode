@@ -623,6 +623,7 @@ impl Archive {
             "items_per_pass": self.budget,
             "last_pass": self.get("pass_ended")?,
             "last_error": self.get("last_error")?.filter(|e| !e.is_empty()),
+            "shadow": self.get("shadow")?.and_then(|s| serde_json::from_str::<Value>(&s).ok()),
         }))
     }
 
@@ -996,6 +997,78 @@ async fn pass(
     Ok(fetched)
 }
 
+/// Rows compared per kind after each pass: the ones the sync updated last.
+const SHADOW_SAMPLE: usize = 500;
+const SHADOW_EXAMPLES: usize = 10;
+
+#[derive(Default)]
+struct Shadow {
+    compared: usize,
+    differ: usize,
+    /// Not in the archive, or archived at another `updatedAt`.
+    skipped: usize,
+    examples: Vec<Value>,
+}
+
+impl Shadow {
+    fn check<T: serde::Serialize>(
+        &mut self,
+        a: &Archive,
+        number: u64,
+        updated_at: DateTime<Utc>,
+        project: fn(&Value) -> Option<T>,
+        stored: &T,
+    ) -> Result<()> {
+        let Some(json) = a.item(number)?.and_then(|i| i.json) else {
+            self.skipped += 1;
+            return Ok(());
+        };
+        let item: Value = serde_json::from_str(&json)?;
+        let same_time = github::time(&item["updatedAt"]) == Some(updated_at);
+        if !same_time {
+            self.skipped += 1;
+            return Ok(());
+        }
+        self.compared += 1;
+        let fields = match project(&item) {
+            Some(p) => crate::project::differ(&p, stored),
+            None => vec!["kind".into()],
+        };
+        if !fields.is_empty() {
+            self.differ += 1;
+            if self.examples.len() < SHADOW_EXAMPLES {
+                self.examples
+                    .push(json!({ "number": number, "fields": fields }));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Compares the projection of the archived items with the `pr`, `issue`
+/// and `history` rows that the walks wrote, and keeps the counts in the
+/// archive file. It writes nothing to the main database.
+fn shadow(store: &Store, a: &Archive, now: DateTime<Utc>) -> Result<()> {
+    let mut s = Shadow::default();
+    for p in store.recent_prs(SHADOW_SAMPLE)? {
+        s.check(a, p.number, p.updated_at, crate::project::pr, &p)?;
+    }
+    for i in store.recent_issues(SHADOW_SAMPLE)? {
+        s.check(a, i.number, i.updated_at, crate::project::issue, &i)?;
+    }
+    for f in store.recent_facts(SHADOW_SAMPLE)? {
+        s.check(a, f.number, f.updated_at, crate::project::facts, &f)?;
+    }
+    let v = json!({
+        "at": now.to_rfc3339(),
+        "compared": s.compared,
+        "differ": s.differ,
+        "skipped": s.skipped,
+        "examples": s.examples,
+    });
+    a.set("shadow", &v.to_string())
+}
+
 const NO_TOKEN: &str =
     "no GitHub App token and no bot token; the walk does not use the tokens that people lend";
 
@@ -1047,6 +1120,18 @@ pub async fn walk(app: Arc<App>) {
                     "pass_seconds",
                     &(Utc::now() - started).num_seconds().to_string(),
                 );
+                if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
+                    let (app, archive) = (app.clone(), a.clone());
+                    let r = tokio::task::spawn_blocking(move || {
+                        shadow(&app.store, &archive, Utc::now())
+                    })
+                    .await
+                    .map_err(anyhow::Error::from)
+                    .and_then(|r| r);
+                    if let Err(e) = r {
+                        tracing::warn!("archive {}: shadow projection: {e:#}", a.repo);
+                    }
+                }
             }
         }
         let wait = StdDuration::from_secs(PASS_EVERY).saturating_sub(round.elapsed());
@@ -1144,6 +1229,40 @@ mod tests {
         let z = std::fs::read(out.join("NixOS/nixpkgs/0000000.ndjson.zst")).unwrap();
         let text = String::from_utf8(zstd::decode_all(z.as_slice()).unwrap()).unwrap();
         assert_eq!(text.lines().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn shadow_counts_rows_that_differ() {
+        let dir = tmp("shadow");
+        let a = Archive::open(&dir, "NixOS/nixpkgs", 10).unwrap();
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let f = crate::project::tests::fixtures();
+        let now = Utc::now();
+        for n in [300123, 350000, 453372] {
+            a.put(n, &f["archive"][n.to_string()], now).unwrap();
+        }
+        let same = crate::project::pr(&f["archive"]["300123"]).unwrap();
+        let mut renamed = crate::project::pr(&f["archive"]["350000"]).unwrap();
+        renamed.title.push('!');
+        let mut later = crate::project::pr(&f["archive"]["444470"]).unwrap();
+        later.updated_at = now;
+        store.put_prs(&[same, renamed, later]).unwrap();
+        store
+            .put_issues(&[crate::project::issue(&f["archive"]["453372"]).unwrap()])
+            .unwrap();
+        store
+            .put_facts(&[crate::project::facts(&f["archive"]["300123"]).unwrap()])
+            .unwrap();
+        shadow(&store, &a, now).unwrap();
+        let s = &a.progress(now).unwrap()["shadow"];
+        assert_eq!(s["compared"], 4);
+        assert_eq!(s["differ"], 1);
+        assert_eq!(s["skipped"], 1);
+        assert_eq!(
+            s["examples"],
+            json!([{ "number": 350000, "fields": ["title"] }])
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

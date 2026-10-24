@@ -39,6 +39,7 @@ mod notify;
 mod osv;
 mod profile;
 mod progress;
+mod project;
 mod prpage;
 mod prpanel;
 mod queue;
