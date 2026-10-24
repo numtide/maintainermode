@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A5, and B1 to B8 are done.
+Status: A1 to A6, and B1 to B8 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -88,8 +88,8 @@ association, checked_at)` keeps them. `project::pr_live` and
    tenth of its budget per rate limit window (`github::Client::lent`).
    Done.
 6. **Prune.** Step 5 writes to `pr` only open PRs and PRs updated in the
-   last 60 days (`WINDOW_DAYS`). Left: delete the older rows that the sync
-   wrote, so `recompute` loads less.
+   last 60 days (`WINDOW_DAYS`). After each full pass, `Store::prune`
+   deletes the older closed rows. Done.
 7. **API and docs.** `/api/v1/sync` shows one fetcher. Step 5 removed the
    fields of the old walks (`open_walk_done`, `up_to`, `last_pass`,
    `walk_every_seconds`, `archive[].shadow`) and added

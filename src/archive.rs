@@ -1460,6 +1460,17 @@ pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
                 done.written += d.written;
             }
         }
+        if full {
+            let from = Utc::now() - Duration::days(crate::ledger::WINDOW_DAYS);
+            match app.store.prune(from) {
+                Ok((0, 0)) => {}
+                Ok((p, i)) => {
+                    tracing::info!("pruned {p} pull requests and {i} issues closed before {from}");
+                    done.written += p + i;
+                }
+                Err(e) => tracing::warn!("prune: {e:#}"),
+            }
+        }
         changed |= done.written > 0;
         if changed && last_recompute.is_none_or(|t| t.elapsed() >= RECOMPUTE_EVERY) {
             recompute(&app).await;

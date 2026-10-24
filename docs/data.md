@@ -13,7 +13,9 @@ its known limits.
   since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default
   2020-01-01). The rows have the caps of the projection (30 reviews, 5
   inline comments per review, 30 comments, 30 pushes, 50 files). A row with
-  a newer `updatedAt` stays. When rows change, the pages are computed again,
+  a newer `updatedAt` stays. After each full pass, the server deletes the
+  closed rows of `pr` and `issue` last updated more than 60 days ago. When
+  rows change, the pages are computed again,
   at most once every 30 seconds. Without an archive of NixOS/nixpkgs, the
   server has no issues and no pull requests.
 - **The first start.** When the main database has no key

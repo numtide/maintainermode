@@ -430,6 +430,21 @@ impl Store {
         )?)
     }
 
+    /// Deletes the closed pull requests and issues last updated before
+    /// `from`. The archive keeps them; the `history` table keeps the facts.
+    pub fn prune(&self, from: DateTime<Utc>) -> Result<(usize, usize)> {
+        let conn = self.conn.lock().unwrap();
+        let from = from.to_rfc3339();
+        let sql = |table: &str| {
+            format!(
+                "DELETE FROM {table} WHERE state != 'OPEN' AND julianday(updated_at) < julianday(?1)"
+            )
+        };
+        let prs = conn.execute(&sql("pr"), [&from])?;
+        let issues = conn.execute(&sql("issue"), [&from])?;
+        Ok((prs, issues))
+    }
+
     pub fn put_issues(&self, issues: &[Issue]) -> Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
@@ -1830,6 +1845,33 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn prune_keeps_open_and_recent_rows() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let f = crate::project::tests::fixtures();
+        let t = |d: &str| d.parse::<DateTime<Utc>>().unwrap();
+        let pr = |n: &str, state: &str, at: &str| {
+            let mut p = crate::project::pr(&f["archive"][n]).unwrap();
+            p.state = state.into();
+            p.updated_at = t(at);
+            p
+        };
+        s.put_prs(&[
+            pr("300123", "MERGED", "2026-01-01T00:00:00Z"),
+            pr("350000", "OPEN", "2026-01-01T00:00:00Z"),
+            pr("444470", "CLOSED", "2026-10-01T00:00:00Z"),
+        ])
+        .unwrap();
+        let mut old = crate::project::issue(&f["archive"]["453372"]).unwrap();
+        old.state = "CLOSED".into();
+        old.updated_at = t("2026-01-01T00:00:00Z");
+        s.put_issues(&[old]).unwrap();
+        assert_eq!(s.prune(t("2026-08-25T00:00:00Z")).unwrap(), (1, 1));
+        let mut left: Vec<u64> = s.prs().unwrap().iter().map(|p| p.number).collect();
+        left.sort_unstable();
+        assert_eq!(left, [350000, 444470]);
+    }
 
     #[test]
     fn pr_live_keeps_a_known_mergeable_of_the_same_head() {
