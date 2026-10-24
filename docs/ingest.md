@@ -95,7 +95,9 @@ failed query is asked again with 5 items, then with 1 item and smaller
 first pages. A due item that fails at the smallest size is due again one
 hour later. After a second failure, and for an item of the history walk,
 the wait is one day. The `failed` table keeps it, with the error, until a fetch
-succeeds. `/state?tab=status` shows the count of failed items. The walk is complete
+succeeds. `/state?tab=status` shows the count of failed items. Pages of a
+connection whose first page has fewer than 100 items are read again from
+the start in pages of 100, because GitHub drops an item at that boundary. The walk is complete
 only when every number up to the highest has a row. A failed item keeps the
 walk from completion.
 
