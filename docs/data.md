@@ -195,7 +195,8 @@ cost.
   not change.
 - **The walk.** A background task, apart from the sync, starts a pass every
   5 minutes. Each pass fetches a fixed number of items per repository. It
-  first fetches what changed recently, then walks back from the newest
+  first fetches every open item, once, and what changed recently, then
+  walks back from the newest
   number to #1. An item that gets an event in the event log is fetched again
   5 minutes later. The walk keeps its cursors in the archive file, so it
   continues after a restart. It uses only the GitHub App token and the sync
