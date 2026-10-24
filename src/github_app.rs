@@ -20,6 +20,9 @@ pub struct GithubApp {
     id: String,
     key: Secret,
     installation: Option<u64>,
+    /// The installation found on the owner of the App, when the deployment
+    /// sets none; a 404 on the token request clears it.
+    found: std::sync::Mutex<Option<u64>>,
     http: reqwest::Client,
     cached: Mutex<Option<(String, DateTime<Utc>)>>,
 }
@@ -69,6 +72,7 @@ impl GithubApp {
             id,
             key,
             installation,
+            found: std::sync::Mutex::new(None),
             http: crate::github::http(),
             cached: Mutex::new(None),
         })
@@ -104,7 +108,7 @@ impl GithubApp {
     }
 
     async fn installation(&self, jwt: &str) -> Result<u64> {
-        if let Some(id) = self.installation {
+        if let Some(id) = self.installation.or(*self.found.lock().unwrap()) {
             return Ok(id);
         }
         let app = self.get(jwt, "/app").await?;
@@ -118,6 +122,7 @@ impl GithubApp {
                 .await?;
             let list = list.as_array().cloned().unwrap_or_default();
             if let Some(id) = owned(&list, &owner) {
+                *self.found.lock().unwrap() = Some(id);
                 return Ok(id);
             }
             if list.len() < 100 {
@@ -151,6 +156,9 @@ impl GithubApp {
         let status = resp.status();
         let body: Value = resp.json().await.context("installation token response")?;
         if !status.is_success() {
+            if status == reqwest::StatusCode::NOT_FOUND {
+                *self.found.lock().unwrap() = None;
+            }
             bail!("POST {path}: {status}: {body}");
         }
         let token = body["token"]

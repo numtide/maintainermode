@@ -89,7 +89,7 @@
         {
           build = self.packages.${system}.maintainer-mode;
         }
-        // nixpkgs.lib.optionalAttrs pkgs.stdenv.isLinux {
+        // nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           vm = import ./nix/test.nix { inherit self pkgs; };
           instance =
             let

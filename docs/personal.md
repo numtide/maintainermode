@@ -615,8 +615,10 @@ One button revokes it. A token can only send your package sets.
 
 `login` uses a device code. The tool asks `POST /api/v1/login` for a code,
 and the server keeps it in memory for 10 minutes. You open `/login/cli`,
-sign in if you must (the sign-in brings you back to the page), and confirm
-the code. The tool asks `POST /api/v1/login/poll` every 2 seconds. After
+sign in if you must (the sign-in brings you back to the page), type the
+code that your terminal shows, and confirm it. The page never fills in the
+code for you: a link alone cannot confirm a sign-in. Then
+the tool asks `POST /api/v1/login/poll` every 2 seconds. After
 you confirm, the server gives the token once and forgets the code. A
 restart of the server forgets all codes.
 

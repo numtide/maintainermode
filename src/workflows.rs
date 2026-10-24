@@ -26,9 +26,10 @@ pub fn valid_repo(r: &str) -> bool {
     ok(parts.next()) && ok(parts.next()) && parts.next().is_none()
 }
 
+static HTTP: std::sync::LazyLock<reqwest::Client> = std::sync::LazyLock::new(crate::github::http);
+
 fn api(token: &str, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-    crate::github::http()
-        .request(method, format!("https://api.github.com{path}"))
+    HTTP.request(method, format!("https://api.github.com{path}"))
         .bearer_auth(token)
         .header("Accept", "application/vnd.github+json")
         .header("X-GitHub-Api-Version", "2022-11-28")
@@ -52,8 +53,12 @@ fn refused(status: reqwest::StatusCode, body: &str, repo: &str) -> anyhow::Error
     )
 }
 
-async fn default_branch(token: &str, repo: &str) -> Result<String> {
-    let resp = api(token, reqwest::Method::GET, &format!("/repos/{repo}"))
+/// GET `/repos/{repo}{rest}` as JSON, after a check of `repo`.
+async fn get_json(token: &str, repo: &str, rest: &str) -> Result<Value> {
+    if !valid_repo(repo) {
+        bail!("{repo:?} is not owner/name");
+    }
+    let resp = api(token, reqwest::Method::GET, &format!("/repos/{repo}{rest}"))
         .send()
         .await?;
     let status = resp.status();
@@ -61,7 +66,11 @@ async fn default_branch(token: &str, repo: &str) -> Result<String> {
     if !status.is_success() {
         return Err(refused(status, &body, repo));
     }
-    let v: Value = serde_json::from_str(&body)?;
+    Ok(serde_json::from_str(&body)?)
+}
+
+async fn default_branch(token: &str, repo: &str) -> Result<String> {
+    let v = get_json(token, repo, "").await?;
     Ok(v["default_branch"].as_str().unwrap_or("main").to_string())
 }
 
@@ -98,22 +107,12 @@ pub struct Run {
 }
 
 pub async fn runs(token: &str, repo: &str, workflow: &str) -> Result<Vec<Run>> {
-    if !valid_repo(repo) {
-        bail!("{repo:?} is not owner/name");
-    }
-    let resp = api(
+    let v = get_json(
         token,
-        reqwest::Method::GET,
-        &format!("/repos/{repo}/actions/workflows/{workflow}/runs?per_page=15"),
+        repo,
+        &format!("/actions/workflows/{workflow}/runs?per_page=15"),
     )
-    .send()
     .await?;
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        return Err(refused(status, &body, repo));
-    }
-    let v: Value = serde_json::from_str(&body)?;
     Ok(v["workflow_runs"]
         .as_array()
         .into_iter()
@@ -534,22 +533,13 @@ fn pushed_in(jobs: &Value) -> bool {
 /// Whether an update run pushed its branch: the push job is skipped when
 /// nix-update changed nothing, and the run conclusion alone does not say so.
 pub async fn pushed(token: &str, repo: &str, run: u64) -> Result<bool> {
-    if !valid_repo(repo) {
-        bail!("{repo:?} is not owner/name");
-    }
-    let resp = api(
+    let v = get_json(
         token,
-        reqwest::Method::GET,
-        &format!("/repos/{repo}/actions/runs/{run}/jobs?per_page=30"),
+        repo,
+        &format!("/actions/runs/{run}/jobs?per_page=30"),
     )
-    .send()
     .await?;
-    let status = resp.status();
-    let body = resp.text().await?;
-    if !status.is_success() {
-        return Err(refused(status, &body, repo));
-    }
-    Ok(pushed_in(&serde_json::from_str(&body)?))
+    Ok(pushed_in(&v))
 }
 
 /// The branch the update workflow pushes to when nix-update changed something.
