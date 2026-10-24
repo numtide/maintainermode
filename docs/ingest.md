@@ -1,12 +1,11 @@
 # Plan: the archive of issues and pull requests
 
-Status: built in `src/archive.rs`, and the walk of NixOS/nixpkgs is
-complete. On 24 Oct 2026 the archive held 576,624 issues and pull
-requests up to #578,232. Two numbers failed to fetch. The compressed JSON
-was 1.80 GB,
-3.1 kB for each item. The archive file was 2.52 GB with its indexes. The
-estimates below came from a sample before the walk; the measured figures
-agree with them.
+Status: built in `src/archive.rs`. The walk of NixOS/nixpkgs has read
+every number but two, which failed to fetch. On 24 Oct 2026 the archive
+held 576,624 issues and pull requests up to #578,232. The compressed JSON
+was 1.80 GB, 3.1 kB for each item. The archive file was 2.52 GB with its
+indexes. The estimates below came from a sample before the walk; the
+measured figures agree with them.
 
 ## Goal
 
