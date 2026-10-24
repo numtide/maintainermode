@@ -225,7 +225,7 @@ async fn me_pages_show_their_parts() {
             .contains("<a href=\"/me/settings\" aria-current=\"page\">")
     );
     for id in [
-        "email",
+        "notifications",
         "feed",
         "upload",
         "llm",
@@ -363,16 +363,6 @@ async fn public_pages_keep_private_data_out() {
     site.post("/me/upload-token", SID, &[]).await;
     site.post("/me/tags", SID, &[("tags", "pkgs/secret-tag")])
         .await;
-    app.store
-        .set_setting("alice", crate::notify::EMAIL, "alice@example.org")
-        .unwrap();
-    assert_eq!(
-        app.store
-            .setting("alice", crate::notify::EMAIL)
-            .unwrap()
-            .as_deref(),
-        Some("alice@example.org")
-    );
     let feed = app
         .store
         .feed_token("alice")
@@ -389,7 +379,6 @@ async fn public_pages_keep_private_data_out() {
         assert_eq!(a.status, StatusCode::OK, "{path}");
         for secret in [
             "secret-watch",
-            "alice@example.org",
             "dummy-token",
             "pkgs/secret-tag",
             feed.as_str(),

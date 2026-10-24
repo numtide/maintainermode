@@ -542,8 +542,8 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
         By(&["/api/v1/sets", "/api/v1/progress", "/api/v1/needs"]),
     ),
     (
-        "/me/settings#email",
-        Without("your address and its choices: settings that only the page changes"),
+        "/me/settings#notifications",
+        Without("the kinds that the unread count includes: a setting that only the page changes"),
     ),
     ("/me/settings#followup", By(&["/api/v1/needs"])),
     (
@@ -583,14 +583,6 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     (
         "/claude/pr/:number",
         Without("a link to Claude Code on the web; its prompt names the MCP server"),
-    ),
-    (
-        "/confirm/:token",
-        Without("the link that confirms an email address; it changes a setting"),
-    ),
-    (
-        "/unsubscribe/:token",
-        Without("the link that stops the email digest; it changes a setting"),
     ),
     (
         "/login/cli",

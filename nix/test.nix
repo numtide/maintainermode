@@ -283,27 +283,15 @@ pkgs.testers.runNixOSTest {
     machine.fail("curl -sf http://127.0.0.1:8790/pr/nope")
     # crawlers stay off the pull request pages
     machine.succeed("curl -sf -o /tmp/robots http://127.0.0.1:8790/robots.txt && grep -q '^Disallow: /pr/' /tmp/robots && grep -q '^Disallow: /api/v1/prs/' /tmp/robots")
-    # notifications: the inbox and its settings need a session; email is off
-    # without SMTP, and an unknown unsubscribe link is not found
+    # notifications: the inbox and its settings need a session
     machine.succeed("curl -s -D /tmp/n1.h -o /dev/null http://127.0.0.1:8790/me/inbox && grep -qi '^location: /inbox' /tmp/n1.h && grep -qi '^cache-control: private, no-store' /tmp/n1.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/inbox/read > /tmp/n2 && grep -q 303 /tmp/n2")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d k_pr=1 -d email=a@example.org http://127.0.0.1:8790/me/notify > /tmp/n3 && grep -q 303 /tmp/n3")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/notify/test > /tmp/n4 && grep -q 303 /tmp/n4")
-    machine.succeed("curl -s -o /tmp/n5.body -w '%{http_code}' http://127.0.0.1:8790/unsubscribe/nope > /tmp/n5 && grep -q 404 /tmp/n5 && grep -q 'unsubscribe link is unknown' /tmp/n5.body")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/unsubscribe/0000000000000000000000000000000000000000000000000000000000000000 > /tmp/n6 && grep -q 404 /tmp/n6")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/unsubscribe/nope > /tmp/n7 && grep -q 404 /tmp/n7")
-    machine.succeed("curl -s -o /tmp/n8.body -w '%{http_code}' http://127.0.0.1:8790/confirm/nope > /tmp/n8 && grep -q 404 /tmp/n8 && grep -q 'confirmation link is unknown' /tmp/n8.body")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/confirm/0000000000000000000000000000000000000000000000000000000000000000 > /tmp/n9 && grep -q 404 /tmp/n9")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/confirm/0000000000000000000000000000000000000000000000000000000000000000 > /tmp/n10 && grep -q 404 /tmp/n10")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/notify/confirm > /tmp/n11 && grep -q 303 /tmp/n11")
-    machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_SMTP /tmp/env")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d k_pr=1 http://127.0.0.1:8790/me/notify > /tmp/n3 && grep -q 303 /tmp/n3")
     # server rescans are off by default: registering a flake is refused
     machine.succeed("curl -s -o /tmp/r5.body -w '%{http_code}' -X POST -d name=web -d reference=github:o/r -d output=packages.x86_64-linux.default http://127.0.0.1:8790/me/sets/flakes > /tmp/r5 && grep -q 403 /tmp/r5")
     machine.succeed("grep -q 'does not scan flakes' /tmp/r5.body")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'Flake rescans' /tmp/sync && grep -q 'off on this server' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q '\"rescans\":{\"enabled\":false' /tmp/sync.json")
-    machine.succeed("grep -q 'Notification emails' /tmp/sync && grep -q 'did not set up SMTP' /tmp/sync")
-    machine.succeed("grep -q '\"email\":{\"enabled\":false,\"per_day\":null,\"sent_24h\":0,\"skipped_24h\":0}' /tmp/sync.json")
     machine.fail("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q MAINTAINER_MODE_RESCAN /tmp/env")
     machine.succeed("cp -rL /etc/scan /tmp/scan")
     # before the first index, the public list answers 503 and export stops
@@ -382,7 +370,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'No report yet.' /tmp/s-pk-machines && grep -q 'id=\"flakes\"' /tmp/s-pk-machines")
     machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
-    for anchor in ["email", "followup", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
+    for anchor in ["notifications", "followup", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
         machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Runs</h1>' /tmp/s-runs && grep -q 'Your weekly goal' /tmp/s-progress")
     machine.succeed("grep -q 'selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review")
@@ -438,18 +426,11 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test $(stat -c %a /tmp/lh/.config/maintainer-mode/upload-token) = 600")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{\"device_code\":\"x\"}' http://127.0.0.1:8790/api/v1/login/poll > /tmp/poll.code && grep -qx 404 /tmp/poll.code")
     machine.succeed("curl -s -D /tmp/cli-out.h -o /dev/null 'http://127.0.0.1:8790/login/cli?code=bbbb-bbbb' && grep -qi '^location: /auth/login?next=%2Flogin%2Fcli%3Fcode%3DBBBB-BBBB' /tmp/cli-out.h")
-    # email needs SMTP, which the VM does not have, so root stores the address
-    machine.succeed(
-        f"sqlite3 -cmd '.timeout 5000' {db} "
-        "\"INSERT OR REPLACE INTO setting (login, key, value) VALUES ('alice', 'digest_email', 'vm-mail@example.org')\""
-        f" && sqlite3 -cmd '.timeout 5000' {db} \"SELECT value FROM setting WHERE login = 'alice' AND key = 'digest_email'\" > /tmp/mail && grep -qx vm-mail@example.org /tmp/mail"
-        f" && chown --reference={db} {db}-wal {db}-shm"
-    )
     # a public page, fetched with no cookie, shows nothing private
     machine.succeed(f"curl -sf -D /tmp/pub.h -o /tmp/pub {base}/u/alice && curl -sf -o /tmp/pub.json {base}/api/v1/people/alice")
     machine.fail("grep -qi '^cache-control: private' /tmp/pub.h")
     machine.fail("grep -q 'menu-login' /tmp/pub")
-    for secret in ["vm-watched", "vm-tag", "vm-mail@example.org", "vm-dummy-token", "vm-session", "$(cut -d/ -f3 /tmp/feed.path)", "$(cat /tmp/upload.token)"]:
+    for secret in ["vm-watched", "vm-tag", "vm-dummy-token", "vm-session", "$(cut -d/ -f3 /tmp/feed.path)", "$(cat /tmp/upload.token)"]:
         machine.fail(f"grep -q -e \"{secret}\" /tmp/pub /tmp/pub.json")
     machine.wait_until_succeeds("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'GitHub App 1 syncs first' /tmp/log")
     # the key parsed and the JWT was signed; only the request found no network

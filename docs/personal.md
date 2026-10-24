@@ -91,7 +91,7 @@ Maintainer Mode tells you what happens to the pull requests that you opened. It 
 
 ### Events
 
-Your [inbox](#notifications), your Atom feed and your email digest show these events of your own pull requests, from the last 30 days. Their kind is "Your pull requests".
+Your [inbox](#notifications) and your Atom feed show these events of your own pull requests, from the last 30 days. Their kind is "Your pull requests".
 
 | Event                  | When                                                                                  |
 | ---------------------- | ------------------------------------------------------------------------------------- |
@@ -103,8 +103,6 @@ Your [inbox](#notifications), your Atom feed and your email digest show these ev
 Your own reviews, the reviews of bots and dismissed reviews make no event. A comment outside a review makes no event: the synced data keeps only the comments of the author.
 
 The events come from the synced data. The server reads GitHub again at each sync pass, so an event can come some minutes after it happened on GitHub.
-
-**One email for each event.** In `/me/settings#email`, select "Send the events of your own pull requests at once". This is off by default. The server then sends one email for each new event, some minutes after it sees the event. It sends at most 20 of these emails in 24 hours, and only to a confirmed address. It sends no email for an event that you read in your inbox before. The daily digest still includes these events.
 
 ### The follow-up plan
 
@@ -122,7 +120,7 @@ N is a number from 1 to 90. Push "Save". The box then shows the plan and its dea
 **At the deadline.** When the deadline of a plan that you chose passes, and the pull request is open with no review by another person:
 
 - Needs you shows an item at the top of your pull requests (cause 2).
-- Your inbox, your feed and your email get the event.
+- Your inbox and your feed get the event.
 
 The built-in default makes no event. It only gives cause 5 of Needs you.
 
@@ -222,18 +220,18 @@ always sees it, with a note on how to add one.
 
 `/me/settings` is one page with these sections. The links at the top go to each section.
 
-| Section      | What you set                                                                                     |
-| ------------ | ------------------------------------------------------------------------------------------------ |
-| `#email`     | the kinds of events that the unread count and the email digest show, and the digest address      |
-| `#followup`  | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
-| `#feed`      | the private link of your Atom feed                                                               |
-| `#upload`    | the upload token for `maintainer-mode submit`                                                    |
-| `#llm`       | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                              |
-| `#mcp`       | the MCP token                                                                                    |
-| `#workflows` | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run   |
-| `#tags`      | the path prefixes that the For you tab of `/review` adds                                         |
-| `#goal`      | your weekly goal                                                                                 |
-| `#start`     | show or hide the Get started card                                                                |
+| Section          | What you set                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------ |
+| `#notifications` | the kinds of events that the unread count includes                                               |
+| `#followup`      | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
+| `#feed`          | the private link of your Atom feed                                                               |
+| `#upload`        | the upload token for `maintainer-mode submit`                                                    |
+| `#llm`           | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                              |
+| `#mcp`           | the MCP token                                                                                    |
+| `#workflows`     | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run   |
+| `#tags`          | the path prefixes that the For you tab of `/review` adds                                         |
+| `#goal`          | your weekly goal                                                                                 |
+| `#start`         | show or hide the Get started card                                                                |
 
 ## Get started
 
@@ -387,40 +385,8 @@ choice is on until you turn it off.
 
 **The unread count.** The header shows the number of unread events. The
 server counts them after each sync pass, and when you open the inbox.
-In `/me/settings#email`, choose the kinds that the count includes.
+In `/me/settings#notifications`, choose the kinds that the count includes.
 The kind "Your pull requests" stays on until you turn it off.
-
-**The email digest.** This is off by default. It works only when the
-operator sets up SMTP (see [operations.md](operations.md#email)). Enter
-an address in `/me/settings#email` to get the digest. The server sends at most
-one email a day. The email lists the unread events of your chosen kinds
-that no digest listed before. An event that the server finds late, such as
-an old advisory on a package you start to watch, goes in the next digest.
-"Send me a test email" sends one email, at most once in 10 minutes.
-
-- The address is private. It shows only to you, in `/me/settings#email`.
-- The server accepts only a plain address, like `name@example.org`. It
-  refuses spaces, names and quotes.
-- Each email has an unsubscribe link with a new random token. The server
-  keeps only the hash of the token, for 60 days. The link opens a page
-  with one button. Mail clients that know RFC 8058 unsubscribe in one
-  click. Unsubscribing deletes the address.
-- To stop the digest, you can also empty the address in `/me/settings#email`.
-
-### Confirm your address
-
-The server sends no digest to an address that you did not confirm.
-When you enter or change the address in `/me/settings#email`, the server stores it as pending.
-The server then sends one confirmation email to the address.
-Open the link in that email in the next 24 hours.
-Push the Confirm button on the page that opens.
-The settings page then shows "confirmed".
-A link scanner can open the link, but it cannot confirm the address. Only the button confirms it.
-If the link is too old, push "Send the confirmation email again" on the settings page.
-You get at most 3 confirmation emails in 24 hours.
-A test email goes only to a confirmed address.
-You can send at most 3 test emails in 24 hours, with 10 minutes between them.
-Addresses that you saved before this change are pending. Confirm them again to get the digest.
 
 ## My package set
 

@@ -219,8 +219,6 @@ enum Command {
         archive_items: usize,
         #[command(flatten)]
         rescan: Box<rescan::Args>,
-        #[command(flatten)]
-        smtp: Box<notify::SmtpArgs>,
     },
     /// The full copy of issues and pull requests
     Archive {
@@ -911,10 +909,8 @@ async fn run(cli: Cli) -> Result<i32> {
             archive_repos,
             archive_items,
             rescan,
-            smtp,
         } => {
             let rescan = rescan.config()?;
-            let smtp = smtp.config(&public_url)?;
             let S3 {
                 s3_endpoint,
                 s3_bucket,
@@ -985,7 +981,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 )?,
                 rescan,
                 inbox: Default::default(),
-                smtp,
                 pr_cache: Default::default(),
                 notifications: if bot_token.is_some() {
                     notifications::Status::on()
@@ -1017,7 +1012,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 tokio::spawn(archive::walk(app.clone()));
             }
             tokio::spawn(rescan::run(app.clone()));
-            tokio::spawn(notify::run(app.clone()));
             if let Some(b) = bucket {
                 tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
                 tokio::spawn(events::copy(app.clone(), b));
@@ -1064,7 +1058,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 archive: Vec::new(),
                 rescan: None,
                 inbox: Default::default(),
-                smtp: None,
                 pr_cache: Default::default(),
                 notifications: Default::default(),
             };
@@ -1119,7 +1112,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 archive: Vec::new(),
                 rescan: None,
                 inbox: Default::default(),
-                smtp: None,
                 pr_cache: Default::default(),
                 notifications: Default::default(),
             };

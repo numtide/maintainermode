@@ -35,12 +35,6 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_RESCAN_TIMEOUT`       | wall-clock limit of one scan in seconds, default 900        |
 | `MAINTAINER_MODE_RESCAN_MEMORY_MB`     | address-space limit of each sandboxed process, default 3072 |
 | `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
-| `MAINTAINER_MODE_SMTP_HOST`            | SMTP server for the email digest; off without it            |
-| `MAINTAINER_MODE_SMTP_PORT`            | SMTP port, default 465 (TLS); another port needs STARTTLS   |
-| `MAINTAINER_MODE_SMTP_USER`            | SMTP user, with the password file                           |
-| `MAINTAINER_MODE_SMTP_PASSWORD_FILE`   | file holding the SMTP password                              |
-| `MAINTAINER_MODE_SMTP_FROM`            | the From address of the digest                              |
-| `MAINTAINER_MODE_MAIL_PER_DAY`         | emails the server sends in 24 hours, default 500            |
 
 CI is the flake's `checks`: `nix flake check`.
 
@@ -77,24 +71,6 @@ The tool writes to `./ux-audit`. Use `--out` to change the folder. Open `index.h
 | `--bin <path>`     | the binary for `--local`; in the dev shell, the default is `target/debug` |
 
 The checks are: the HTTP status, the HTML size, the load time, console errors, failed requests, horizontal overflow, images without `alt`, form controls without a label, controls without a name, the order of the headings, duplicate ids, low text contrast, small tap targets on a phone, and same-origin links that answer 404. The link check does not open `/pr/`, `/claude/`, `/auth/` and `/feed/` links.
-
-## Email
-
-Set `MAINTAINER_MODE_SMTP_HOST` and `MAINTAINER_MODE_SMTP_FROM` to turn
-the email digest on. `MAINTAINER_MODE_SMTP_PORT` is 465 by default. Port
-465 uses TLS from the start. Any other port must offer STARTTLS. Set
-`MAINTAINER_MODE_SMTP_USER` and `MAINTAINER_MODE_SMTP_PASSWORD_FILE`
-together, or leave both unset. In the NixOS module, use
-`services.maintainer-mode.smtp`. The password file goes through
-LoadCredential.
-
-## Email limits
-
-The server sends at most 500 emails in 24 hours: digests, test emails and confirmations together.
-To change the limit, set `MAINTAINER_MODE_MAIL_PER_DAY` or the module option `services.maintainer-mode.smtp.perDay`.
-Each person gets at most 3 confirmation emails and 3 test emails in 24 hours.
-Over a limit, the server does not send the email and writes a warning to the log.
-The Data status page (`/state?tab=status`) shows the emails sent and skipped in the last 24 hours. It shows no address and no login.
 
 ## New secrets without a restart
 
