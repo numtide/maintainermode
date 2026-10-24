@@ -9,6 +9,7 @@ use std::fmt::Write;
 
 use crate::area::Index;
 use crate::catalog::Subject;
+use crate::html::{Html, html};
 use crate::ledger::Ledger;
 use crate::links::Links;
 use crate::model::Pr;
@@ -134,9 +135,59 @@ pub struct Row {
     /// When the approval it waits on was given.
     pub waiting_since: DateTime<Utc>,
     pub why: String,
-    /// `why` with each login linked to its profile.
     #[serde(skip)]
-    pub why_html: String,
+    pub reason: Reason,
+}
+
+/// Why a pull request is on the board: [`Reason::text`] for the API,
+/// [`Reason::html`] for the page. Each list holds the approvers.
+#[derive(Debug, Clone)]
+pub enum Reason {
+    /// (login, subject label) of each maintainer who approved.
+    Maintainer(Vec<(String, String)>),
+    Security(Vec<String>),
+    Backport(Vec<String>),
+    Ready(Vec<String>),
+}
+
+impl Reason {
+    fn say(&self, base: &str, person: fn(&str) -> String, text: fn(&str) -> String) -> String {
+        let approval = |logins: &[String]| {
+            format!(
+                "checks pass, approved by {}",
+                logins
+                    .iter()
+                    .map(|l| person(l))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        match self {
+            Reason::Maintainer(by) => {
+                let mut out = by
+                    .iter()
+                    .take(3)
+                    .map(|(l, label)| format!("{} for {}", person(l), text(label)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                if by.len() > 3 {
+                    let _ = write!(out, " and {} more", by.len() - 3);
+                }
+                format!("A maintainer approved the current head: {out}.")
+            }
+            Reason::Security(l) => format!("Labelled \"{}\"; {}.", text(SECURITY), approval(l)),
+            Reason::Backport(l) => format!("A backport to {}; {}.", text(base), approval(l)),
+            Reason::Ready(l) => format!("Ready: {}.", approval(l)),
+        }
+    }
+
+    pub fn text(&self, base: &str) -> String {
+        self.say(base, str::to_string, str::to_string)
+    }
+
+    pub(crate) fn html(&self, base: &str) -> Html {
+        Html::from(self.say(base, person_link, esc))
+    }
 }
 
 /// Public data only: every viewer gets the same board.
@@ -229,67 +280,32 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
                 since = Some(since.map_or(*at, |s| s.min(*at)));
             }
         }
-        let logins: Vec<&str> = approved.iter().map(|(l, _)| *l).collect();
+        let logins: Vec<String> = approved.iter().map(|(l, _)| l.to_string()).collect();
+        let row = |reason: Reason, since: DateTime<Utc>| Row {
+            entry: e.clone(),
+            waiting_since: since,
+            why: reason.text(&pr.base),
+            reason,
+        };
         if let Some(at) = since {
-            let said = |html: bool| {
-                let mut out = by_maintainer
-                    .iter()
-                    .take(3)
-                    .map(|(l, label)| {
-                        if html {
-                            format!("{} for {}", person_link(l), esc(label))
-                        } else {
-                            format!("{l} for {label}")
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                if by_maintainer.len() > 3 {
-                    let _ = write!(out, " and {} more", by_maintainer.len() - 3);
-                }
-                format!("A maintainer approved the current head: {out}.")
-            };
-            b.maintainer_approved.push(Row {
-                entry: e.clone(),
-                waiting_since: at,
-                why: said(false),
-                why_html: said(true),
-            });
+            let by = by_maintainer
+                .iter()
+                .map(|(l, label)| (l.to_string(), label.clone()))
+                .collect();
+            b.maintainer_approved.push(row(Reason::Maintainer(by), at));
         }
         if !ready(&e) {
             continue;
         }
-        let approval = format!("checks pass, approved by {}", logins.join(", "));
-        let approval_html = format!(
-            "checks pass, approved by {}",
-            logins
-                .iter()
-                .map(|l| person_link(l))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
         if pr.labels.iter().any(|l| l == SECURITY) {
-            b.security.push(Row {
-                entry: e.clone(),
-                waiting_since: first,
-                why: format!("Labelled \"{SECURITY}\"; {approval}."),
-                why_html: format!("Labelled \"{}\"; {approval_html}.", esc(SECURITY)),
-            });
+            b.security
+                .push(row(Reason::Security(logins.clone()), first));
         }
         if pr.base.starts_with("release-") {
-            b.backports.push(Row {
-                entry: e.clone(),
-                waiting_since: first,
-                why: format!("A backport to {}; {approval}.", pr.base),
-                why_html: format!("A backport to {}; {approval_html}.", esc(&pr.base)),
-            });
+            b.backports
+                .push(row(Reason::Backport(logins.clone()), first));
         }
-        b.waiting.push(Row {
-            entry: e,
-            waiting_since: first,
-            why: format!("Ready: {approval}."),
-            why_html: format!("Ready: {approval_html}."),
-        });
+        b.waiting.push(row(Reason::Ready(logins), first));
     }
     for rows in [
         &mut b.maintainer_approved,
@@ -334,34 +350,33 @@ fn yours(app: &crate::web::App, s: &Snapshot, login: &str) -> impl Fn(&Entry) ->
 
 struct Line<'a> {
     entry: &'a Entry,
-    /// HTML.
-    why: String,
+    why: Html,
     since: Option<DateTime<Utc>>,
 }
 
-fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> crate::html::Html {
+fn lines(list: &[Line], empty_text: &str, act: crate::actions::Act) -> Html {
     if list.is_empty() {
         return empty(empty_text);
     }
-    let mut out = crate::html::Html::new();
+    let mut out = Html::new();
     for l in list {
         let e = l.entry;
-        let mut meta = format!(
+        let mut meta = html!(
             "{}<br>#{} by <a href=\"/u/{a}\">{a}</a> · {} old · <span class=\"branch-name\">{}</span>",
             l.why,
             e.number,
             ago(e.created_at),
-            esc(&e.base),
-            a = esc(&e.author)
+            e.base,
+            a = e.author
         );
         if let Some(t) = l.since {
-            let _ = write!(meta, " · waiting {} since the approval", ago(t));
+            meta.push(&html!(" · waiting {} since the approval", ago(t)));
         }
         out.push_str(&item_row(
             Some(Kind::PR_OPEN),
             crate::prpage::title_link(e.number, &esc(&e.title), "Link--primary text-bold"),
             "",
-            &meta,
+            meta,
             &[],
             format!(
                 "<span class=\"ml-2\">{}</span>{}",
@@ -377,7 +392,7 @@ fn rows_of(rows: &[Row]) -> Vec<Line<'_>> {
     rows.iter()
         .map(|r| Line {
             entry: &r.entry,
-            why: r.why_html.clone(),
+            why: r.reason.html(&r.entry.base),
             since: Some(r.waiting_since),
         })
         .collect()
@@ -564,7 +579,7 @@ fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec
     yours_list(app, s, login)
         .into_iter()
         .map(|(entry, why)| Line {
-            why: esc(&why),
+            why: Html::text(&why),
             entry,
             since: None,
         })
@@ -576,7 +591,7 @@ fn yours_section(
     total: usize,
     more: Option<(&str, &str)>,
     act: crate::actions::Act,
-) -> crate::html::Html {
+) -> Html {
     section(
         "In your areas",
         Some(total),
@@ -660,7 +675,8 @@ mod tests {
         );
         assert!(
             b.maintainer_approved[0]
-                .why_html
+                .reason
+                .html(&b.maintainer_approved[0].entry.base)
                 .contains("<a href=\"/u/mai\">mai</a> for hello")
         );
         assert_eq!(nums(&b.security), [2]);
@@ -713,7 +729,7 @@ mod tests {
                 entry: e,
                 waiting_since: t(0),
                 why: String::new(),
-                why_html: String::new(),
+                reason: Reason::Ready(vec![]),
             });
         }
         let count = |html: &str| html.matches("class=\"Box-row").count();
