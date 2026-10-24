@@ -20,6 +20,7 @@ const EVERY: std::time::Duration = std::time::Duration::from_secs(3600);
 /// A channel waits while the master index is this old: the master sweep is
 /// close, and two sweeps at once double the peak memory.
 const MASTER_DUE: i64 = 22;
+const PATHS_RETRY_HOURS: i64 = 24;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Channel {
@@ -80,7 +81,8 @@ impl Channels {
                 Seen {
                     channel: c,
                     version,
-                    behind: version.is_some_and(|v| compare(master, v) == Ordering::Greater),
+                    behind: version
+                        .is_some_and(|v| crate::version::compare(master, v) == Ordering::Greater),
                 }
             })
             .collect()
@@ -102,70 +104,6 @@ impl Channels {
             .filter(|c| c.stable())
             .collect()
     }
-}
-
-/// The parts of a version: runs of digits and runs of other characters,
-/// split at `.` and `-`, as `builtins.splitVersion` does.
-fn parts(v: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = None;
-    let mut digit = false;
-    for (i, c) in v.char_indices() {
-        if c == '.' || c == '-' {
-            if let Some(s) = start.take() {
-                out.push(&v[s..i]);
-            }
-            continue;
-        }
-        match start {
-            Some(s) if c.is_ascii_digit() != digit => {
-                out.push(&v[s..i]);
-                start = Some(i);
-            }
-            None => start = Some(i),
-            _ => {}
-        }
-        digit = c.is_ascii_digit();
-    }
-    if let Some(s) = start {
-        out.push(&v[s..]);
-    }
-    out
-}
-
-fn number(p: &str) -> bool {
-    !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// `builtins.compareVersions`, part by part.
-fn less(a: &str, b: &str) -> bool {
-    match (number(a), number(b)) {
-        (true, true) => {
-            let (a, b) = (a.trim_start_matches('0'), b.trim_start_matches('0'));
-            (a.len(), a) < (b.len(), b)
-        }
-        _ if a.is_empty() && number(b) => true,
-        _ if a == "pre" && b != "pre" => true,
-        _ if b == "pre" => false,
-        (_, true) => true,
-        (true, _) => false,
-        _ => a < b,
-    }
-}
-
-pub fn compare(a: &str, b: &str) -> Ordering {
-    let (pa, pb) = (parts(a), parts(b));
-    for i in 0..pa.len().max(pb.len()) {
-        let x = pa.get(i).copied().unwrap_or("");
-        let y = pb.get(i).copied().unwrap_or("");
-        if less(x, y) {
-            return Ordering::Less;
-        }
-        if less(y, x) {
-            return Ordering::Greater;
-        }
-    }
-    Ordering::Equal
 }
 
 /// The stable releases out by a date, newest first. A release ships at the
@@ -310,7 +248,14 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
     let (name, rev) = resolve(&http, key).await?;
     let current = app.channels.read().unwrap().clone();
     let tracked = app.hydra.builds.tracked();
-    let paths_missing = |c: &Channel| c.out_paths.is_empty() && !tracked.is_empty();
+    // a failed or empty out_paths would otherwise download and evaluate the
+    // whole channel again every hour
+    let paths_missing = |c: &Channel| {
+        c.out_paths.is_empty()
+            && !tracked.is_empty()
+            && c.read_at
+                .is_none_or(|t| Utc::now() - t > Duration::hours(PATHS_RETRY_HOURS))
+    };
     if current
         .list
         .iter()
@@ -425,18 +370,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn versions_compare_as_nix_does() {
-        assert_eq!(compare("1.2.10", "1.2.9"), Ordering::Greater);
-        assert_eq!(compare("2.4.19", "2.4.19"), Ordering::Equal);
-        assert_eq!(compare("1.0pre1", "1.0"), Ordering::Less);
-        assert_eq!(compare("1.0", "1.0a"), Ordering::Less);
-        assert_eq!(compare("1.0.1", "1.0"), Ordering::Greater);
-        assert_eq!(
-            compare("0-unstable-2026-10-01", "0-unstable-2026-09-30"),
-            Ordering::Greater
-        );
-        assert_eq!(compare("1.10", "1.9"), Ordering::Greater);
-        assert_eq!(parts("1.2-rc3"), ["1", "2", "rc", "3"]);
+    fn a_channel_on_a_prerelease_is_behind_the_release() {
+        let c = |v: &str| Channel {
+            key: "stable".into(),
+            name: "nixos-26.05".into(),
+            rev: "r".into(),
+            read_at: None,
+            versions: [("a".to_string(), v.to_string())].into(),
+            out_paths: HashMap::new(),
+        };
+        let behind = |v: &str| Channels { list: vec![c(v)] }.backport("a", "1.0").len();
+        assert_eq!(behind("1.0-rc1"), 1);
+        assert_eq!(behind("1.0pre1"), 1);
+        assert_eq!(behind("0.9"), 1);
+        assert_eq!(behind("1.0"), 0);
+        assert_eq!(behind("1.0.1"), 0);
     }
 
     #[test]

@@ -121,21 +121,16 @@ let
       grow =
         n: seen: frontier:
         if n >= input.maxHops || frontier == [ ] then
-          {
-            files = seen;
-            hops = n;
-          }
+          seen
         else
           let
             defs = builtins.filter confirmed (defined (lib.concatMap loadRel frontier));
             new = builtins.filter (f: !(builtins.elem f seen)) (lib.unique (lib.concatMap declared defs));
           in
           grow (n + 1) (seen ++ new) new;
-      all = grow 0 hop0 hop0;
     in
     {
-      inherit hop0;
-      inherit (all) files hops;
+      files = grow 0 hop0 hop0;
     };
 
   one =
@@ -149,6 +144,8 @@ let
           null;
     in
     {
+      # nothing reads it: forcing drvPath is what makes iets record the files
+      # that the output depends on.
       drv = value.drvPath or null;
       modules = if host == null then null else signal host;
     };

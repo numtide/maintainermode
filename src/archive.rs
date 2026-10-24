@@ -854,17 +854,14 @@ impl Pass<'_> {
         let Some(repo) = data.get_mut("repository").filter(|r| r.is_object()) else {
             bail!("GitHub does not know {}", a.repo);
         };
-        let mut found = Vec::new();
-        for k in numbers {
-            found.push((*k, repo[format!("n{k}")].take()));
-        }
         let mut items = Vec::new();
-        for (k, mut item) in found {
+        for k in numbers {
+            let mut item = repo[format!("n{k}")].take();
             if !item.is_null() {
                 self.complete(&mut item).await?;
                 unalias(&mut item);
             }
-            items.push((k, item));
+            items.push((*k, item));
         }
         let now = Utc::now();
         for (k, item) in &items {

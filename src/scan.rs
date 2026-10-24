@@ -569,9 +569,7 @@ impl Closure {
         let version = drv.env.version.unwrap_or(fallback_version);
         if is_package(&name, &version, drv.env.output_hash || drv.outputs) {
             self.insert(pname, version, path);
-            if self.pairs.len() > self.max {
-                return Err(E::custom(format!("more than {} packages", self.max)));
-            }
+            self.room().map_err(E::custom)?;
         }
         Ok(())
     }

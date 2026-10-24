@@ -10,7 +10,7 @@ use axum::extract::{DefaultBodyLimit, Form, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use serde_json::json;
 use std::fmt::Write;
@@ -315,13 +315,7 @@ pub(crate) fn sets_value(
     if output.is_some() && set.is_none() {
         return Err("output needs set".into());
     }
-    let scans: std::collections::HashMap<String, crate::store::FlakeRef> = app
-        .store
-        .flake_refs(login)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (r.name.clone(), r))
-        .collect();
+    let scans = scans_by_name(app, login);
     let mut list = Vec::new();
     for s in sets.iter().filter(|s| set.is_none_or(|n| s.name == n)) {
         let empty = SetOutputs::default();
@@ -347,7 +341,7 @@ pub(crate) fn sets_value(
             "output": s.flake.as_ref().map(|f| &f.1),
             "updated_at": s.data.as_ref().map(|d| d.uploaded_at),
             "scanned_at": s.data.as_ref().and_then(|d| d.scanned_at.clone()),
-            "expires_at": s.data.as_ref().filter(|_| !s.rescan).map(|d| d.uploaded_at + Duration::days(RETENTION_DAYS)),
+            "expires_at": expires_at(s),
             "nixpkgs_rev": s.data.as_ref().and_then(|d| d.nixpkgs_rev.clone()),
             "dropped": s.data.as_ref().map_or(0, |d| d.dropped),
             "packages": packages,
@@ -376,12 +370,24 @@ pub(crate) fn machines_href(set: Option<&str>) -> String {
     }
 }
 
-fn kind(s: &NamedSet) -> &'static str {
-    match (&s.flake, s.rescan) {
-        (Some(_), true) => "server scan",
-        (Some(_), false) => "flake upload",
-        (None, _) => "upload",
-    }
+fn scans_by_name(
+    app: &App,
+    login: &str,
+) -> std::collections::HashMap<String, crate::store::FlakeRef> {
+    app.store
+        .flake_refs(login)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|r| (r.name.clone(), r))
+        .collect()
+}
+
+/// A server scan renews itself; only an upload runs out.
+fn expires_at(s: &NamedSet) -> Option<DateTime<Utc>> {
+    s.data
+        .as_ref()
+        .filter(|_| !s.rescan)
+        .map(|d| d.uploaded_at + Duration::days(RETENTION_DAYS))
 }
 
 /// The facts of one set, in one line.
@@ -416,14 +422,16 @@ fn facts(s: &NamedSet) -> String {
     }
     let _ = write!(
         out,
-        " nixpkgs {}. Expires {}.",
+        " nixpkgs {}.",
         esc(d
             .nixpkgs_rev
             .as_deref()
             .map(|r| r.get(..12).unwrap_or(r))
             .unwrap_or("unknown")),
-        (d.uploaded_at + Duration::days(RETENTION_DAYS)).format("%Y-%m-%d"),
     );
+    if let Some(at) = expires_at(s) {
+        let _ = write!(out, " Expires {}.", at.format("%Y-%m-%d"));
+    }
     out
 }
 
@@ -443,13 +451,7 @@ pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> String {
     if sets.is_empty() {
         return String::new();
     }
-    let scans: std::collections::HashMap<String, crate::store::FlakeRef> = app
-        .store
-        .flake_refs(login)
-        .unwrap_or_default()
-        .into_iter()
-        .map(|r| (r.name.clone(), r))
-        .collect();
+    let scans = scans_by_name(app, login);
     let index_at = app.store.get_time("index_at").ok().flatten();
     let count = |s: &NamedSet| s.data.as_ref().map_or(0, |d| d.attrs.len());
     let mut tabs = vec![Tab::new(machines_href(None), "All sets", current.is_none())];
@@ -470,7 +472,10 @@ pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> String {
         crate::ui::subnav(&tabs).replacen("aria-label=\"Views\"", "aria-label=\"Sets\"", 1)
     );
     for s in &sets {
-        let mut labels = format!("<span class=\"Label\">{}</span>", kind(s));
+        let mut labels = format!(
+            "<span class=\"Label\">{}</span>",
+            source(s).replace('_', " ")
+        );
         if s.public {
             let _ = write!(
                 labels,
@@ -671,7 +676,7 @@ fn shared(app: &App) -> String {
          With <code>--with-outputs</code>, it also keeps the output labels and which package each one holds.</li>\
          <li>Only you see it, when you sign in. It never shows on public pages or in public numbers. Only a public flake that you mark with <code>--public-flake</code> shows on your profile.</li>\
          <li>The admin of {host} can read the server database.</li>\
-         <li>The server deletes it {RETENTION_DAYS} days after the upload. <em>Delete my report</em> on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
+         <li>The server deletes it {RETENTION_DAYS} days after the upload. The <em>Delete</em> button of a set on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
          <p class=\"mb-0\"><strong>The risk.</strong> The report tells which public packages run on your machines, and their versions. \
          A person who reads it can find the known advisories that can affect you. \
          Send only machines that you can share at that level.</p></div>",
@@ -790,10 +795,10 @@ async fn delete_token(State(app): State<Shared>, headers: HeaderMap) -> Response
     Redirect::to("/me/settings#upload").into_response()
 }
 
+/// A form with no name is refused: it must never mean "every set".
 #[derive(Deserialize)]
 struct NameForm {
-    /// With no name, every set goes.
-    name: Option<String>,
+    name: String,
 }
 
 async fn delete_set(
@@ -804,11 +809,7 @@ async fn delete_set(
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let done = match f.name.as_deref() {
-        Some(n) => app.store.delete_package_set(&login, n),
-        None => app.store.delete_package_sets(&login),
-    };
-    if let Err(e) = done {
+    if let Err(e) = app.store.delete_package_set(&login, &f.name) {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     Redirect::to(MACHINES).into_response()

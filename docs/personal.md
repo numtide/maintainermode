@@ -604,7 +604,7 @@ person who reads it can find the known advisories that can affect you.
 index has, the count of dropped names, the scan time and the nixpkgs
 revision. Only you see them. They never show on public pages or in public
 numbers. The admin of the server can read its database. The server deletes
-a report 90 days after the upload, and "Delete my report" deletes it at
+a report 90 days after the upload, and the "Delete" button of a set deletes it at
 once.
 
 **The upload token.** `maintainer-mode login` gets one, or the button in

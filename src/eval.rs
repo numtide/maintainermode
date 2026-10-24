@@ -1,12 +1,13 @@
-//! Runs a Nix evaluator. There is no sandbox, because the only thing
-//! evaluated is a nixpkgs tarball pinned by revision.
+//! Runs a Nix evaluator. `eval_with_input` has no sandbox: on the server it
+//! evaluates only nixpkgs pinned by revision. A flake of someone else goes
+//! through the sandbox of rescan.rs.
 
 use anyhow::{Context, Result, bail};
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-const FEATURES: &str = "nix-command flakes";
+pub(crate) const FEATURES: &str = "nix-command flakes";
 
 static EVALUATOR: OnceLock<String> = OnceLock::new();
 
@@ -24,10 +25,14 @@ pub fn evaluator() -> &'static str {
     EVALUATOR.get().map(String::as_str).unwrap_or("nix")
 }
 
-pub fn run_with(program: &str, args: &[&str]) -> Result<String> {
+fn with_features<'a>(args: &[&'a str]) -> Vec<&'a str> {
     let mut all = vec!["--extra-experimental-features", FEATURES];
     all.extend_from_slice(args);
-    run_plain(program, &all)
+    all
+}
+
+pub fn run_with(program: &str, args: &[&str]) -> Result<String> {
+    run_plain(program, &with_features(args))
 }
 
 /// For a native iets command, which takes no Nix flag before its name.
@@ -54,8 +59,7 @@ pub fn stream_with<T>(
     args: &[&str],
     read: impl FnOnce(&mut dyn Read) -> Result<T>,
 ) -> Result<T> {
-    let mut all = vec!["--extra-experimental-features", FEATURES];
-    all.extend_from_slice(args);
+    let all = with_features(args);
     let mut child = Command::new(program)
         .args(&all)
         .stdout(Stdio::piped())

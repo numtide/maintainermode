@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::health::{Health, Run};
+use crate::health::{Health, Run, http};
 use crate::severity::Band;
 use crate::upstream::Origin;
 
@@ -67,14 +67,6 @@ pub fn query(attr: &str, pname: &str, version: &str, src_url: Option<&str>) -> O
         name,
         version: version.to_string(),
     })
-}
-
-fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent("maintainer-mode (+https://github.com/numtide/maintainermode)")
-        .timeout(Duration::from_secs(60))
-        .build()
-        .expect("http client")
 }
 
 async fn batch(http: &reqwest::Client, chunk: &[Query]) -> Result<Vec<Vec<String>>> {
@@ -139,7 +131,7 @@ fn vuln(v: &Value) -> Vuln {
 
 /// Every known package once a day, 1000 to a request.
 pub async fn matches(h: &mut Health, queries: Vec<Query>) -> Run {
-    let http = http();
+    let http = http(Duration::from_secs(60));
     let mut found: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for chunk in queries.chunks(BATCH) {
         let results = match batch(&http, chunk).await {
@@ -162,14 +154,14 @@ pub async fn matches(h: &mut Health, queries: Vec<Query>) -> Run {
     );
     let matched: std::collections::HashSet<&String> = found.values().flatten().collect();
     h.osv_failed.retain(|id, _| matched.contains(id));
+    h.osv_vulns.retain(|id, _| matched.contains(id));
     h.osv = found;
     h.osv_at = Some(Utc::now());
     Run::ok(line)
 }
 
-/// 1, 2, 4 … 32 days after the last failure.
 fn retry(failures: u32, at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    now - at > chrono::Duration::days(1 << failures.saturating_sub(1).min(5))
+    now - at > chrono::Duration::days(crate::health::backoff_days(failures))
 }
 
 /// The ids with no record yet, the ones that never failed first.
@@ -191,7 +183,7 @@ fn detail_due(h: &Health, now: DateTime<Utc>) -> Vec<String> {
 
 /// The record of each matched id, once: 200 a pass.
 pub async fn details(h: &mut Health) -> Run {
-    let http = http();
+    let http = http(Duration::from_secs(60));
     let due = detail_due(h, Utc::now());
     let (mut read, mut failed, mut done) = (0, 0, 0);
     for id in due.iter().take(DETAIL_BUDGET) {
@@ -228,11 +220,6 @@ pub async fn details(h: &mut Health) -> Run {
         "{read} records read, {failed} failed · {} left",
         due.len().saturating_sub(done)
     ))
-}
-
-/// When this was last asked, for the daily check.
-pub fn due(at: Option<DateTime<Utc>>) -> bool {
-    at.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(24))
 }
 
 #[cfg(test)]
