@@ -556,8 +556,8 @@ pub(crate) fn numbers(app: &App, range: Range) -> Html {
     body.push(&html!(
         "<h2 class=\"f3 mt-5 mb-2\" id=\"more\">More numbers</h2>\
          <div class=\"d-flex flex-wrap gap-3 mb-4\"><div class=\"flex-1\"><h3 class=\"f4 mb-2\">How many people do the work, last 365 days</h3>{}</div>\
-         <div><h3 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h3><details><summary>{}</summary>{}</details></div></div>\
-         <details class=\"mb-4\"><summary>Every month, {} to {}</summary>{}</details>",
+         <div><h3 class=\"f4 mb-2\">Disclosed AI tools, last 365 days</h3><details class=\"chart-table\"><summary>{}</summary>{}</details></div></div>\
+         <details class=\"chart-table mb-4\"><summary>Every month, {} to {}</summary>{}</details>",
         table(
             &["", "total", "people", "people for half", "people for 80%"],
             &[
