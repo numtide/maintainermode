@@ -28,6 +28,8 @@ use crate::severity::{self, Worst};
 use crate::ui::{Page, Section, Tone, badge, empty, item_row, kv};
 use crate::web::{Shared, Snapshot, ago, esc, icon, octicon, random_id};
 
+pub(crate) mod area;
+pub(crate) mod module;
 pub(crate) mod package;
 
 use package::{build_row, channel_names, hover, osv_worst, rated};
@@ -61,8 +63,8 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/packages", get(browse))
         .route("/p/:attr", get(package::page))
-        .route("/m/*file", get(module_page))
-        .route("/a/*path", get(area_page))
+        .route("/m/*file", get(module::page))
+        .route("/a/*path", get(area::page))
         .route("/me/watch", post(add_watch))
         .route("/me/watch/remove", post(remove_watch))
         .route("/me/watch/maintained", post(watch_maintained))
@@ -861,62 +863,6 @@ fn not_found(app: &crate::web::App, viewer: Option<&str>, what: &str) -> Respons
         .into_response()
 }
 
-async fn module_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Path(file): Path<String>,
-) -> Response {
-    let viewer = app.viewer(&headers);
-    let (m, rev) = {
-        let index = app.index.read().unwrap();
-        match index.modules.get(&file) {
-            Some(m) => (m.clone(), index.rev.clone()),
-            None => {
-                drop(index);
-                return not_found(&app, viewer.as_deref(), &file);
-            }
-        }
-    };
-    let subject = Subject::Module(file.clone());
-    let name = module_name(&file);
-    let job = Hydra::test_job(name.trim_start_matches("nixos/"));
-    let build = app.hydra.last(&job).await;
-    let s = app.snap();
-    let index = app.index.read().unwrap();
-    let (prs, issues) = attached(&s, &index, &subject);
-    let page = Page::new(Section::Packages, name.clone())
-        .icon(octicon!("gear"))
-        .sub(format!("NixOS module · {}", source_link(&rev, &file)))
-        .actions(subscribe_button(
-            watching(&app, viewer.as_deref(), &subject),
-            &subject,
-        ));
-    let mut out = String::new();
-    let mut health = String::new();
-    health.push_str(&build_row("NixOS test", &job, &build));
-    health.push_str(&kv("Maintainers", people_links(&m.maintainers)));
-    if !m.teams.is_empty() {
-        health.push_str(&kv("Teams", teams_html(&index, &m.teams)));
-    }
-    health.push_str(&kv(
-        "Directory",
-        format!(
-            "<a href=\"/a/{0}\">{0}/</a>",
-            esc(file.rsplit_once('/').map_or("nixos/modules", |(d, _)| d))
-        ),
-    ));
-    out.push_str(&crate::ui::section("Health", None, None, &health));
-    let act = Act::of(&app, viewer.as_deref());
-    out.push_str(&section(
-        "Pull requests",
-        &prs,
-        |p| p.is_open(),
-        |p| pr_row(p, act),
-    ));
-    out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
-    page.body(out).render(&app, viewer.as_deref())
-}
-
 /// Packages and modules under a path, the ones that need attention first.
 /// One row per package name and file: an alias shares both with its target,
 /// while `python3Packages.protobuf` shares only the name with `protobuf`.
@@ -967,91 +913,6 @@ pub(crate) fn subject_rows(rows: &[(Subject, Flags)]) -> String {
         );
     }
     out
-}
-
-async fn area_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Path(path): Path<String>,
-) -> Response {
-    let viewer = app.viewer(&headers);
-    let path = path.trim_matches('/').to_string();
-    if !valid_path(&path) {
-        return (StatusCode::BAD_REQUEST, "not a nixpkgs path").into_response();
-    }
-    let subject = Subject::Area(path.clone());
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let (prs, issues) = attached(&s, &index, &subject);
-    let rows = contents(&index, &s, &h, &path);
-    let owners: Vec<String> = index
-        .owners
-        .iter()
-        .filter(|(p, _)| under(&path, p) || under(p, &path))
-        .map(|(p, l)| format!("<a href=\"/a/{0}\">{0}</a> {1}", esc(p), people_links(l)))
-        .collect();
-    let parent = path
-        .rsplit_once('/')
-        .map(|(p, _)| format!("<a href=\"/a/{0}\">{0}/</a> · ", esc(p)))
-        .unwrap_or_default();
-    let page = Page::new(Section::Packages, format!("{path}/"))
-        .icon(octicon!("file-directory"))
-        .sub(format!(
-            "{parent}{} packages and modules · {} open pull requests",
-            rows.len(),
-            s.open_by_dir.get(&path).copied().unwrap_or(0)
-        ))
-        .actions(subscribe_button(
-            watching(&app, viewer.as_deref(), &subject),
-            &subject,
-        ));
-    let mut out = String::new();
-    let prefix = format!("{path}/");
-    let mut children: Vec<(&String, &usize)> = s
-        .open_by_dir
-        .iter()
-        .filter(|(d, _)| d.strip_prefix(&prefix).is_some_and(|r| !r.contains('/')))
-        .collect();
-    children.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-    if !owners.is_empty() || !children.is_empty() {
-        out.push_str("<div class=\"Box mb-4\">");
-        if !owners.is_empty() {
-            out.push_str(&kv("ci/OWNERS", owners.join("<br>")));
-        }
-        if !children.is_empty() {
-            let list: Vec<String> = children
-                .iter()
-                .take(40)
-                .map(|(d, n)| {
-                    format!(
-                        "<a href=\"/a/{0}\">{1}</a>&nbsp;<span class=\"color-fg-muted\">{n}</span>",
-                        esc(d),
-                        esc(d.rsplit('/').next().unwrap_or(d))
-                    )
-                })
-                .collect();
-            out.push_str(&kv("Most open pull requests", list.join(" · ")));
-        }
-        out.push_str("</div>");
-    }
-    if !rows.is_empty() {
-        out.push_str(&crate::ui::section(
-            "Packages and modules",
-            Some(rows.len()),
-            None,
-            subject_rows(&rows),
-        ));
-    }
-    let act = Act::of(&app, viewer.as_deref());
-    out.push_str(&section(
-        "Pull requests",
-        &prs,
-        |p| p.is_open(),
-        |p| pr_row(p, act),
-    ));
-    out.push_str(&section("Issues", &issues, |i| i.is_open(), issue_row));
-    page.body(out).render(&app, viewer.as_deref())
 }
 
 #[derive(Deserialize)]
@@ -1753,56 +1614,6 @@ impl<'a> SubjectView<'a> {
         out.push(&section("Issues", &self.issues, |i| i.is_open(), issue_row));
         out
     }
-}
-
-fn subject_json(app: &crate::web::App, subject: &Subject, extra: Value) -> Value {
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let mut v = json!(SubjectView::of(&s, &index, &h, subject));
-    if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
-        o.extend(e.clone());
-    }
-    v
-}
-
-/// `name` is a module file or `nixos/NAME`.
-pub(crate) async fn module_value(app: &crate::web::App, name: &str) -> Option<Value> {
-    let (file, m) = {
-        let index = app.index.read().unwrap();
-        let file = match Subject::resolve(&index, name) {
-            Some(Subject::Module(m)) => m,
-            _ => name.to_string(),
-        };
-        let m = index.modules.get(&file).cloned()?;
-        (file, m)
-    };
-    let file = file.as_str();
-    let job = Hydra::test_job(module_name(file).trim_start_matches("nixos/"));
-    let build = app.hydra.last(&job).await;
-    let extra = json!({ "file": file, "module": m, "test": build.build(), "test_state": build.state(), "test_job": job });
-    Some(subject_json(app, &Subject::Module(file.to_string()), extra))
-}
-
-pub(crate) fn area_value(app: &crate::web::App, path: &str) -> Option<Value> {
-    let path = path.trim_matches('/');
-    if !valid_path(path) {
-        return None;
-    }
-    let contents: Vec<Value> = {
-        let s = app.snap();
-        let h = app.health.read().unwrap().clone();
-        let index = app.index.read().unwrap();
-        contents(&index, &s, &h, path)
-            .into_iter()
-            .map(|(sub, f)| json!(SubjectRow::new(&sub, &f)))
-            .collect()
-    };
-    Some(subject_json(
-        app,
-        &Subject::Area(path.to_string()),
-        json!({ "contents": contents }),
-    ))
 }
 
 #[derive(Serialize)]
