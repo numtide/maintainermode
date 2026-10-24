@@ -269,6 +269,28 @@ fn markdown(src: &str) -> (String, String) {
     (title.trim().to_string(), anchor_headings(&html))
 }
 
+/// The id GitHub gives a heading, from its inner HTML: tags and entities
+/// are not part of the text.
+fn slug(inner: &str) -> String {
+    let mut out = String::new();
+    let mut skip: Option<char> = None;
+    for ch in inner.to_lowercase().chars() {
+        match (skip, ch) {
+            (Some(end), _) => {
+                if ch == end {
+                    skip = None;
+                }
+            }
+            (None, '<') => skip = Some('>'),
+            (None, '&') => skip = Some(';'),
+            (None, 'a'..='z' | '0'..='9' | '-') => out.push(ch),
+            (None, ' ') => out.push('-'),
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Gives each heading the id GitHub would, so `#the-rules` links still land.
 fn anchor_headings(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
@@ -280,15 +302,7 @@ fn anchor_headings(html: &str) -> String {
             (Some(l @ b'1'..=b'6'), Some(c)) if c == i + 3 => {
                 let tag_end = format!("</h{}>", l as char);
                 let text_end = rest[c..].find(&tag_end).map_or(rest.len(), |j| c + j);
-                let slug: String = rest[c + 1..text_end]
-                    .to_lowercase()
-                    .chars()
-                    .filter_map(|ch| match ch {
-                        'a'..='z' | '0'..='9' | '-' => Some(ch),
-                        ' ' => Some('-'),
-                        _ => None,
-                    })
-                    .collect();
+                let slug = slug(&rest[c + 1..text_end]);
                 out.push_str(&rest[..i]);
                 let _ = write!(out, "<h{} id=\"{slug}\">", l as char);
                 rest = &rest[c + 1..];
@@ -323,6 +337,42 @@ mod tests {
         assert!(html.contains("id=\"the-rules\""));
         assert!(html.contains("id=\"the-state-of-nixpkgs\""));
         assert!(!html.contains("<h1"));
+    }
+
+    #[test]
+    fn a_heading_id_skips_tags_and_entities() {
+        assert_eq!(slug("<code>GET /api/v1/sets</code>"), "get-apiv1sets");
+        assert_eq!(slug("Rules &amp; numbers"), "rules--numbers");
+    }
+
+    #[test]
+    fn every_anchor_between_docs_lands_on_a_heading() {
+        let mut html: std::collections::HashMap<String, String> = DOCS
+            .iter()
+            .map(|(id, _, src)| (id.to_string(), markdown(src).1))
+            .collect();
+        html.insert("rules".into(), markdown(RULES).1);
+        for (from, page) in &html {
+            for href in page.split("<a href=\"").skip(1) {
+                let href = href.split('"').next().unwrap().replace("&amp;", "&");
+                let (target, anchor) = match href.split_once('#') {
+                    Some(("", a)) => (from.clone(), a.to_string()),
+                    Some(("/state?tab=rules", a)) => ("rules".into(), a.to_string()),
+                    Some((p, a)) => match p.strip_prefix("/state?tab=docs&doc=") {
+                        Some(doc) => (doc.to_string(), a.to_string()),
+                        None => continue,
+                    },
+                    None => continue,
+                };
+                let page = html
+                    .get(&target)
+                    .unwrap_or_else(|| panic!("{from}: no doc {target}"));
+                assert!(
+                    page.contains(&format!("id=\"{anchor}\"")),
+                    "{from} links to {target}#{anchor}, which has no such heading"
+                );
+            }
+        }
     }
 
     #[test]

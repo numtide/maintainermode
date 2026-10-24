@@ -84,6 +84,10 @@ pub struct Jobset {
 }
 
 impl Jobset {
+    fn pair(&self) -> (&str, &str) {
+        (&self.project, &self.name)
+    }
+
     pub fn master() -> Jobset {
         Jobset {
             project: "nixpkgs".into(),
@@ -445,11 +449,14 @@ fn tracked(app: &App) -> HashSet<String> {
     out
 }
 
-pub(crate) fn latest_url(base: &str, j: &Jobset, job: Option<&str>, rows: usize) -> String {
-    let mut url = format!(
-        "{base}/api/latestbuilds?nr={rows}&project={}&jobset={}",
-        j.project, j.name
-    );
+/// Without `job`, only a dense jobset answers fast: see the module doc.
+pub(crate) fn latest_url(
+    base: &str,
+    (project, jobset): (&str, &str),
+    job: Option<&str>,
+    rows: usize,
+) -> String {
+    let mut url = format!("{base}/api/latestbuilds?nr={rows}&project={project}&jobset={jobset}");
     match job {
         Some(job) => url.push_str(&format!("&job={}", crate::github::urlencode(job))),
         None => url.push_str(&format!("&system={SYSTEM}")),
@@ -488,10 +495,10 @@ async fn feed(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
         .get("hydra_feed_max")?
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let mut rows = fetch(http, &latest_url(base, &master, None, FEED_ROWS)).await?;
+    let mut rows = fetch(http, &latest_url(base, master.pair(), None, FEED_ROWS)).await?;
     let mut requests = 1;
     if !fresh(&rows, seen_max).1 {
-        rows = fetch(http, &latest_url(base, &master, None, FEED_ROWS_MORE)).await?;
+        rows = fetch(http, &latest_url(base, master.pair(), None, FEED_ROWS_MORE)).await?;
         requests += 1;
     }
     let tracked = app.hydra.builds.tracked.read().unwrap().clone();
@@ -536,7 +543,11 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
         return Ok(false);
     };
     app.hydra.builds.stats.lock().unwrap().sweep_requests += 1;
-    let rows = fetch(http, &latest_url(base, j, Some(&j.job(attr)), JOB_ROWS)).await?;
+    let rows = fetch(
+        http,
+        &latest_url(base, j.pair(), Some(&j.job(attr)), JOB_ROWS),
+    )
+    .await?;
     match telling(&rows).filter(|r| recent(r.timestamp, now)) {
         Some(r) => {
             app.hydra.builds.record(
@@ -648,8 +659,27 @@ fn cache_due(app: &App, now: DateTime<Utc>) -> Vec<String> {
         .collect()
 }
 
+/// Each channel bump brings new output paths: forget the old ones.
+fn cache_forget(app: &App) {
+    let live: HashSet<String> = app
+        .channels
+        .read()
+        .unwrap()
+        .list
+        .iter()
+        .flat_map(|c| c.out_paths.values().cloned())
+        .collect();
+    app.hydra
+        .builds
+        .cache
+        .write()
+        .unwrap()
+        .retain(|p, _| live.contains(p));
+}
+
 async fn cache_some(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
     let now = Utc::now();
+    cache_forget(app);
     for path in cache_due(app, now) {
         let Some(hash) = store_hash(&path) else {
             continue;
@@ -1257,5 +1287,17 @@ mod tests {
             ("nixos-unstable", Some(true))
         );
         assert!(crate::catalog::binary_cache(&app, "jq").is_empty());
+        {
+            let mut list = app.channels.read().unwrap().list.clone();
+            list[0].out_paths.remove("hello");
+            *app.channels.write().unwrap() = Arc::new(crate::channels::Channels { list });
+        }
+        cache_some(&app, &http, &base).await.unwrap();
+        assert_eq!(
+            app.hydra.builds.cached(built),
+            None,
+            "the old path is forgotten"
+        );
+        assert_eq!(app.hydra.builds.cached(missing), Some(false));
     }
 }

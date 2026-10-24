@@ -1,4 +1,4 @@
-//! How bad and how likely: CVSS for the CVEs the security tracker names,
+//! How bad and how likely: CVSS for the CVEs the security tracker and OSV name,
 //! from the CVE Program's own records and, with a key, from NVD; and the
 //! EPSS score of FIRST.
 
@@ -9,7 +9,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use crate::health::{Health, Run};
+use crate::health::{Health, Run, http};
 
 /// One file per CVE, in the repository that CISA's enrichment lands in. No
 /// key and no quota; NVD answers the same behind 5 requests in 30 seconds.
@@ -131,14 +131,6 @@ pub fn worst<'a>(h: &Health, cves: impl IntoIterator<Item = &'a String>) -> Wors
     w
 }
 
-fn http() -> reqwest::Client {
-    reqwest::Client::builder()
-        .user_agent("maintainer-mode (+https://github.com/numtide/maintainermode)")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("http client")
-}
-
 /// The CVEs of the tracker advisories and of the OSV matches.
 fn tracked(h: &Health) -> BTreeSet<String> {
     h.advisories
@@ -230,7 +222,7 @@ fn nvd_score(v: &Value) -> (Option<Band>, Option<f64>) {
 }
 
 fn days(t: Option<DateTime<Utc>>, n: i64) -> bool {
-    t.is_none_or(|t| Utc::now() - t > chrono::Duration::days(n))
+    crate::health::older(t, chrono::Duration::days(n))
 }
 
 /// New CVEs first, then the ones without a score, which a later CISA
@@ -251,8 +243,19 @@ fn due(h: &Health) -> Vec<String> {
     never.into_iter().chain(unscored).chain(old).collect()
 }
 
+/// Drops the CVEs that no advisory and no OSV match names any more. Before
+/// the first tracker read every CVE would look unnamed, so nothing goes.
+fn forget(h: &mut Health) {
+    if h.tracker_at.is_none() {
+        return;
+    }
+    let keep = tracked(h);
+    h.cves.retain(|id, _| keep.contains(id));
+}
+
 pub async fn records(h: &mut Health) -> Run {
-    let http = http();
+    let http = http(Duration::from_secs(30));
+    forget(h);
     let due = due(h);
     let (mut read, mut missing) = (0, 0);
     for id in due.iter().take(RECORD_BUDGET) {
@@ -306,7 +309,7 @@ pub async fn nvd(h: &mut Health, key: Option<&str>) -> Run {
     let Some(key) = key else {
         return Run::ok("off: no API key".into());
     };
-    let http = http();
+    let http = http(Duration::from_secs(30));
     let due: Vec<String> = tracked(h)
         .into_iter()
         .filter(|id| {
@@ -377,7 +380,7 @@ async fn epss_chunk(http: &reqwest::Client, ids: &[String]) -> Result<Vec<(Strin
 
 /// Every tracked CVE, 100 to a request, once a day: the scores move daily.
 pub async fn epss(h: &mut Health) -> Run {
-    let http = http();
+    let http = http(Duration::from_secs(30));
     let ids: Vec<String> = tracked(h).into_iter().collect();
     let mut scored = 0;
     for chunk in ids.chunks(EPSS_CHUNK) {
@@ -400,6 +403,28 @@ pub async fn epss(h: &mut Health) -> Run {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_cve_no_advisory_names_is_forgotten_after_a_tracker_read() {
+        let mut h = Health::default();
+        h.cves.insert("CVE-2024-1".into(), Cve::default());
+        h.cves.insert("CVE-2024-2".into(), Cve::default());
+        forget(&mut h);
+        assert_eq!(h.cves.len(), 2, "no tracker read yet");
+        h.tracker_at = Some(Utc::now());
+        h.advisories.insert(
+            "a".into(),
+            vec![crate::health::Advisory {
+                code: "NIXPKGS-2026-1".into(),
+                cves: vec!["CVE-2024-1".into()],
+                title: String::new(),
+                issue: None,
+                ranges: Vec::new(),
+            }],
+        );
+        forget(&mut h);
+        assert_eq!(h.cves.keys().collect::<Vec<_>>(), ["CVE-2024-1"]);
+    }
 
     #[test]
     fn a_cve_has_a_place_in_the_record_tree() {

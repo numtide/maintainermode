@@ -1,7 +1,8 @@
 //! Package health from public sources: the newest upstream version from
-//! repology, advisories from the nixpkgs security tracker, and the last build
-//! on Hydra. The first two are bulk sweeps, kept a day; Hydra is asked per
-//! page view, within a limit, and cached.
+//! repology and from the sources themselves, advisories from the nixpkgs
+//! security tracker and OSV, CVE scores from the CVE records, NVD and EPSS,
+//! and the last build on Hydra. The bulk sweeps keep a day; Hydra is asked
+//! per page view, within a limit, and cached.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -71,7 +72,8 @@ pub struct Health {
     /// a daily refresh does not make an old release new again.
     #[serde(default)]
     pub upstream_seen: BTreeMap<String, (String, DateTime<Utc>)>,
-    /// CVE id → severity and EPSS, for the CVEs the tracker names.
+    /// CVE id → severity and EPSS, for the CVEs of the tracker advisories and
+    /// of the OSV matches.
     #[serde(default)]
     pub cves: BTreeMap<String, crate::severity::Cve>,
     #[serde(default)]
@@ -259,8 +261,18 @@ impl Health {
 /// back the pull request and issue sync.
 pub const PASS: Duration = Duration::from_secs(600);
 
+/// Never done, or done more than `d` ago.
+pub(crate) fn older(t: Option<DateTime<Utc>>, d: chrono::Duration) -> bool {
+    t.is_none_or(|t| Utc::now() - t > d)
+}
+
 fn stale(t: Option<DateTime<Utc>>) -> bool {
-    t.is_none_or(|t| Utc::now() - t > chrono::Duration::hours(24))
+    older(t, chrono::Duration::hours(24))
+}
+
+/// 1, 2, 4 … 32 days after a run of failures.
+pub(crate) fn backoff_days(failures: u32) -> i64 {
+    1 << failures.saturating_sub(1).min(5)
 }
 
 fn publish(app: &App, h: &Health) {
@@ -354,9 +366,7 @@ pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
                 Err(e) => tracing::warn!("repology: {e:#}"),
             }
         }
-        let no_ranges = !h.advisories.is_empty()
-            && h.advisories.values().flatten().all(|a| a.ranges.is_empty());
-        if stale(h.tracker_at) || no_ranges {
+        if stale(h.tracker_at) {
             match tracker().await {
                 Ok(a) => {
                     h.advisories = a;
@@ -380,7 +390,7 @@ pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
             note(&mut h, "epss", r);
         }
         publish(&app, &h);
-        if crate::osv::due(h.osv_at) {
+        if stale(h.osv_at) {
             let q = osv_queries(&app);
             if !q.is_empty() {
                 let r = crate::osv::matches(&mut h, q).await;
@@ -404,10 +414,12 @@ pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
     }
 }
 
-fn http() -> reqwest::Client {
+/// The client of the health passes: repology, the tracker, the CVE
+/// records, NVD, EPSS, OSV and the upstream sources.
+pub(crate) fn http(timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()
         .user_agent("maintainer-mode (+https://github.com/numtide/maintainermode)")
-        .timeout(Duration::from_secs(60))
+        .timeout(timeout)
         .build()
         .expect("http client")
 }
@@ -415,7 +427,7 @@ fn http() -> reqwest::Client {
 /// Every project repology calls outdated in nixpkgs unstable, page by page.
 /// The cursor is the last project name of a page.
 pub async fn repology() -> Result<BTreeMap<String, String>> {
-    let http = http();
+    let http = http(Duration::from_secs(60));
     let mut out = BTreeMap::new();
     let mut cursor = String::new();
     for _ in 0..REPOLOGY_PAGES {
@@ -543,7 +555,7 @@ pub fn read_page(page: &Value, out: &mut BTreeMap<String, Vec<Advisory>>) {
 /// Every tracker issue with its suggestions; each names the attributes it
 /// affects.
 pub async fn tracker() -> Result<BTreeMap<String, Vec<Advisory>>> {
-    let http = http();
+    let http = http(Duration::from_secs(60));
     let mut out: BTreeMap<String, Vec<Advisory>> = BTreeMap::new();
     let mut url = format!("{TRACKER}?expand=suggestions&limit=100");
     for n in 0..TRACKER_PAGES {
@@ -729,15 +741,11 @@ impl Hydra {
         })
     }
 
-    fn cached(&self, job: &str) -> Option<Last> {
+    /// What a page view already learned about a job; it never asks Hydra.
+    pub fn known(&self, job: &str) -> Option<Last> {
         let cache = self.cache.lock().unwrap();
         let (at, last) = cache.get(job)?;
         (at.elapsed() < last.ttl()).then(|| last.clone())
-    }
-
-    /// What a page view already learned about a job; it never asks Hydra.
-    pub fn known(&self, job: &str) -> Option<Last> {
-        self.cached(job)
     }
 
     fn keep(&self, job: &str, last: &Last) {
@@ -755,7 +763,7 @@ impl Hydra {
 
     /// Over the limit, the answer is `NotAsked` and nothing is sent.
     pub async fn last(&self, job: &str) -> Last {
-        if let Some(last) = self.cached(job) {
+        if let Some(last) = self.known(job) {
             return last;
         }
         let Ok(_permit) = self.running.try_acquire() else {
@@ -782,11 +790,11 @@ impl Hydra {
         else {
             return Last::Missing;
         };
-        let url = format!(
-            "{}/api/latestbuilds?nr={}&project={project}&jobset={jobset}&job={}",
-            self.base,
+        let url = crate::builds::latest_url(
+            &self.base,
+            (project, jobset),
+            Some(name),
             crate::builds::HISTORY,
-            crate::github::urlencode(name)
         );
         let Ok(resp) = self.http.get(url).send().await else {
             return Last::NoAnswer;

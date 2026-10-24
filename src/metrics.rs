@@ -173,8 +173,10 @@ impl Facts {
         self.reviews.iter().map(|r| r.at).min()
     }
 
-    fn open_at(&self, t: DateTime<Utc>) -> bool {
-        self.created_at <= t && self.closed_at.is_none_or(|c| c > t)
+    /// A disclosure the policy accepts; other forms, such as a
+    /// `Co-authored-by:` trailer, count apart.
+    fn ai(&self) -> bool {
+        self.ai.as_deref().is_some_and(|t| t != OTHER_FORM)
     }
 }
 
@@ -381,7 +383,7 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
             a.m.opened += 1;
             a.m.opened_by_bots += f.author_is_bot as usize;
             a.m.opened_first_time += f.first_time() as usize;
-            a.m.opened_ai += f.ai.as_deref().is_some_and(|t| t != OTHER_FORM) as usize;
+            a.m.opened_ai += f.ai() as usize;
             a.m.opened_ai_other_form += (f.ai.as_deref() == Some(OTHER_FORM)) as usize;
             a.m.opened_security += f.security() as usize;
             a.m.opened_new_package += f.new_package() as usize;
@@ -413,7 +415,7 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
                     a.closed_first_time.0 += merged;
                     a.closed_first_time.1 += 1;
                 }
-                if f.ai.is_some() {
+                if f.ai() {
                     a.closed_ai.0 += merged;
                     a.closed_ai.1 += 1;
                 }
@@ -460,9 +462,7 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
             if f.closed_at.is_some_and(|c| c <= *end) {
                 break;
             }
-            if f.open_at(*end) {
-                acc.get_mut(k).unwrap().m.open_at_end += 1;
-            }
+            acc.get_mut(k).unwrap().m.open_at_end += 1;
         }
     }
 
@@ -511,7 +511,7 @@ fn snapshot(facts: &[Facts], now: DateTime<Utc>) -> Now {
         n.drafts += f.is_draft as usize;
         n.by_bots += f.author_is_bot as usize;
         n.first_time += f.first_time() as usize;
-        n.ai += f.ai.is_some() as usize;
+        n.ai += f.ai() as usize;
         n.needs_reviewer_label += f.has("9.needs: reviewer") as usize;
         n.merge_bot_eligible_label += f.has("2.status: merge-bot eligible") as usize;
         if f.security() {

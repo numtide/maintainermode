@@ -14,7 +14,7 @@ use crate::health::{Health, Run};
 use crate::version;
 
 /// Requests a pass may make: about 1,800 an hour at most.
-pub const BUDGET: usize = 300;
+const BUDGET: usize = 300;
 const PAUSE: Duration = Duration::from_millis(100);
 /// How long an answer holds for a package someone maintains or watches, and
 /// for the rest.
@@ -41,8 +41,6 @@ pub struct Direct {
     pub latest: Option<String>,
     /// `tags`, `crates.io`, `PyPI` or `npm`.
     pub from: String,
-    #[serde(default)]
-    pub failed: bool,
     /// Failures in a row: each one doubles the wait before the next try.
     #[serde(default)]
     pub failures: u32,
@@ -390,11 +388,6 @@ pub struct Candidate {
     pub first: bool,
 }
 
-/// 1, 2, 4 … 32 days.
-fn retry_days(failures: u32) -> i64 {
-    FRESH_FIRST << failures.saturating_sub(1).min(5)
-}
-
 /// When a package first gets `latest`. A first answer, or the first one
 /// after a failure or an unclear answer, is not news, unless repology saw
 /// it first.
@@ -414,8 +407,8 @@ fn due(h: &Health, c: &Candidate) -> Option<(u8, DateTime<Utc>)> {
     let Some(d) = h.direct.get(&c.attr) else {
         return Some((rank, DateTime::UNIX_EPOCH));
     };
-    let days = if d.failed {
-        retry_days(d.failures)
+    let days = if d.failures > 0 {
+        crate::health::backoff_days(d.failures)
     } else if c.first {
         FRESH_FIRST
     } else {
@@ -428,12 +421,12 @@ fn due(h: &Health, c: &Candidate) -> Option<(u8, DateTime<Utc>)> {
 /// asked, then the oldest answers. Several packages share a repository, so
 /// a pass asks each remote once.
 pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
-    let http = reqwest::Client::builder()
-        .user_agent("maintainer-mode (+https://github.com/numtide/maintainermode)")
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("http client");
+    let http = crate::health::http(Duration::from_secs(30));
     let total = candidates.len();
+    if total > 0 {
+        let live: HashSet<&str> = candidates.iter().map(|c| c.attr.as_str()).collect();
+        h.direct.retain(|a, _| live.contains(a.as_str()));
+    }
     let mut queue: Vec<(u8, DateTime<Utc>, Candidate)> = candidates
         .into_iter()
         .filter_map(|c| due(h, &c).map(|(rank, at)| (rank, at, c)))
@@ -441,6 +434,7 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
     queue.sort_by(|a, b| (a.0, a.1, &a.2.attr).cmp(&(b.0, b.1, &b.2.attr)));
     let left = queue.len();
     let mut seen: HashMap<String, Result<Vec<String>, ()>> = HashMap::new();
+    let mut registries: HashMap<String, Result<Option<String>, ()>> = HashMap::new();
     let mut asked: HashSet<String> = HashSet::new();
     let (mut behind, mut current, mut unclear, mut failed, mut done) = (0, 0, 0, 0, 0);
     for (_, _, c) in queue {
@@ -467,12 +461,15 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                 }
             }
             Origin::Registry { ecosystem, name } => {
-                asked.insert(key.clone());
-                let got = published(&http, ecosystem, name).await.map_err(|e| {
-                    tracing::debug!("{}: {e:#}", c.attr);
-                });
-                tokio::time::sleep(PAUSE).await;
-                (got, *ecosystem)
+                if !registries.contains_key(&key) {
+                    asked.insert(key.clone());
+                    let got = published(&http, ecosystem, name).await.map_err(|e| {
+                        tracing::debug!("{}: {e:#}", c.attr);
+                    });
+                    registries.insert(key.clone(), got);
+                    tokio::time::sleep(PAUSE).await;
+                }
+                (registries[&key].clone(), *ecosystem)
             }
         };
         done += 1;
@@ -508,7 +505,6 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
         let now = Utc::now();
         if unreachable {
             if let Some(d) = h.direct.get_mut(&c.attr) {
-                d.failed = true;
                 d.failures += 1;
                 d.checked_at = now;
                 continue;
@@ -518,7 +514,6 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
         h.direct.insert(
             c.attr.clone(),
             Direct {
-                failed: unreachable,
                 failures: u32::from(unreachable),
                 latest,
                 from: from.to_string(),
@@ -597,7 +592,6 @@ mod tests {
         let entry = |latest: Option<&str>, failed| Direct {
             latest: latest.map(String::from),
             from: "tags".into(),
-            failed,
             failures: u32::from(failed),
             checked_at: earlier,
             seen_at: earlier,
@@ -616,11 +610,12 @@ mod tests {
 
     #[test]
     fn a_failing_origin_waits_longer_each_time() {
-        assert_eq!(retry_days(0), 1);
-        assert_eq!(retry_days(1), 1);
-        assert_eq!(retry_days(2), 2);
-        assert_eq!(retry_days(4), 8);
-        assert_eq!(retry_days(40), 32);
+        use crate::health::backoff_days;
+        assert_eq!(backoff_days(0), 1);
+        assert_eq!(backoff_days(1), 1);
+        assert_eq!(backoff_days(2), 2);
+        assert_eq!(backoff_days(4), 8);
+        assert_eq!(backoff_days(40), 32);
     }
 
     #[test]

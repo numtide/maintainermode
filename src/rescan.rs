@@ -434,7 +434,7 @@ fn argv(cfg: &Config, host: &Host, work: &Path, net: bool, nix_args: &[&str]) ->
         "--",
         &nix,
         "--extra-experimental-features",
-        "nix-command flakes",
+        crate::eval::FEATURES,
         "--store",
         "daemon",
         "--option",
@@ -681,7 +681,7 @@ fn short(e: &anyhow::Error) -> String {
     }
 }
 
-/// A flake whose owner has not visited the My machines tab of `/me` for the 90 days of an
+/// A flake whose owner has not opened `/packages` for the 90 days of an
 /// upload is not scanned any more.
 pub fn seen_since() -> chrono::DateTime<Utc> {
     Utc::now() - chrono::Duration::days(crate::sets::RETENTION_DAYS)
@@ -832,7 +832,7 @@ pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> St
 }
 
 /// What `submit` takes to upload the owner's own scan of a public flake.
-pub const SUBMIT_FLAKE: &str =
+const SUBMIT_FLAKE: &str =
     "maintainer-mode submit --name NAME --public-flake github:OWNER/REPO#OUTPUT";
 
 /// The flakes box of the machines filter of /packages: the form that adds
