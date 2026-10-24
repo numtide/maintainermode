@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A6, and B1 to B9 are done.
+Status: all steps are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -93,7 +93,7 @@ association, checked_at)` keeps them. `project::pr_live` and
 7. **API and docs.** `/api/v1/sync` shows one fetcher. Step 5 removed the
    fields of the old walks (`open_walk_done`, `up_to`, `last_pass`,
    `walk_every_seconds`, `archive[].shadow`) and added
-   `rows_from_archive_at`. Left: a review of the status page as a whole.
+   `rows_from_archive_at`. The status page names the upkeep task. Done.
 
 ### Decisions
 
