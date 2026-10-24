@@ -9,9 +9,8 @@ its known limits.
   requests (see [the archive](#the-archive-of-issues-and-pull-requests)).
   Each item that it stores in the NixOS/nixpkgs archive writes its rows of
   the main database: `pr` and `issue` for the open items and the items
-  updated in the last 60 days, and `history` for the pull requests created
-  since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default
-  2020-01-01). The rows have the caps of the projection (30 reviews, 5
+  updated in the last 60 days, and `history` for every pull request. The
+  rows have the caps of the projection (30 reviews, 5
   inline comments per review, 30 comments, 30 pushes, 50 files). A row with
   a newer `updatedAt` stays. After each full pass, the server deletes the
   closed rows of `pr` and `issue` last updated more than 60 days ago. When
@@ -19,8 +18,9 @@ its known limits.
   at most once every 30 seconds. Without an archive of NixOS/nixpkgs, the
   server has no issues and no pull requests.
 - **The first start.** When the main database has no key
-  `archive_projected`, the walk first writes the rows of every item in the
-  archive, 1000 items at a time, then sets the key. It first copies the
+  `archive_projected`, or its key `archive_rows` is not the version of the
+  rules for the rows, the walk first writes the rows of every item in the
+  archive, 1000 items at a time, then sets the keys. It first copies the
   `mergeable`, CI state and author association of the open `pr` rows into
   `pr_live`, so the pages keep them, and it deletes the state of the old
   sync and history walks. `/api/v1/sync` gives the time as

@@ -74,10 +74,11 @@ association, checked_at)` keeps them. `project::pr_live` and
 5. **Switch.** Each archive write of a nixpkgs item writes its `pr`,
    `issue` and `history` rows, with `pr_live` joined. A row with a newer
    `updated_at` stays. `pr` and `issue` get the open items and the items
-   updated in the last 60 days; `history` gets the pull requests created
-   since `--history-since`. On the first start, `archive::backfill` writes
+   updated in the last 60 days; `history` gets every pull request. On the
+   first start, and after a change of `ROWS_VERSION`, `archive::backfill` writes
    the rows of every stored item, seeds `pr_live` from the open `pr` rows,
-   deletes the keys of the old walks and sets `archive_projected`. The sync
+   deletes the keys of the old walks and sets `archive_projected` and
+   `archive_rows`. The sync
    walk, the history walk and the poller's fetch are deleted; the CLI
    `sync` runs archive passes. `issues_complete` is the archive's
    `open_complete`, and the history is complete when the walk reaches #1; items that fail and

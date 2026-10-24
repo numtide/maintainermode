@@ -108,7 +108,7 @@ impl App {
     }
 
     /// The archive holds every number of nixpkgs, so the facts of every
-    /// pull request since `--history-since` are in the `history` table.
+    /// pull request are in the `history` table.
     /// Items that fail are retried and do not hold this back.
     pub(crate) fn history_complete(&self) -> bool {
         self.nixpkgs_archive()

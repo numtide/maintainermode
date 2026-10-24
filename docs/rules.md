@@ -268,9 +268,8 @@ nixpkgs, month by month. Each number is a total. No number names a person.
   each part of the tree, from the files that a pull request changes.
 
 The ledger reads only the pull requests updated in the last 60 days and all
-open ones. These numbers read the facts of each pull request created since
-`--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default 2020-01-01),
-from the archive: the first 10 reviews, the first 50 files, the labels and
+open ones. These numbers read the facts of every pull request in the
+archive: the first 10 reviews, the first 50 files, the labels and
 the last commit message, but not the description. They are in a separate
 table, so they never go into the ledger. Until the archive walk reaches the
 first number, the older months are not complete.

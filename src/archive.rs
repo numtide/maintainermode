@@ -1170,11 +1170,10 @@ pub async fn sync_once(
     events: &crate::events::Log,
     a: &Archive,
     client: &mut github::Client,
-    history_from: DateTime<Utc>,
     history: bool,
 ) -> Result<Done> {
-    let rows = crate::project::Rows::at(Utc::now(), history_from);
-    if store.get(PROJECTED)?.is_none() {
+    let rows = crate::project::Rows::at(Utc::now());
+    if !projected(store)? {
         backfill(store, a, rows)?;
     }
     let mut total = Done::default();
@@ -1201,9 +1200,21 @@ const BACKFILL_CHUNK: usize = 1000;
 /// from the archive.
 pub(crate) const PROJECTED: &str = "archive_projected";
 
-/// Writes the rows of every stored item into the main database, once: a new
-/// deployment with a copied archive, or a server that the sync filled
-/// before. It first keeps the live fields of the open `pr` rows.
+/// The main database key that holds the [`ROWS_VERSION`] of its rows.
+const ROWS: &str = "archive_rows";
+
+/// A change to the rows that `project::write` keeps needs a new value, so
+/// that the next start writes the rows of every stored item again.
+const ROWS_VERSION: &str = "2";
+
+pub(crate) fn projected(store: &Store) -> Result<bool> {
+    Ok(store.get(PROJECTED)?.is_some() && store.get(ROWS)?.as_deref() == Some(ROWS_VERSION))
+}
+
+/// Writes the rows of every stored item into the main database, once per
+/// [`ROWS_VERSION`]: a new deployment with a copied archive, a server that
+/// the sync filled before, or new rules for the rows. It first keeps the
+/// live fields of the open `pr` rows.
 pub(crate) fn backfill(store: &Store, a: &Archive, rows: crate::project::Rows) -> Result<usize> {
     store.seed_live()?;
     let (mut written, mut after) = (0, 0);
@@ -1219,6 +1230,7 @@ pub(crate) fn backfill(store: &Store, a: &Archive, rows: crate::project::Rows) -
         store.delete_key(key)?;
     }
     store.set(PROJECTED, &Utc::now().to_rfc3339())?;
+    store.set(ROWS, ROWS_VERSION)?;
     Ok(written)
 }
 
@@ -1263,10 +1275,10 @@ const OLD_WALK_KEYS: [&str; 15] = [
 ];
 
 /// The rows of the main database come from the nixpkgs archive only.
-fn rows_of(a: &Archive, history_from: DateTime<Utc>) -> Option<crate::project::Rows> {
+fn rows_of(a: &Archive) -> Option<crate::project::Rows> {
     a.repo
         .eq_ignore_ascii_case(crate::events::REPO)
-        .then(|| crate::project::Rows::at(Utc::now(), history_from))
+        .then(|| crate::project::Rows::at(Utc::now()))
 }
 
 const NO_TOKEN: &str = "no GitHub App token, no bot token and no lent token";
@@ -1355,16 +1367,11 @@ async fn recompute(app: &Arc<App>) {
 }
 
 /// One pass, full or due only, of each archive with `client`.
-async fn run_all(
-    app: &Arc<App>,
-    client: &mut github::Client,
-    full: bool,
-    history_from: DateTime<Utc>,
-) -> Done {
+async fn run_all(app: &Arc<App>, client: &mut github::Client, full: bool) -> Done {
     let mut total = Done::default();
     for a in &app.archive {
         let started = Utc::now();
-        let rows = rows_of(a, history_from);
+        let rows = rows_of(a);
         let r = if full {
             pass(&app.store, &app.events, a, client, rows).await
         } else {
@@ -1420,16 +1427,15 @@ async fn run_all(
 /// the server has none, the tokens that people lent pay for the listings
 /// and the due items only, each at most a tenth of its budget per rate
 /// limit window (`github::Client::lent`).
-pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
-    let history_from = history_since.and_hms_opt(0, 0, 0).unwrap().and_utc();
+pub async fn walk(app: Arc<App>) {
     if let Some(a) = app
         .archive
         .iter()
         .find(|a| a.repo.eq_ignore_ascii_case(crate::events::REPO))
     {
-        if app.store.get(PROJECTED).ok().flatten().is_none() {
+        if !projected(&app.store).unwrap_or(false) {
             let (app2, a2) = (app.clone(), a.clone());
-            let rows = crate::project::Rows::at(Utc::now(), history_from);
+            let rows = crate::project::Rows::at(Utc::now());
             match tokio::task::spawn_blocking(move || backfill(&app2.store, &a2, rows)).await {
                 Ok(Ok(n)) => {
                     tracing::info!("archive {}: {n} rows written from the archive", a.repo)
@@ -1467,7 +1473,7 @@ pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
             ..Done::default()
         };
         if server.has_token() {
-            done = run_all(&app, &mut server, full, history_from).await;
+            done = run_all(&app, &mut server, full).await;
         }
         if done.low {
             let lent = app.store.lent_tokens().unwrap_or_default();
@@ -1481,7 +1487,7 @@ pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
                 }
             } else if !lent.is_empty() {
                 let mut client = github::Client::lent(lent);
-                let d = run_all(&app, &mut client, full && !server.has_token(), history_from).await;
+                let d = run_all(&app, &mut client, full && !server.has_token()).await;
                 done.written += d.written;
             }
         }
@@ -1629,7 +1635,6 @@ mod tests {
         let long_ago = "2000-01-01T00:00:00Z".parse().unwrap();
         let rows = crate::project::Rows {
             window_from: long_ago,
-            history_from: long_ago,
         };
         assert_eq!(backfill(&store, &a, rows).unwrap(), 5);
         let prs = store.prs().unwrap();
@@ -1641,14 +1646,19 @@ mod tests {
         assert_eq!(get(350000).title, newer.title);
         assert_eq!(store.issues().unwrap()[0].number, 453372);
         assert_eq!(store.facts().unwrap().len(), 2);
-        assert!(store.get(PROJECTED).unwrap().is_some());
-        let recent = crate::project::Rows::at(now, now);
+        assert!(projected(&store).unwrap());
+        store.set(ROWS, "1").unwrap();
+        assert!(
+            !projected(&store).unwrap(),
+            "new rules for the rows write them again"
+        );
+        let recent = crate::project::Rows::at(now);
         store.put_prs(&[]).unwrap();
         assert_eq!(
             crate::project::write(&store, recent, &[(300123, f["archive"]["300123"].clone())])
                 .unwrap(),
-            0,
-            "a closed pull request out of the window and before history writes nothing"
+            1,
+            "a closed pull request out of the window writes its facts only"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -1908,8 +1918,7 @@ mod tests {
     }
 
     fn rows() -> Option<crate::project::Rows> {
-        let from = "2020-01-01T00:00:00Z".parse().unwrap();
-        Some(crate::project::Rows::at(Utc::now(), from))
+        Some(crate::project::Rows::at(Utc::now()))
     }
 
     #[tokio::test]

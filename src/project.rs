@@ -188,19 +188,16 @@ pub(crate) fn facts_live(item: &Value, live: Option<&Live>) -> Option<Facts> {
 }
 
 /// Which projected rows go to the main database: open items, items updated
-/// in the window of the ledger, and the facts of the pull requests created
-/// since `history_from`.
+/// in the window of the ledger, and the facts of every pull request.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Rows {
     pub(crate) window_from: DateTime<Utc>,
-    pub(crate) history_from: DateTime<Utc>,
 }
 
 impl Rows {
-    pub(crate) fn at(now: DateTime<Utc>, history_from: DateTime<Utc>) -> Self {
+    pub(crate) fn at(now: DateTime<Utc>) -> Self {
         Rows {
             window_from: now - chrono::Duration::days(crate::ledger::WINDOW_DAYS),
-            history_from,
         }
     }
 }
@@ -213,7 +210,7 @@ pub(crate) fn write(store: &Store, rows: Rows, items: &[(u64, Value)]) -> Result
     for (n, item) in items {
         let l = live.get(n);
         if let Some(p) = pr_live(item, l) {
-            if let Some(f) = facts_live(item, l).filter(|f| f.created_at >= rows.history_from) {
+            if let Some(f) = facts_live(item, l) {
                 facts.push(f);
             }
             if p.is_open() || p.updated_at >= rows.window_from {

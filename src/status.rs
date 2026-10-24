@@ -349,7 +349,7 @@ pub(crate) fn body(app: &App) -> Html {
         ),
     ));
     out.push(&kv(
-        "History since 2020",
+        "History",
         done(
             &v["history"]["done"],
             "complete",
