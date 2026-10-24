@@ -168,10 +168,14 @@ fn nav(section_now: Section) -> Html {
 }
 
 pub(crate) fn subnav(tabs: &[Tab]) -> Html {
+    subnav_named(tabs, "Views")
+}
+
+pub(crate) fn subnav_named(tabs: &[Tab], name: &str) -> Html {
     if tabs.is_empty() {
         return Html::new();
     }
-    let mut out = Html::from("<nav class=\"subnav mb-3\" aria-label=\"Views\">");
+    let mut out = html!("<nav class=\"subnav mb-3\" aria-label=\"{name}\">");
     for t in tabs {
         let sel = if t.current { " selected" } else { "" };
         let cur = current(t.current);

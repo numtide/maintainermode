@@ -1753,7 +1753,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             } else {
                 String::new()
             },
-            extra_actions: next,
+            extra_actions: next.into_string(),
         })
     };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
