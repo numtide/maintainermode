@@ -819,7 +819,7 @@ async fn page(
         ),
         ProfileTab::Maintains => (
             format!("What {login} maintains"),
-            crate::catalog::maintains_body(&app, &login),
+            crate::catalog::maintains::body(&app, &login),
         ),
         ProfileTab::Flakes => (
             format!("Public flakes of {login}"),
