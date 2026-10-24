@@ -341,7 +341,7 @@ pub(crate) fn body(app: &App) -> Html {
     out.push(&kv(
         "Mergeable and checks",
         html!(
-            "{} of {} open pull requests checked · {} per update, the oldest check first · oldest check {}",
+            "{} of {} open pull requests checked · {} per upkeep run, the oldest check first · oldest check {}",
             l["checked"],
             l["open_pull_requests"],
             l["per_pass"],
@@ -374,9 +374,9 @@ pub(crate) fn body(app: &App) -> Html {
         ),
     ));
     out.push(&kv(
-        "Updates",
+        "Upkeep",
         html!(
-            "one every {} · the last took {} and ended {}",
+            "the index, the expiry of old data and the live refresh, one run every {} · the last took {} and ended {}",
             minutes(pass["every_seconds"].as_i64().unwrap_or(600)),
             pass["last_seconds"]
                 .as_i64()
@@ -464,7 +464,7 @@ pub(crate) fn body(app: &App) -> Html {
     out.push(&kv(
         "Health task",
         html!(
-            "its own task, one run every {}: a slow source does not delay the GitHub updates",
+            "its own task, one run every {}: a slow source does not delay the archive or the upkeep",
             minutes(h["every_seconds"].as_i64().unwrap_or(600))
         ),
     ));

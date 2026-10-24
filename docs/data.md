@@ -27,7 +27,9 @@ its known limits.
   `rows_from_archive_at`.
 - **Mergeable, checks and author association** change with no change to
   `updatedAt`. The table `pr_live` keeps them for each open pull request,
-  with the head they belong to and the time of the check. Each pass reads
+  with the head they belong to and the time of the check. The upkeep task
+  runs every 10 minutes: it refreshes the nixpkgs index once a day, deletes
+  expired data, and reads
   them for up to 500 open pull requests: first the merge candidates, then
   the ones checked longest ago, 50 to a query. GitHub computes `mergeable`
   lazily, so a bulk read mostly answers UNKNOWN; an UNKNOWN keeps the known
