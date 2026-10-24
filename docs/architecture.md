@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: plan. Started with B1.
+Status: B1 and B4 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -114,9 +114,6 @@ pr_live (mergeable, ci) ◄── live refresh of open PRs
   - `catalog::package_page` and `package_value` compute the builds,
     channels, backports and advisories twice.
   - `notify::inbox_page` and `inbox_value` do the same reads.
-  - `api::prs_value` repeats the review pipeline. It passes no watched
-    packages (`api.rs:1101`), but the page does (`review.rs:172`). This
-    is a bug: the API and the page list different PRs.
 
 ### Target
 
@@ -152,8 +149,7 @@ several places today:
 2. **needs.** It is already split. Make `Item` `Serialize` and render it
    with `Html`.
 3. **committer.** Remove `why_html`; render `why` in the view.
-4. **review and `api::prs_value`.** One `ReviewList`. This fixes the
-   watched packages bug.
+4. **review and `api::prs_value`.** One `ReviewList`. Done.
 5. **notify, sets, mine.**
 6. **profile, home.** Add `SubjectRow`.
 7. **prpanel, then prpage.** Blockers and checks reach the API.
@@ -174,6 +170,6 @@ several places today:
 ## Order
 
 1. B1, the `Html` type. Small, and every later step uses it.
-2. B4, because it fixes a bug.
+2. B4, the review list. Done.
 3. A1 to A3 and B2, B3, B5 in parallel.
 4. A4 to A7, then B6 to B9.

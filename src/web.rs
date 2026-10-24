@@ -561,12 +561,6 @@ pub(crate) fn review_bucket<'a>(
         .collect()
 }
 
-pub(crate) fn watched_of(app: &App, login: Option<&str>) -> Vec<String> {
-    login
-        .and_then(|l| app.store.watched(l).ok())
-        .unwrap_or_default()
-}
-
 pub(crate) fn stat(n: usize, label: &str, hint: &str) -> String {
     format!(
         "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"text-bold\">{label}</div>\

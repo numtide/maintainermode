@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 use crate::queue::Entry;
 use crate::ui::{Page, Section, Tab, empty, pager, section};
-use crate::web::{Shared, esc, octicon, review_bucket, review_rows, watched_of};
+use crate::web::{Shared, esc, octicon, review_bucket, review_rows};
 
 pub(crate) const PAGE: usize = 50;
 use crate::web::NIXPKGS;
@@ -130,7 +130,6 @@ async fn review_page(
     let v = viewer.as_deref();
     let s = app.snap();
     let tab = tab_id(q.tab.as_deref(), v.is_some());
-    let watched = watched_of(&app, v);
     let act = crate::actions::Act::of(&app, v);
     let foryou = v
         .map(|l| crate::mine::for_you_why(&app, &s, l))
@@ -167,18 +166,17 @@ async fn review_page(
                 .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
                 .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
             _ => {
-                let mut entries: Vec<&Entry> = if tab == "foryou" {
-                    foryou.iter().map(|(e, _)| *e).collect()
+                let other;
+                let src = if tab == "foryou" {
+                    &foryou
                 } else {
-                    review_bucket(&s, v, v.map(|_| watched.as_slice()), tab)
+                    other = source(&app, &s, v, true, tab);
+                    &other
                 };
-                let n_hidden = entries
-                    .iter()
-                    .filter(|e| hidden.contains(&e.number))
-                    .count();
-                entries.retain(|e| hidden.contains(&e.number) == show_hidden);
-                let bases = bases(&entries);
-                let entries = opts.apply(entries);
+                let list = ReviewList::new(src, &hidden, show_hidden, &opts);
+                let n_hidden = list.hidden;
+                let bases = list.bases.clone();
+                let entries = list.entries();
                 let (page, next) = if tab == "foryou" || opts.sorted() {
                     paged_by_offset(&entries, q.after)
                 } else {
@@ -204,8 +202,8 @@ async fn review_page(
                     if show_hidden { "&hidden=1" } else { "" },
                     opts.query()
                 );
-                let why_of: std::collections::HashMap<u64, &Vec<String>> =
-                    foryou.iter().map(|(e, w)| (e.number, w)).collect();
+                let why_of: std::collections::HashMap<u64, &[String]> =
+                    list.rows.iter().map(|r| (r.entry.number, r.why)).collect();
                 let rows = if page.is_empty() {
                     empty(if opts.active() {
                         "Nothing matches these filters."
@@ -214,14 +212,10 @@ async fn review_page(
                     })
                 } else {
                     review_rows(page, act, tab == "firsttime", |e| {
-                        let why = if tab == "foryou" {
-                            why_of
-                                .get(&e.number)
-                                .map(|w| why_line(w))
-                                .unwrap_or_default()
-                        } else {
-                            String::new()
-                        };
+                        let why = why_of
+                            .get(&e.number)
+                            .map(|w| why_line(w))
+                            .unwrap_or_default();
                         let end = if v.is_some() {
                             hide_button(e.number, show_hidden, &here, true)
                         } else {
@@ -272,7 +266,7 @@ async fn review_page(
                 .iter()
                 .filter(|(e, _)| !hidden.contains(&e.number))
                 .count(),
-            _ => review_bucket(&s, v, v.map(|_| watched.as_slice()), id)
+            _ => review_bucket(&s, v, None, id)
                 .iter()
                 .filter(|e| !hidden.contains(&e.number))
                 .count(),
@@ -584,6 +578,83 @@ pub(crate) fn why_line(why: &[String]) -> String {
         esc(&why.join(" · "))
     )
 }
+
+/// The pull requests of a review queue, with why each one is there.
+/// `own` is true when `login` asks for their own queue: only then do
+/// their subscriptions, machines and private tags count.
+pub(crate) fn source<'a>(
+    app: &crate::web::App,
+    s: &'a crate::web::Snapshot,
+    login: Option<&str>,
+    own: bool,
+    queue: &str,
+) -> Vec<(&'a Entry, Vec<String>)> {
+    match login {
+        Some(l) if own && crate::web::bucket_name(queue) == Some("foryou") => {
+            crate::mine::for_you_why(app, s, l)
+        }
+        _ => review_bucket(s, login, None, queue)
+            .into_iter()
+            .map(|e| (e, Vec::new()))
+            .collect(),
+    }
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct Row<'a> {
+    #[serde(flatten)]
+    pub entry: &'a Entry,
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub why: &'a [String],
+}
+
+/// One review list, as both `/review` and `/api/v1/prs` show it.
+pub(crate) struct ReviewList<'a> {
+    pub rows: Vec<Row<'a>>,
+    /// The rows that the hidden filter removed, before `Opts`.
+    pub hidden: usize,
+    /// The base branches after the hidden filter, before `Opts`.
+    pub bases: Vec<&'a str>,
+}
+
+impl<'a> ReviewList<'a> {
+    pub(crate) fn new(
+        source: &'a [(&'a Entry, Vec<String>)],
+        hidden: &std::collections::HashSet<u64>,
+        show_hidden: bool,
+        opts: &Opts,
+    ) -> Self {
+        let n_hidden = source
+            .iter()
+            .filter(|(e, _)| hidden.contains(&e.number))
+            .count();
+        let kept: Vec<&(&Entry, Vec<String>)> = source
+            .iter()
+            .filter(|(e, _)| hidden.contains(&e.number) == show_hidden)
+            .collect();
+        let bases = bases(&kept.iter().map(|(e, _)| *e).collect::<Vec<_>>());
+        let why: std::collections::HashMap<u64, &[String]> =
+            kept.iter().map(|(e, w)| (e.number, w.as_slice())).collect();
+        let rows = opts
+            .apply(kept.iter().map(|(e, _)| *e).collect())
+            .into_iter()
+            .map(|e| Row {
+                entry: e,
+                why: why.get(&e.number).copied().unwrap_or(&[]),
+            })
+            .collect();
+        ReviewList {
+            rows,
+            hidden: n_hidden,
+            bases,
+        }
+    }
+
+    pub(crate) fn entries(&self) -> Vec<&'a Entry> {
+        self.rows.iter().map(|r| r.entry).collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -618,6 +689,40 @@ mod tests {
         assert_eq!((p2[0], p2.len(), next.as_deref()), (150, PAGE, Some("100")));
         let (p, next) = paged_by_offset(&items, Some(10_000));
         assert!(p.is_empty() && next.is_none());
+    }
+
+    #[test]
+    fn a_review_list_keeps_why_through_the_sort_and_counts_hidden() {
+        let a = entry(1, "SUCCESS", false, "master", "a");
+        let b = entry(2, "SUCCESS", false, "staging", "b");
+        let c = entry(3, "SUCCESS", false, "master", "c");
+        let src = vec![
+            (&a, vec!["you watch: a".to_string()]),
+            (&b, vec![]),
+            (&c, vec!["you maintain: c".to_string()]),
+        ];
+        let hidden = [2].into_iter().collect();
+        let opts = Opts {
+            sort: Some("newest".into()),
+            ..Default::default()
+        };
+        let list = ReviewList::new(&src, &hidden, false, &opts);
+        assert_eq!(list.hidden, 1);
+        assert_eq!(list.bases, ["master"]);
+        let rows: Vec<(u64, &[String])> =
+            list.rows.iter().map(|r| (r.entry.number, r.why)).collect();
+        assert_eq!(rows[0], (3, &["you maintain: c".to_string()][..]));
+        assert_eq!(rows[1].0, 1);
+        let v = serde_json::to_value(&list.rows).unwrap();
+        assert_eq!(v[1]["why"][0], "you watch: a");
+        assert_eq!(v[0]["number"], 3);
+        let shown = ReviewList::new(&src, &hidden, true, &Opts::default());
+        assert_eq!(shown.entries().len(), 1);
+        assert!(
+            serde_json::to_value(&shown.rows).unwrap()[0]
+                .get("why")
+                .is_none()
+        );
     }
 
     fn entry(number: u64, ci: &str, reviewed: bool, base: &str, title: &str) -> Entry {
