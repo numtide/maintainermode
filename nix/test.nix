@@ -209,11 +209,11 @@ pkgs.testers.runNixOSTest {
     machine.fail("curl -sf http://127.0.0.1:8790/feed/nothing")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync && grep -q 'How fast changes show here' /tmp/sync")
     # the bot token turns the notifications poller on; with no network its
-    # polls fail, so the page says so and the full walk keeps its interval
+    # polls fail, so the page says so and a change waits for the next archive pass
     machine.succeed("grep -q 'Notifications</div><div class=\"flex-auto min-width-0\">the notifications of the bot account' /tmp/sync")
     machine.succeed("grep -q 'the poll of its notifications fails now' /tmp/sync")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/sync.json && grep -q worst_delay_seconds /tmp/sync.json")
-    machine.succeed("grep -q '\"notifications\":{[^}]*\"enabled\":true' /tmp/sync.json && grep -q '\"walk_every_seconds\":600' /tmp/sync.json")
+    machine.succeed("grep -q '\"notifications\":{[^}]*\"enabled\":true' /tmp/sync.json && grep -q rows_from_archive_at /tmp/sync.json")
     machine.wait_until_succeeds("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/sync.n && grep -q 'errors in the last hour; the last: ' /tmp/sync.n")
     machine.succeed("journalctl -u maintainer-mode -o cat > /tmp/log && grep -q 'notifications poller on' /tmp/log")
     machine.succeed("systemctl show maintainer-mode -p Environment > /tmp/env && grep -q 'MAINTAINER_MODE_BOT_TOKEN_FILE=' /tmp/env && ! grep -q SYNC_TOKEN /tmp/env")

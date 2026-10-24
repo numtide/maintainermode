@@ -1,6 +1,6 @@
 # Plan: one source for GitHub data, typed HTML, data apart from views
 
-Status: A1 to A4, and B1 to B8 are done.
+Status: A1 to A5, and B1 to B8 are done.
 
 Two tracks. They touch different code, except `model::Pr`, so they can run
 in parallel. Each step is one commit that passes all checks and deploys on
@@ -10,15 +10,14 @@ its own.
 
 ### Today
 
-Five paths read the same items from GitHub:
+Two paths read issues and pull requests from GitHub:
 
-| Path                                      | Writes                          | Cadence                                   |
-| ----------------------------------------- | ------------------------------- | ----------------------------------------- |
-| sync walk (`github::sync`, `sync_issues`) | `pr`, `issue`                   | 600 s; 1800 s while the poller is healthy |
-| history walk (`github::history`)          | `history`                       | 100 pages per pass                        |
-| notifications poller (`by_number`)        | `pr`, `issue`                   | about 60 s                                |
-| archive walk                              | `archive/<owner>/<name>.sqlite` | 300 s                                     |
-| live refresh (`github::refresh_live`)     | `pr_live`, `pr.data`            | each pass, 500 open PRs                   |
+| Path                                  | Writes                                                    | Cadence                                    |
+| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------ |
+| archive walk (`archive::walk`)        | `archive/<owner>/<name>.sqlite`, `pr`, `issue`, `history` | 300 s; a due pass 10 s after each due mark |
+| live refresh (`github::refresh_live`) | `pr_live`, `pr.data`                                      | each pass, 500 open PRs                    |
+
+The notifications poller and the event log only mark numbers due.
 
 The archive holds every field of `model::Pr`, `model::Issue` and
 `metrics::Facts`, with no caps. Three fields change without a change to
@@ -59,7 +58,8 @@ association, checked_at)` keeps them. `project::pr_live` and
    files), so the ledger and the queues do not change. A test compares
    the projection with the sync result for recorded items. On the server,
    count the items where the projection and the `pr` row differ, and show
-   the count on `/state?tab=status`. Done.
+   the count on `/state?tab=status`. Done. Step 5 removes the count: the
+   projection is then the only writer of the rows.
 2. **Open items first.** Add an "open" listing to the fetcher, so a new
    deployment reads every open PR and issue first. The archive gives
    `open_complete`. Done.
@@ -71,17 +71,28 @@ association, checked_at)` keeps them. `project::pr_live` and
    A full read by the sync or the poller writes `pr_live` too. The shadow
    check compares the live fields where `pr_live` has the same head.
    Done.
-5. **Switch.** The projection writes `pr`, `issue` and `history`. Delete
-   the sync walk, the history walk and the poller's fetch. Write
-   projections only when `updated_at` is newer, so that two writers
-   cannot race. `issues_complete` becomes the archive's
-   `open_complete`. A fetch of due items triggers `recompute`, at most
-   once every 30 s. Before the switch, `recompute` reads nothing from the
-   archive, so it is not triggered.
-6. **Prune.** The projection writes to `pr` only open PRs and PRs
-   updated in the last 60 days (`WINDOW_DAYS`). `recompute` loads less.
-7. **API and docs.** `/api/v1/sync` shows one fetcher, not three walks.
-   Update `docs/data.md` and `docs/ingest.md`.
+5. **Switch.** Each archive write of a nixpkgs item writes its `pr`,
+   `issue` and `history` rows, with `pr_live` joined. A row with a newer
+   `updated_at` stays. `pr` and `issue` get the open items and the items
+   updated in the last 60 days; `history` gets the pull requests created
+   since `--history-since`. On the first start, `archive::backfill` writes
+   the rows of every stored item, seeds `pr_live` from the open `pr` rows,
+   deletes the keys of the old walks and sets `archive_projected`. The sync
+   walk, the history walk and the poller's fetch are deleted; the CLI
+   `sync` runs archive passes. `issues_complete` is the archive's
+   `open_complete`, and the history is complete at `backfill_done`. The
+   walk recomputes at most once every 30 s after rows change. Lent tokens
+   pay for the listings and due items, and for the live fields of the merge
+   candidates, only below `RESERVE` or with no server token, each at most a
+   tenth of its budget per rate limit window (`github::Client::lent`).
+   Done.
+6. **Prune.** Step 5 writes to `pr` only open PRs and PRs updated in the
+   last 60 days (`WINDOW_DAYS`). Left: delete the older rows that the sync
+   wrote, so `recompute` loads less.
+7. **API and docs.** `/api/v1/sync` shows one fetcher. Step 5 removed the
+   fields of the old walks (`open_walk_done`, `up_to`, `last_pass`,
+   `walk_every_seconds`, `archive[].shadow`) and added
+   `rows_from_archive_at`. Left: a review of the status page as a whole.
 
 ### Decisions
 
@@ -92,10 +103,9 @@ association, checked_at)` keeps them. `project::pr_live` and
   and bot tokens. A lent token pays for shared freshness only when the
   App and bot budgets are below `RESERVE`, and then for at most 10% of
   its remaining budget. The backfill never uses a lent token. The page
-  where a person lends a token states this. Today the
-  sync walk and the poller spread all reads over every lent token; the
-  fetcher replaces that.
-- **Caps.** The projection keeps the caps of the sync. Removing them
+  where a person lends a token states this; that page does not exist yet,
+  and `docs/data.md` states the rule.
+- **Caps.** The projection keeps the caps of the old sync. Removing them
   changes the ledger, voids and queues, so it is a separate change with
   its own review.
 - **Other repositories.** Event hints cover nixpkgs only. Keep it so

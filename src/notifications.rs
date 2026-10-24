@@ -9,21 +9,17 @@ use serde_json::{Value, json};
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration as StdDuration;
-use tokio::sync::Notify;
 
 use crate::events::REPO;
 use crate::github;
 use crate::secret::Secret;
-use crate::store::Store;
+
 use crate::web::App;
 
 const API: &str = "https://api.github.com";
 const MAX_PAGES: usize = 20;
-const PRS_PER_QUERY: usize = 10;
-const ISSUES_PER_QUERY: usize = 50;
 const DEFAULT_INTERVAL: u64 = 60;
 const ERROR_WAIT: u64 = 60;
-const RECOMPUTE_EVERY: StdDuration = StdDuration::from_secs(30);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -201,87 +197,29 @@ impl Api {
     }
 }
 
-pub struct Applied {
-    pub stored: usize,
-    /// The first fetch that failed, when one did. Its threads stay unread.
-    pub failed: Option<String>,
-}
-
-/// Reads each changed item with the walk's fields, stores it, and marks the
-/// threads read up to the oldest one that failed.
+/// Marks the items of the threads due in the archive with `mark`, then the
+/// threads read. The archive walk fetches them. When `mark` fails, the
+/// threads stay unread. Returns the threads marked.
 pub async fn apply(
     api: &Api,
     token: &str,
-    store: &Store,
-    client: &mut github::Client,
+    mark: impl FnOnce(&[u64]) -> Result<()>,
     status: &Status,
     threads: &[Thread],
     newest: Option<DateTime<Utc>>,
-) -> Result<Applied> {
-    let mut stored = 0;
-    let mut failed = None;
-    let mut oldest_failed: Option<DateTime<Utc>> = None;
-    for (kind, per_query) in [
-        (Kind::PullRequest, PRS_PER_QUERY),
-        (Kind::Issue, ISSUES_PER_QUERY),
-    ] {
-        let mine: Vec<&Thread> = threads.iter().filter(|t| t.kind == kind).collect();
-        for chunk in mine.chunks(per_query) {
-            let numbers: Vec<u64> = chunk
-                .iter()
-                .map(|t| t.number)
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            let (prs, issues) = match kind {
-                Kind::PullRequest => (numbers.as_slice(), &[][..]),
-                Kind::Issue => (&[][..], numbers.as_slice()),
-            };
-            match github::by_number(store, client, prs, issues).await {
-                Ok((prs, issues)) => {
-                    store.put_prs(&prs)?;
-                    store.note_live(&prs, Utc::now())?;
-                    store.put_issues(&issues)?;
-                    stored += prs.len() + issues.len();
-                    status.seen(chunk.iter().map(|t| t.updated_at), Utc::now());
-                }
-                Err(e) => {
-                    tracing::warn!("notifications: fetch: {e:#}");
-                    failed.get_or_insert_with(|| format!("{e:#}"));
-                    let t = chunk.iter().map(|t| t.updated_at).min();
-                    oldest_failed = oldest_failed.into_iter().chain(t).min();
-                }
-            }
-        }
-    }
-    let read_up_to = match oldest_failed {
-        Some(t) => Some(t - Duration::seconds(1)),
-        None => newest,
-    };
-    if let Some(at) = read_up_to {
+) -> Result<usize> {
+    let numbers: Vec<u64> = threads
+        .iter()
+        .map(|t| t.number)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    mark(&numbers)?;
+    status.seen(threads.iter().map(|t| t.updated_at), Utc::now());
+    if let Some(at) = newest {
         api.mark_read(token, at).await?;
     }
-    Ok(Applied { stored, failed })
-}
-
-/// While the poller is healthy, the full walk of pull requests and issues
-/// runs at most this often. A pass that starts up to a minute early counts.
-pub const WALK_EVERY_WHEN_HEALTHY: i64 = 1800;
-const WALK_SLACK: i64 = 60;
-
-/// The full walk runs on each pass, except while the poller is healthy:
-/// then only after the first walks are done and every
-/// `WALK_EVERY_WHEN_HEALTHY`.
-pub fn walk_due(
-    healthy: bool,
-    first_walks_done: bool,
-    last_walk: Option<DateTime<Utc>>,
-    now: DateTime<Utc>,
-) -> bool {
-    !healthy
-        || !first_walks_done
-        || last_walk
-            .is_none_or(|t| now - t >= Duration::seconds(WALK_EVERY_WHEN_HEALTHY - WALK_SLACK))
+    Ok(numbers.len())
 }
 
 #[derive(Default)]
@@ -372,51 +310,9 @@ impl Status {
     }
 }
 
-/// The tokens of the sync, in its order: the GitHub App, the bot, then the
-/// tokens that people lend.
-async fn client(app: &App, bot: &str) -> github::Client {
-    let mut tokens = Vec::new();
-    if let Some(a) = &app.github_app {
-        match a.token().await {
-            Ok(t) => tokens.push(t),
-            Err(e) => tracing::warn!("notifications: GitHub App token: {e:#}"),
-        }
-    }
-    tokens.push(bot.to_string());
-    tokens.extend(app.store.lent_tokens().unwrap_or_default());
-    github::Client::new(tokens)
-}
-
-/// Recomputes at once after a change, then at most once per
-/// `RECOMPUTE_EVERY`.
-async fn recompute_soon(app: Arc<App>, wake: Arc<Notify>) {
-    loop {
-        wake.notified().await;
-        let a = app.clone();
-        match tokio::task::spawn_blocking(move || {
-            a.recompute()?;
-            crate::notify::recount(&a);
-            anyhow::Ok(())
-        })
-        .await
-        {
-            Ok(Err(e)) => tracing::warn!("notifications: recompute: {e:#}"),
-            Err(e) => tracing::warn!("notifications: recompute: {e}"),
-            Ok(Ok(())) => {}
-        }
-        tokio::time::sleep(RECOMPUTE_EVERY).await;
-    }
-}
-
-async fn poll_once(
-    app: &App,
-    api: &Api,
-    bot: &str,
-    since: &mut Option<String>,
-    wake: &Notify,
-) -> Result<(u64, Option<String>)> {
+async fn poll_once(app: &App, api: &Api, bot: &str, since: &mut Option<String>) -> Result<u64> {
     let (interval, last_modified, threads, newest) = match api.list(bot, since.as_deref()).await? {
-        Answer::NotModified { interval } => return Ok((interval, None)),
+        Answer::NotModified { interval } => return Ok(interval),
         Answer::Changed {
             interval,
             last_modified,
@@ -424,39 +320,21 @@ async fn poll_once(
             newest,
         } => (interval, last_modified, threads, newest),
     };
-    let numbers: Vec<u64> = threads.iter().map(|t| t.number).collect();
-    crate::archive::mark_due(app, REPO, &numbers);
-    let mut client = client(app, bot).await;
-    let applied = apply(
-        api,
-        bot,
-        &app.store,
-        &mut client,
-        &app.notifications,
-        &threads,
-        newest,
-    )
-    .await?;
-    if applied.stored > 0 {
-        wake.notify_one();
-    }
-    if applied.failed.is_none() {
-        *since = last_modified;
-    }
-    Ok((interval, applied.failed))
+    let mark = |numbers: &[u64]| crate::archive::mark_due(app, REPO, numbers);
+    apply(api, bot, mark, &app.notifications, &threads, newest).await?;
+    *since = last_modified;
+    Ok(interval)
 }
 
 /// Polls the notifications of the bot account at the interval GitHub asks
-/// for.
+/// for, and marks the items of the threads due in the archive.
 pub async fn run(app: Arc<App>, token: Arc<Secret>) {
     let api = Api::new(API);
-    let wake = Arc::new(Notify::new());
-    tokio::spawn(recompute_soon(app.clone(), wake.clone()));
     let mut since = None;
     loop {
-        let wait = match poll_once(&app, &api, &token.get(), &mut since, &wake).await {
-            Ok((interval, failed)) => {
-                app.notifications.polled(Utc::now(), interval, failed);
+        let wait = match poll_once(&app, &api, &token.get(), &mut since).await {
+            Ok(interval) => {
+                app.notifications.polled(Utc::now(), interval, None);
                 interval
             }
             Err(e) => {
@@ -477,9 +355,8 @@ mod tests {
     use axum::extract::{Query, State};
     use axum::http::{HeaderMap, StatusCode};
     use axum::response::IntoResponse;
-    use axum::routing::{get, post};
+    use axum::routing::get;
     use std::collections::HashMap;
-    use std::path::Path;
 
     fn note(id: &str, repo: &str, kind: &str, url: &str, at: &str) -> Value {
         json!({
@@ -556,25 +433,12 @@ mod tests {
         assert_eq!(v["last_error"]["message"], "boom");
     }
 
-    #[test]
-    fn the_walk_waits_only_while_the_poller_is_healthy() {
-        let now = Utc::now();
-        let ago = |m: i64| Some(now - Duration::minutes(m));
-        assert!(walk_due(false, true, ago(1), now));
-        assert!(walk_due(true, false, ago(1), now));
-        assert!(walk_due(true, true, None, now));
-        assert!(!walk_due(true, true, ago(20), now));
-        assert!(walk_due(true, true, ago(29), now));
-        assert!(walk_due(true, true, ago(31), now));
-    }
-
     const LAST_MODIFIED: &str = "Sat, 17 Oct 2026 10:00:00 GMT";
 
     #[derive(Default)]
     struct Fake {
         base: Mutex<String>,
         marked: Mutex<Vec<Value>>,
-        graphql_fails: bool,
     }
 
     async fn list(
@@ -631,28 +495,12 @@ mod tests {
         StatusCode::RESET_CONTENT
     }
 
-    async fn graphql(State(f): State<Arc<Fake>>) -> axum::response::Response {
-        if f.graphql_fails {
-            return StatusCode::BAD_GATEWAY.into_response();
-        }
-        let item = |n: u64| {
-            json!({ "number": n, "title": "t", "url": "u", "state": "OPEN",
-                    "createdAt": "2026-10-01T00:00:00Z", "updatedAt": "2026-10-17T09:59:00Z" })
-        };
-        axum::Json(json!({ "data": {
-            "rateLimit": { "remaining": 5000 },
-            "repository": { "p7": item(7), "i9": item(9) },
-        } }))
-        .into_response()
-    }
-
     async fn serve(fake: Arc<Fake>) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         *fake.base.lock().unwrap() = base.clone();
         let app = Router::new()
             .route("/notifications", get(list).put(mark))
-            .route("/graphql", post(graphql))
             .with_state(fake);
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         base
@@ -684,11 +532,8 @@ mod tests {
         }
     }
 
-    async fn applied(fails: bool) -> (Applied, Arc<Fake>, Store) {
-        let fake = Arc::new(Fake {
-            graphql_fails: fails,
-            ..Default::default()
-        });
+    async fn applied(fails: bool) -> (Result<usize>, Vec<u64>, Arc<Fake>) {
+        let fake = Arc::new(Fake::default());
         let base = serve(fake.clone()).await;
         let api = Api::new(&base);
         let Answer::Changed {
@@ -697,34 +542,30 @@ mod tests {
         else {
             panic!("first poll must list the threads");
         };
-        let store = Store::open(Path::new(":memory:")).unwrap();
-        let mut client = github::Client::at(&format!("{base}/graphql"), vec!["t".into()]);
+        let mut due = Vec::new();
         let status = Status::on();
-        let a = apply(&api, "t", &store, &mut client, &status, &threads, newest)
-            .await
-            .unwrap();
-        (a, fake, store)
+        let mark = |n: &[u64]| {
+            due.extend_from_slice(n);
+            if fails { bail!("disk full") } else { Ok(()) }
+        };
+        let r = apply(&api, "t", mark, &status, &threads, newest).await;
+        (r, due, fake)
     }
 
     #[tokio::test]
-    async fn changed_items_are_stored_and_marked_read() {
-        let (a, fake, store) = applied(false).await;
-        assert_eq!(a.stored, 2);
-        assert!(a.failed.is_none());
-        assert_eq!(store.prs().unwrap()[0].number, 7);
-        assert_eq!(store.issues().unwrap()[0].number, 9);
+    async fn changed_items_are_marked_due_then_read() {
+        let (r, due, fake) = applied(false).await;
+        assert_eq!(r.unwrap(), 2);
+        assert_eq!(due, [7, 9]);
         let marked = fake.marked.lock().unwrap();
         assert_eq!(marked.len(), 1);
         assert_eq!(marked[0]["last_read_at"], "2026-10-17T09:59:30Z");
     }
 
     #[tokio::test]
-    async fn a_failed_fetch_stays_unread() {
-        let (a, fake, store) = applied(true).await;
-        assert_eq!(a.stored, 0);
-        assert!(a.failed.is_some());
-        assert!(store.prs().unwrap().is_empty());
-        let marked = fake.marked.lock().unwrap();
-        assert_eq!(marked[0]["last_read_at"], "2026-10-17T09:57:59Z");
+    async fn a_failed_mark_stays_unread() {
+        let (r, _, fake) = applied(true).await;
+        assert!(r.is_err());
+        assert!(fake.marked.lock().unwrap().is_empty());
     }
 }

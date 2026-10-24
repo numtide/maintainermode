@@ -475,6 +475,24 @@ impl Archive {
         Ok(Some(Item { kind, json }))
     }
 
+    /// Up to `limit` stored items with a number above `after`, in order.
+    fn items_after(&self, after: u64, limit: usize) -> Result<Vec<(u64, Value)>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT number, data FROM item WHERE data IS NOT NULL AND number > ?1
+             ORDER BY number LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![after as i64, limit as i64], |r| {
+            Ok((r.get::<_, i64>(0)? as u64, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (n, z) = row?;
+            out.push((n, serde_json::from_slice(&zstd::decode_all(z.as_slice())?)?));
+        }
+        Ok(out)
+    }
+
     fn updated_at(&self, number: u64) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
         Ok(conn
@@ -671,7 +689,6 @@ impl Archive {
             "items_per_pass": self.budget,
             "last_pass": self.get("pass_ended")?,
             "last_error": self.get("last_error")?.filter(|e| !e.is_empty()),
-            "shadow": self.get("shadow")?.and_then(|s| serde_json::from_str::<Value>(&s).ok()),
         }))
     }
 
@@ -780,6 +797,10 @@ struct Pass<'a> {
     a: &'a Archive,
     client: &'a mut github::Client,
     remaining: i64,
+    /// The rows of the main database to write from each stored item; only
+    /// for the nixpkgs archive.
+    rows: Option<crate::project::Rows>,
+    written: usize,
 }
 
 /// GitHub drops an item at the boundary when it pages a filtered timeline
@@ -972,6 +993,11 @@ impl Pass<'_> {
         for (k, item) in &items {
             a.put(*k, item, now)?;
         }
+        if let Some(rows) = self.rows {
+            let items: Vec<(u64, Value)> =
+                items.into_iter().filter(|(_, v)| !v.is_null()).collect();
+            self.written += crate::project::write(self.store, rows, &items)?;
+        }
         Ok(())
     }
 
@@ -1050,14 +1076,27 @@ fn hints(log: &crate::events::Log, a: &Archive, now: DateTime<Utc>) -> Result<us
     Ok(n)
 }
 
-/// One pass over one repository: the event hints, the listing of recent
-/// updates, the due items, then the walk back through history.
+/// What one pass did.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Done {
+    /// Items fetched and stored, or put off.
+    pub(crate) fetched: usize,
+    /// Rows written to the main database.
+    pub(crate) written: usize,
+    /// The token ran low: due items may wait.
+    pub(crate) low: bool,
+}
+
+/// One pass over one repository: the event hints, the listings, the due
+/// items, then the walk back through history. A client on lent tokens
+/// never walks back through history.
 async fn pass(
     store: &Store,
     events: &crate::events::Log,
     a: &Archive,
     client: &mut github::Client,
-) -> Result<usize> {
+    rows: Option<crate::project::Rows>,
+) -> Result<Done> {
     let now = Utc::now();
     if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
         hints(events, a, now)?;
@@ -1067,6 +1106,8 @@ async fn pass(
         a,
         client,
         remaining: i64::MAX,
+        rows,
+        written: 0,
     };
     for field in FIELDS {
         if a.get(&Listing::Open.keys(field).2)?.is_none() {
@@ -1082,25 +1123,25 @@ async fn pass(
     let mut fetched = done;
     let listed = Listing::Recent.done(a)? && a.open_complete()?;
     let left = a.budget.saturating_sub(due.len());
-    if listed && left > 0 && a.get("backfill_done")?.is_none() && !p.low() {
-        let Some(top) = a.num("top")? else {
-            return Ok(fetched);
-        };
-        let cursor = a.num("cursor")?.unwrap_or(top + 1).max(1) as u64;
-        let back = a.missing_below(cursor, left)?;
-        let mut done = 0;
-        let r = p.fetch(&back, &mut done, RETRY_BACKFILL).await;
-        fetched += done;
-        let reached = match done {
-            0 if back.is_empty() => 1,
-            0 => cursor,
-            d => back[d - 1],
-        };
-        a.set("cursor", &reached.to_string())?;
-        if reached <= 1 && a.stored_up_to(top as u64)? {
-            a.set("backfill_done", &Utc::now().to_rfc3339())?;
+    let backfill = listed && left > 0 && !p.client.is_lent();
+    if backfill && a.get("backfill_done")?.is_none() && !p.low() {
+        if let Some(top) = a.num("top")? {
+            let cursor = a.num("cursor")?.unwrap_or(top + 1).max(1) as u64;
+            let back = a.missing_below(cursor, left)?;
+            let mut done = 0;
+            let r = p.fetch(&back, &mut done, RETRY_BACKFILL).await;
+            fetched += done;
+            let reached = match done {
+                0 if back.is_empty() => 1,
+                0 => cursor,
+                d => back[d - 1],
+            };
+            a.set("cursor", &reached.to_string())?;
+            if reached <= 1 && a.stored_up_to(top as u64)? {
+                a.set("backfill_done", &Utc::now().to_rfc3339())?;
+            }
+            r?;
         }
-        r?;
     }
     if p.low() {
         tracing::info!(
@@ -1108,117 +1149,103 @@ async fn pass(
             a.repo
         );
     }
-    Ok(fetched)
+    Ok(Done {
+        fetched,
+        written: p.written,
+        low: p.low(),
+    })
 }
 
-/// Rows compared per kind after each pass: the ones the sync updated last.
-const SHADOW_SAMPLE: usize = 500;
-const SHADOW_EXAMPLES: usize = 10;
-
-#[derive(Default)]
-struct Shadow {
-    compared: usize,
-    differ: usize,
-    /// Not in the archive, or archived at another `updatedAt`.
-    skipped: usize,
-    examples: Vec<Value>,
-}
-
-impl Shadow {
-    fn check<T: serde::Serialize>(
-        &mut self,
-        a: &Archive,
-        number: u64,
-        updated_at: DateTime<Utc>,
-        project: impl Fn(&Value) -> Option<(T, &'static [&'static str])>,
-        stored: &T,
-    ) -> Result<()> {
-        let Some(json) = a.item(number)?.and_then(|i| i.json) else {
-            self.skipped += 1;
-            return Ok(());
-        };
-        let item: Value = serde_json::from_str(&json)?;
-        let same_time = github::time(&item["updatedAt"]) == Some(updated_at);
-        if !same_time {
-            self.skipped += 1;
-            return Ok(());
-        }
-        self.compared += 1;
-        let (fields, values) = match project(&item) {
-            Some((p, skip)) => {
-                let fields = crate::project::differ(&p, stored, skip);
-                let values = short_values(&p, stored, &fields);
-                (fields, values)
-            }
-            None => (vec!["kind".into()], json!({})),
-        };
-        if !fields.is_empty() {
-            self.differ += 1;
-            if self.examples.len() < SHADOW_EXAMPLES {
-                self.examples
-                    .push(json!({ "number": number, "fields": fields, "values": values }));
-            }
-        }
-        Ok(())
+/// The `sync` command: full passes of the nixpkgs archive `a` with `client`
+/// until the open items and the recent updates are stored, and with
+/// `history` until the walk back through history ends.
+pub async fn sync_once(
+    store: &Store,
+    events: &crate::events::Log,
+    a: &Archive,
+    client: &mut github::Client,
+    history_from: DateTime<Utc>,
+    history: bool,
+) -> Result<Done> {
+    let rows = crate::project::Rows::at(Utc::now(), history_from);
+    if store.get(PROJECTED)?.is_none() {
+        backfill(store, a, rows)?;
     }
-}
-
-/// Bytes of JSON per field, above which an example gives no values.
-const SHADOW_VALUE_BYTES: usize = 600;
-
-/// `{field: [projected, stored]}` for each short field in `fields`.
-fn short_values<T: serde::Serialize>(projected: &T, stored: &T, fields: &[String]) -> Value {
-    let (a, b) = (json!(projected), json!(stored));
-    let mut out = serde_json::Map::new();
-    for f in fields {
-        let pair = json!([a[f], b[f]]);
-        if pair.to_string().len() <= SHADOW_VALUE_BYTES {
-            out.insert(f.clone(), pair);
+    let mut total = Done::default();
+    loop {
+        let d = pass(store, events, a, client, Some(rows)).await?;
+        total.fetched += d.fetched;
+        total.written += d.written;
+        let listed = Listing::Recent.done(a)? && a.open_complete()?;
+        let walked = !history || a.get("backfill_done")?.is_some();
+        if listed && walked {
+            return Ok(total);
+        }
+        if d.low || (d.fetched == 0 && listed) {
+            total.low = d.low;
+            return Ok(total);
         }
     }
-    Value::Object(out)
 }
 
-/// Compares the projection of the archived items with the `pr`, `issue`
-/// and `history` rows that the walks wrote, and keeps the counts in the
-/// archive file. It writes nothing to the main database.
-fn shadow(store: &Store, a: &Archive, now: DateTime<Utc>) -> Result<()> {
-    use crate::project::NOT_ARCHIVED;
-    let mut s = Shadow::default();
-    let live = store.live()?;
-    for p in store.recent_prs(SHADOW_SAMPLE)? {
-        let l = live.get(&p.number);
-        let project = |item: &Value| {
-            let got = crate::project::pr_live(item, l)?;
-            let known = l.is_some_and(|l| l.head_oid == got.head_oid);
-            Some((got, if known { &[][..] } else { &NOT_ARCHIVED[..] }))
+/// Stored items read per step of [`backfill`].
+const BACKFILL_CHUNK: usize = 1000;
+
+/// The main database key that says the rows of the main database come
+/// from the archive.
+pub(crate) const PROJECTED: &str = "archive_projected";
+
+/// Writes the rows of every stored item into the main database, once: a new
+/// deployment with a copied archive, or a server that the sync filled
+/// before. It first keeps the live fields of the open `pr` rows.
+pub(crate) fn backfill(store: &Store, a: &Archive, rows: crate::project::Rows) -> Result<usize> {
+    store.seed_live()?;
+    let (mut written, mut after) = (0, 0);
+    loop {
+        let chunk = a.items_after(after, BACKFILL_CHUNK)?;
+        let Some((last, _)) = chunk.last() else {
+            break;
         };
-        s.check(a, p.number, p.updated_at, project, &p)?;
+        after = *last;
+        written += crate::project::write(store, rows, &chunk)?;
     }
-    for i in store.recent_issues(SHADOW_SAMPLE)? {
-        let project = |item: &Value| Some((crate::project::issue(item)?, &[][..]));
-        s.check(a, i.number, i.updated_at, project, &i)?;
+    for key in OLD_WALK_KEYS {
+        store.delete_key(key)?;
     }
-    for f in store.recent_facts(SHADOW_SAMPLE)? {
-        let l = live.get(&f.number);
-        let project = |item: &Value| Some((crate::project::facts_live(item, l)?, &[][..]));
-        s.check(a, f.number, f.updated_at, project, &f)?;
-    }
-    let v = json!({
-        "at": now.to_rfc3339(),
-        "compared": s.compared,
-        "differ": s.differ,
-        "skipped": s.skipped,
-        "examples": s.examples,
-    });
-    a.set("shadow", &v.to_string())
+    store.set(PROJECTED, &Utc::now().to_rfc3339())?;
+    Ok(written)
 }
 
-const NO_TOKEN: &str =
-    "no GitHub App token and no bot token; the walk does not use the tokens that people lend";
+/// The state of the sync walk and the history walk, which the archive
+/// replaces.
+const OLD_WALK_KEYS: [&str; 15] = [
+    "open_cursor",
+    "open_done",
+    "recent_cursor",
+    "recent_started",
+    "watermark",
+    "last_sync",
+    "walk_at",
+    "issues_open_cursor",
+    "issues_open_done",
+    "issues_recent_cursor",
+    "issues_recent_started",
+    "issues_watermark",
+    "history_cursor",
+    "history_done",
+    "history_since",
+];
 
-/// The server's own tokens only: a token that a person lent pays for
-/// their own reviews, not for the archive.
+/// The rows of the main database come from the nixpkgs archive only.
+fn rows_of(a: &Archive, history_from: DateTime<Utc>) -> Option<crate::project::Rows> {
+    a.repo
+        .eq_ignore_ascii_case(crate::events::REPO)
+        .then(|| crate::project::Rows::at(Utc::now(), history_from))
+}
+
+const NO_TOKEN: &str = "no GitHub App token, no bot token and no lent token";
+
+/// The server's own tokens: the GitHub App, then the bot.
 pub(crate) async fn tokens(app: &App) -> Vec<String> {
     let mut tokens = Vec::new();
     if let Some(g) = &app.github_app {
@@ -1236,9 +1263,10 @@ async fn due_pass(
     events: &crate::events::Log,
     a: &Archive,
     client: &mut github::Client,
-) -> Result<usize> {
+    rows: Option<crate::project::Rows>,
+) -> Result<Done> {
     if a.is_private() {
-        return Ok(0);
+        return Ok(Done::default());
     }
     if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
         hints(events, a, Utc::now())?;
@@ -1250,22 +1278,28 @@ async fn due_pass(
         a,
         client,
         remaining: i64::MAX,
+        rows,
+        written: 0,
     };
     p.fetch(&due, &mut done, RETRY_DUE).await?;
-    Ok(done)
+    Ok(Done {
+        fetched: done,
+        written: p.written,
+        low: p.low(),
+    })
 }
 
 /// Marks numbers of `repo` due now, when this server archives it.
-pub(crate) fn mark_due(app: &App, repo: &str, numbers: &[u64]) {
+pub(crate) fn mark_due(app: &App, repo: &str, numbers: &[u64]) -> Result<()> {
     for a in app
         .archive
         .iter()
         .filter(|a| a.repo.eq_ignore_ascii_case(repo))
     {
-        if let Err(e) = a.mark(numbers) {
-            tracing::warn!("archive {}: mark due: {e:#}", a.repo);
-        }
+        a.mark(numbers)
+            .with_context(|| format!("archive {}: mark due", a.repo))?;
     }
+    Ok(())
 }
 
 /// Waits for a due mark on any archive.
@@ -1276,78 +1310,164 @@ async fn marked(archives: &[Arc<Archive>]) {
     futures_util::future::select_all(archives.iter().map(|a| Box::pin(a.wake.notified()))).await;
 }
 
-/// The background walk, in its own task so it never delays the sync. A
-/// full pass runs every `PASS_EVERY`; a new event or a due mark runs a due
-/// pass in between.
-pub async fn walk(app: Arc<App>) {
+/// The least time between two recomputes after rows change.
+const RECOMPUTE_EVERY: StdDuration = StdDuration::from_secs(30);
+
+async fn recompute(app: &Arc<App>) {
+    let a = app.clone();
+    match tokio::task::spawn_blocking(move || {
+        a.recompute()?;
+        crate::notify::recount(&a);
+        anyhow::Ok(())
+    })
+    .await
+    {
+        Ok(Err(e)) => tracing::warn!("archive: recompute: {e:#}"),
+        Err(e) => tracing::warn!("archive: recompute: {e}"),
+        Ok(Ok(())) => {}
+    }
+}
+
+/// One pass, full or due only, of each archive with `client`.
+async fn run_all(
+    app: &Arc<App>,
+    client: &mut github::Client,
+    full: bool,
+    history_from: DateTime<Utc>,
+) -> Done {
+    let mut total = Done::default();
+    for a in &app.archive {
+        let started = Utc::now();
+        let rows = rows_of(a, history_from);
+        let r = if full {
+            pass(&app.store, &app.events, a, client, rows).await
+        } else {
+            due_pass(&app.store, &app.events, a, client, rows).await
+        };
+        match r {
+            Ok(d) => {
+                if d.fetched > 0 {
+                    tracing::info!(
+                        "archive {}: {} items, {} rows{}",
+                        a.repo,
+                        d.fetched,
+                        d.written,
+                        if client.is_lent() {
+                            ", on lent tokens"
+                        } else {
+                            ""
+                        }
+                    );
+                }
+                total.fetched += d.fetched;
+                total.written += d.written;
+                total.low |= d.low;
+                if full {
+                    let _ = a.set("last_error", "");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("archive {}: {e:#}", a.repo);
+                let _ = a.set("last_error", &format!("{e:#}"));
+                total.low |= !client.has_token();
+            }
+        }
+        if full {
+            let _ = a.set("pass_ended", &Utc::now().to_rfc3339());
+            let _ = a.mark_pace(Utc::now());
+            let _ = a.set(
+                "pass_seconds",
+                &(Utc::now() - started).num_seconds().to_string(),
+            );
+        }
+    }
+    total
+}
+
+/// The background walk: the one fetcher of issues and pull requests. A full
+/// pass runs every `PASS_EVERY`; a new event or a due mark runs a due pass
+/// in between. Each stored nixpkgs item writes its rows of the main
+/// database, and a change of rows recomputes the pages at most every
+/// `RECOMPUTE_EVERY`.
+///
+/// The server's tokens pay for the walk. When they have no budget left, or
+/// the server has none, the tokens that people lent pay for the listings
+/// and the due items only, each at most a tenth of its budget per rate
+/// limit window (`github::Client::lent`).
+pub async fn walk(app: Arc<App>, history_since: chrono::NaiveDate) {
+    let history_from = history_since.and_hms_opt(0, 0, 0).unwrap().and_utc();
+    if let Some(a) = app
+        .archive
+        .iter()
+        .find(|a| a.repo.eq_ignore_ascii_case(crate::events::REPO))
+    {
+        if app.store.get(PROJECTED).ok().flatten().is_none() {
+            let (app2, a2) = (app.clone(), a.clone());
+            let rows = crate::project::Rows::at(Utc::now(), history_from);
+            match tokio::task::spawn_blocking(move || backfill(&app2.store, &a2, rows)).await {
+                Ok(Ok(n)) => {
+                    tracing::info!("archive {}: {n} rows written from the archive", a.repo)
+                }
+                Ok(Err(e)) => tracing::warn!("archive {}: rows from the archive: {e:#}", a.repo),
+                Err(e) => tracing::warn!("archive {}: rows from the archive: {e}", a.repo),
+            }
+            recompute(&app).await;
+        }
+    } else {
+        tracing::warn!(
+            "no archive of {}: this server has no pull requests or issues",
+            crate::events::REPO
+        );
+    }
     let mut said = false;
     let mut events = app.events.subscribe();
     let mut last_full: Option<std::time::Instant> = None;
+    let mut changed = false;
+    let mut last_recompute: Option<std::time::Instant> = None;
     loop {
         let every = StdDuration::from_secs(PASS_EVERY);
         let full = last_full.is_none_or(|t| t.elapsed() >= every);
         if full {
             last_full = Some(std::time::Instant::now());
         }
-        let mut client = github::Client::new(tokens(&app).await);
-        if !client.has_token() {
-            if !said {
-                tracing::info!("archive: {NO_TOKEN}");
-                said = true;
-            }
-            for a in &app.archive {
-                let _ = a.set("last_error", NO_TOKEN);
-            }
-        } else if !full {
-            for a in &app.archive {
-                match due_pass(&app.store, &app.events, a, &mut client).await {
-                    Ok(0) => {}
-                    Ok(n) => tracing::info!("archive {}: {n} due items", a.repo),
-                    Err(e) => {
-                        tracing::warn!("archive {}: {e:#}", a.repo);
-                        let _ = a.set("last_error", &format!("{e:#}"));
-                    }
+        let mut server = github::Client::new(tokens(&app).await);
+        let mut done = Done {
+            low: !server.has_token(),
+            ..Done::default()
+        };
+        if server.has_token() {
+            done = run_all(&app, &mut server, full, history_from).await;
+        }
+        if done.low {
+            let lent = app.store.lent_tokens().unwrap_or_default();
+            if lent.is_empty() && !server.has_token() {
+                if !said {
+                    tracing::info!("archive: {NO_TOKEN}");
+                    said = true;
                 }
-            }
-        } else {
-            for a in &app.archive {
-                let started = Utc::now();
-                match pass(&app.store, &app.events, a, &mut client).await {
-                    Ok(n) => {
-                        if n > 0 {
-                            tracing::info!("archive {}: {n} items", a.repo);
-                        }
-                        let _ = a.set("last_error", "");
-                    }
-                    Err(e) => {
-                        tracing::warn!("archive {}: {e:#}", a.repo);
-                        let _ = a.set("last_error", &format!("{e:#}"));
-                    }
+                for a in &app.archive {
+                    let _ = a.set("last_error", NO_TOKEN);
                 }
-                let _ = a.set("pass_ended", &Utc::now().to_rfc3339());
-                let _ = a.mark_pace(Utc::now());
-                let _ = a.set(
-                    "pass_seconds",
-                    &(Utc::now() - started).num_seconds().to_string(),
-                );
-                if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
-                    let (app, archive) = (app.clone(), a.clone());
-                    let r = tokio::task::spawn_blocking(move || {
-                        shadow(&app.store, &archive, Utc::now())
-                    })
-                    .await
-                    .map_err(anyhow::Error::from)
-                    .and_then(|r| r);
-                    if let Err(e) = r {
-                        tracing::warn!("archive {}: shadow projection: {e:#}", a.repo);
-                    }
-                }
+            } else if !lent.is_empty() {
+                let mut client = github::Client::lent(lent);
+                let d = run_all(&app, &mut client, full && !server.has_token(), history_from).await;
+                done.written += d.written;
             }
+        }
+        changed |= done.written > 0;
+        if changed && last_recompute.is_none_or(|t| t.elapsed() >= RECOMPUTE_EVERY) {
+            recompute(&app).await;
+            last_recompute = Some(std::time::Instant::now());
+            changed = false;
         }
         let since = last_full.map_or(every, |t| t.elapsed());
         let mut wait = every.saturating_sub(since);
         if full {
             wait = wait.max(StdDuration::from_secs(30));
+        }
+        if changed {
+            let since = last_recompute.map_or(RECOMPUTE_EVERY, |t| t.elapsed());
+            wait = wait.min(RECOMPUTE_EVERY.saturating_sub(since));
         }
         tokio::select! {
             _ = tokio::time::sleep(wait) => {}
@@ -1451,8 +1571,8 @@ mod tests {
     }
 
     #[test]
-    fn shadow_counts_rows_that_differ() {
-        let dir = tmp("shadow");
+    fn backfill_writes_rows_and_keeps_a_newer_row() {
+        let dir = tmp("backfill");
         let a = Archive::open(&dir, "NixOS/nixpkgs", 10).unwrap();
         let store = Store::open(Path::new(":memory:")).unwrap();
         let f = crate::project::tests::fixtures();
@@ -1460,33 +1580,34 @@ mod tests {
         for n in [300123, 350000, 453372] {
             a.put(n, &f["archive"][n.to_string()], now).unwrap();
         }
-        let same = crate::project::pr(&f["archive"]["300123"]).unwrap();
-        let mut renamed = crate::project::pr(&f["archive"]["350000"]).unwrap();
-        renamed.title.push('!');
-        let mut later = crate::project::pr(&f["archive"]["444470"]).unwrap();
-        later.updated_at = now;
-        store.put_prs(&[same, renamed, later]).unwrap();
-        store
-            .put_issues(&[crate::project::issue(&f["archive"]["453372"]).unwrap()])
-            .unwrap();
-        store
-            .put_facts(&[crate::project::facts(&f["archive"]["300123"]).unwrap()])
-            .unwrap();
-        shadow(&store, &a, now).unwrap();
-        let s = &a.progress(now).unwrap()["shadow"];
-        assert_eq!(s["compared"], 4);
-        assert_eq!(s["differ"], 1);
-        assert_eq!(s["skipped"], 1);
-        let e = &s["examples"][0];
+        let mut newer = crate::project::pr(&f["archive"]["350000"]).unwrap();
+        newer.title.push('!');
+        newer.updated_at = now;
+        store.put_prs(std::slice::from_ref(&newer)).unwrap();
+        let long_ago = "2000-01-01T00:00:00Z".parse().unwrap();
+        let rows = crate::project::Rows {
+            window_from: long_ago,
+            history_from: long_ago,
+        };
+        assert_eq!(backfill(&store, &a, rows).unwrap(), 5);
+        let prs = store.prs().unwrap();
+        let get = |n: u64| prs.iter().find(|p| p.number == n).unwrap();
         assert_eq!(
-            (&e["number"], &e["fields"]),
-            (&json!(350000), &json!(["title"]))
+            get(300123).title,
+            crate::project::pr(&f["archive"]["300123"]).unwrap().title
         );
-        let (p, st) = (
-            e["values"]["title"][0].as_str().unwrap(),
-            e["values"]["title"][1].as_str().unwrap(),
+        assert_eq!(get(350000).title, newer.title);
+        assert_eq!(store.issues().unwrap()[0].number, 453372);
+        assert_eq!(store.facts().unwrap().len(), 2);
+        assert!(store.get(PROJECTED).unwrap().is_some());
+        let recent = crate::project::Rows::at(now, now);
+        store.put_prs(&[]).unwrap();
+        assert_eq!(
+            crate::project::write(&store, recent, &[(300123, f["archive"]["300123"].clone())])
+                .unwrap(),
+            0,
+            "a closed pull request out of the window and before history writes nothing"
         );
-        assert_eq!(format!("{p}!"), st);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1695,15 +1816,15 @@ mod tests {
         async fn try_pass(&self, budget: usize) -> (Archive, Result<usize>) {
             let a = Archive::open(&self.dir, "NixOS/nixpkgs", budget).unwrap();
             let mut client = github::Client::at(&self.url, vec!["t".into()]);
-            let r = pass(&self.store, &self.events, &a, &mut client).await;
-            (a, r)
+            let r = pass(&self.store, &self.events, &a, &mut client, rows()).await;
+            (a, r.map(|d| d.fetched))
         }
 
         /// One pass with a fresh `Archive`, as after a restart.
         async fn pass(&self, budget: usize) -> Archive {
             let a = Archive::open(&self.dir, "NixOS/nixpkgs", budget).unwrap();
             let mut client = github::Client::at(&self.url, vec!["t".into()]);
-            pass(&self.store, &self.events, &a, &mut client)
+            pass(&self.store, &self.events, &a, &mut client, rows())
                 .await
                 .unwrap();
             a
@@ -1712,11 +1833,16 @@ mod tests {
         async fn due_pass(&self) -> (Archive, usize) {
             let a = Archive::open(&self.dir, "NixOS/nixpkgs", 100).unwrap();
             let mut client = github::Client::at(&self.url, vec!["t".into()]);
-            let n = due_pass(&self.store, &self.events, &a, &mut client)
+            let d = due_pass(&self.store, &self.events, &a, &mut client, rows())
                 .await
                 .unwrap();
-            (a, n)
+            (a, d.fetched)
         }
+    }
+
+    fn rows() -> Option<crate::project::Rows> {
+        let from = "2020-01-01T00:00:00Z".parse().unwrap();
+        Some(crate::project::Rows::at(Utc::now(), from))
     }
 
     #[tokio::test]

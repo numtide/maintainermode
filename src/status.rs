@@ -13,10 +13,6 @@ fn time(app: &App, key: &str) -> Option<DateTime<Utc>> {
     app.store.get_time(key).ok().flatten()
 }
 
-fn has(app: &App, key: &str) -> bool {
-    app.store.get(key).ok().flatten().is_some()
-}
-
 fn num(app: &App, key: &str) -> Option<i64> {
     app.store.get(key).ok().flatten()?.parse().ok()
 }
@@ -78,17 +74,6 @@ fn email(app: &App) -> Value {
     })
 }
 
-fn notifications(app: &App, sync_every: i64) -> Value {
-    let now = Utc::now();
-    let mut v = app.notifications.json(now);
-    v["walk_every_seconds"] = json!(if app.notifications.healthy(now) {
-        crate::notifications::WALK_EVERY_WHEN_HEALTHY.max(sync_every)
-    } else {
-        sync_every
-    });
-    v
-}
-
 pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
@@ -124,18 +109,10 @@ pub(crate) fn state(app: &App) -> Value {
     let sync_every = num(app, "sync_every").unwrap_or(600);
     let pass_seconds = num(app, "pass_seconds");
     json!({
-        "pull_requests": {
-            "stored": s.prs,
-            "open_walk_done": has(app, "open_done"),
-            "last_pass": time(app, "last_sync"),
-            "up_to": time(app, "watermark"),
-        },
-        "issues": {
-            "stored": s.issues.len(),
-            "open_walk_done": has(app, "issues_open_done"),
-            "up_to": time(app, "issues_watermark"),
-        },
-        "history": { "done": has(app, "history_done") },
+        "pull_requests": { "stored": s.prs },
+        "issues": { "stored": s.issues.len() },
+        "history": { "done": app.history_complete() },
+        "rows_from_archive_at": time(app, crate::archive::PROJECTED),
         "live": live(app),
         "index": {
             "rev": rev, "at": time(app, "index_at"),
@@ -162,7 +139,7 @@ pub(crate) fn state(app: &App) -> Value {
             "last_seconds": pass_seconds,
             "worst_delay_seconds": pass_seconds.map(|p| sync_every + p),
         },
-        "notifications": notifications(app, sync_every),
+        "notifications": app.notifications.json(Utc::now()),
         "hydra": app.hydra.stats(),
         "hydra_builds": app.hydra.builds.stats(),
         "rescans": rescans(app),
@@ -348,27 +325,17 @@ pub(crate) fn body(app: &App) -> String {
     out.push_str(&kv(
         "Pull requests",
         format!(
-            "{} stored · {} · updates read up to {}",
+            "{} stored: the open ones and those updated in the last {} days, from the archive",
             p["stored"],
-            done(
-                &p["open_walk_done"],
-                "every open one read",
-                "first read of the open ones in progress"
-            ),
-            when(&p["up_to"])
+            crate::ledger::WINDOW_DAYS
         ),
     ));
     out.push_str(&kv(
         "Issues",
         format!(
-            "{} stored · {} · updates read up to {}",
+            "{} stored: the open ones and those updated in the last {} days, from the archive",
             i["stored"],
-            done(
-                &i["open_walk_done"],
-                "every open one read",
-                "first read of the open ones in progress"
-            ),
-            when(&i["up_to"])
+            crate::ledger::WINDOW_DAYS
         ),
     ));
     let l = &v["live"];
@@ -387,7 +354,7 @@ pub(crate) fn body(app: &App) -> String {
         done(
             &v["history"]["done"],
             "complete",
-            "in progress: the numbers on the state of nixpkgs grow while it reads",
+            "in progress: the archive walks back through history, and the numbers on the state of nixpkgs grow while it reads",
         ),
     ));
     out.push_str(&kv(
@@ -427,29 +394,9 @@ pub(crate) fn body(app: &App) -> String {
         &if on {
             notifications_row(n)
         } else {
-            "off: this server has no token of a bot account, so a change waits for the next update"
+            "off: this server has no token of a bot account, so a change waits for the next archive pass"
                 .to_string()
         },
-    ));
-    out.push_str(&kv(
-        "Full walk",
-        format!(
-            "every update reads the pull requests and issues that changed since the last walk, \
-             one every {} · {}",
-            minutes(n["walk_every_seconds"].as_i64().unwrap_or(600)),
-            if healthy {
-                "the notifications poller is healthy, so the walk is only the safety net"
-                    .to_string()
-            } else {
-                format!(
-                    "it runs every {} while the notifications poller is healthy",
-                    minutes(
-                        crate::notifications::WALK_EVERY_WHEN_HEALTHY
-                            .max(n["walk_every_seconds"].as_i64().unwrap_or(600))
-                    )
-                )
-            }
-        ),
     ));
     out.push_str("</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">nixpkgs and package health</h2></div>");
     out.push_str(&kv(
@@ -610,39 +557,31 @@ pub(crate) fn body(app: &App) -> String {
         }
         out.push_str("</div>");
     }
-    let worst = pass["worst_delay_seconds"].as_i64();
     let walk_delay = format!(
-        "up to <strong>{}</strong> later{}",
-        worst
-            .map(minutes)
-            .unwrap_or_else(|| minutes(pass["every_seconds"].as_i64().unwrap_or(600))),
-        if worst.is_some() {
-            " (the interval plus the duration of the last update)"
-        } else {
-            ""
-        },
+        "up to <strong>{}</strong> later (the archive lists the updates on each pass)",
+        minutes(crate::archive::PASS_EVERY as i64)
     );
     let now = if healthy {
         format!(
             "<p>A bot account watches nixpkgs, and GitHub notifies it of each issue and pull request that changes. \
-             This server reads those notifications every {}, and reads each changed item again at once. \
+             This server reads those notifications every {}, and the archive reads each changed item again within seconds. \
              A review, push or merge on GitHub shows here in <strong>about a minute</strong>{}. \
-             The full walk runs every {}, for anything the notifications miss.</p>",
+             Each archive pass also lists the updates, every {}, for anything the notifications miss.</p>",
             minutes(n["interval_seconds"].as_i64().unwrap_or(60)),
             n["average_delay_seconds"]
                 .as_i64()
                 .map(|d| format!(" ({} on average in the last hour)", minutes(d)))
                 .unwrap_or_default(),
-            minutes(n["walk_every_seconds"].as_i64().unwrap_or(1800))
+            minutes(crate::archive::PASS_EVERY as i64)
         )
     } else if on {
         format!(
             "<p>A bot account watches nixpkgs, but the poll of its notifications fails now. \
-             Until it works again, a review, push or merge on GitHub shows here after the next update: {walk_delay}.</p>"
+             Until it works again, a review, push or merge on GitHub shows here {walk_delay}.</p>"
         )
     } else {
         format!(
-            "<p>This server walks the updates on GitHub. A review, push or merge shows here after the next update: \
+            "<p>The archive lists the updates on GitHub. A review, push or merge shows here \
              {walk_delay}. With the token of a bot account that watches nixpkgs, it shows in about a minute.</p>"
         )
     };
@@ -678,7 +617,7 @@ fn notifications_row(n: &Value) -> String {
     ));
     if let Some(d) = n["average_delay_seconds"].as_i64() {
         parts.push(format!(
-            "{} on average from a change on GitHub to its read here",
+            "{} on average from a change on GitHub to its mark here",
             minutes(d)
         ));
     }
@@ -691,7 +630,7 @@ fn notifications_row(n: &Value) -> String {
     }
     if n["healthy"].as_bool() != Some(true) {
         parts.push(
-            "<span class=\"color-fg-attention\">not healthy: every update walks in full</span>"
+            "<span class=\"color-fg-attention\">not healthy: a change waits for the next archive pass</span>"
                 .into(),
         );
     }

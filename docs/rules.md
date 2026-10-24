@@ -105,7 +105,7 @@ them.
 ### 4. How the ledger is calculated
 
 The ledger is a function of public GitHub data and the clock only. Nobody
-types data into it. If you delete the database and sync again, you get the
+types data into it. If you delete the database, the walk writes it again from the archive, with the
 same ledger. Each counted review has a link to the review.
 
 - **The count only adds.** Nobody loses a counted review. Nobody is banned
@@ -144,7 +144,7 @@ same ledger. Each counted review has a link to the review.
 | ----------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Move window (N)   | 14 d  | A volunteer author has two weekends to answer. A longer window counts a push or merge that has no relation to the review.               |
 | Decay half-life   | 30 d  | One month. Two months after a person stops, their weight is one quarter. Shorter punishes a holiday. Longer shows who helped long ago.  |
-| Window            | 60 d  | Two half-lives. Older reviews are at 25% and tell little. It also limits the first sync of nixpkgs to a size that one token can read.   |
+| Window            | 60 d  | Two half-lives. Older reviews are at 25% and tell little. It also keeps the `pr` table small.                                           |
 | Distinct authors  | 3     | The smallest number that two people cannot get to. A higher number stops people who know a small part of nixpkgs well.                  |
 | Daily cap         | 5     | A careful nixpkgs review takes 15 to 60 minutes. Five is a full but honest day. Twenty in one hour is not careful.                      |
 | Per pull request  | 1     | More rounds on one change are the same work. Without this limit, ten small reviews on one pull request weigh more than one good review. |
@@ -243,7 +243,7 @@ nixpkgs, month by month. Each number is a total. No number names a person.
   advisories (critical, high, medium, low, no score); with no maintainer (no
   `meta.maintainers` and no `meta.teams`); broken (`meta.broken`); insecure
   (`meta.knownVulnerabilities`); with packaging gaps; and open version bumps
-  with their median age in days. The server calculates them after each sync
+  with their median age in days. The server calculates them after each change of rows
   and after each health update, not on each request. `GET /api/v1/metrics`
   gives them under `packages`. They contain no personal data.
 - **Disclosed AI use.** A pull request counts when its last commit or its
@@ -267,13 +267,10 @@ nixpkgs, month by month. Each number is a total. No number names a person.
 - **Directories.** Open, never reviewed, opened and merged pull requests for
   each part of the tree, from the files that a pull request changes.
 
-The full sync reads only the pull requests updated in the last 60 days and
-all open ones. A second read goes back in time. It reads each pull request
-created since `--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default
-2020-01-01). It reads 50 pull requests in each query, with fewer fields: the
-first 10 reviews, the first 50 files, the labels and the last commit message,
-but not the description. It keeps them in a separate table, so they never go
-into the ledger. It reads 100 pages in each sync and continues from its
-cursor. The first read back to 2020 takes some hours. Until it ends, the
-older months are not complete. The backlog before `--history-since` is a
-minimum, because a pull request closed before the read started is not in it.
+The ledger reads only the pull requests updated in the last 60 days and all
+open ones. These numbers read the facts of each pull request created since
+`--history-since` (`MAINTAINER_MODE_HISTORY_SINCE`, default 2020-01-01),
+from the archive: the first 10 reviews, the first 50 files, the labels and
+the last commit message, but not the description. They are in a separate
+table, so they never go into the ledger. Until the archive walk reaches the
+first number, the older months are not complete.
