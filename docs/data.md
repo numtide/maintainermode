@@ -221,7 +221,9 @@ cost.
   state and the author association from `pr_live`. When `pr_live` has no
   row for the same head, `mergeable` and the CI state are not compared. `/state?tab=status` shows how many rows
   differ and in which fields; `/api/v1/sync` gives the same data as
-  `archive[].shadow`.
+  `archive[].shadow`. Its first 10 examples give the number, the fields
+  that differ and, for each short field, the projected and the stored
+  value.
 - **Reading.** `GET /api/v1/archive/<owner>/<repo>/<number>` gives the stored
   JSON, or 404. `/state?tab=status` shows the progress. The endpoint has no
   authentication, so the archive keeps public repositories only: it refuses

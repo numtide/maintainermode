@@ -1130,19 +1130,39 @@ impl Shadow {
             return Ok(());
         }
         self.compared += 1;
-        let fields = match project(&item) {
-            Some((p, skip)) => crate::project::differ(&p, stored, skip),
-            None => vec!["kind".into()],
+        let (fields, values) = match project(&item) {
+            Some((p, skip)) => {
+                let fields = crate::project::differ(&p, stored, skip);
+                let values = short_values(&p, stored, &fields);
+                (fields, values)
+            }
+            None => (vec!["kind".into()], json!({})),
         };
         if !fields.is_empty() {
             self.differ += 1;
             if self.examples.len() < SHADOW_EXAMPLES {
                 self.examples
-                    .push(json!({ "number": number, "fields": fields }));
+                    .push(json!({ "number": number, "fields": fields, "values": values }));
             }
         }
         Ok(())
     }
+}
+
+/// Bytes of JSON per field, above which an example gives no values.
+const SHADOW_VALUE_BYTES: usize = 600;
+
+/// `{field: [projected, stored]}` for each short field in `fields`.
+fn short_values<T: serde::Serialize>(projected: &T, stored: &T, fields: &[String]) -> Value {
+    let (a, b) = (json!(projected), json!(stored));
+    let mut out = serde_json::Map::new();
+    for f in fields {
+        let pair = json!([a[f], b[f]]);
+        if pair.to_string().len() <= SHADOW_VALUE_BYTES {
+            out.insert(f.clone(), pair);
+        }
+    }
+    Value::Object(out)
 }
 
 /// Compares the projection of the archived items with the `pr`, `issue`
@@ -1443,10 +1463,16 @@ mod tests {
         assert_eq!(s["compared"], 4);
         assert_eq!(s["differ"], 1);
         assert_eq!(s["skipped"], 1);
+        let e = &s["examples"][0];
         assert_eq!(
-            s["examples"],
-            json!([{ "number": 350000, "fields": ["title"] }])
+            (&e["number"], &e["fields"]),
+            (&json!(350000), &json!(["title"]))
         );
+        let (p, st) = (
+            e["values"]["title"][0].as_str().unwrap(),
+            e["values"]["title"][1].as_str().unwrap(),
+        );
+        assert_eq!(format!("{p}!"), st);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
