@@ -228,7 +228,6 @@ mod tests {
             archive: Vec::new(),
             rescan: None,
             inbox: Default::default(),
-            smtp: None,
             pr_cache: Default::default(),
             notifications: Default::default(),
             github_app: None,

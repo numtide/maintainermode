@@ -28,10 +28,6 @@ let
       id = "s3_credentials";
       path = if cfg.eventCopy.enable then cfg.eventCopy.credentialsFile else null;
     }
-    {
-      id = "smtp_password";
-      path = if cfg.smtp.enable then cfg.smtp.passwordFile else null;
-    }
   ];
   # LoadCredential copies each file once, when the service starts, and
   # NixOS does not restart a unit whose secret alone changed. This compares
@@ -201,46 +197,6 @@ in
       };
     };
 
-    smtp = {
-      enable = lib.mkEnableOption "the daily email digest, sent through an SMTP server over TLS";
-
-      host = lib.mkOption {
-        type = lib.types.str;
-        example = "smtp.example.org";
-        description = "The SMTP server. The server name in its TLS certificate must match.";
-      };
-
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = 465;
-        description = "465 uses TLS from the start. Any other port, such as 587, must offer STARTTLS.";
-      };
-
-      user = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        description = "The SMTP login. Set it with `passwordFile`, or leave both unset.";
-      };
-
-      passwordFile = lib.mkOption {
-        type = lib.types.nullOr lib.types.path;
-        default = null;
-        description = "File holding the SMTP password, read through LoadCredential; never copied to the store.";
-      };
-
-      from = lib.mkOption {
-        type = lib.types.str;
-        example = "Maintainer Mode <noreply@example.org>";
-        description = "The sender of the digest.";
-      };
-
-      perDay = lib.mkOption {
-        type = lib.types.ints.unsigned;
-        default = 500;
-        description = "Emails in 24 hours for the whole server: digests, test emails and confirmations. Over it, the server skips the email and logs it.";
-      };
-    };
-
     eventCopy = {
       enable = lib.mkEnableOption "the daily copy of the nixpkgs event log to an S3-compatible store";
 
@@ -279,10 +235,6 @@ in
       {
         assertion = (cfg.githubAppId == null) == (cfg.githubAppKeyFile == null);
         message = "services.maintainer-mode: set githubAppId and githubAppKeyFile together.";
-      }
-      {
-        assertion = (cfg.smtp.user == null) == (cfg.smtp.passwordFile == null);
-        message = "services.maintainer-mode: set smtp.user and smtp.passwordFile together.";
       }
     ];
 
@@ -326,16 +278,6 @@ in
         MAINTAINER_MODE_S3_BUCKET = cfg.eventCopy.bucket;
         MAINTAINER_MODE_S3_REGION = cfg.eventCopy.region;
         MAINTAINER_MODE_S3_CREDENTIALS_FILE = "%d/s3_credentials";
-      }
-      // lib.optionalAttrs cfg.smtp.enable {
-        MAINTAINER_MODE_SMTP_HOST = cfg.smtp.host;
-        MAINTAINER_MODE_SMTP_PORT = toString cfg.smtp.port;
-        MAINTAINER_MODE_SMTP_FROM = cfg.smtp.from;
-        MAINTAINER_MODE_MAIL_PER_DAY = toString cfg.smtp.perDay;
-      }
-      // lib.optionalAttrs (cfg.smtp.enable && cfg.smtp.user != null) {
-        MAINTAINER_MODE_SMTP_USER = cfg.smtp.user;
-        MAINTAINER_MODE_SMTP_PASSWORD_FILE = "%d/smtp_password";
       }
       // lib.optionalAttrs cfg.rescan.enable {
         MAINTAINER_MODE_RESCAN = "true";

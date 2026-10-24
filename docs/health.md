@@ -89,7 +89,7 @@ The state of a package is one of these:
 | 3, 4, 9 (aborted, cancelled) | no change          |
 | any other                    | fails              |
 
-The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox, the Atom feed and the email digest of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". For a channel, the title ends with its name, such as "Hydra build fails on nixos-26.05". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
+The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox and the Atom feed of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". For a channel, the title ends with its name, such as "Hydra build fails on nixos-26.05". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
 
 ## Search
 

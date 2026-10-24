@@ -55,8 +55,6 @@ both /pr/${pr}
 signed-in /pr/100173
 signed-in /pr/100172
 both /actions
-public /confirm/${token} status=404
-public /unsubscribe/${token} status=404
 signed-in /inbox
 signed-in /packages?filter=mine
 signed-in /packages?filter=machines

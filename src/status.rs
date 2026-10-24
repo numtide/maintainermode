@@ -60,20 +60,6 @@ fn rescans(app: &App) -> Value {
     })
 }
 
-/// Counts of emails only: no address or login.
-fn email(app: &App) -> Value {
-    let (sent, skipped) = app
-        .store
-        .mail_counts(Utc::now() - chrono::Duration::days(1))
-        .unwrap_or_default();
-    json!({
-        "enabled": app.smtp.is_some(),
-        "per_day": app.smtp.as_ref().map(|s| s.per_day),
-        "sent_24h": sent,
-        "skipped_24h": skipped,
-    })
-}
-
 pub(crate) fn state(app: &App) -> Value {
     let s = app.snap();
     let (rev, pkgs, modules, teams, checked, with_gaps) = {
@@ -143,7 +129,6 @@ pub(crate) fn state(app: &App) -> Value {
         "hydra": app.hydra.stats(),
         "hydra_builds": app.hydra.builds.stats(),
         "rescans": rescans(app),
-        "email": email(app),
         "tokens": {
             "server": app.bot_token.is_some() || app.github_app.is_some(),
             "bot": app.bot_token.is_some(),
@@ -529,30 +514,6 @@ pub(crate) fn body(app: &App) -> Html {
                 "only GH Archive, each hour: there is no bot token to poll with"
             }
         ),
-    ));
-    let m = &v["email"];
-    out.push(&Html::from(
-        "</div><div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">Email</h2></div>",
-    ));
-    out.push(&kv(
-        "Notification emails",
-        if m["enabled"].as_bool() == Some(true) {
-            let skipped = m["skipped_24h"].as_u64().unwrap_or(0);
-            html!(
-                "{} sent in the last 24 hours, at most {} · {}",
-                m["sent_24h"],
-                m["per_day"],
-                if skipped == 0 {
-                    Html::from("none skipped")
-                } else {
-                    html!(
-                        "<span class=\"color-fg-attention\">{skipped} skipped over a daily limit</span>"
-                    )
-                }
-            )
-        } else {
-            "off on this server: its operator did not set up SMTP".into()
-        },
     ));
     out.push(&Html::from("</div>"));
     if let Some(list) = v["archive"].as_array().filter(|l| !l.is_empty()) {

@@ -590,7 +590,7 @@ pub(crate) fn settings_box(app: &App, login: &str) -> Html {
                  <span>days:</span>\
                  <select class=\"form-select\" name=\"action\" aria-label=\"what to do then\">{}</select>\
                  <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-                 <p class=\"note f6 color-fg-muted mt-2 mb-0\">{state} A saved plan puts a reminder in your inbox, your feed and your email at the deadline. \
+                 <p class=\"note f6 color-fg-muted mt-2 mb-0\">{state} A saved plan puts a reminder in your inbox and your feed at the deadline. \
                  A review by someone else before the deadline cancels the reminder. {COMMITTER_NOTE}</p></div>",
                 plan.days,
                 options(plan.action)

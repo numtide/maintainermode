@@ -55,7 +55,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
 }
 
 pub(crate) const SETTINGS: [(&str, &str); 11] = [
-    ("email", "Email"),
+    ("notifications", "Notifications"),
     ("followup", "Pull requests"),
     ("feed", "Feed"),
     ("upload", "Upload"),
@@ -70,7 +70,6 @@ pub(crate) const SETTINGS: [(&str, &str); 11] = [
 
 #[derive(Deserialize)]
 struct SettingsQuery {
-    mail: Option<String>,
     /// GitHub adds it when it sends the person back after an App install.
     setup_action: Option<String>,
 }
@@ -115,7 +114,7 @@ async fn settings_page(
     }
     let workflows = crate::actions::repos_box(&app, &login).await;
     let body = [
-        crate::notify::settings_box(&app, &login, q.mail.as_deref()),
+        crate::notify::settings_box(&app, &login),
         crate::followup::settings_box(&app, &login),
         crate::catalog::feed_box(&app, &login),
         crate::sets::token_box(&app, &login),
@@ -206,10 +205,7 @@ mod tests {
         let r = settings_page(
             State(app.clone()),
             HeaderMap::new(),
-            Query(SettingsQuery {
-                mail: None,
-                setup_action: None,
-            }),
+            Query(SettingsQuery { setup_action: None }),
         )
         .await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
@@ -222,15 +218,7 @@ mod tests {
                 lines: vec![],
             },
         );
-        let r = settings_page(
-            State(app),
-            h,
-            Query(SettingsQuery {
-                mail: None,
-                setup_action: None,
-            }),
-        )
-        .await;
+        let r = settings_page(State(app), h, Query(SettingsQuery { setup_action: None })).await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(
             r.headers().get(header::CACHE_CONTROL).unwrap(),

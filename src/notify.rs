@@ -1,67 +1,38 @@
-//! Notifications: the inbox at `/inbox`, its unread count in the
-//! header, and an optional daily email digest. The events are those of the
-//! private Atom feed. Only the owner sees their inbox, their choices and
-//! their address.
+//! Notifications: the inbox at `/inbox` and its unread count in the
+//! header. The events are those of the private Atom feed. Only the owner
+//! sees their inbox and their choices.
 
-use anyhow::{Context, bail};
 use axum::Router;
-use axum::extract::{Form, Path, Query, State};
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::extract::{Form, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
-use chrono::{DateTime, Duration, Utc};
-use lettre::message::header::{ContentType, HeaderName, HeaderValue};
-use lettre::message::{Mailbox, Message};
-use lettre::transport::smtp::AsyncSmtpTransportBuilder;
-use lettre::transport::smtp::authentication::Credentials;
-use lettre::transport::smtp::extension::ClientId;
-use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
-use std::fmt::Write;
-use std::path::PathBuf;
 use std::sync::RwLock;
 
 use crate::catalog::{Event, person_events};
 use crate::github::urlencode;
 use crate::html::{Html, html};
-use crate::secret::Secret;
-use crate::sets::token_hash;
-use crate::store::Confirmation;
 use crate::ui::{Page, Personal, Section, Tab};
-use crate::web::{App, Shared, ago, icon, octicon, random_id};
+use crate::web::{App, Shared, ago, icon, octicon};
 
 pub(crate) const INBOX: &str = "/inbox";
 const READ_AT: &str = "inbox_read_at";
 const KINDS: &str = "notify_kinds";
-pub(crate) const EMAIL: &str = "digest_email";
-const DIGEST_AT: &str = "digest_at";
-const TEST_AT: &str = "test_mail_at";
-/// The address the person confirmed; the digest goes only to an address
-/// equal to it.
-const CONFIRMED: &str = "digest_confirmed";
-const CONFIRM_HOURS: i64 = 24;
 const MINE_OFF: &str = "notify_mine_off";
 /// The kinds the form showed when the person saved; a kind added later
 /// is on until they choose.
 const KNOWN: &str = "notify_kinds_known";
 /// The kinds before [`KNOWN`] was saved.
 const FIRST_KINDS: &str = "pr,issue,advisory,release";
-const MINE_NOW: &str = "notify_mine_now";
-const NOW_PER_DAY: usize = 20;
 
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/inbox", get(inbox_page))
         .route("/me/inbox/read", post(mark_read))
         .route("/me/notify", post(save_notify))
-        .route("/me/notify/test", post(test_mail))
-        .route("/me/notify/confirm", post(resend_confirmation))
-        .route("/confirm/:token", get(confirm_page).post(confirm))
-        .route(
-            "/unsubscribe/:token",
-            get(unsubscribe_page).post(unsubscribe),
-        )
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,7 +112,7 @@ impl Kind {
     }
 }
 
-/// The kinds a person counts in the header and gets by email. All of them
+/// The kinds a person counts in the header. All of them
 /// until the person chooses. Your own pull requests have their own switch,
 /// so a choice saved before they existed keeps them on.
 pub fn kinds(app: &App, login: &str) -> Vec<Kind> {
@@ -169,12 +140,6 @@ pub fn kinds(app: &App, login: &str) -> Vec<Kind> {
         out.insert(0, Kind::Mine);
     }
     out
-}
-
-/// When the person turned on one email per event of their own pull
-/// requests, or nothing.
-fn mine_now(app: &App, login: &str) -> Option<DateTime<Utc>> {
-    app.store.setting_time(login, MINE_NOW)
 }
 
 pub(crate) fn read_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
@@ -444,44 +409,8 @@ async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
     Redirect::to(INBOX).into_response()
 }
 
-fn mail_note(mail: Option<&str>) -> &'static str {
-    match mail {
-        Some("sent") => "The test email is on its way.",
-        Some("failed") => "The server could not send the email. Try again later.",
-        Some("wait") => "Wait 10 minutes between two test emails.",
-        Some("invalid") => "Use an address like name@example.org, with no spaces and no name.",
-        Some("none") => "Save an address first.",
-        Some("off") => "Email is off on this server.",
-        Some("confirm") => {
-            "We sent a confirmation email. Open its link in the next 24 hours to start the daily email."
-        }
-        Some("unconfirmed") => {
-            "Confirm your address first: open the link in the confirmation email."
-        }
-        Some("limit") => {
-            "The server reached its daily email limit, or you got 3 emails of this kind today. Try again tomorrow."
-        }
-        _ => "",
-    }
-}
-
-fn stored_address(app: &App, login: &str) -> Option<String> {
-    app.store
-        .setting(login, EMAIL)
-        .ok()
-        .flatten()
-        .filter(|a| !a.is_empty())
-}
-
-/// The digest address, only once its owner confirmed it.
-fn confirmed_address(app: &App, login: &str) -> Option<String> {
-    let address = stored_address(app, login)?;
-    let confirmed = app.store.setting(login, CONFIRMED).ok().flatten()?;
-    (confirmed == address).then_some(address)
-}
-
-/// The section of `/me/settings`. The address shows only here, to its owner.
-pub(crate) fn settings_box(app: &App, login: &str, mail: Option<&str>) -> Html {
+/// The `#notifications` section of `/me/settings`.
+pub(crate) fn settings_box(app: &App, login: &str) -> Html {
     let on = kinds(app, login);
     let mut boxes = Html::new();
     for k in Kind::ALL {
@@ -493,67 +422,16 @@ pub(crate) fn settings_box(app: &App, login: &str, mail: Option<&str>) -> Html {
             key = k.key()
         ));
     }
-    let address = stored_address(app, login).unwrap_or_default();
-    let confirmed = confirmed_address(app, login).is_some();
-    let state = Html::from(match (address.is_empty(), confirmed) {
-        (true, _) => "",
-        (false, true) => " <span class=\"Label Label--success ml-1\">confirmed</span>",
-        (false, false) => {
-            " <span class=\"Label Label--attention ml-1\">pending confirmation</span>"
-        }
-    });
-    let email = if app.smtp.is_some() {
-        html!(
-            "<label class=\"d-block mt-3\" for=\"email-address\">Daily email to</label>{state}\
-             <input class=\"form-control width-full my-1\" type=\"email\" id=\"email-address\" name=\"email\" maxlength=\"254\" value=\"{address}\" placeholder=\"name@example.org\">\
-             <p class=\"note\">At most one email a day, with the unread events of these kinds since the last daily email. \
-             A new address gets a confirmation email first; the daily email starts when you open its link. \
-             Leave it empty to get no email. Only you see this address. Each email has a link to unsubscribe.</p>\
-             <div class=\"form-checkbox my-1\"><label><input type=\"checkbox\" name=\"mine_now\" value=\"1\"{}> Send the events of your own pull requests at once</label>\
-             <p class=\"note\">One email for each review, merge, close or reminder, a few minutes after the server sees it. \
-             At most {NOW_PER_DAY} in 24 hours, and only to a confirmed address. The daily email still includes them.</p></div>",
-            if mine_now(app, login).is_some() {
-                " checked"
-            } else {
-                ""
-            }
-        )
-    } else {
-        "<p class=\"note mt-3\">Email is off on this server: its operator did not set up SMTP.</p>"
-            .into()
-    };
-    let test = if app.smtp.is_none() || address.is_empty() {
-        Html::new()
-    } else if !confirmed {
-        html!(
-            "<form method=\"post\" action=\"/me/notify/confirm\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send the confirmation email again</button></form>",
-            icon(octicon!("mail"))
-        )
-    } else {
-        let last = digest_at(app, login)
-            .map(|t| format!(" The last daily email went out {} ago.", ago(t)))
-            .unwrap_or_default();
-        html!(
-            "<form method=\"post\" action=\"/me/notify/test\" class=\"mt-3\"><button class=\"btn btn-sm\" type=\"submit\">{} Send me a test email</button>\
-             <span class=\"f6 color-fg-muted ml-2\">{last}</span></form>",
-            icon(octicon!("mail"))
-        )
-    };
-    let note = match mail_note(mail) {
-        "" => Html::new(),
-        n => html!("<div class=\"flash mb-3\">{n}</div>"),
-    };
     html!(
-        "<div id=\"email\">{}</div>",
+        "<div id=\"notifications\">{}</div>",
         crate::ui::section(
             html!("{} Notifications", icon(octicon!("bell"))),
             None,
             None,
             html!(
-                "<div class=\"Box-row\">{note}\
-                 <form method=\"post\" action=\"/me/notify\">\
-                 <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header, and the email digest, include only the kinds you choose here.</p>\
-                 {boxes}{email}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form>{test}</div>"
+                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/notify\">\
+                 <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header includes only the kinds you choose here.</p>\
+                 {boxes}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form></div>"
             )
         )
     )
@@ -564,8 +442,6 @@ struct NotifyForm {
     #[serde(default)]
     k_mine: Option<String>,
     #[serde(default)]
-    mine_now: Option<String>,
-    #[serde(default)]
     k_pr: Option<String>,
     #[serde(default)]
     k_issue: Option<String>,
@@ -575,8 +451,6 @@ struct NotifyForm {
     k_release: Option<String>,
     #[serde(default)]
     k_build: Option<String>,
-    #[serde(default)]
-    email: Option<String>,
 }
 
 impl NotifyForm {
@@ -604,10 +478,6 @@ async fn save_notify(
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let address = f.email.as_deref().map(str::trim);
-    if app.smtp.is_some() && address.is_some_and(|a| !a.is_empty() && !valid_address(a)) {
-        return Redirect::to("/me/settings?mail=invalid#email").into_response();
-    }
     let chosen = f.chosen();
     let keys: Vec<&str> = chosen
         .iter()
@@ -620,12 +490,6 @@ async fn save_notify(
     } else {
         "1"
     };
-    let now_on = f.mine_now.as_deref() == Some("1");
-    let now_value = match mine_now(&app, &login) {
-        Some(t) if now_on => t.to_rfc3339(),
-        _ if now_on => Utc::now().to_rfc3339(),
-        _ => String::new(),
-    };
     let saved = app
         .store
         .set_setting(&login, KINDS, &keys.join(","))
@@ -637,742 +501,18 @@ async fn save_notify(
                 .collect();
             app.store.set_setting(&login, KNOWN, &all.join(","))
         })
-        .and_then(|_| app.store.set_setting(&login, MINE_OFF, mine_off))
-        .and_then(|_| app.store.set_setting(&login, MINE_NOW, &now_value));
+        .and_then(|_| app.store.set_setting(&login, MINE_OFF, mine_off));
     if let Err(e) = saved {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
     recount_one(&app, &login);
-    let mut note = "";
-    let changed = |a: &str| stored_address(&app, &login).as_deref().unwrap_or("") != a;
-    if let (Some(a), Some(smtp)) = (address.filter(|a| changed(a)), &app.smtp) {
-        let saved =
-            forget_address(&app, &login).and_then(|_| app.store.set_setting(&login, EMAIL, a));
-        if let Err(e) = saved {
-            return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-        }
-        if !a.is_empty() {
-            note = request_confirmation(&app, smtp, &login, a).await;
-        }
-    }
-    settings_redirect(note)
-}
-
-fn settings_redirect(note: &str) -> Response {
-    if note.is_empty() {
-        Redirect::to("/me/settings#email").into_response()
-    } else {
-        Redirect::to(&format!("/me/settings?mail={note}#email")).into_response()
-    }
-}
-
-/// Removes the address with everything that points to it.
-fn forget_address(app: &App, login: &str) -> anyhow::Result<()> {
-    app.store.set_setting(login, EMAIL, "")?;
-    app.store.set_setting(login, CONFIRMED, "")?;
-    app.store.delete_unsubscribes(login)?;
-    app.store.delete_confirmations(login)
-}
-
-fn new_confirmation(
-    app: &App,
-    login: &str,
-    address: &str,
-    at: DateTime<Utc>,
-) -> anyhow::Result<String> {
-    let token = random_id();
-    app.store
-        .add_confirmation(login, address, &token_hash(&token), at)?;
-    Ok(token)
-}
-
-/// Sends one confirmation email and gives the note for the settings page.
-async fn request_confirmation(app: &App, smtp: &Smtp, login: &str, address: &str) -> &'static str {
-    if !take_slot(app, smtp, login, Mail::Confirm) {
-        return "limit";
-    }
-    let token = match new_confirmation(app, login, address, Utc::now()) {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!("confirmation of {login}: {e:#}");
-            return "failed";
-        }
-    };
-    let base = app.public_url.trim_end_matches('/');
-    let body = format!(
-        "Someone asked Maintainer Mode to send a daily email to this address, for the GitHub account {login}.\n\n\
-         To confirm, open this link in the next {CONFIRM_HOURS} hours and push the button:\n\
-         {base}/confirm/{token}\n\n\
-         If you did not ask for this, ignore this email. \
-         Without a confirmation, Maintainer Mode sends no more email to this address.\n"
-    );
-    match deliver(
-        smtp,
-        address,
-        "Maintainer Mode: confirm your address",
-        body,
-        None,
-    )
-    .await
-    {
-        Ok(()) => "confirm",
-        Err(e) => {
-            tracing::warn!("confirmation of {login}: {e:#}");
-            "failed"
-        }
-    }
-}
-
-async fn resend_confirmation(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let Some(smtp) = &app.smtp else {
-        return settings_redirect("off");
-    };
-    let Some(address) = stored_address(&app, &login) else {
-        return settings_redirect("none");
-    };
-    if confirmed_address(&app, &login).is_some() {
-        return settings_redirect("");
-    }
-    settings_redirect(request_confirmation(&app, smtp, &login, &address).await)
-}
-
-/// The confirmation of a token: known, younger than `CONFIRM_HOURS`, and
-/// for the address the person holds now.
-fn pending_confirmation(app: &App, token: &str, now: DateTime<Utc>) -> Option<Confirmation> {
-    if !valid_token(token) {
-        return None;
-    }
-    let c = app.store.confirmation(&token_hash(token)).ok().flatten()?;
-    let fresh = now - c.created_at < Duration::hours(CONFIRM_HOURS);
-    (fresh && stored_address(app, &c.login).as_deref() == Some(c.address.as_str())).then_some(c)
-}
-
-const UNKNOWN_CONFIRM: &str = "<div class=\"blankslate\"><p>This confirmation link is unknown, used or older than 24 hours. \
-     Sign in and send a new one from your settings page.</p></div>";
-
-/// A link scanner opens every link of an email, so a GET only asks.
-async fn confirm_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
-    if pending_confirmation(&app, &token, Utc::now()).is_none() {
-        return token_reply(
-            &app,
-            StatusCode::NOT_FOUND,
-            "Confirm your address",
-            "",
-            UNKNOWN_CONFIRM,
-        );
-    }
-    let body = html!(
-        "<form method=\"post\" action=\"/confirm/{token}\"><button class=\"btn btn-primary\" type=\"submit\">Confirm</button></form>"
-    );
-    token_reply(
-        &app,
-        StatusCode::OK,
-        "Confirm your address",
-        "Start the daily email of Maintainer Mode at this address.",
-        body,
-    )
-}
-
-async fn confirm(State(app): State<Shared>, Path(token): Path<String>) -> Response {
-    let Some(c) = pending_confirmation(&app, &token, Utc::now()) else {
-        return token_reply(
-            &app,
-            StatusCode::NOT_FOUND,
-            "Confirm your address",
-            "",
-            UNKNOWN_CONFIRM,
-        );
-    };
-    let done = app
-        .store
-        .set_setting(&c.login, CONFIRMED, &c.address)
-        .and_then(|_| app.store.delete_confirmations(&c.login));
-    if let Err(e) = done {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    token_reply(
-        &app,
-        StatusCode::OK,
-        "Address confirmed",
-        "The daily email goes to this address from now on. Each email has a link to unsubscribe.",
-        "",
-    )
-}
-
-async fn test_mail(State(app): State<Shared>, headers: HeaderMap) -> Response {
-    let Some(login) = app.viewer(&headers) else {
-        return Redirect::to("/auth/login").into_response();
-    };
-    let Some(smtp) = &app.smtp else {
-        return settings_redirect("off");
-    };
-    if stored_address(&app, &login).is_none() {
-        return settings_redirect("none");
-    }
-    let Some(address) = confirmed_address(&app, &login) else {
-        return settings_redirect("unconfirmed");
-    };
-    let last = app.store.setting_time(&login, TEST_AT);
-    if last.is_some_and(|t| Utc::now() - t < Duration::minutes(10)) {
-        return settings_redirect("wait");
-    }
-    if let Err(e) = app
-        .store
-        .set_setting(&login, TEST_AT, &Utc::now().to_rfc3339())
-    {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    if !take_slot(&app, smtp, &login, Mail::Test) {
-        return settings_redirect("limit");
-    }
-    let body = format!(
-        "This is a test email from Maintainer Mode, sent because {login} asked for it on the settings page.\n\
-         The daily email comes from the same address.\n"
-    );
-    match send(
-        &app,
-        smtp,
-        &login,
-        &address,
-        "Maintainer Mode: test email",
-        body,
-    )
-    .await
-    {
-        Ok(()) => settings_redirect("sent"),
-        Err(e) => {
-            tracing::warn!("test email of {login}: {e:#}");
-            settings_redirect("failed")
-        }
-    }
-}
-
-/// A plain address, `local@domain.tld`, with no display name. It refuses
-/// spaces, quotes, angle brackets and control characters, so no header can
-/// be injected through it.
-pub fn valid_address(s: &str) -> bool {
-    if s.len() > 254 {
-        return false;
-    }
-    let Some((local, domain)) = s.split_once('@') else {
-        return false;
-    };
-    let atext = |c: char| c.is_ascii_alphanumeric() || "!#$%&'*+-/=?^_`{|}~".contains(c);
-    let local_ok = local.len() <= 64
-        && local
-            .split('.')
-            .all(|p| !p.is_empty() && p.chars().all(atext));
-    let labels: Vec<&str> = domain.split('.').collect();
-    let domain_ok = labels.len() >= 2
-        && labels.iter().all(|l| {
-            !l.is_empty()
-                && l.len() <= 63
-                && !l.starts_with('-')
-                && !l.ends_with('-')
-                && l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-        });
-    local_ok && domain_ok
-}
-
-/// The SMTP server for the digest. Email stays off unless the host and the
-/// sender are both set.
-#[derive(clap::Args)]
-pub struct SmtpArgs {
-    #[arg(long = "smtp-host", env = "MAINTAINER_MODE_SMTP_HOST")]
-    host: Option<String>,
-    /// 465 is TLS from the start; any other port must offer STARTTLS.
-    #[arg(
-        long = "smtp-port",
-        env = "MAINTAINER_MODE_SMTP_PORT",
-        default_value_t = 465
-    )]
-    port: u16,
-    #[arg(long = "smtp-user", env = "MAINTAINER_MODE_SMTP_USER")]
-    user: Option<String>,
-    #[arg(
-        long = "smtp-password-file",
-        env = "MAINTAINER_MODE_SMTP_PASSWORD_FILE"
-    )]
-    password_file: Option<PathBuf>,
-    /// The sender, like `Maintainer Mode <noreply@example.org>`.
-    #[arg(long = "smtp-from", env = "MAINTAINER_MODE_SMTP_FROM")]
-    from: Option<String>,
-    /// Emails in 24 hours for the whole server, of every kind.
-    #[arg(
-        long = "mail-per-day",
-        env = "MAINTAINER_MODE_MAIL_PER_DAY",
-        default_value_t = 500
-    )]
-    mail_per_day: usize,
-}
-
-type Transport = AsyncSmtpTransport<Tokio1Executor>;
-
-pub struct Smtp {
-    builder: AsyncSmtpTransportBuilder,
-    login: Option<(String, Secret)>,
-    transport: std::sync::Mutex<(String, Transport)>,
-    from: Mailbox,
-    pub per_day: usize,
-}
-
-const CONFIRMS_PER_DAY: usize = 3;
-const TESTS_PER_DAY: usize = 3;
-#[derive(Clone, Copy)]
-enum Mail {
-    Confirm,
-    Test,
-    Digest,
-    Now,
-}
-impl Mail {
-    fn key(self) -> &'static str {
-        match self {
-            Mail::Confirm => "confirm",
-            Mail::Test => "test",
-            Mail::Digest => "digest",
-            Mail::Now => "now",
-        }
-    }
-    fn own_max(self) -> usize {
-        match self {
-            Mail::Confirm => CONFIRMS_PER_DAY,
-            Mail::Test => TESTS_PER_DAY,
-            Mail::Digest => usize::MAX,
-            Mail::Now => NOW_PER_DAY,
-        }
-    }
-}
-/// False when the email would go over the server limit, or over the
-/// confirmations or test emails a person gets in a day.
-fn take_slot(app: &App, smtp: &Smtp, login: &str, kind: Mail) -> bool {
-    match app
-        .store
-        .take_mail_slot(login, kind.key(), smtp.per_day, kind.own_max(), Utc::now())
-    {
-        Ok(true) => true,
-        Ok(false) => {
-            tracing::warn!("{} email skipped: over a daily email limit", kind.key());
-            false
-        }
-        Err(e) => {
-            tracing::warn!("email limit: {e:#}");
-            false
-        }
-    }
-}
-fn build(
-    b: &AsyncSmtpTransportBuilder,
-    login: &Option<(String, Secret)>,
-    password: &str,
-) -> Transport {
-    match login {
-        Some((user, _)) => b
-            .clone()
-            .credentials(Credentials::new(user.clone(), password.to_string()))
-            .build(),
-        None => b.clone().build(),
-    }
-}
-impl Smtp {
-    /// The pooled transport, built again when the password changes.
-    fn transport(&self) -> Transport {
-        let password = self
-            .login
-            .as_ref()
-            .map(|(_, p)| p.get())
-            .unwrap_or_default();
-        let mut t = self.transport.lock().unwrap();
-        if t.0 != password {
-            *t = (
-                password.clone(),
-                build(&self.builder, &self.login, &password),
-            );
-        }
-        t.1.clone()
-    }
-}
-
-impl SmtpArgs {
-    pub fn config(&self, public_url: &str) -> anyhow::Result<Option<Smtp>> {
-        let (host, from) = match (&self.host, &self.from) {
-            (Some(h), Some(f)) => (h, f),
-            (None, None) => return Ok(None),
-            _ => bail!("set both MAINTAINER_MODE_SMTP_HOST and _FROM, or neither"),
-        };
-        let from: Mailbox = from
-            .parse()
-            .with_context(|| "MAINTAINER_MODE_SMTP_FROM is not an address")?;
-        let mut b = if self.port == 465 {
-            AsyncSmtpTransport::<Tokio1Executor>::relay(host)?
-        } else {
-            AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(host)?
-        }
-        .port(self.port)
-        .timeout(Some(std::time::Duration::from_secs(30)));
-        let login = match (&self.user, Secret::open(self.password_file.clone())?) {
-            (Some(u), Some(p)) => Some((u.clone(), p)),
-            (None, None) => None,
-            _ => bail!("set both MAINTAINER_MODE_SMTP_USER and _PASSWORD_FILE, or neither"),
-        };
-        if let Some(name) = hello_name(public_url) {
-            b = b.hello_name(ClientId::Domain(name));
-        }
-        tracing::info!("email digest through {host}:{}", self.port);
-        let password = login.as_ref().map(|(_, p)| p.get()).unwrap_or_default();
-        let transport = build(&b, &login, &password);
-        Ok(Some(Smtp {
-            builder: b,
-            login,
-            transport: std::sync::Mutex::new((password, transport)),
-            per_day: self.mail_per_day,
-            from,
-        }))
-    }
-}
-
-fn hello_name(public_url: &str) -> Option<String> {
-    let rest = public_url.split_once("://").map_or(public_url, |(_, r)| r);
-    let host = rest.split(['/', ':']).next()?;
-    (host.contains('.') && host.chars().any(|c| c.is_ascii_alphabetic())).then(|| host.to_string())
-}
-
-const UNSUBSCRIBE_DAYS: i64 = 60;
-
-fn valid_token(t: &str) -> bool {
-    t.len() == 64 && t.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// Every email gets a new token, so an old link still works after a newer
-/// email, for `UNSUBSCRIBE_DAYS`.
-async fn send(
-    app: &App,
-    smtp: &Smtp,
-    login: &str,
-    address: &str,
-    subject: &str,
-    body: String,
-) -> anyhow::Result<()> {
-    let token = random_id();
-    app.store.add_unsubscribe(login, &token_hash(&token))?;
-    let base = app.public_url.trim_end_matches('/');
-    let unsubscribe = format!("{base}/unsubscribe/{token}");
-    let body = format!(
-        "{body}\n--\nYour inbox: {base}/inbox\nYour notification settings: {base}/me/settings#email\n\
-         Unsubscribe from these emails: {unsubscribe}\n"
-    );
-    deliver(smtp, address, subject, body, Some(&unsubscribe)).await
-}
-
-async fn deliver(
-    smtp: &Smtp,
-    address: &str,
-    subject: &str,
-    body: String,
-    unsubscribe: Option<&str>,
-) -> anyhow::Result<()> {
-    if !valid_address(address) {
-        bail!("the stored address is not valid");
-    }
-    let raw = |name: &'static str, value: String| {
-        HeaderValue::new(HeaderName::new_from_ascii_str(name), value)
-    };
-    let mut message = Message::builder()
-        .from(smtp.from.clone())
-        .to(address.parse()?)
-        .subject(subject)
-        .header(ContentType::TEXT_PLAIN);
-    if let Some(u) = unsubscribe {
-        message = message
-            .raw_header(raw("List-Unsubscribe", format!("<{u}>")))
-            .raw_header(raw(
-                "List-Unsubscribe-Post",
-                "List-Unsubscribe=One-Click".into(),
-            ));
-    }
-    let message = message
-        .raw_header(raw("Auto-Submitted", "auto-generated".into()))
-        .body(body)?;
-    smtp.transport().send(message).await?;
-    Ok(())
-}
-
-fn digest_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
-    app.store.setting_time(login, DIGEST_AT)
-}
-
-/// At most one digest per person and UTC day.
-pub fn digest_due(last: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
-    last.is_none_or(|t| t.date_naive() < now.date_naive())
-}
-
-const DIGEST_MARK: &str = "digest:";
-
-/// The mark in `mail_once` of an event that a digest carried.
-fn digest_key(id: &str) -> String {
-    format!("{DIGEST_MARK}{id}")
-}
-
-/// The unread events of the chosen kinds that no digest carried yet. The
-/// time of an event is the time of the fact, often before the server saw
-/// it, so the marks decide and not the time of the last digest.
-pub fn digest_selection<'a>(
-    events: &'a [Event],
-    read_at: Option<DateTime<Utc>>,
-    sent: &std::collections::HashSet<String>,
-    kinds: &[Kind],
-) -> Vec<&'a Event> {
-    events
-        .iter()
-        .filter(|e| unread(e, read_at) && !sent.contains(&digest_key(&e.id)))
-        .filter(|e| kinds.contains(&Kind::of(&e.id)))
-        .collect()
-}
-
-/// The marks of a person's sent digests. The first time, before any mark
-/// exists, the events up to the last digest count as sent, so the switch
-/// to marks sends no old event again.
-fn digest_sent(
-    app: &App,
-    login: &str,
-    events: &[Event],
-    last: Option<DateTime<Utc>>,
-) -> anyhow::Result<std::collections::HashSet<String>> {
-    let sent = app.store.mailed(login, DIGEST_MARK)?;
-    let Some(last) = last.filter(|_| sent.is_empty()) else {
-        return Ok(sent);
-    };
-    let old: Vec<&Event> = events.iter().filter(|e| e.at <= last).collect();
-    mark_sent(app, login, &old)?;
-    Ok(old.iter().map(|e| digest_key(&e.id)).collect())
-}
-
-fn mark_sent(app: &App, login: &str, list: &[&Event]) -> anyhow::Result<()> {
-    let now = Utc::now();
-    for e in list {
-        app.store.mail_once(login, &digest_key(&e.id), now)?;
-    }
-    Ok(())
-}
-
-const DIGEST_LINES: usize = 50;
-
-fn one_line(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
-}
-
-fn digest_body(list: &[&Event]) -> String {
-    let mut out = format!(
-        "{} new events on your pull requests, on what you watch and on your machines:\n\n",
-        list.len()
-    );
-    for e in list.iter().take(DIGEST_LINES) {
-        let _ = writeln!(out, "- {}: {}", one_line(&e.subject), one_line(&e.title));
-        if !e.url.is_empty() {
-            let _ = writeln!(out, "  {}", one_line(&e.url));
-        }
-    }
-    if list.len() > DIGEST_LINES {
-        let _ = writeln!(
-            out,
-            "\nand {} more in your inbox.",
-            list.len() - DIGEST_LINES
-        );
-    }
-    out
-}
-
-async fn digest_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
-    app.store
-        .purge_unsubscribes(Utc::now() - Duration::days(UNSUBSCRIBE_DAYS))?;
-    app.store
-        .purge_confirmations(Utc::now() - Duration::hours(CONFIRM_HOURS))?;
-    let mut sent = 0;
-    for (login, address) in app.store.settings_with(EMAIL)? {
-        if confirmed_address(app, &login).as_deref() != Some(address.as_str()) {
-            continue;
-        }
-        let now = Utc::now();
-        let last = digest_at(app, &login);
-        if !digest_due(last, now) {
-            continue;
-        }
-        let events = person_events(app, &login);
-        let marks = digest_sent(app, &login, &events, last)?;
-        let list = digest_selection(&events, read_at(app, &login), &marks, &kinds(app, &login));
-        if list.is_empty() {
-            continue;
-        }
-        if !take_slot(app, smtp, &login, Mail::Digest) {
-            break;
-        }
-        let subject = format!("Maintainer Mode: {} new", list.len());
-        match send(app, smtp, &login, &address, &subject, digest_body(&list)).await {
-            Ok(()) => {
-                mark_sent(app, &login, &list)?;
-                app.store
-                    .set_setting(&login, DIGEST_AT, &now.to_rfc3339())?;
-                sent += 1;
-            }
-            Err(e) => tracing::warn!("digest of {login}: {e:#}"),
-        }
-    }
-    Ok(sent)
-}
-
-/// The events of one's own pull requests that are due an email of their
-/// own: unread, newer than the switch, and not mailed before.
-pub fn now_selection(
-    events: &[Event],
-    on: DateTime<Utc>,
-    read_at: Option<DateTime<Utc>>,
-) -> Vec<&Event> {
-    events
-        .iter()
-        .filter(|e| Kind::of(&e.id) == Kind::Mine && e.at >= on && unread(e, read_at))
-        .collect()
-}
-
-fn now_body(e: &Event) -> String {
-    format!(
-        "{}\n{}\n\nYou get this email because you asked for the events of your own pull requests at once.\n",
-        one_line(&e.title),
-        one_line(&e.url)
-    )
-}
-
-/// One email per event of a person's own pull requests. An event over the
-/// limit is marked too, so it is not tried again: the daily email has it.
-async fn now_pass(app: &App, smtp: &Smtp) -> anyhow::Result<usize> {
-    let mut sent = 0;
-    for (login, _) in app.store.settings_with(MINE_NOW)? {
-        let (Some(on), Some(address)) = (mine_now(app, &login), confirmed_address(app, &login))
-        else {
-            continue;
-        };
-        if !kinds(app, &login).contains(&Kind::Mine) {
-            continue;
-        }
-        let events = crate::followup::own_events(app, &login, crate::catalog::FEED_DAYS);
-        for e in now_selection(&events, on, read_at(app, &login)) {
-            if !app.store.mail_once(&login, &e.id, Utc::now())? {
-                continue;
-            }
-            if !take_slot(app, smtp, &login, Mail::Now) {
-                continue;
-            }
-            let subject = format!("Maintainer Mode: {}", one_line(&e.title));
-            match send(app, smtp, &login, &address, &subject, now_body(e)).await {
-                Ok(()) => sent += 1,
-                Err(err) => tracing::warn!("event email of {login}: {err:#}"),
-            }
-        }
-    }
-    Ok(sent)
-}
-
-/// The email loop: the events of one's own pull requests each minute, the
-/// digest each 15 minutes. It does nothing while email is off.
-pub async fn run(app: Shared) {
-    let Some(smtp) = &app.smtp else {
-        return;
-    };
-    let mut tick: u64 = 0;
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-        tick += 1;
-        match now_pass(&app, smtp).await {
-            Ok(0) => {}
-            Ok(n) => tracing::info!("{n} event emails sent"),
-            Err(e) => tracing::warn!("event emails: {e:#}"),
-        }
-        if !tick.is_multiple_of(15) {
-            continue;
-        }
-        match digest_pass(&app, smtp).await {
-            Ok(0) => {}
-            Ok(n) => tracing::info!("{n} email digests sent"),
-            Err(e) => tracing::warn!("email digests: {e:#}"),
-        }
-    }
-}
-
-fn token_reply(
-    app: &App,
-    code: StatusCode,
-    title: &str,
-    sub: &'static str,
-    body: impl Into<Html>,
-) -> Response {
-    let page = Page::new(Section::Home, title)
-        .sub(sub)
-        .body(body)
-        .render(app, None);
-    (
-        code,
-        [
-            (header::CACHE_CONTROL, "no-store"),
-            (header::REFERRER_POLICY, "no-referrer"),
-        ],
-        page,
-    )
-        .into_response()
-}
-
-fn unsubscribe_login(app: &App, token: &str) -> Option<String> {
-    if !valid_token(token) {
-        return None;
-    }
-    app.store
-        .unsubscribe_login(&token_hash(token))
-        .ok()
-        .flatten()
-}
-
-const UNKNOWN_LINK: &str = "<div class=\"blankslate\"><p>This unsubscribe link is unknown or too old. Sign in and empty the address on your settings page.</p></div>";
-
-/// A link scanner opens every link of an email, so a GET only asks. The
-/// one-click POST of RFC 8058 and the button below do the work.
-async fn unsubscribe_page(State(app): State<Shared>, Path(token): Path<String>) -> Response {
-    if unsubscribe_login(&app, &token).is_none() {
-        return token_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
-    }
-    let body = html!(
-        "<form method=\"post\" action=\"/unsubscribe/{token}\"><button class=\"btn btn-danger\" type=\"submit\">Unsubscribe</button></form>"
-    );
-    token_reply(
-        &app,
-        StatusCode::OK,
-        "Unsubscribe",
-        "Stop the daily email of Maintainer Mode. Your inbox on the site stays.",
-        body,
-    )
-}
-
-async fn unsubscribe(State(app): State<Shared>, Path(token): Path<String>) -> Response {
-    let Some(login) = unsubscribe_login(&app, &token) else {
-        return token_reply(&app, StatusCode::NOT_FOUND, "Unsubscribe", "", UNKNOWN_LINK);
-    };
-    if let Err(e) = forget_address(&app, &login) {
-        return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
-    }
-    token_reply(
-        &app,
-        StatusCode::OK,
-        "Unsubscribed",
-        "Maintainer Mode sends you no more email. The server deleted your address.",
-        "",
-    )
+    Redirect::to("/me/settings#notifications").into_response()
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use axum::http::header;
     use chrono::Duration;
 
     fn event(id: &str, at: DateTime<Utc>) -> Event {
@@ -1456,418 +596,6 @@ pub(crate) mod tests {
         assert!(read_at(&app, "alice").is_some());
     }
 
-    #[test]
-    fn an_address_is_plain_and_carries_no_header() {
-        for ok in [
-            "alice@example.org",
-            "a.b+nix@mail.example.co.uk",
-            "x_y-z@a-b.example",
-        ] {
-            assert!(valid_address(ok), "{ok}");
-        }
-        for bad in [
-            "",
-            "alice",
-            "alice@",
-            "@example.org",
-            "alice@localhost",
-            "alice@@example.org",
-            "a@b@example.org",
-            "alice @example.org",
-            "alice@example.org\r\nBcc: victim@example.org",
-            "alice@example.org\n",
-            "Alice <alice@example.org>",
-            "\"alice\"@example.org",
-            "alice,bob@example.org",
-            ".alice@example.org",
-            "al..ice@example.org",
-            "alice@-example.org",
-            "alice@example..org",
-            "alice@exa_mple.org",
-        ] {
-            assert!(!valid_address(bad), "{bad:?}");
-        }
-        assert!(!valid_address(&format!("{}@example.org", "a".repeat(65))));
-        assert!(!valid_address(&format!(
-            "a@{}.org",
-            vec!["b".repeat(60); 5].join(".")
-        )));
-    }
-
-    #[test]
-    fn a_digest_carries_the_unread_events_no_digest_carried() {
-        let now = Utc::now();
-        let list = [
-            event("pr-1-merged", now - Duration::hours(1)),
-            event("advisory-A-1-hello", now - Duration::hours(5)),
-            event("issue-2-issue opened", now - Duration::hours(30)),
-            event("upstream-hello-2", now - Duration::days(3)),
-        ];
-        let ids = |v: Vec<&Event>| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
-        let none = std::collections::HashSet::new();
-        assert_eq!(digest_selection(&list, None, &none, &Kind::ALL).len(), 4);
-        let sent: std::collections::HashSet<String> = ["issue-2-issue opened", "upstream-hello-2"]
-            .iter()
-            .map(|id| digest_key(id))
-            .collect();
-        assert_eq!(
-            ids(digest_selection(&list, None, &sent, &Kind::ALL)),
-            ["pr-1-merged", "advisory-A-1-hello"]
-        );
-        assert_eq!(
-            ids(digest_selection(
-                &list,
-                Some(now - Duration::hours(2)),
-                &sent,
-                &Kind::ALL
-            )),
-            ["pr-1-merged"]
-        );
-        assert_eq!(
-            ids(digest_selection(
-                &list,
-                None,
-                &none,
-                &[Kind::Advisory, Kind::Release]
-            )),
-            ["advisory-A-1-hello", "upstream-hello-2"]
-        );
-        assert!(digest_selection(&list, Some(now), &none, &Kind::ALL).is_empty());
-    }
-
-    #[test]
-    fn an_event_found_after_a_digest_goes_in_the_next_one() {
-        let app = crate::sets::tests::app(&[]);
-        let now = Utc::now();
-        let last = now - Duration::hours(2);
-        let old = event("pr-1-merged", now - Duration::hours(5));
-        let mut events = vec![old];
-        let marks = digest_sent(&app, "alice", &events, Some(last)).unwrap();
-        assert!(digest_selection(&events, None, &marks, &Kind::ALL).is_empty());
-        events.push(event("advisory-A-1-hello", now - Duration::days(3)));
-        let marks = digest_sent(&app, "alice", &events, Some(last)).unwrap();
-        let list = digest_selection(&events, None, &marks, &Kind::ALL);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].id, "advisory-A-1-hello");
-        mark_sent(&app, "alice", &list).unwrap();
-        let marks = digest_sent(&app, "alice", &events, Some(now)).unwrap();
-        assert!(digest_selection(&events, None, &marks, &Kind::ALL).is_empty());
-    }
-
-    #[test]
-    fn a_digest_goes_out_once_a_day_at_most() {
-        let now = DateTime::parse_from_rfc3339("2026-10-17T10:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        assert!(digest_due(None, now));
-        assert!(!digest_due(Some(now - Duration::hours(9)), now));
-        assert!(digest_due(Some(now - Duration::hours(11)), now));
-    }
-
-    #[test]
-    fn a_digest_body_is_one_line_per_event_and_capped() {
-        let now = Utc::now();
-        let mut e = event("pr-1-merged", now);
-        e.title = "merged: #1 a\nBcc: x".into();
-        let many: Vec<Event> = (0..DIGEST_LINES + 3)
-            .map(|n| event(&format!("pr-{n}-merged"), now))
-            .collect();
-        assert!(digest_body(&[&e]).contains("- hello: merged: #1 a Bcc: x\n"));
-        let refs: Vec<&Event> = many.iter().collect();
-        assert!(digest_body(&refs).contains("and 3 more in your inbox."));
-    }
-
-    #[test]
-    fn the_hello_name_is_the_public_host() {
-        assert_eq!(
-            hello_name("https://maintainermode.org/").as_deref(),
-            Some("maintainermode.org")
-        );
-        assert_eq!(hello_name("http://127.0.0.1:8790"), None);
-        assert_eq!(hello_name("http://localhost:8790"), None);
-    }
-
-    #[test]
-    fn smtp_is_off_without_a_host_and_refuses_half_a_setup() {
-        let args = |host: Option<&str>, from: Option<&str>, user: Option<&str>| SmtpArgs {
-            host: host.map(Into::into),
-            port: 465,
-            user: user.map(Into::into),
-            password_file: None,
-            from: from.map(Into::into),
-            mail_per_day: 500,
-        };
-        assert!(args(None, None, None).config("").unwrap().is_none());
-        assert!(
-            args(Some("smtp.example.org"), None, None)
-                .config("")
-                .is_err()
-        );
-        assert!(
-            args(Some("smtp.example.org"), Some("a@example.org"), Some("u"))
-                .config("")
-                .is_err()
-        );
-        assert!(
-            args(Some("smtp.example.org"), Some("a@example.org"), None)
-                .config("https://mm.example")
-                .unwrap()
-                .is_some()
-        );
-    }
-
-    #[tokio::test]
-    async fn an_unsubscribe_link_works_once_and_a_bad_one_is_not_found() {
-        let app = crate::sets::tests::app(&[]);
-        app.store
-            .set_setting("alice", EMAIL, "alice@example.org")
-            .unwrap();
-        let token = random_id();
-        app.store
-            .add_unsubscribe("alice", &token_hash(&token))
-            .unwrap();
-        let get = |t: &str| unsubscribe_page(State(app.clone()), Path(t.to_string()));
-        assert_eq!(get("nope").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get(&random_id()).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get(&token).await.status(), StatusCode::OK);
-        assert_eq!(
-            app.store.setting("alice", EMAIL).unwrap().as_deref(),
-            Some("alice@example.org")
-        );
-        let r = unsubscribe(State(app.clone()), Path(token.clone())).await;
-        assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(
-            app.store.setting("alice", EMAIL).unwrap().as_deref(),
-            Some("")
-        );
-        assert!(app.store.settings_with(EMAIL).unwrap().is_empty());
-        let r = unsubscribe(State(app.clone()), Path(token)).await;
-        assert_eq!(r.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn without_smtp_the_address_is_not_kept() {
-        let app = crate::sets::tests::app(&[]);
-        let h = signed_in(&app, "alice");
-        let form = NotifyForm {
-            k_mine: None,
-            mine_now: None,
-            k_pr: None,
-            k_issue: Some("1".into()),
-            k_advisory: None,
-            k_release: None,
-            k_build: None,
-            email: Some("alice@example.org".into()),
-        };
-        let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
-        assert_eq!(r.status(), StatusCode::SEE_OTHER);
-        assert_eq!(kinds(&app, "alice"), [Kind::Issue]);
-        assert!(app.store.setting("alice", EMAIL).unwrap().is_none());
-        let html = settings_box(&app, "alice", None);
-        assert!(html.contains("Email is off on this server"));
-        assert!(!html.contains("alice@example.org"));
-        let r = test_mail(State(app.clone()), h).await;
-        assert_eq!(r.status(), StatusCode::SEE_OTHER);
-    }
-
-    #[tokio::test]
-    async fn with_smtp_only_a_valid_address_is_kept() {
-        let mut app = crate::sets::tests::app(&[]);
-        std::sync::Arc::get_mut(&mut app).unwrap().smtp = SmtpArgs {
-            host: Some("smtp.example.org".into()),
-            port: 587,
-            user: None,
-            password_file: None,
-            from: Some("Maintainer Mode <mm@example.org>".into()),
-            mail_per_day: 0,
-        }
-        .config("https://mm.example")
-        .unwrap();
-        let h = signed_in(&app, "alice");
-        let save = |email: &str| {
-            let form = NotifyForm {
-                k_mine: None,
-                mine_now: None,
-                k_pr: Some("1".into()),
-                k_issue: None,
-                k_advisory: None,
-                k_release: None,
-                k_build: None,
-                email: Some(email.into()),
-            };
-            save_notify(State(app.clone()), h.clone(), Form(form))
-        };
-        let r = save("alice@example.org\r\nBcc: x@example.org").await;
-        assert_eq!(
-            r.headers()[header::LOCATION],
-            "/me/settings?mail=invalid#email"
-        );
-        assert!(app.store.setting("alice", EMAIL).unwrap().is_none());
-        save(" alice@example.org ").await;
-        assert_eq!(
-            app.store.setting("alice", EMAIL).unwrap().as_deref(),
-            Some("alice@example.org")
-        );
-        let html = settings_box(&app, "alice", Some("invalid"));
-        assert!(html.contains("value=\"alice@example.org\""));
-        assert!(html.contains("pending confirmation"));
-        assert!(html.contains("Send the confirmation email again"));
-        assert!(!html.contains("Send me a test email"));
-        assert!(html.contains("with no spaces"));
-        assert!(!settings_box(&app, "bob", None).contains("alice@example.org"));
-        let r = test_mail(State(app.clone()), h.clone()).await;
-        assert_eq!(
-            r.headers()[header::LOCATION],
-            "/me/settings?mail=unconfirmed#email"
-        );
-        let token = new_confirmation(&app, "alice", "alice@example.org", Utc::now()).unwrap();
-        confirm(State(app.clone()), Path(token)).await;
-        let html = settings_box(&app, "alice", None);
-        assert!(html.contains("confirmed"));
-        assert!(html.contains("Send me a test email"));
-        save("").await;
-        assert!(app.store.settings_with(EMAIL).unwrap().is_empty());
-        assert!(confirmed_address(&app, "alice").is_none());
-    }
-
-    #[tokio::test]
-    async fn a_confirmation_link_works_once_for_a_day_and_only_for_the_current_address() {
-        let app = crate::sets::tests::app(&[]);
-        app.store
-            .set_setting("alice", EMAIL, "alice@example.org")
-            .unwrap();
-        let now = Utc::now();
-        let token = new_confirmation(&app, "alice", "alice@example.org", now).unwrap();
-        let stored = app
-            .store
-            .confirmation(&token_hash(&token))
-            .unwrap()
-            .unwrap();
-        assert_eq!(stored.address, "alice@example.org");
-        assert!(app.store.confirmation(&token).unwrap().is_none());
-        let get = |t: &str| confirm_page(State(app.clone()), Path(t.to_string()));
-        let post = |t: &str| confirm(State(app.clone()), Path(t.to_string()));
-        assert_eq!(get("nope").await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get(&random_id()).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(post(&random_id()).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(get(&token).await.status(), StatusCode::OK);
-        assert!(confirmed_address(&app, "alice").is_none());
-        assert!(pending_confirmation(&app, &token, now + Duration::hours(23)).is_some());
-        assert!(pending_confirmation(&app, &token, now + Duration::hours(25)).is_none());
-        let old = new_confirmation(
-            &app,
-            "alice",
-            "alice@example.org",
-            now - Duration::hours(25),
-        )
-        .unwrap();
-        assert_eq!(get(&old).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(post(&old).await.status(), StatusCode::NOT_FOUND);
-        let other = new_confirmation(&app, "alice", "old@example.org", now).unwrap();
-        assert_eq!(post(&other).await.status(), StatusCode::NOT_FOUND);
-        assert_eq!(post(&token).await.status(), StatusCode::OK);
-        assert_eq!(
-            confirmed_address(&app, "alice").as_deref(),
-            Some("alice@example.org")
-        );
-        assert_eq!(post(&token).await.status(), StatusCode::NOT_FOUND);
-        app.store
-            .set_setting("alice", EMAIL, "new@example.org")
-            .unwrap();
-        assert!(confirmed_address(&app, "alice").is_none());
-        app.store.purge_confirmations(now).unwrap();
-        assert!(app.store.confirmation(&token_hash(&old)).unwrap().is_none());
-    }
-
-    #[test]
-    fn the_email_limits_count_a_rolling_day_and_skip_without_a_login() {
-        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
-        let now = Utc::now();
-        let take = |login: &str, kind: Mail, at: DateTime<Utc>| {
-            s.take_mail_slot(login, kind.key(), 5, kind.own_max(), at)
-                .unwrap()
-        };
-        let old = now - Duration::hours(25);
-        for _ in 0..CONFIRMS_PER_DAY {
-            assert!(take("alice", Mail::Confirm, old));
-        }
-        for _ in 0..CONFIRMS_PER_DAY {
-            assert!(take("alice", Mail::Confirm, now));
-        }
-        assert!(!take("alice", Mail::Confirm, now));
-        assert!(take("bob", Mail::Confirm, now));
-        assert!(take("alice", Mail::Test, now));
-        assert!(!take("carol", Mail::Digest, now));
-        assert!(!take("carol", Mail::Confirm, now));
-        assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 3));
-        for _ in 0..100 {
-            assert!(!take("alice", Mail::Confirm, now));
-        }
-        assert_eq!(s.mail_counts(now - Duration::days(1)).unwrap(), (5, 103));
-        assert!(take("alice", Mail::Confirm, now + Duration::hours(25)));
-    }
-
-    #[test]
-    fn test_emails_have_a_daily_limit_per_person() {
-        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
-        let now = Utc::now();
-        let take = |login: &str, kind: Mail| {
-            s.take_mail_slot(login, kind.key(), 500, kind.own_max(), now)
-                .unwrap()
-        };
-        for _ in 0..TESTS_PER_DAY {
-            assert!(take("alice", Mail::Test));
-        }
-        assert!(!take("alice", Mail::Test));
-        assert!(take("alice", Mail::Digest));
-        assert!(take("bob", Mail::Test));
-    }
-
-    #[tokio::test]
-    async fn over_the_server_limit_no_confirmation_goes_out() {
-        let mut app = crate::sets::tests::app(&[]);
-        std::sync::Arc::get_mut(&mut app).unwrap().smtp = SmtpArgs {
-            host: Some("smtp.example.org".into()),
-            port: 587,
-            user: None,
-            password_file: None,
-            from: Some("mm@example.org".into()),
-            mail_per_day: 0,
-        }
-        .config("https://mm.example")
-        .unwrap();
-        let h = signed_in(&app, "alice");
-        let form = NotifyForm {
-            k_mine: None,
-            mine_now: None,
-            k_pr: None,
-            k_issue: None,
-            k_advisory: None,
-            k_release: None,
-            k_build: None,
-            email: Some("alice@example.org".into()),
-        };
-        let r = save_notify(State(app.clone()), h.clone(), Form(form)).await;
-        assert_eq!(
-            r.headers()[header::LOCATION],
-            "/me/settings?mail=limit#email"
-        );
-        let r = resend_confirmation(State(app.clone()), h).await;
-        assert_eq!(
-            r.headers()[header::LOCATION],
-            "/me/settings?mail=limit#email"
-        );
-        assert_eq!(
-            app.store
-                .mail_counts(Utc::now() - Duration::days(1))
-                .unwrap(),
-            (0, 2)
-        );
-        let sync = crate::status::state(&app);
-        assert_eq!(sync["email"]["skipped_24h"], 2);
-        assert!(!sync.to_string().contains("alice"));
-    }
-
     #[tokio::test]
     async fn your_pull_requests_stay_on_after_an_old_choice_and_have_their_own_switch() {
         let app = crate::sets::tests::app(&[]);
@@ -1879,66 +607,20 @@ pub(crate) mod tests {
             "a kind added after the choice is on"
         );
         let h = signed_in(&app, "alice");
-        let form = |mine: bool, now: bool| NotifyForm {
+        let form = |mine: bool| NotifyForm {
             k_mine: mine.then(|| "1".into()),
-            mine_now: now.then(|| "1".into()),
             k_pr: None,
             k_issue: None,
             k_advisory: Some("1".into()),
             k_release: None,
             k_build: None,
-            email: None,
         };
-        save_notify(State(app.clone()), h.clone(), Form(form(false, false))).await;
+        save_notify(State(app.clone()), h.clone(), Form(form(false))).await;
         assert_eq!(kinds(&app, "alice"), [Kind::Advisory]);
-        assert!(mine_now(&app, "alice").is_none());
-        save_notify(State(app.clone()), h.clone(), Form(form(true, true))).await;
+        save_notify(State(app.clone()), h, Form(form(true))).await;
         assert_eq!(kinds(&app, "alice"), [Kind::Mine, Kind::Advisory]);
-        let on = mine_now(&app, "alice").unwrap();
-        save_notify(State(app.clone()), h.clone(), Form(form(true, true))).await;
-        assert_eq!(
-            mine_now(&app, "alice"),
-            Some(on),
-            "saving again keeps the start"
-        );
-        save_notify(State(app.clone()), h, Form(form(true, false))).await;
-        assert!(mine_now(&app, "alice").is_none());
     }
 
-    #[test]
-    fn an_event_email_goes_for_new_unread_events_of_your_own_pull_requests_only() {
-        let now = Utc::now();
-        let list = [
-            event("mine-1-review-7", now - Duration::minutes(5)),
-            event("mine-2-merged", now - Duration::hours(3)),
-            event("pr-3-merged", now - Duration::minutes(1)),
-            event("mine-4-closed", now - Duration::days(2)),
-        ];
-        let ids = |v: Vec<&Event>| v.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
-        let on = now - Duration::days(1);
-        assert_eq!(
-            ids(now_selection(&list, on, None)),
-            ["mine-1-review-7", "mine-2-merged"]
-        );
-        assert_eq!(
-            ids(now_selection(&list, on, Some(now - Duration::hours(1)))),
-            ["mine-1-review-7"]
-        );
-        let mut e = event("mine-1-review-7", now);
-        e.title = "bob approved: #1 a\r\nBcc: x".into();
-        assert!(now_body(&e).starts_with("bob approved: #1 a  Bcc: x\n"));
-        let s = crate::store::Store::open(std::path::Path::new(":memory:")).unwrap();
-        for _ in 0..NOW_PER_DAY {
-            assert!(
-                s.take_mail_slot("alice", Mail::Now.key(), 500, Mail::Now.own_max(), now)
-                    .unwrap()
-            );
-        }
-        assert!(
-            !s.take_mail_slot("alice", Mail::Now.key(), 500, Mail::Now.own_max(), now)
-                .unwrap()
-        );
-    }
     #[test]
     fn a_filter_link_keeps_the_other_filter() {
         assert_eq!(inbox_href(None, None), "/inbox");

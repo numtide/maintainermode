@@ -125,21 +125,13 @@ impl Store {
                data TEXT NOT NULL
              );
              CREATE TABLE IF NOT EXISTS rescan_run (login TEXT NOT NULL, at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS unsubscribe (
-               hash TEXT PRIMARY KEY,
-               login TEXT NOT NULL,
-               created_at TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS mail_confirm (
-               hash TEXT PRIMARY KEY,
-               login TEXT NOT NULL,
-               address TEXT NOT NULL,
-               created_at TEXT NOT NULL
-             );
-             CREATE TABLE IF NOT EXISTS mail_log (login TEXT NOT NULL, kind TEXT NOT NULL, at TEXT NOT NULL);
-             CREATE INDEX IF NOT EXISTS mail_log_at ON mail_log (at);
-             CREATE INDEX IF NOT EXISTS mail_log_own ON mail_log (login, kind, at);
-             CREATE TABLE IF NOT EXISTS mail_skip (hour TEXT PRIMARY KEY, n INTEGER NOT NULL);
+             -- what the email digest kept; drop these lines once every server has run them
+             DROP TABLE IF EXISTS unsubscribe;
+             DROP TABLE IF EXISTS mail_confirm;
+             DROP TABLE IF EXISTS mail_log;
+             DROP TABLE IF EXISTS mail_skip;
+             DROP TABLE IF EXISTS mail_once;
+             DELETE FROM setting WHERE key IN ('digest_email', 'digest_confirmed', 'digest_at', 'test_mail_at', 'notify_mine_now');
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,
@@ -176,13 +168,6 @@ impl Store {
                since TEXT NOT NULL,
                PRIMARY KEY (login, number)
              );
-             CREATE TABLE IF NOT EXISTS mail_once (
-               login TEXT NOT NULL,
-               id TEXT NOT NULL,
-               at TEXT NOT NULL,
-               PRIMARY KEY (login, id)
-             );
-             CREATE INDEX IF NOT EXISTS mail_once_at ON mail_once (at);
              CREATE TABLE IF NOT EXISTS hydra_state (
                jobset TEXT NOT NULL,
                attr TEXT NOT NULL,
@@ -1134,10 +1119,6 @@ pub struct FlakeRef {
     pub scanned_at: Option<DateTime<Utc>>,
 }
 
-fn mail_hour(at: DateTime<Utc>) -> String {
-    at.format("%Y-%m-%dT%H").to_string()
-}
-
 /// The age of the session cookie in web.rs: a session dies with it.
 const SESSION_DAYS: i64 = 30;
 
@@ -1343,157 +1324,6 @@ impl Store {
         let rows = stmt.query_map([key], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
-
-    /// Each email carries its own unsubscribe token; only its hash is kept.
-    pub fn add_unsubscribe(&self, login: &str, hash: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO unsubscribe (hash, login, created_at) VALUES (?1, ?2, ?3)",
-            params![hash, login, Utc::now().to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
-    pub fn unsubscribe_login(&self, hash: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn
-            .query_row(
-                "SELECT login FROM unsubscribe WHERE hash = ?1",
-                [hash],
-                |r| r.get(0),
-            )
-            .optional()?)
-    }
-
-    pub fn delete_unsubscribes(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM unsubscribe WHERE login = ?1", [login])?;
-        Ok(())
-    }
-
-    pub fn purge_unsubscribes(&self, before: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "DELETE FROM unsubscribe WHERE created_at < ?1",
-            [before.to_rfc3339()],
-        )?)
-    }
-}
-
-/// A link that confirms a digest address. Only the hash of its token is kept.
-pub struct Confirmation {
-    pub login: String,
-    pub address: String,
-    pub created_at: DateTime<Utc>,
-}
-
-impl Store {
-    pub fn add_confirmation(
-        &self,
-        login: &str,
-        address: &str,
-        hash: &str,
-        at: DateTime<Utc>,
-    ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO mail_confirm (hash, login, address, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![hash, login, address, at.to_rfc3339()],
-        )?;
-        Ok(())
-    }
-
-    pub fn confirmation(&self, hash: &str) -> Result<Option<Confirmation>> {
-        let conn = self.conn.lock().unwrap();
-        let row: Option<(String, String, String)> = conn
-            .query_row(
-                "SELECT login, address, created_at FROM mail_confirm WHERE hash = ?1",
-                [hash],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .optional()?;
-        Ok(row.and_then(|(login, address, at)| {
-            Some(Confirmation {
-                login,
-                address,
-                created_at: time_of(Some(at))?,
-            })
-        }))
-    }
-
-    pub fn delete_confirmations(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM mail_confirm WHERE login = ?1", [login])?;
-        Ok(())
-    }
-
-    /// Logs an email of `kind` when it fits under both limits of the 24
-    /// hours before `now`: `total_max` for the server, `own_max` for this
-    /// login and kind. A refused email only adds one to the skip count of
-    /// its hour, so refusals cannot grow the tables.
-    pub fn take_mail_slot(
-        &self,
-        login: &str,
-        kind: &str,
-        total_max: usize,
-        own_max: usize,
-        now: DateTime<Utc>,
-    ) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        let since = (now - chrono::Duration::days(1)).to_rfc3339();
-        let old = now - chrono::Duration::days(2);
-        conn.execute("DELETE FROM mail_log WHERE at < ?1", [old.to_rfc3339()])?;
-        conn.execute("DELETE FROM mail_skip WHERE hour < ?1", [mail_hour(old)])?;
-        let total: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mail_log WHERE at >= ?1",
-            [&since],
-            |r| r.get(0),
-        )?;
-        let own: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mail_log WHERE login = ?1 AND kind = ?2 AND at >= ?3",
-            [login, kind, &since],
-            |r| r.get(0),
-        )?;
-        let fits = (total as usize) < total_max && (own as usize) < own_max;
-        if fits {
-            conn.execute(
-                "INSERT INTO mail_log (login, kind, at) VALUES (?1, ?2, ?3)",
-                [login, kind, &now.to_rfc3339()],
-            )?;
-        } else {
-            conn.execute(
-                "INSERT INTO mail_skip (hour, n) VALUES (?1, 1)
-                 ON CONFLICT(hour) DO UPDATE SET n = n + 1",
-                [mail_hour(now)],
-            )?;
-        }
-        Ok(fits)
-    }
-
-    /// Emails sent since `since`, and emails skipped since the start of
-    /// its hour, for /sync.
-    pub fn mail_counts(&self, since: DateTime<Utc>) -> Result<(usize, usize)> {
-        let conn = self.conn.lock().unwrap();
-        let sent: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM mail_log WHERE at >= ?1",
-            [since.to_rfc3339()],
-            |r| r.get(0),
-        )?;
-        let skipped: i64 = conn.query_row(
-            "SELECT COALESCE(SUM(n), 0) FROM mail_skip WHERE hour >= ?1",
-            [mail_hour(since)],
-            |r| r.get(0),
-        )?;
-        Ok((sent as usize, skipped as usize))
-    }
-
-    pub fn purge_confirmations(&self, before: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
-        Ok(conn.execute(
-            "DELETE FROM mail_confirm WHERE created_at < ?1",
-            [before.to_rfc3339()],
-        )?)
-    }
 }
 
 impl Store {
@@ -1644,29 +1474,6 @@ impl Store {
         }
         tx.commit()?;
         Ok(n)
-    }
-
-    /// True the first time `id` is marked for `login`: an event that gets
-    /// its own email gets it once.
-    pub fn mail_once(&self, login: &str, id: &str, now: DateTime<Utc>) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
-        conn.execute(
-            "DELETE FROM mail_once WHERE at < ?1",
-            [(now - chrono::Duration::days(45)).to_rfc3339()],
-        )?;
-        Ok(conn.execute(
-            "INSERT OR IGNORE INTO mail_once (login, id, at) VALUES (?1, ?2, ?3)",
-            params![login, id, now.to_rfc3339()],
-        )? == 1)
-    }
-
-    /// The ids marked for `login` that start with `prefix`.
-    pub fn mailed(&self, login: &str, prefix: &str) -> Result<std::collections::HashSet<String>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT id FROM mail_once WHERE login = ?1 AND substr(id, 1, ?2) = ?3")?;
-        let rows = stmt.query_map(params![login, prefix.len() as i64, prefix], |r| r.get(0))?;
-        Ok(rows.collect::<Result<_, _>>()?)
     }
 
     /// Everyone who signed in, chose a setting or watches something.
@@ -1972,51 +1779,6 @@ mod tests {
         assert_eq!(s.token_for("bob").unwrap(), None);
         assert_eq!(s.token_for("alice").unwrap().as_deref(), Some("t1"));
         assert_eq!(s.purge_sessions().unwrap(), 1);
-    }
-
-    #[test]
-    fn mailed_ids_keep_to_their_prefix() {
-        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
-        let now = Utc::now();
-        s.mail_once("alice", "digest:pr-1", now).unwrap();
-        s.mail_once("alice", "mine-1-merged", now).unwrap();
-        s.mail_once("bob", "digest:pr-2", now).unwrap();
-        let ids = s.mailed("alice", "digest:").unwrap();
-        assert_eq!(ids.len(), 1);
-        assert!(ids.contains("digest:pr-1"));
-    }
-
-    #[test]
-    fn an_event_mail_is_marked_once() {
-        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
-        let now = Utc::now();
-        assert!(s.mail_once("alice", "mine-1-merged", now).unwrap());
-        assert!(!s.mail_once("alice", "mine-1-merged", now).unwrap());
-        assert!(s.mail_once("bob", "mine-1-merged", now).unwrap());
-        let later = now + chrono::Duration::days(46);
-        assert!(s.mail_once("alice", "mine-1-merged", later).unwrap());
-    }
-
-    #[test]
-    fn refused_emails_add_no_rows() {
-        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
-        let now = Utc::now();
-        assert!(s.take_mail_slot("alice", "confirm", 10, 1, now).unwrap());
-        for _ in 0..50 {
-            assert!(!s.take_mail_slot("alice", "confirm", 10, 1, now).unwrap());
-        }
-        let rows = |table: &str| -> i64 {
-            s.conn
-                .lock()
-                .unwrap()
-                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
-                .unwrap()
-        };
-        assert_eq!((rows("mail_log"), rows("mail_skip")), (1, 1));
-        assert_eq!(
-            s.mail_counts(now - chrono::Duration::days(1)).unwrap(),
-            (1, 50)
-        );
     }
 
     #[test]

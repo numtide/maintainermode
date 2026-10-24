@@ -91,8 +91,6 @@ pub struct App {
     /// Server-side flake rescans; None while they are off.
     pub rescan: Option<crate::rescan::Config>,
     pub inbox: crate::notify::Counts,
-    /// The SMTP server of the email digest; None while email is off.
-    pub smtp: Option<crate::notify::Smtp>,
     /// What pull request pages read from GitHub on demand.
     pub pr_cache: crate::prpage::Cache,
     /// The poller of the bot account's notifications; off by default.
