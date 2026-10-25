@@ -94,7 +94,7 @@ pub(crate) struct Endpoint {
 pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/prs",
-        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. The review queues (foryou, unowned, firsttime, all) take sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login they leave out what you hid, and foryou rows have why.",
+        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why.",
         params: &[
             opt("queue", Type::OneOf(&QUEUES), "the queue: all by default"),
             opt(
@@ -110,32 +110,32 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt(
                 "sort",
                 Type::OneOf(&crate::review::SORTS),
-                "for a review queue: the order of the tab by default",
+                "not with ready: the order of the queue by default",
             ),
             opt(
                 "checks",
                 Type::OneOf(&crate::review::CHECKS),
-                "for a review queue: keep the pull requests whose checks pass, fail or are pending",
+                "not with ready: keep the pull requests whose checks pass, fail or are pending",
             ),
             opt(
                 "reviews",
                 Type::OneOf(&crate::review::REVIEWS),
-                "for a review queue: none keeps those with no review by another person yet",
+                "not with ready: none keeps those with no review by another person yet",
             ),
             opt(
                 "conflicts",
                 Type::OneOf(&crate::review::CONFLICTS),
-                "for a review queue: hide drops those with a conflict",
+                "not with ready: hide drops those with a conflict",
             ),
             opt(
                 "base",
                 Type::Text,
-                "for a review queue: keep one base branch, like master or staging",
+                "not with ready: keep one base branch, like master or staging",
             ),
             opt(
                 "q",
                 Type::Text,
-                "for a review queue: keep the titles with a word that starts with this text",
+                "not with ready: keep the titles with a word that starts with this text",
             ),
             LIMIT_P,
             CURSOR_P,
@@ -432,7 +432,7 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/?mood=review", By(&["/api/v1/needs?mood=review"])),
     ("/?mood=maintain", By(&["/api/v1/needs?mood=maintain"])),
     ("/#first", By(&["/api/v1/first"])),
-    ("/review", By(&["/api/v1/prs", "/api/v1/progress"])),
+    ("/review", By(&["/api/v1/prs"])),
     ("/review?tab=foryou", By(&["/api/v1/prs?queue=foryou"])),
     ("/review?tab=unowned", By(&["/api/v1/prs?queue=unowned"])),
     (
@@ -443,6 +443,10 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     (
         "/review?tab=bumps&filter=mine",
         By(&["/api/v1/prs?queue=bumps&login=<login>"]),
+    ),
+    (
+        "/review?tab=bumps&sort=newest&checks=fail",
+        By(&["/api/v1/prs?queue=bumps&sort=newest&checks=fail"]),
     ),
     ("/review?tab=all", By(&["/api/v1/prs?queue=all"])),
     (
@@ -968,6 +972,14 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
     let login = Args::text(&q.login).or(caller.filter(|_| queue == "foryou" || yours));
     let own = login.is_some() && login == caller;
     let s = app.snap();
+    let opts = crate::review::Opts {
+        sort: q.sort.clone(),
+        checks: q.checks.clone(),
+        reviews: q.reviews.clone(),
+        conflicts: q.conflicts.clone(),
+        base: q.base.clone(),
+        q: q.q.clone(),
+    };
     let mut out;
     let mut private = false;
     match queue {
@@ -1015,6 +1027,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                 rows = crate::bumps::mine(app, &index, l, own, rows);
                 private = own;
             }
+            let rows = opts.apply(rows);
             let items: Vec<Value> = rows.iter().map(crate::bumps::row_json).collect();
             out = page(&items, q.limit, q.cursor.as_deref())?;
             out["median_age_days"] =
@@ -1030,14 +1043,6 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
             let hidden = match login {
                 Some(l) if own => app.store.hidden_prs(l).unwrap_or_default(),
                 _ => Default::default(),
-            };
-            let opts = crate::review::Opts {
-                sort: q.sort.clone(),
-                checks: q.checks.clone(),
-                reviews: q.reviews.clone(),
-                conflicts: q.conflicts.clone(),
-                base: q.base.clone(),
-                q: q.q.clone(),
             };
             let list = crate::review::ReviewList::new(&src, &hidden, false, &opts);
             out = page(&list.rows, q.limit, q.cursor.as_deref())?;

@@ -192,20 +192,6 @@ fn listing_line(p: &Progress) -> String {
     }
 }
 
-/// The small box on /review, for the signed-in person only.
-pub(crate) fn widget(app: &App, login: &str) -> Html {
-    let p = of(app, login, false);
-    html!(
-        "<div class=\"Box mb-3\" id=\"your-progress\"><div class=\"Box-row d-flex flex-wrap flex-items-center gap-3\">\
-         <span class=\"text-bold\">{} Your progress</span>\
-         <span>{} reviews this week</span><span class=\"f6\">{}</span>\
-         <a class=\"ml-auto f6\" href=\"/me/progress\">Details</a></div></div>",
-        icon(octicon!("pulse")),
-        p.reviews_week,
-        goal_line(&p),
-    )
-}
-
 fn stat(n: usize, label: &str) -> Html {
     html!(
         "<div class=\"Box p-3 flex-1\"><div class=\"f1 text-bold\">{n}</div><div class=\"f6\">{label}</div></div>"

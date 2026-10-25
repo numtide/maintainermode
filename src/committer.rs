@@ -24,7 +24,6 @@ pub const SECURITY: &str = "1.severity: security";
 const PREVIEW: usize = 5;
 /// Rows of "Ready to merge" on the first page; later pages hold `review::PAGE`.
 const FIRST: usize = 20;
-use crate::web::CONTRIBUTING as GUIDE;
 
 /// Logins are kept in lower case: `meta.maintainers` and GitHub disagree on case.
 #[derive(Debug, Default)]
@@ -399,10 +398,8 @@ pub(crate) fn ready_tab(
     after: Option<u64>,
 ) -> Html {
     let first = after.is_none();
-    let mut out = html!(
-        "<p class=\"f6\">Maintainer Mode never merges. Each row links to GitHub, and you decide. \
-         Read <a href=\"{GUIDE}#how-to-merge-pull-requests-yourself\">how nixpkgs merges</a>. \
-         <a href=\"/state?tab=rules\">The rules</a> of this site only decide which pull requests are in the queues.</p>"
+    let mut out = Html::from(
+        "<p class=\"f6\">Maintainer Mode never merges: each row links to GitHub, and you decide.</p>",
     );
     match viewer.filter(|v| s.committers.is(v)) {
         Some(login) if first => {
@@ -455,7 +452,6 @@ pub(crate) fn ready_tab(
             ),
         ));
     }
-    out.push(&api_links());
     out
 }
 
@@ -588,17 +584,6 @@ fn yours_section(page: &[Line], total: usize, more: Option<(&str, &str)>) -> Htm
              Only you see this section.</div>{}",
             lines(page, "Nothing ready touches your areas or what you watch.")
         ),
-    )
-}
-
-fn api_links() -> Html {
-    let links = crate::api::SECTIONS
-        .iter()
-        .filter(|s| **s != "yours")
-        .map(|s| html!("<a href=\"/api/v1/prs?queue=ready&amp;section={s}\"><code>{s}</code></a>"));
-    html!(
-        "<p class=\"f6\">The lists without the personal part are in the JSON API, one section each: {}.</p>",
-        crate::html::join(links, ", ")
     )
 }
 

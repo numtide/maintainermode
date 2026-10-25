@@ -229,7 +229,7 @@ section of a box has its own anchor.
 | News (`#news`)              | `#notifications` | the kinds of events that the unread count includes                                               |
 |                             | `#feed`          | the private link of your Atom feed                                                               |
 |                             | `#followup`      | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
-| Reviews (`#reviews`)        | `#tags`          | the path prefixes that the For you tab of `/review` adds                                         |
+| Reviews (`#reviews`)        | `#tags`          | the path prefixes that For you on `/review` adds                                                 |
 |                             | `#goal`          | your weekly goal                                                                                 |
 | Your machines (`#machines`) | `#upload`        | the upload token for `maintainer-mode submit`, with the steps and an example report              |
 | Account (`#account`)        | `#api`           | the API token for the `maintainer-mode` command and your own tools (see [api.md](api.md))        |
@@ -254,7 +254,7 @@ If you maintain nothing yet, the card is **Start contributing**. It teaches you 
 If you maintain packages or modules, the card is **Keep up with your packages**. It helps you keep up with them:
 
 1. Watch what you maintain, in the "I maintain" filter of `/packages`. Watch all of it in one step.
-2. Review the pull requests on them, in the For you tab of `/review`. It is done after your first review.
+2. Review the pull requests on them, in For you on `/review`. It is done after your first review.
 3. Get the news: your inbox, or a private Atom feed from `/me/settings#feed`.
 
 ### A first package to work on
@@ -313,65 +313,70 @@ maintain" filter. The "I watch" filter shows each item with its flags, and a
 
 ## Review, for you
 
-`/review` is the one place to review. It has six tabs, and each tab shows its count:
+`/review` is the one place to review. It shows one list of pull requests that need a review. The **Show** choice above the list selects which pull requests it holds:
 
-| Tab            | Address                 | What it lists                                                                            |
-| -------------- | ----------------------- | ---------------------------------------------------------------------------------------- |
-| For you        | `/review?tab=foryou`    | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
-| No maintainer  | `/review?tab=unowned`   | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
-| First-timers   | `/review?tab=firsttime` | first contributions that no one has reviewed (see below)                                 |
-| Bumps          | `/review?tab=bumps`     | open version bumps (see [health.md](health.md))                                          |
-| All            | `/review?tab=all`       | every pull request in the queues that is not ready to merge                              |
-| Ready to merge | `/review?tab=ready`     | the ready-to-merge queue, and the lists for committers (see below)                       |
+| Show               | Address                 | What it lists                                                                            |
+| ------------------ | ----------------------- | ---------------------------------------------------------------------------------------- |
+| For you            | `/review?tab=foryou`    | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
+| No maintainer      | `/review?tab=unowned`   | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
+| First-time authors | `/review?tab=firsttime` | first contributions that no one has reviewed (see below)                                 |
+| Version bumps      | `/review?tab=bumps`     | open version bumps (see [health.md](health.md))                                          |
+| All                | `/review?tab=all`       | every pull request in the queues that is not ready to merge                              |
 
-Sign in, and `/review` opens on **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. Signed out, `/review` opens on **No maintainer**, and For you is not shown.
+A committer also sees the tab **Ready to merge** (`/review?tab=ready`, see [For committers](#for-committers)). The address works for everyone.
 
-Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these tabs are not in number order. `/merge`, `/committer` and `/bumps` redirect to their tab.
+Sign in, and `/review` shows **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. Signed out, `/review` shows **No maintainer**, and For you is not a choice.
 
-**Why a pull request is here.** For you, No maintainer and All list only the pull requests of authors who are [in the queues](rules.md#2-whose-pull-requests-appear): in the last 60 days, they reviewed the pull requests of 3 or more other authors. The subtitle of these tabs says so. Each row of For you also says why it is yours, for example "on your machines: curl · you maintain: hello · you watch: nginx". The kinds are: on your machines, you maintain, you own in ci/OWNERS, you changed this year, your tag, and you watch. The page of a pull request shows the same in "Why it is here", with the number of other authors whose pull requests the author reviewed.
+The first row of the list tells in one sentence what the list holds. On No maintainer, "What to check" opens the checks that a first review can do.
 
-**Hide.** Signed in, each row of For you, No maintainer, First-timers and All has a **Hide** button (key `e`). A hidden pull request leaves these tabs and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the tab, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Bumps do not hide anything.
+Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these lists are not in number order. `/merge`, `/committer` and `/bumps` redirect to their list.
 
-**Sort and filter.** Above the list of For you, No maintainer, First-timers and All, a bar narrows and orders it. Each choice is a parameter of the address, so you can keep a link to a view:
+**Why a pull request is here.** For you, No maintainer and All list only the pull requests of authors who are [in the queues](rules.md#2-whose-pull-requests-appear): in the last 60 days, they reviewed the pull requests of 3 or more other authors. The first row of these lists links to this rule. Each row of For you also says why it is yours, for example "on your machines: curl · you maintain: hello · you watch: nginx". The kinds are: on your machines, you maintain, you own in ci/OWNERS, you changed this year, your tag, and you watch. The page of a pull request shows the same in "Why it is here", with the number of other authors whose pull requests the author reviewed.
 
-| Parameter   | Values                                  | What it does                                           |
-| ----------- | --------------------------------------- | ------------------------------------------------------ |
-| `q`         | text                                    | titles with a word that starts with the text           |
-| `sort`      | `oldest`, `newest`, `updated`           | the order; without it, the order of the tab            |
-| `checks`    | `pass`, `fail`, `pending`               | the state of the checks of the head commit             |
-| `reviews`   | `none`, `some`                          | no review by another person yet, or one or more        |
-| `conflicts` | `hide`                                  | drops the pull requests with a conflict                |
-| `base`      | a branch, such as `master` or `staging` | one base branch; the bar lists the branches of the tab |
+**Hide.** Signed in, each row of For you, No maintainer, First-time authors and All has a **Hide** button (key `e`). A hidden pull request leaves these lists and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the list, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Version bumps do not hide anything.
 
-"Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for these queues. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
+**Sort and filter.** The bar above the list has the Show choice and a search for words in the title. **More filters** opens the other choices. It is open when one of them is set. Push **Apply** to show the list. Each choice is a parameter of the address, so you can keep a link to a view:
 
-The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The CLI (`maintainer-mode prs --queue foryou --login <login>`) takes the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own API token asks for your login. Then the answer has the rows and the order of the tab. In all other cases only your public area counts, in number order. See [api.md](api.md).
+| Parameter   | Values                                           | What it does                                                           |
+| ----------- | ------------------------------------------------ | ---------------------------------------------------------------------- |
+| `tab`       | `foryou`, `unowned`, `firsttime`, `bumps`, `all` | the Show choice                                                        |
+| `q`         | text                                             | titles with a word that starts with the text                           |
+| `sort`      | `oldest`, `newest`, `updated`                    | the order; without it, the order of the Show choice                    |
+| `checks`    | `pass`, `fail`, `pending`                        | the state of the checks of the head commit                             |
+| `reviews`   | `none`, `some`                                   | no review by another person yet, or one or more                        |
+| `conflicts` | `hide`                                           | drops the pull requests with a conflict                                |
+| `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                |
+| `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch |
 
-### First-timers
+"Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue but `ready`. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
 
-A first contribution that waits for a long time can lose a new contributor. Some wait for a year. This tab lists them, the oldest first. Each row shows how long the author has waited, for example "waiting 11 months".
+The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The CLI (`maintainer-mode prs --queue foryou --login <login>`) takes the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own API token asks for your login. Then the answer has the rows and the order of For you. In all other cases only your public area counts, in number order. See [api.md](api.md).
 
-A pull request is on the tab when all of these are true:
+### First-time authors
+
+A first contribution that waits for a long time can lose a new contributor. Some wait for a year. Show **First-time authors** lists them, the oldest first. Each row shows how long the author has waited, for example "waiting 11 months".
+
+A pull request is on the list when all of these are true:
 
 - It is open, and it is not a draft.
 - GitHub calls its author `FIRST_TIME_CONTRIBUTOR` or `FIRST_TIMER`, or it has the label `12.first-time contribution`.
 - The author is not a bot.
 - No one other than the author has reviewed it. A review from a bot does not count.
 
-Maintainer Mode does not store the comments of other people. Thus a pull request with a comment but no review stays on the tab. The author does not need a review record: this tab does not use the queue rules. The tab is visible when you are signed in and when you are signed out.
+Maintainer Mode does not store the comments of other people. Thus a pull request with a comment but no review stays on the list. The author does not need a review record: this list does not use the queue rules. Everyone can see it, signed in or signed out.
 
-The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. Paging is the same as on the other tabs.
+The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. Paging is the same as on the other lists.
 
 ## Your progress
 
 `/me/progress` shows your own review record. Only you see it. It never shows the numbers of another person.
 
 - **This week and this month**: the pull requests you reviewed. A week starts on Monday, in UTC.
-- **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal. `/review` shows how far you are.
+- **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal.
 - **In the queues**: whether your own pull requests show in the queues. If they do not, it tells how many more authors you need. Your reviews must move the pull requests of 3 different authors in 60 days. See [rule 2](rules.md#2-whose-pull-requests-appear).
 - **Badges**: First review; First review with no maintainer; Merged unchanged; 10, 50 and 100 reviews; Five parts of nixpkgs.
 
-The page counts the synced data only: the last 60 days and every open pull request. A small box on `/review` shows your week and your goal. Your menu links to the page.
+The page counts the synced data only: the last 60 days and every open pull request. Your menu links to the page.
 
 ## Notifications
 
@@ -772,7 +777,7 @@ limits, and why the feature is off by default.
 
 ## For committers
 
-The tab **Ready to merge** of `/review` shows what waits for a person with merge rights. Everyone can see it. A committer who signs in also sees the section **In your areas** at the top. The home page of a committer links to the tab.
+**Ready to merge** (`/review?tab=ready`) shows what waits for a person with merge rights. A committer who signs in sees it as the second tab of `/review`, with the section **In your areas** at the top. Everyone can open the address. The home page of a committer links to it.
 
 **Who is a committer.** Maintainer Mode counts a login as a committer when one of these is true:
 

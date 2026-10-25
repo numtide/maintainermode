@@ -836,9 +836,27 @@ main:focus {
   flex: 1 1 180px;
   max-width: 260px;
 }
+.review-show {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.review-more > summary,
+.review-check > summary {
+  cursor: pointer;
+  line-height: 24px;
+}
+.review-more > summary {
+  color: var(--fgColor-accent);
+}
+.review-more[open] {
+  flex-basis: 100%;
+}
 @media (max-width: 543px) {
   .review-bar input[type="search"],
-  .review-bar select {
+  .review-bar select,
+  .review-show {
     flex: 1 1 140px;
     max-width: none;
   }

@@ -1,26 +1,28 @@
-//! One place to review: the queues as tabs of `/review`.
+//! One place to review: the pull requests that need a review, with one
+//! Show choice, and Ready to merge for committers.
 
 use axum::Router;
 use axum::extract::{Form, Query, State};
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
+use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::fmt::Write;
 
 use crate::html::{Html, html};
 use crate::queue::Entry;
 use crate::ui::{Page, Section, Tab, empty, pager, section};
-use crate::web::{Shared, octicon, review_bucket, review_rows};
+use crate::web::{CONTRIBUTING, Shared, octicon, review_bucket, review_rows};
 
 pub(crate) const PAGE: usize = 50;
-use crate::web::NIXPKGS;
 
+/// The values of `tab`: the choices of Show, then Ready to merge.
 pub(crate) const TABS: [(&str, &str); 6] = [
     ("foryou", "For you"),
     ("unowned", "No maintainer"),
-    ("firsttime", "First-timers"),
-    ("bumps", "Bumps"),
+    ("firsttime", "First-time authors"),
+    ("bumps", "Version bumps"),
     ("all", "All"),
     ("ready", "Ready to merge"),
 ];
@@ -108,18 +110,36 @@ fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
     }
 }
 
-const NO_MAINTAINER: &str = "<div class=\"callout mb-3\">No maintainer, team or <code>ci/OWNERS</code> line covers the files of these pull requests. \
-A first review needs no special knowledge. Is <code>meta</code> complete (description, homepage, license, maintainers, mainProgram)? \
-Are the hashes fixed-output and pinned? Are the <code>platforms</code> correct? Does a CLI have <code>versionCheckHook</code>? \
-Write each finding as a comment on the changed line.</div>";
+const IN_THE_QUEUES: &str =
+    "<a href=\"/state?tab=rules#2-whose-pull-requests-appear\">in the queues</a>";
 
-fn first_timers() -> Html {
-    html!(
-        "<div class=\"callout mb-3\">First contributions that no one but the author has reviewed, the oldest first. \
-         A first answer decides if a new contributor stays: start at the top. \
-         <a href=\"{}#how-to-review-pull-requests\">How to review</a></div>",
-        crate::web::CONTRIBUTING
-    )
+const CHECKLIST: &str = "<details class=\"review-check\"><summary>What to check</summary><ul class=\"ml-3 mt-1\">\
+<li>Is <code>meta</code> complete: description, homepage, license, maintainers, mainProgram?</li>\
+<li>Are the hashes fixed-output and pinned?</li>\
+<li>Are the <code>platforms</code> correct?</li>\
+<li>Does a CLI have <code>versionCheckHook</code>?</li></ul>\
+<p class=\"mt-1 mb-0\">Write each finding as a comment on the changed line.</p></details>";
+
+/// One sentence above the rows of a Show choice.
+fn intro(tab: &str) -> Html {
+    let queues = Html::from(IN_THE_QUEUES);
+    match tab {
+        "foryou" => html!(
+            "Pull requests {queues} that touch your machines come first, then what you maintain, then what you watch."
+        ),
+        "unowned" => html!(
+            "Pull requests {queues} with no maintainer, team or <code>ci/OWNERS</code> line: a first review needs no special knowledge.{}",
+            Html::from(CHECKLIST)
+        ),
+        "firsttime" => {
+            "First contributions with no review yet: a first answer decides if a new contributor stays.".into()
+        }
+        "bumps" => html!(
+            "Titles like <code>name: old -&gt; new</code>, most from r-ryantm. <a href=\"{}\">How to review an update</a>",
+            crate::bumps::GUIDE
+        ),
+        _ => html!("Every pull request {queues} that is not ready to merge."),
+    }
 }
 
 async fn review_page(
@@ -131,14 +151,50 @@ async fn review_page(
     let v = viewer.as_deref();
     let s = app.snap();
     let tab = tab_id(q.tab.as_deref(), v.is_some());
+    let (sub, body) = if tab == "ready" {
+        (
+            html!(
+                "Pull requests that wait for a committer. \
+                 <a href=\"{CONTRIBUTING}#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a>"
+            ),
+            q.section
+                .as_deref()
+                .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
+                .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
+        )
+    } else {
+        (
+            html!(
+                "Pull requests that wait for a review. \
+                 <a href=\"{CONTRIBUTING}#how-to-review-pull-requests\">How nixpkgs reviews</a>"
+            ),
+            needs_review(&app, &s, v, tab, &q),
+        )
+    };
+    let tabs = if tab == "ready" || v.is_some_and(|l| s.committers.is(l)) {
+        vec![
+            Tab::new("/review", "Needs review", tab != "ready"),
+            Tab::new("/review?tab=ready", "Ready to merge", tab == "ready"),
+        ]
+    } else {
+        Vec::new()
+    };
+    Page::new(Section::Review, "Review")
+        .icon(octicon!("eye"))
+        .sub(sub)
+        .subnav(tabs)
+        .body(body)
+        .render(&app, v)
+}
 
-    let foryou = v
-        .map(|l| crate::mine::for_you_why(&app, &s, l))
-        .unwrap_or_default();
-    let hidden = v
-        .map(|l| app.store.hidden_prs(l).unwrap_or_default())
-        .unwrap_or_default();
-    let show_hidden = v.is_some() && q.hidden.as_deref() == Some("1");
+/// The list of one Show choice, under the bar.
+fn needs_review(
+    app: &crate::web::App,
+    s: &crate::web::Snapshot,
+    v: Option<&str>,
+    tab: &str,
+    q: &ReviewQuery,
+) -> Html {
     let opts = Opts {
         sort: q.sort.clone(),
         checks: q.checks.clone(),
@@ -147,163 +203,184 @@ async fn review_page(
         base: q.base.clone(),
         q: q.q.clone(),
     };
-    let (bumps, body) = {
+    let bumps = tab == "bumps";
+    let only_mine = bumps && v.is_some() && q.filter.as_deref() == Some("mine");
+    let show_hidden = !bumps && v.is_some() && q.hidden.as_deref() == Some("1");
+    let here = format!(
+        "/review?tab={tab}{}{}{}",
+        if only_mine { "&filter=mine" } else { "" },
+        if show_hidden { "&hidden=1" } else { "" },
+        opts.query()
+    );
+    let filtered = opts.active() || only_mine;
+    let none = if filtered {
+        "Nothing matches these filters."
+    } else {
+        "Nothing here."
+    };
+    let label = TABS.iter().find(|t| t.0 == tab).map_or("All", |t| t.1);
+    if bumps {
         let index = app.index.read().unwrap();
         let h = app.health.read().unwrap();
-        let bumps = crate::bumps::open(&s, &index, &h);
-        let n = bumps.len();
-        let body = match tab {
-            "bumps" => crate::bumps::tab(
-                &app,
-                &index,
-                v,
-                bumps,
-                q.filter.as_deref() == Some("mine"),
-                q.after,
-            ),
-            "ready" => q
-                .section
-                .as_deref()
-                .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
-                .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
-            _ => {
-                let other;
-                let src = if tab == "foryou" {
-                    &foryou
-                } else {
-                    other = source(&app, &s, v, true, tab);
-                    &other
-                };
-                let list = ReviewList::new(src, &hidden, show_hidden, &opts);
-                let n_hidden = list.hidden;
-                let bases = list.bases.clone();
-                let entries = list.entries();
-                let (page, next) = if tab == "foryou" || opts.sorted() {
-                    paged_by_offset(&entries, q.after)
-                } else {
-                    paged(&entries, q.after, |e| e.number)
-                };
-                let (title, intro): (&str, Html) = match tab {
-                    "foryou" => (
-                        "For you",
-                        "<p>Pull requests that touch the packages of <a href=\"/packages?filter=machines\">your machines</a> come first. Then those that touch what you maintain (<code>meta.maintainers</code>, <code>meta.teams</code>), \
-                         own in <code>ci/OWNERS</code>, changed this year or tagged. Then those on what you <a href=\"/packages?filter=watch\">watch</a>. Oldest first in each group. Each row tells why it is here.</p>".into(),
-                    ),
-                    "unowned" => ("No maintainer", NO_MAINTAINER.into()),
-                    "firsttime" => ("First-timers", first_timers()),
-                    _ => (
-                        "All",
-                        "<p>Every pull request <a href=\"/state?tab=rules#the-rules\">in the queues</a> that is not ready to merge. Oldest first.</p>".into(),
-                    ),
-                };
-                let title = if show_hidden { "Hidden by you" } else { title };
-                let here = format!(
-                    "/review?tab={tab}{}{}",
-                    if show_hidden { "&hidden=1" } else { "" },
-                    opts.query()
-                );
-                let why_of: std::collections::HashMap<u64, &[String]> =
-                    list.rows.iter().map(|r| (r.entry.number, r.why)).collect();
-                let rows = if page.is_empty() {
-                    empty(if opts.active() {
-                        "Nothing matches these filters."
-                    } else {
-                        "Nothing here."
-                    })
-                } else {
-                    review_rows(page, tab == "firsttime", |e| {
-                        let why = why_of
-                            .get(&e.number)
-                            .map(|w| why_line(w))
-                            .unwrap_or_default();
-                        let end = if v.is_some() {
-                            hide_button(e.number, show_hidden, &here, true)
-                        } else {
-                            Html::new()
-                        };
-                        (why, end)
-                    })
-                };
-                let more_hidden;
-                let more = if show_hidden {
-                    Some((format!("/review?tab={tab}"), "back to the list"))
-                } else if n_hidden > 0 {
-                    more_hidden = format!("{n_hidden} hidden by you");
-                    Some((format!("/review?tab={tab}&hidden=1"), more_hidden.as_str()))
-                } else {
-                    None
-                };
-                let intro = if show_hidden {
-                    "<p>Pull requests you hid. They come back when you press Show again, and leave this list when they close.</p>".into()
-                } else {
-                    intro
-                };
+        let mut rows = crate::bumps::open(s, &index, &h);
+        if let (true, Some(l)) = (only_mine, v) {
+            rows = crate::bumps::mine(app, &index, l, true, rows);
+        }
+        let bases = bases(&rows);
+        let rows = opts.apply(rows);
+        let (page, next) = if opts.sorted() {
+            paged_by_offset(&rows, q.after)
+        } else {
+            paged(&rows, q.after, |r| r.pr.number)
+        };
+        let body = if page.is_empty() {
+            empty(if filtered {
+                none
+            } else {
+                "No open version bump."
+            })
+        } else {
+            crate::bumps::rows(page)
+        };
+        return html!(
+            "{}{}{}",
+            bar(&opts, tab, v.is_some(), false, only_mine, &bases),
+            section(
+                label,
+                Some(rows.len()),
+                None,
                 html!(
-                    "{intro}{}{}{}",
-                    opts.bar(tab, show_hidden, &bases),
-                    section(
-                        title,
-                        Some(entries.len()),
-                        more.as_ref().map(|(h, l)| (h.as_str(), *l)),
-                        rows
-                    ),
-                    pager(&here, next.as_deref())
+                    "<div class=\"Box-row f6 color-fg-muted\">{}</div>{body}",
+                    intro(tab)
                 )
-            }
-        };
-        (n, body)
-    };
-    let mut tabs = Vec::new();
-    for (id, label) in TABS {
-        let count = match id {
-            "foryou" if v.is_none() => continue,
-            "bumps" => bumps,
-            "ready" => s.queues.merge.len(),
-            "foryou" => foryou
-                .iter()
-                .filter(|(e, _)| !hidden.contains(&e.number))
-                .count(),
-            _ => review_bucket(&s, v, None, id)
-                .iter()
-                .filter(|e| !hidden.contains(&e.number))
-                .count(),
-        };
-        tabs.push(Tab::new(format!("/review?tab={id}"), label, id == tab).count(count));
+            ),
+            pager(&here, next.as_deref())
+        );
     }
-    let sub = if tab == "ready" {
-        html!(
-            "Pull requests that wait for a committer. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-merge-pull-requests-yourself\">How nixpkgs merges</a>"
-        )
-    } else if matches!(tab, "firsttime" | "bumps") {
-        html!(
-            "Pull requests that wait for a review. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>"
+    let src = source(app, s, v, true, tab);
+    let hidden = v
+        .map(|l| app.store.hidden_prs(l).unwrap_or_default())
+        .unwrap_or_default();
+    let list = ReviewList::new(&src, &hidden, show_hidden, &opts);
+    let entries = list.entries();
+    let (page, next) = if tab == "foryou" || opts.sorted() {
+        paged_by_offset(&entries, q.after)
+    } else {
+        paged(&entries, q.after, |e| e.number)
+    };
+    let why_of: std::collections::HashMap<u64, &[String]> =
+        list.rows.iter().map(|r| (r.entry.number, r.why)).collect();
+    let rows = if !page.is_empty() {
+        review_rows(page, tab == "firsttime", |e| {
+            let why = why_of
+                .get(&e.number)
+                .map(|w| why_line(w))
+                .unwrap_or_default();
+            let end = if v.is_some() {
+                hide_button(e.number, show_hidden, &here, true)
+            } else {
+                Html::new()
+            };
+            (why, end)
+        })
+    } else if tab == "foryou" && !filtered && !show_hidden {
+        empty(
+            "Nothing for you now. The pull requests with <a href=\"/review?tab=unowned\">no maintainer</a> need reviews too.",
         )
     } else {
-        html!(
-            "Pull requests that wait for a review. Each author is <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">in the queues</a>: \
-             they reviewed the pull requests of {} or more other authors in the last {} days. \
-             <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">How nixpkgs reviews</a>",
-            crate::ledger::MIN_COUNTERPARTIES,
-            crate::ledger::WINDOW_DAYS
-        )
+        empty(none)
     };
-    let widget = v
-        .map(|v| crate::progress::widget(&app, v))
-        .unwrap_or_default();
-    Page::new(Section::Review, "Review")
-        .icon(octicon!("eye"))
-        .sub(sub)
-        .subnav(tabs)
-        .body(html!("{widget}{body}"))
-        .render(&app, v)
+    let more_hidden;
+    let more = if show_hidden {
+        Some((format!("/review?tab={tab}"), "back to the list"))
+    } else if list.hidden > 0 {
+        more_hidden = format!("{} hidden by you", list.hidden);
+        Some((format!("/review?tab={tab}&hidden=1"), more_hidden.as_str()))
+    } else {
+        None
+    };
+    let (title, lead): (&str, Html) = if show_hidden {
+        (
+            "Hidden by you",
+            "Pull requests that you hid. Push <strong>Show again</strong> to put one back in your lists.".into(),
+        )
+    } else {
+        (label, intro(tab))
+    };
+    html!(
+        "{}{}{}",
+        bar(&opts, tab, v.is_some(), show_hidden, false, &list.bases),
+        section(
+            title,
+            Some(entries.len()),
+            more.as_ref().map(|(h, l)| (h.as_str(), *l)),
+            html!("<div class=\"Box-row f6 color-fg-muted\">{lead}</div>{rows}")
+        ),
+        pager(&here, next.as_deref())
+    )
 }
 
 pub(crate) const SORTS: [&str; 3] = ["oldest", "newest", "updated"];
 pub(crate) const CHECKS: [&str; 3] = ["pass", "fail", "pending"];
 pub(crate) const REVIEWS: [&str; 2] = ["none", "some"];
 pub(crate) const CONFLICTS: [&str; 1] = ["hide"];
+
+/// What the filters and the sorts read of a row.
+pub(crate) struct Facts<'a> {
+    number: u64,
+    title: &'a str,
+    ci: Option<&'a str>,
+    reviewed: bool,
+    conflict: bool,
+    base: &'a str,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+/// A row that the filter bar can narrow and order.
+pub(crate) trait Filtered {
+    fn facts(&self) -> Facts<'_>;
+}
+
+impl Filtered for Entry {
+    fn facts(&self) -> Facts<'_> {
+        Facts {
+            number: self.number,
+            title: &self.title,
+            ci: self.ci.as_deref(),
+            reviewed: !self.reviewers.is_empty(),
+            conflict: self.mergeable == "CONFLICTING",
+            base: &self.base,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        }
+    }
+}
+
+impl Filtered for crate::bumps::Row<'_> {
+    fn facts(&self) -> Facts<'_> {
+        let p = self.pr;
+        Facts {
+            number: p.number,
+            title: &p.title,
+            ci: p.ci.as_deref(),
+            reviewed: p
+                .reviews
+                .iter()
+                .any(|r| r.author != p.author && !r.author_is_bot),
+            conflict: p.mergeable == "CONFLICTING",
+            base: &p.base,
+            created_at: p.created_at,
+            updated_at: p.updated_at,
+        }
+    }
+}
+
+impl<T: Filtered + ?Sized> Filtered for &T {
+    fn facts(&self) -> Facts<'_> {
+        (**self).facts()
+    }
+}
 
 /// How a person narrows and orders a review list. Each field is `None` for
 /// "any", and an unknown value counts as `None`: the API checks the values
@@ -333,34 +410,49 @@ impl Opts {
         Self::get(&self.q, &[]).map(str::to_lowercase)
     }
 
-    pub(crate) fn keeps(&self, e: &Entry) -> bool {
+    fn keeps(&self, f: &Facts) -> bool {
         let checks = match Self::get(&self.checks, &CHECKS) {
             None => true,
-            Some("pass") => e.ci.as_deref() == Some("SUCCESS"),
-            Some("fail") => matches!(e.ci.as_deref(), Some("FAILURE" | "ERROR")),
-            Some(_) => !matches!(e.ci.as_deref(), Some("SUCCESS" | "FAILURE" | "ERROR")),
+            Some("pass") => f.ci == Some("SUCCESS"),
+            Some("fail") => matches!(f.ci, Some("FAILURE" | "ERROR")),
+            Some(_) => !matches!(f.ci, Some("SUCCESS" | "FAILURE" | "ERROR")),
         };
         let reviews = match Self::get(&self.reviews, &REVIEWS) {
             None => true,
-            Some("none") => e.reviewers.is_empty(),
-            Some(_) => !e.reviewers.is_empty(),
+            Some("none") => !f.reviewed,
+            Some(_) => f.reviewed,
         };
-        let conflicts =
-            Self::get(&self.conflicts, &CONFLICTS).is_none() || e.mergeable != "CONFLICTING";
-        let base = Self::get(&self.base, &[]).is_none_or(|b| e.base == b);
+        let conflicts = Self::get(&self.conflicts, &CONFLICTS).is_none() || !f.conflict;
+        let base = Self::get(&self.base, &[]).is_none_or(|b| f.base == b);
         let words = self
             .words()
-            .is_none_or(|w| crate::search::at_word(&e.title.to_lowercase(), &w));
+            .is_none_or(|w| crate::search::at_word(&f.title.to_lowercase(), &w));
         checks && reviews && conflicts && base && words
     }
 
-    /// With no sort asked, the list keeps the order of its tab.
-    pub(crate) fn apply<'a>(&self, list: Vec<&'a Entry>) -> Vec<&'a Entry> {
-        let mut out: Vec<&Entry> = list.into_iter().filter(|e| self.keeps(e)).collect();
+    /// With no sort asked, the list keeps the order of its Show choice.
+    pub(crate) fn apply<T: Filtered>(&self, list: Vec<T>) -> Vec<T> {
+        let mut out: Vec<T> = list
+            .into_iter()
+            .filter(|e| self.keeps(&e.facts()))
+            .collect();
+        let at = |e: &T| {
+            let f = e.facts();
+            (f.created_at, f.updated_at, f.number)
+        };
         match self.sort() {
-            Some("oldest") => out.sort_by_key(|e| (e.created_at, e.number)),
-            Some("newest") => out.sort_by_key(|e| std::cmp::Reverse((e.created_at, e.number))),
-            Some("updated") => out.sort_by_key(|e| std::cmp::Reverse((e.updated_at, e.number))),
+            Some("oldest") => out.sort_by_key(|e| {
+                let (c, _, n) = at(e);
+                (c, n)
+            }),
+            Some("newest") => out.sort_by_key(|e| {
+                let (c, _, n) = at(e);
+                std::cmp::Reverse((c, n))
+            }),
+            Some("updated") => out.sort_by_key(|e| {
+                let (_, u, n) = at(e);
+                std::cmp::Reverse((u, n))
+            }),
             _ => {}
         }
         out
@@ -370,13 +462,17 @@ impl Opts {
         self.sort().is_some()
     }
 
-    pub(crate) fn active(&self) -> bool {
+    /// A filter of "More filters" is set.
+    fn more(&self) -> bool {
         self.sorted()
             || Self::get(&self.checks, &CHECKS).is_some()
             || Self::get(&self.reviews, &REVIEWS).is_some()
             || Self::get(&self.conflicts, &CONFLICTS).is_some()
             || Self::get(&self.base, &[]).is_some()
-            || self.words().is_some()
+    }
+
+    pub(crate) fn active(&self) -> bool {
+        self.more() || self.words().is_some()
     }
 
     /// `&name=value` for each field that is set, to keep in links. Not
@@ -397,104 +493,129 @@ impl Opts {
         }
         out
     }
+}
 
-    /// The filter bar above a list. `bases` are the base branches of the
-    /// list, so each choice has rows.
-    fn bar(&self, tab: &str, hidden: bool, bases: &[&str]) -> Html {
-        let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
-            let mut s = html!(
-                "<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">"
-            );
-            for (value, text) in choices {
-                let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
-                    " selected"
-                } else {
-                    ""
-                };
-                s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
-            }
-            s.push(&Html::from("</select>"));
-            s
-        };
-        let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
-        base_choices.extend(bases.iter().map(|b| (*b, *b)));
-        let clear = if self.active() {
-            html!(
-                " <a class=\"btn btn-sm btn-invisible\" href=\"/review?tab={tab}{}\">Clear</a>",
-                if hidden { "&hidden=1" } else { "" }
-            )
-        } else {
-            Html::new()
-        };
-        html!(
-            "<form class=\"review-bar mb-3\" method=\"get\" action=\"/review\" role=\"search\" aria-label=\"Sort and filter\">\
-             <input type=\"hidden\" name=\"tab\" value=\"{tab}\">{}\
-             <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Words in the title\" aria-label=\"Words in the title\">\
-             {}{}{}{}{}\
-             <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}</form>",
-            Html::from(if hidden {
-                "<input type=\"hidden\" name=\"hidden\" value=\"1\">"
+/// The bar above a list: Show and the title search, then the other filters,
+/// folded until one is set. `bases` are the base branches of the list, so
+/// each choice has rows. `only_mine` is the `filter=mine` of Version bumps.
+fn bar(
+    o: &Opts,
+    tab: &str,
+    signed_in: bool,
+    hidden: bool,
+    only_mine: bool,
+    bases: &[String],
+) -> Html {
+    let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
+        let mut s = html!(
+            "<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">"
+        );
+        for (value, text) in choices {
+            let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
+                " selected"
             } else {
                 ""
-            }),
-            self.q.as_deref().unwrap_or(""),
-            select(
-                "sort",
-                "Sort",
-                self.sort(),
-                &[
-                    ("", "Tab order"),
-                    ("oldest", "Oldest first"),
-                    ("newest", "Newest first"),
-                    ("updated", "Recently updated")
-                ]
-            ),
-            select(
-                "checks",
-                "Checks",
-                Self::get(&self.checks, &CHECKS),
-                &[
-                    ("", "Any checks"),
-                    ("pass", "Checks pass"),
-                    ("fail", "Checks fail"),
-                    ("pending", "Checks pending")
-                ]
-            ),
-            select(
-                "reviews",
-                "Reviews",
-                Self::get(&self.reviews, &REVIEWS),
-                &[
-                    ("", "Any reviews"),
-                    ("none", "No review yet"),
-                    ("some", "Reviewed")
-                ]
-            ),
-            select(
-                "conflicts",
-                "Conflicts",
-                Self::get(&self.conflicts, &CONFLICTS),
-                &[("", "With conflicts"), ("hide", "No conflicts")]
-            ),
-            select(
-                "base",
-                "Base branch",
-                Self::get(&self.base, &[]),
-                &base_choices
-            ),
+            };
+            s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
+        }
+        s.push(&Html::from("</select>"));
+        s
+    };
+    let show: Vec<(&str, &str)> = TABS
+        .iter()
+        .copied()
+        .filter(|(id, _)| *id != "ready" && (signed_in || *id != "foryou"))
+        .collect();
+    let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
+    base_choices.extend(bases.iter().map(|b| (b.as_str(), b.as_str())));
+    let whose = if tab == "bumps" && signed_in {
+        select(
+            "filter",
+            "Whose",
+            only_mine.then_some("mine"),
+            &[("", "Any package"), ("mine", "What you maintain or watch")],
         )
-    }
+    } else {
+        Html::new()
+    };
+    let clear = if o.active() || only_mine {
+        html!(
+            " <a class=\"btn btn-sm btn-invisible\" href=\"/review?tab={tab}{}\">Clear</a>",
+            if hidden { "&hidden=1" } else { "" }
+        )
+    } else {
+        Html::new()
+    };
+    html!(
+        "<form class=\"review-bar mb-3\" method=\"get\" action=\"/review\" role=\"search\" aria-label=\"Show and filter\">{}\
+         <label class=\"review-show\">Show {}</label>\
+         <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Words in the title\" aria-label=\"Words in the title\">\
+         <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}\
+         <details class=\"review-more\"{}><summary class=\"f6\">More filters</summary><div class=\"review-bar mt-2\">{}{}{}{}{}{whose}</div></details></form>",
+        Html::from(if hidden {
+            "<input type=\"hidden\" name=\"hidden\" value=\"1\">"
+        } else {
+            ""
+        }),
+        select("tab", "Show", Some(tab), &show),
+        o.q.as_deref().unwrap_or(""),
+        Html::from(if o.more() || only_mine { " open" } else { "" }),
+        select(
+            "sort",
+            "Sort",
+            o.sort(),
+            &[
+                ("", "Default order"),
+                ("oldest", "Oldest first"),
+                ("newest", "Newest first"),
+                ("updated", "Recently updated")
+            ]
+        ),
+        select(
+            "checks",
+            "Checks",
+            Opts::get(&o.checks, &CHECKS),
+            &[
+                ("", "Any checks"),
+                ("pass", "Checks pass"),
+                ("fail", "Checks fail"),
+                ("pending", "Checks pending")
+            ]
+        ),
+        select(
+            "reviews",
+            "Reviews",
+            Opts::get(&o.reviews, &REVIEWS),
+            &[
+                ("", "Any reviews"),
+                ("none", "No review yet"),
+                ("some", "Reviewed")
+            ]
+        ),
+        select(
+            "conflicts",
+            "Conflicts",
+            Opts::get(&o.conflicts, &CONFLICTS),
+            &[("", "With conflicts"), ("hide", "No conflicts")]
+        ),
+        select(
+            "base",
+            "Base branch",
+            Opts::get(&o.base, &[]),
+            &base_choices
+        ),
+    )
 }
 
 /// The base branches of `list`, the most common first.
-fn bases<'a>(list: &[&'a Entry]) -> Vec<&'a str> {
+fn bases<T: Filtered>(list: &[T]) -> Vec<String> {
     let mut n: std::collections::HashMap<&str, usize> = Default::default();
     for e in list {
-        *n.entry(e.base.as_str()).or_default() += 1;
+        *n.entry(e.facts().base).or_default() += 1;
     }
     let mut out: Vec<(&str, usize)> = n.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
-    out.into_iter().map(|(b, _)| b).collect()
+    out.into_iter().map(|(b, _)| b.to_string()).collect()
 }
 
 /// A safe place to go back to after a form: a path of this site.
@@ -605,7 +726,7 @@ pub(crate) struct ReviewList<'a> {
     /// The rows that the hidden filter removed, before `Opts`.
     pub hidden: usize,
     /// The base branches after the hidden filter, before `Opts`.
-    pub bases: Vec<&'a str>,
+    pub bases: Vec<String>,
 }
 
 impl<'a> ReviewList<'a> {
@@ -777,6 +898,78 @@ mod tests {
         assert_eq!(o.query(), "&sort=newest&q=a%20b");
         assert!(o.active() && o.sorted());
         assert_eq!(bases(&list), ["master", "staging"]);
+    }
+
+    #[test]
+    fn the_filters_narrow_and_order_the_version_bumps_too() {
+        let mut prs: Vec<crate::model::Pr> = (1..=3)
+            .map(|n| crate::ledger::tests::pr(n, "r-ryantm", n as i64))
+            .collect();
+        prs[0].title = "hello: 1 -> 2".into();
+        prs[1].title = "curl: 8.1 -> 8.2".into();
+        prs[1].ci = Some("FAILURE".into());
+        prs[2].title = "jq: 1.7 -> 1.8".into();
+        prs[2].base = "staging".into();
+        let mut bot = crate::ledger::tests::review(1, "bot", 1);
+        bot.author_is_bot = true;
+        prs[0].reviews.push(bot);
+        prs[2]
+            .reviews
+            .push(crate::ledger::tests::review(2, "alice", 4));
+        let rows = || -> Vec<crate::bumps::Row> {
+            prs.iter()
+                .map(|pr| crate::bumps::Row {
+                    pr,
+                    bump: crate::bumps::parse(&pr.title).unwrap(),
+                    attr: None,
+                    upstream: None,
+                    approvals: 0,
+                })
+                .collect()
+        };
+        let numbers =
+            |o: Opts| -> Vec<u64> { o.apply(rows()).iter().map(|r| r.pr.number).collect() };
+        assert_eq!(numbers(Opts::default()), [1, 2, 3]);
+        let o = |f: fn(&mut Opts)| {
+            let mut o = Opts::default();
+            f(&mut o);
+            o
+        };
+        assert_eq!(numbers(o(|o| o.checks = Some("fail".into()))), [2]);
+        assert_eq!(numbers(o(|o| o.reviews = Some("none".into()))), [1, 2]);
+        assert_eq!(numbers(o(|o| o.base = Some("staging".into()))), [3]);
+        assert_eq!(numbers(o(|o| o.q = Some("cur".into()))), [2]);
+        assert_eq!(numbers(o(|o| o.sort = Some("newest".into()))), [3, 2, 1]);
+        assert_eq!(bases(&rows()), ["master", "staging"]);
+    }
+
+    #[test]
+    fn the_bar_folds_the_filters_that_are_not_set() {
+        let none = bar(&Opts::default(), "unowned", false, false, false, &[]);
+        assert!(none.contains("<option value=\"unowned\" selected>No maintainer</option>"));
+        assert!(!none.contains("value=\"foryou\"") && !none.contains("value=\"ready\""));
+        assert!(none.contains("<details class=\"review-more\">"));
+        assert!(!none.contains("name=\"filter\"") && !none.contains("Clear"));
+        let sorted = Opts {
+            sort: Some("newest".into()),
+            ..Default::default()
+        };
+        let set = bar(&sorted, "foryou", true, false, false, &[]);
+        assert!(set.contains("<option value=\"foryou\" selected>For you</option>"));
+        assert!(set.contains("<details class=\"review-more\" open>") && set.contains("Clear"));
+        let words = Opts {
+            q: Some("curl".into()),
+            ..Default::default()
+        };
+        assert!(
+            bar(&words, "all", true, false, false, &[]).contains("<details class=\"review-more\">")
+        );
+        let mine = bar(&Opts::default(), "bumps", true, false, true, &[]);
+        assert!(mine.contains("<option value=\"mine\" selected>"));
+        assert!(mine.contains("<details class=\"review-more\" open>"));
+        assert!(
+            !bar(&Opts::default(), "bumps", false, false, false, &[]).contains("name=\"filter\"")
+        );
     }
 
     #[test]

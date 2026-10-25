@@ -236,10 +236,10 @@ follow.
 A pull request has **no maintainer** when no `meta.maintainers`,
 `meta.teams` or `ci/OWNERS` line covers a file that it changes. The same test
 sets the weight of a review on it, so the label and the ledger agree. These
-pull requests have their own tab. A new reviewer can start there: a check of
-the packaging (complete `meta`, pinned hashes, `platforms`, a missing
-`versionCheckHook`) needs no expert knowledge. Most first reviews find these
-problems.
+pull requests have their own list on `/review`: Show **No maintainer**. A new
+reviewer can start there: a check of the packaging (complete `meta`, pinned
+hashes, `platforms`, a missing `versionCheckHook`) needs no expert knowledge.
+Most first reviews find these problems.
 
 ## The state of nixpkgs
 

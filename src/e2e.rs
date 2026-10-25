@@ -118,6 +118,7 @@ async fn every_signed_in_page_answers_and_stays_private() {
         "/review",
         "/review?tab=ready",
         "/review?tab=bumps",
+        "/review?tab=bumps&filter=mine&sort=newest&checks=pass",
         "/review?tab=all",
         "/u/alice",
         "/u/alice?tab=reviews",
@@ -234,17 +235,18 @@ async fn me_pages_show_their_parts() {
     }
     let a = site.get("/review", Some(SID)).await;
     assert!(
-        a.body
-            .contains("selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you"),
+        a.body.contains("<option value=\"foryou\" selected>For you"),
         "{}",
         a.body
     );
+    assert!(!a.body.contains("aria-label=\"Views\""));
+    assert!(!a.body.contains("<details class=\"review-more\" open>"));
     let a = site.get("/review?tab=ready", Some(SID)).await;
     assert!(
         a.body
             .contains("href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge")
     );
-    assert!(a.body.contains("href=\"/review?tab=foryou\">For you"));
+    assert!(a.body.contains("href=\"/review\">Needs review"));
     let a = site
         .post(
             "/me/review/hide",
@@ -259,6 +261,7 @@ async fn me_pages_show_their_parts() {
         .await;
     assert!(a.body.contains("Hidden by you"), "{}", a.body);
     assert!(a.body.contains("<option value=\"fail\" selected>"));
+    assert!(a.body.contains("<details class=\"review-more\" open>"));
     let a = site
         .post(
             "/me/review/hide",
