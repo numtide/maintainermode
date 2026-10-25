@@ -802,7 +802,7 @@ pub(crate) async fn answer(
         )
         .map_err(Fail::Bad)?,
         "/api/v1/progress" => {
-            json!({ "login": me, "progress": crate::progress::of(app, me, true) })
+            json!({ "login": me, "progress": crate::progress::of(app, me) })
         }
         "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit),
         "/api/v1/first" => paged(&crate::first::rows(app))?,

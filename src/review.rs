@@ -596,7 +596,7 @@ fn bar(
             "conflicts",
             "Conflicts",
             Opts::get(&o.conflicts, &CONFLICTS),
-            &[("", "With conflicts"), ("hide", "No conflicts")]
+            &[("", "Any conflicts"), ("hide", "No conflicts")]
         ),
         select(
             "base",

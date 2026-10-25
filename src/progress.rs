@@ -15,7 +15,7 @@ use crate::dossier::{self, Outcome, Row};
 use crate::html::{Html, html};
 use crate::ledger::{Credit, MIN_COUNTERPARTIES, WINDOW_DAYS};
 use crate::ui::{Page, Section, Tone, badge, section};
-use crate::web::{App, Shared, icon, octicon};
+use crate::web::{App, Shared, octicon};
 
 const GOAL: &str = "weekly_goal";
 pub const MAX_GOAL: u32 = 50;
@@ -144,7 +144,7 @@ fn goal_of(app: &App, login: &str) -> Option<u32> {
         .filter(|g| (1..=MAX_GOAL).contains(g))
 }
 
-pub fn of(app: &App, login: &str, with_badges: bool) -> Progress {
+pub fn of(app: &App, login: &str) -> Progress {
     let s = app.snap();
     let mine = s
         .reviewed_by
@@ -156,14 +156,12 @@ pub fn of(app: &App, login: &str, with_badges: bool) -> Progress {
     let credits: Vec<&Credit> = s.ledger.credits_of(login).collect();
     let counterparties = s.ledger.people.get(login).map_or(0, |p| p.counterparties);
     let mut p = build(&rows, counterparties, goal_of(app, login), Utc::now());
-    if with_badges {
-        p.badges = badges(&rows, &credits, |n| {
-            s.pr_at
-                .get(&n)
-                .map(|&i| crate::metrics::areas(&s.pr_data[i].files))
-                .unwrap_or_default()
-        });
-    }
+    p.badges = badges(&rows, &credits, |n| {
+        s.pr_at
+            .get(&n)
+            .map(|&i| crate::metrics::areas(&s.pr_data[i].files))
+            .unwrap_or_default()
+    });
     p
 }
 
@@ -202,7 +200,7 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let p = of(&app, &login, true);
+    let p = of(&app, &login);
     let mut out = html!(
         "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
         stat(p.reviews_week, "pull requests reviewed this week"),
