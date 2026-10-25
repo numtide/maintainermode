@@ -85,6 +85,8 @@ skip /auth/callback
 skip /feed/:token
 skip /static/:file
 skip /robots.txt
+skip /favicon.ico
+skip /apple-touch-icon.png
 skip /healthz
 skip /metrics
 skip /api/v1

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+<title>Maintainer Mode</title>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.6">
+<path stroke="#5277C3" d="M16.00 11.60L16.00 8.00L18.94 6.30"/>
+<circle stroke="#5277C3" cx="20.85" cy="5.20" r="2.2"/>
+<path stroke="#7EBAE4" d="M19.81 13.80L22.93 12.00L25.87 13.70"/>
+<circle stroke="#7EBAE4" cx="27.78" cy="14.80" r="2.2"/>
+<path stroke="#5277C3" d="M19.81 18.20L22.93 20.00L22.93 23.40"/>
+<circle stroke="#5277C3" cx="22.93" cy="25.60" r="2.2"/>
+<path stroke="#7EBAE4" d="M16.00 20.40L16.00 24.00L13.06 25.70"/>
+<circle stroke="#7EBAE4" cx="11.15" cy="26.80" r="2.2"/>
+<path stroke="#5277C3" d="M12.19 18.20L9.07 20.00L6.13 18.30"/>
+<circle stroke="#5277C3" cx="4.22" cy="17.20" r="2.2"/>
+<path stroke="#7EBAE4" d="M12.19 13.80L9.07 12.00L9.07 8.60"/>
+<circle stroke="#7EBAE4" cx="9.07" cy="6.40" r="2.2"/>
+</g>
+<circle fill="#7EBAE4" cx="16" cy="16" r="2.4"/>
+</svg>

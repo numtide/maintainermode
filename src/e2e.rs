@@ -163,6 +163,28 @@ async fn a_visitor_gets_one_intro_one_list_and_one_row_of_links() {
 }
 
 #[tokio::test]
+async fn every_page_has_the_logo_and_the_icons() {
+    let site = serve(signed_in_app()).await;
+    let a = site.get("/", None).await;
+    assert!(a.body.contains("class=\"site-logo\" aria-hidden=\"true\""));
+    let svg = a
+        .body
+        .split("<link rel=\"icon\" href=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .expect("an icon link");
+    assert!(svg.starts_with("/static/favicon."), "{svg}");
+    let icon = site.get(svg, None).await;
+    assert_eq!(icon.status, StatusCode::OK);
+    assert!(icon.body.starts_with("<svg"));
+    for path in ["/favicon.ico", "/apple-touch-icon.png"] {
+        let png = site.get(path, None).await;
+        assert_eq!(png.status, StatusCode::OK, "{path}");
+        assert_eq!(png.cache.as_deref(), Some("public, max-age=86400"));
+    }
+}
+
+#[tokio::test]
 async fn text_from_github_and_people_is_escaped() {
     let app = signed_in_app();
     {

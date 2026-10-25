@@ -1186,3 +1186,7 @@ main:focus {
   background: var(--bgColor-accent-muted);
   border-color: var(--borderColor-accent-muted);
 }
+
+.site-logo {
+  flex: none;
+}
