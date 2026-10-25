@@ -115,12 +115,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf http://127.0.0.1:8790/healthz")
     machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/page && grep -q 'Maintainer Mode' /tmp/page")
     machine.succeed("grep -q 'id=\"intro\"' /tmp/page && grep -q 'nixpkgs/blob/master/CONTRIBUTING.md\">nixpkgs contributor guide' /tmp/page")
-    machine.succeed("curl -s -D /tmp/intro.h -o /dev/null -X POST http://127.0.0.1:8790/intro/dismiss && grep -q '^HTTP/1.1 303' /tmp/intro.h && grep -qi '^set-cookie: intro=hidden' /tmp/intro.h")
-    machine.succeed("curl -sf -H 'Cookie: intro=hidden' http://127.0.0.1:8790/ -o /tmp/page && ! grep -q 'id=\"intro\"' /tmp/page")
-    machine.succeed("grep -q '<h1 class=\"sr-only\">Maintainer Mode</h1>' /tmp/page && ! grep -q 'Subhead-heading' /tmp/page")
-    machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/page && grep -o '<h1' /tmp/page | wc -l > /tmp/h1 && grep -qx 1 /tmp/h1 && grep -q 'flex-auto\">Tools that make it easier' /tmp/page")
-    machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/home && grep -q 'Pull requests with no maintainer' /tmp/home && grep -q 'nixpkgs in numbers' /tmp/home")
-    machine.succeed("grep -q 'href=\"/review?tab=unowned\"' /tmp/home")
+    machine.succeed("! grep -q -e 'Subhead-heading' -e '/intro/dismiss' /tmp/page && grep -o '<h1' /tmp/page | wc -l > /tmp/h1 && grep -qx 1 /tmp/h1 && grep -q 'mb-2\">Tools that make it easier' /tmp/page")
+    machine.succeed("grep -q 'Box-title\">A first package to work on</h2>' /tmp/page && grep -q 'aria-label=\"More in nixpkgs\"' /tmp/page && ! grep -q 'nixpkgs in numbers' /tmp/page")
+    machine.succeed("grep -q 'class=\"btn btn-sm\" href=\"/review?tab=unowned\"' /tmp/page")
     machine.succeed("curl -s -D /tmp/merge.h -o /dev/null http://127.0.0.1:8790/merge && grep -qi '^location: /review?tab=ready' /tmp/merge.h")
     machine.succeed("curl -s -D /tmp/committer.h -o /dev/null http://127.0.0.1:8790/committer && grep -qi '^location: /review?tab=ready' /tmp/committer.h")
     machine.succeed("curl -s -D /tmp/bumps.h -o /dev/null http://127.0.0.1:8790/bumps && grep -qi '^location: /review?tab=bumps' /tmp/bumps.h")
@@ -354,20 +351,22 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '<a href=\"/inbox\" aria-current=\"page\">' /tmp/s-inbox && ! grep -q 'site-tab\" href=\"[^\"]*\" aria-current' /tmp/s-inbox")
     machine.succeed("grep -q '<a href=\"/me/settings\" aria-current=\"page\">' /tmp/s-settings && ! grep -q 'site-tab\" href=\"[^\"]*\" aria-current' /tmp/s-settings")
     machine.succeed("curl -s -D /tmp/inbox0.h -o /dev/null http://127.0.0.1:8790/inbox && grep -q '^HTTP/1.1 303' /tmp/inbox0.h && grep -qi '^cache-control: private, no-store' /tmp/inbox0.h")
-    for f, label in [("mine", "Mine"), ("machines", "On my machines"), ("maintain", "I maintain"), ("watch", "I watch"), ("all", "All of nixpkgs")]:
+    for f, label in [("mine", "All"), ("machines", "On my machines"), ("maintain", "I maintain"), ("watch", "I watch")]:
         signed_in(f"/packages?filter={f}", f"/tmp/s-pk-{f}")
         machine.succeed(f"grep -q 'href=\"/packages?filter={f}\" aria-current=\"page\">{label} <span class=\"Counter\">' /tmp/s-pk-{f}")
-        machine.succeed(f"grep -q 'href=\"/packages\" aria-current=\"page\"' /tmp/s-pk-{f}")
+        machine.succeed(f"grep -q 'href=\"/packages\" aria-current=\"page\"' /tmp/s-pk-{f} && grep -q 'href=\"/packages?filter=all\">' /tmp/s-pk-{f}")
+    for f in ["mine", "machines"]:
         machine.succeed(f"grep -q 'href=\"/me/settings#upload\">Upload the packages of your machines' /tmp/s-pk-{f}")
     machine.succeed("grep -q 'No report yet.' /tmp/s-pk-machines && grep -q 'id=\"flakes\"' /tmp/s-pk-machines")
-    machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all")
+    signed_in("/packages?filter=all", "/tmp/s-pk-all")
+    machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all && ! grep -q 'aria-label=\"Views\"' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
     for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start"]:
         machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
     machine.succeed("grep -q '<option value=\"foryou\" selected>For you</option>' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
     machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review\">Needs review' /tmp/s-ready")
-    machine.succeed("grep -q 'aria-current=\"page\">Mine <span' /tmp/s-packages")
+    machine.succeed("grep -q 'aria-current=\"page\">All <span' /tmp/s-packages")
     # the forms: the index is empty offline, so a package name is refused and
     # a directory is watched
     form("/me/watch", "/tmp/f-watch0", "-d name=hello", 400)

@@ -3,7 +3,7 @@
 
 use axum::Router;
 use axum::extract::{Form, State};
-use axum::http::{HeaderMap, header};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
@@ -14,7 +14,6 @@ use crate::web::{App, Shared, icon, octicon};
 
 const DONE: &str = "welcome_done";
 const SEEN: &str = "welcome_at";
-const INTRO_COOKIE: &str = "intro";
 
 use crate::web::CONTRIBUTING;
 pub(crate) const MAINTAINERS_README: &str =
@@ -51,7 +50,6 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/welcome", get(|| async { Redirect::permanent("/#start") }))
         .route("/me/start", post(save_done))
-        .route("/intro/dismiss", post(dismiss_intro))
 }
 
 /// True once, on the first sign-in of a login.
@@ -70,10 +68,9 @@ pub fn pending(app: &App, login: &str) -> bool {
     app.store.setting(login, DONE).ok().flatten().as_deref() != Some("1")
 }
 
-pub fn intro(app: &App, headers: &HeaderMap) -> Html {
-    if crate::web::cookie(headers, INTRO_COOKIE).as_deref() == Some("hidden") {
-        return Html::new();
-    }
+/// The top of the home page for a visitor: what the site is, and how to
+/// sign in.
+pub fn intro(app: &App) -> Html {
     let yours = Html::from(if app.oauth.is_some() {
         "<a href=\"/auth/login\">Sign in with GitHub</a> to see"
     } else {
@@ -81,27 +78,13 @@ pub fn intro(app: &App, headers: &HeaderMap) -> Html {
     });
     html!(
         "<div class=\"Box mb-4\" id=\"intro\"><div class=\"Box-body\">\
-         <div class=\"d-flex flex-items-start\"><h1 class=\"f3 flex-auto\">Tools that make it easier to contribute to nixpkgs</h1>\
-         <form method=\"post\" action=\"/intro/dismiss\"><button class=\"btn btn-sm\" type=\"submit\">Hide</button></form></div>\
-         <ul class=\"ml-3 my-2\">\
-         <li><strong>Navigate nixpkgs.</strong> <a href=\"/packages\">Packages and NixOS modules</a> with their issues, pull requests, version bumps and advisories, \
-         and <a href=\"/state\">the state of nixpkgs</a> in numbers.</li>\
-         <li><strong>Make it yours.</strong> {yours} what you maintain and watch, a private feed, and the packages of your own system.</li>\
-         <li><strong>Act on it.</strong> <a href=\"/review\">Review the pull requests that need it</a>.</li></ul>\
+         <h1 class=\"f3 mb-2\">Tools that make it easier to contribute to nixpkgs</h1>\
+         <p>Maintainer Mode shows the packages, pull requests and advisories of nixpkgs, and what needs work. \
+         {yours} what you maintain, what you watch and the packages of your machines.</p>\
          <p class=\"mb-0\">New to nixpkgs? Read the <a href=\"{CONTRIBUTING}\">nixpkgs contributor guide</a> first. \
-         Maintainer Mode helps you find work; nixpkgs decides how the work is done.</p></div></div>"
+         Then pick a package below.</p>{}</div></div>",
+        crate::search::page_form("", "gap-2 mt-3")
     )
-}
-
-async fn dismiss_intro(State(app): State<Shared>) -> Response {
-    (
-        [(
-            header::SET_COOKIE,
-            crate::web::set_cookie(&app, INTRO_COOKIE, "hidden", 365 * 86400),
-        )],
-        Redirect::to("/"),
-    )
-        .into_response()
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]

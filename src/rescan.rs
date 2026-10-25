@@ -833,55 +833,47 @@ pub(crate) fn state(r: &FlakeRef, index_at: Option<chrono::DateTime<Utc>>) -> Ht
 const SUBMIT_FLAKE: &str =
     "maintainer-mode submit --name NAME --public-flake github:OWNER/REPO#OUTPUT";
 
-/// The flakes box of the machines filter of /packages: the form that adds
-/// a flake for the server to scan, or why there is none.
+/// The flakes row of the sets box of /packages: the form that adds a flake
+/// for the server to scan, or why there is none.
 pub(crate) fn panel(app: &App, login: &str) -> Html {
     let n = app.store.flake_refs(login).unwrap_or_default().len();
-    let mut out = html!(
-        "<div class=\"Box mb-4\" id=\"flakes\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Public flakes</h2></div>",
-        icon(octicon!("shield"))
-    );
     let upload = html!(
         "You can scan a public flake on your machine and upload it as a public set: \
          <code class=\"set-ref\">{SUBMIT_FLAKE}</code>. It shows on your profile."
     );
-    match &app.rescan {
-        None => {
-            out.push(&html!(
-                "<div class=\"Box-row\"><p><strong>This server does not scan flakes.</strong> The operator has not turned \
-                 server rescans on.</p><p class=\"mb-0\">{upload}</p></div>"
-            ));
-        }
-        Some(cfg) if n >= cfg.max_flakes => {
-            out.push(&html!(
-                "<div class=\"Box-row color-fg-muted\">The server scans the most flakes a person can have here: {}. {upload}</div>",
-                cfg.max_flakes
-            ));
-        }
-        Some(cfg) => {
-            out.push(&html!(
-                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2 flex-items-center\">\
-                 <input class=\"form-control\" name=\"name\" required maxlength=\"{}\" pattern=\"[a-z0-9][a-z0-9._\\-]*\" \
-                 placeholder=\"name, such as web-1\" aria-label=\"set name\">\
-                 <input class=\"form-control flex-auto\" name=\"reference\" required maxlength=\"{MAX_REFERENCE}\" \
-                 placeholder=\"github:OWNER/REPO\" aria-label=\"flake reference\">\
-                 <input class=\"form-control flex-auto\" name=\"output\" required maxlength=\"{MAX_OUTPUT_NAME}\" \
-                 placeholder=\"nixosConfigurations.HOST.config.system.build.toplevel\" aria-label=\"flake output\">\
-                 <label class=\"f6\"><input type=\"checkbox\" name=\"public\" value=\"1\"> Show on my profile</label>\
-                 <button class=\"btn btn-sm\" type=\"submit\">Add</button></form>\
-                 <p class=\"f6 color-fg-muted mt-2 mb-0\">A public <code>github:OWNER/REPO</code>, <code>github:OWNER/REPO/BRANCH</code> \
-                 or <code>https://</code> tarball, with a <code>flake.lock</code>. After each nixpkgs index, the server evaluates the \
-                 output in a sandbox, with no build, and keeps only the nixpkgs attributes, as for an upload. \
-                 At most {} flakes and {} scans a day for you. \
-                 See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/rescan.md\">docs/rescan.md</a>.</p></div>",
-                crate::sets::MAX_NAME,
-                cfg.max_flakes,
-                cfg.per_day
-            ));
-        }
-    }
-    out.push(&Html::from("</div>"));
-    out
+    let body = match &app.rescan {
+        None => html!(
+            "<p><strong>This server does not scan flakes.</strong> The operator has not turned \
+             server rescans on.</p><p class=\"mb-0\">{upload}</p>"
+        ),
+        Some(cfg) if n >= cfg.max_flakes => html!(
+            "<p class=\"color-fg-muted mb-0\">The server scans the most flakes a person can have here: {}. {upload}</p>",
+            cfg.max_flakes
+        ),
+        Some(cfg) => html!(
+            "<form method=\"post\" action=\"/me/sets/flakes\" class=\"d-flex flex-wrap gap-2 flex-items-center\">\
+             <input class=\"form-control\" name=\"name\" required maxlength=\"{}\" pattern=\"[a-z0-9][a-z0-9._\\-]*\" \
+             placeholder=\"name, such as web-1\" aria-label=\"set name\">\
+             <input class=\"form-control flex-auto\" name=\"reference\" required maxlength=\"{MAX_REFERENCE}\" \
+             placeholder=\"github:OWNER/REPO\" aria-label=\"flake reference\">\
+             <input class=\"form-control flex-auto\" name=\"output\" required maxlength=\"{MAX_OUTPUT_NAME}\" \
+             placeholder=\"nixosConfigurations.HOST.config.system.build.toplevel\" aria-label=\"flake output\">\
+             <label class=\"f6\"><input type=\"checkbox\" name=\"public\" value=\"1\"> Show on my profile</label>\
+             <button class=\"btn btn-sm\" type=\"submit\">Add</button></form>\
+             <p class=\"f6 color-fg-muted mt-2 mb-0\">A public <code>github:OWNER/REPO</code>, <code>github:OWNER/REPO/BRANCH</code> \
+             or <code>https://</code> tarball, with a <code>flake.lock</code>. After each nixpkgs index, the server evaluates the \
+             output in a sandbox, with no build, and keeps only the nixpkgs attributes, as for an upload. \
+             At most {} flakes and {} scans a day for you. \
+             See <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/rescan.md\">docs/rescan.md</a>.</p>",
+            crate::sets::MAX_NAME,
+            cfg.max_flakes,
+            cfg.per_day
+        ),
+    };
+    html!(
+        "<div class=\"Box-row\" id=\"flakes\"><h3 class=\"f5 mb-2\">{} Public flakes</h3>{body}</div>",
+        icon(octicon!("shield"))
+    )
 }
 
 #[cfg(test)]

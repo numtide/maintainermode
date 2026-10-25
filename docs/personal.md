@@ -153,27 +153,31 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 ## Your packages
 
-Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows a filter bar on top. Each filter shows its count. The "filter by name" box filters the list of the current filter.
+Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The filters above the list keep one part of it. Each filter shows its count. The "filter by name" box filters the list of the current filter.
 
-| Filter         | Address                     | What it shows                                                                |
-| -------------- | --------------------------- | ---------------------------------------------------------------------------- |
-| Mine           | `/packages?filter=mine`     | all of the rows below, in one order (the default)                            |
-| On my machines | `/packages?filter=machines` | the packages of your sets: your machine reports and your flakes              |
-| I maintain     | `/packages?filter=maintain` | what nixpkgs names you as a maintainer of, and "Watch everything I maintain" |
-| I watch        | `/packages?filter=watch`    | what you watch, a form to watch more, and a "Stop watching" button on each   |
-| All of nixpkgs | `/packages?filter=all`      | the catalog, as a visitor sees it                                            |
+| Filter         | Address                     | What it keeps                                                   |
+| -------------- | --------------------------- | --------------------------------------------------------------- |
+| All            | `/packages?filter=mine`     | all of the rows below, in one order (the default)               |
+| On my machines | `/packages?filter=machines` | the packages of your sets: your machine reports and your flakes |
+| I maintain     | `/packages?filter=maintain` | what nixpkgs names you as a maintainer of                       |
+| I watch        | `/packages?filter=watch`    | what you watch                                                  |
 
-`/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
+"All of nixpkgs" at the top right opens the catalog, as a visitor sees it, at `/packages?filter=all`. Its "Your packages" button goes back. `/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
 
-**The order.** Mine puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". It also shows its health flags. Each filter shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
+**The order.** The list puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". A filter does not repeat its own reason on its rows. Each row also shows its health flags. The list shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
 
 The Hydra flag comes from [the build watch](health.md#the-build-watch), or from a package page that read a failed build in the last hour. The list itself never asks Hydra.
 
-**No machine report yet.** Then the bar shows the step "Upload the packages of your machines" in place of the machines filter. It links to `/me/settings#upload`. When you have a set, the machines filter shows the box "Your sets", the list and the panel of public flakes (see below).
+**What each filter adds.**
 
-**Pick a set.** The box "Your sets" shows a button for each set, with its count. "All sets" shows all of them together; this is the default. A set button adds `&set=<name>`, such as `/packages?filter=machines&set=laptop`. The list then shows only the packages of that set. An unknown name shows all sets. Each set has one row with its name, its kind, its counts, its upload time and its expiry date. Each row has a "Delete" button. A public flake set also has "Make private" or "Show on my profile".
+- **All**: with no machine report, the list links to `/me/settings#upload`: "Upload the packages of your machines". When the list is empty, it also shows the form of I watch.
+- **On my machines**: with no report, the list says how to upload one. With a set, a row of set links is above the list (see below). Under the list, the folded box "Your sets" holds a row for each set, [the public flakes](#my-package-set) and what the server keeps.
+- **I maintain**: "Watch everything I maintain" at the top right, while you do not watch all of it. When nixpkgs names you nowhere, the list links to maintainers/README.md and to [a first package](#a-first-package-to-work-on).
+- **I watch**: a "Stop watching" button on each row, and a form at the bottom of the list to watch a package, a module or a directory by name.
 
-**Where it runs.** A set that you send with `--with-outputs` (see [My package set](#my-package-set)) knows which output holds each package. Each row of that set then says where the package runs, such as "on web-1, laptop and 2 more". It shows at most three labels. Each label links to the filter of that output. When you pick that set, the line "Where it runs" shows a link for each output, with its count. An output link adds `&output=<label>`, such as `/packages?filter=machines&set=infra&output=web-1`. The list then shows only the packages of that output. `output` works only with `set`. An unknown label shows the whole set.
+**Pick a set.** The row "Set" shows a link for each set, with its count. "All sets" shows all of them together; this is the default. A set link adds `&set=<name>`, such as `/packages?filter=machines&set=laptop`. The list then shows only the packages of that set. An unknown name shows all sets. In the box "Your sets", each set has one row with its name, its kind, its counts, its upload time and its expiry date. Each row has a "Delete" button. A public flake set also has "Make private" or "Show on my profile".
+
+**Where it runs.** A set that you send with `--with-outputs` (see [My package set](#my-package-set)) knows which output holds each package. Each row of that set then says where the package runs, such as "on web-1, laptop and 2 more". It shows at most three labels. Each label links to the filter of that output. When you pick that set, the row "Where it runs" shows a link for each output, with its count. An output link adds `&output=<label>`, such as `/packages?filter=machines&set=infra&output=web-1`. The list then shows only the packages of that output. `output` works only with `set`. An unknown label shows the whole set.
 
 Needs you on the home page uses the same order for its package items (causes 1, 6 and 7). Below it, "Your packages" links to `/packages?filter=mine`.
 
@@ -241,7 +245,11 @@ and what the server reads with your GitHub token always fold.
 
 ## Get started
 
-The home page shows a short introduction to visitors who are not signed in. It names the three ways to use Maintainer Mode. It links to the nixpkgs contributor guide (CONTRIBUTING.md). Press "Hide" to remove it. A cookie keeps it hidden for one year.
+Signed out, the home page has three parts:
+
+1. A short introduction: what Maintainer Mode is, a link to sign in with GitHub, and a link to the nixpkgs contributor guide (CONTRIBUTING.md). On a phone, it also has a search box, because the header has none.
+2. One list: [a first package to work on](#a-first-package-to-work-on).
+3. One row of buttons: the pull requests with no maintainer (with their number), the packages and directories (`/packages`), and the state of nixpkgs (`/state`).
 
 After you sign in, the home page shows a card with three steps. Each step shows your real state: done, to do, or optional. The steps depend on whether nixpkgs names you in `meta.maintainers`.
 
@@ -273,7 +281,8 @@ are true:
   the last 60 days.
 
 Each row gives one task: review the newest pull request, or fix the newest
-issue. The newest task comes first. The list shows 8 rows. After the task,
+issue. The newest task comes first. The list shows 8 rows. When no package
+fits, it links to the pull requests with no maintainer. After the task,
 add yourself to `meta.maintainers`.
 
 Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card. Uploading the packages of your machines is not a step: see [My package set](#my-package-set).
@@ -651,7 +660,7 @@ advisories, a newer upstream release, a failed Hydra build, open pull requests a
 A set with output labels also says where each package runs, and filters
 by output (see [Your packages](#your-packages)).
 The rows that need attention come first. The packages of all sets together also come
-first in Mine, on the home page, in Needs you and in For you on `/review`.
+first in your packages, in Needs you on the home page and in For you on `/review`.
 
 **Alerts.** Your private Atom feed (see above) also gets, for each package in
 your set, a new advisory and a new upstream release. It does not get the pull
@@ -747,15 +756,15 @@ can be public: `github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or an
 
 - **Let the server scan it.** This works only when the operator turns
   server rescans on. Give a name, the reference and the output in the
-  panel "Public flakes", and tick "Show on my profile". When rescans are
-  off, the panel says so and shows the upload command above.
+  row "Public flakes" of the box "Your sets", and tick "Show on my profile". When rescans are
+  off, the row says so and shows the upload command above.
 
 "Make private" removes a set from your profile and keeps it in your list.
 "Show on my profile" makes it public again. A new upload without
 `--public-flake` makes the set private and removes its reference.
 
 **A public flake, scanned by the server.** This is off by default. When the
-operator turns it on, the "On my machines" filter has a form for a name, a
+operator turns it on, the box "Your sets" of the "On my machines" filter has a form for a name, a
 public flake reference (`github:OWNER/REPO`, `github:OWNER/REPO/BRANCH`, or
 an `https://` tarball) and an output. After each nixpkgs index, the server scans the output again.
 It keeps the result with the rules of an upload: the same public-list filter, the

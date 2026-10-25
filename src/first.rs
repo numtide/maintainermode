@@ -144,7 +144,8 @@ pub(crate) fn rows(app: &App) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The home page section.
+/// The list of the home page for a visitor, and for a person who
+/// maintains nothing.
 pub(crate) fn section(app: &App) -> Html {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
@@ -184,7 +185,9 @@ pub(crate) fn section(app: &App) -> Html {
         })
         .collect();
     let body = if rows.is_empty() {
-        empty("None right now.")
+        empty(
+            "No package fits right now. Review a <a href=\"/review?tab=unowned\">pull request with no maintainer</a> instead.",
+        )
     } else {
         html!(
             "<div class=\"Box-row f6 color-fg-muted\">Small packages with no maintainer and an issue or a pull request from the last {RECENT_DAYS} days. \

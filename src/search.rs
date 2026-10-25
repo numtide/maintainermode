@@ -233,15 +233,21 @@ const HELP: &str = "<ul class=\"ml-3\">\
 <li>an advisory: <code>CVE-2024-3094</code>, <code>GHSA-…</code>, <code>NIXPKGS-2026-…</code></li>\
 </ul><p class=\"f6 color-fg-muted mt-2\">Press <kbd>/</kbd> on any page to search.</p>";
 
-/// On a phone the header has no box, so the page brings its own.
-fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
-    let help = Html::from(HELP);
-    let mut out = html!(
-        "<form class=\"search-inline inline-form mb-4\" role=\"search\" method=\"get\" action=\"/search\">\
+/// A search box in the page. `search-inline` alone shows it only on a
+/// phone, where the header has no box; `inline-form` in `class` comes later
+/// in club.css and shows it on every screen, as on this page.
+pub(crate) fn page_form(q: &str, class: &str) -> Html {
+    html!(
+        "<form class=\"search-inline {class}\" role=\"search\" method=\"get\" action=\"/search\">\
          <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{q}\" placeholder=\"{}\" aria-label=\"Search\" autocomplete=\"off\" data-search>\
          <button class=\"btn\" type=\"submit\">Search</button></form>",
         crate::ui::SEARCH_PLACEHOLDER
-    );
+    )
+}
+
+fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
+    let help = Html::from(HELP);
+    let mut out = page_form(q, "inline-form mb-4");
     if q.is_empty() {
         out.push(&html!(
             "<div class=\"Box p-3 mb-4\"><p>Type one of these in the search box:</p>{help}</div>"

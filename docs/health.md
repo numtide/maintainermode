@@ -216,7 +216,7 @@ counts as open.
     tracker issue can be closed. With no channel read yet, master decides
     alone;
   - **range unknown**: the data does not tell.
-- **Counts.** "With open advisories" on `/state`, on the home page and in
+- **Counts.** "With open advisories" on `/state` and in
   the lists counts only advisories that affect master or have an unknown
   range. `/state` also says how many packages have only advisories fixed in
   master, and lists the tracker issues to close under "Tracker issues to
