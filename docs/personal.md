@@ -221,18 +221,23 @@ always sees it, with a note on how to add one.
 
 ## Settings
 
-`/me/settings` is one page with these sections. The links at the top go to each section.
+`/me/settings` has four boxes. The links at the top go to each box. Each
+section of a box has its own anchor.
 
-| Section          | What you set                                                                                     |
-| ---------------- | ------------------------------------------------------------------------------------------------ |
-| `#notifications` | the kinds of events that the unread count includes                                               |
-| `#followup`      | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
-| `#feed`          | the private link of your Atom feed                                                               |
-| `#upload`        | the upload token for `maintainer-mode submit`                                                    |
-| `#api`           | the API token for the `maintainer-mode` command and your own tools (see [api.md](api.md))        |
-| `#tags`          | the path prefixes that the For you tab of `/review` adds                                         |
-| `#goal`          | your weekly goal                                                                                 |
-| `#start`         | show or hide the card with your first steps                                                      |
+| Box                         | Section          | What you set                                                                                     |
+| --------------------------- | ---------------- | ------------------------------------------------------------------------------------------------ |
+| News (`#news`)              | `#notifications` | the kinds of events that the unread count includes                                               |
+|                             | `#feed`          | the private link of your Atom feed                                                               |
+|                             | `#followup`      | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
+| Reviews (`#reviews`)        | `#tags`          | the path prefixes that the For you tab of `/review` adds                                         |
+|                             | `#goal`          | your weekly goal                                                                                 |
+| Your machines (`#machines`) | `#upload`        | the upload token for `maintainer-mode submit`, with the steps and an example report              |
+| Account (`#account`)        | `#api`           | the API token for the `maintainer-mode` command and your own tools (see [api.md](api.md))        |
+|                             | `#github`        | nothing: it tells what the server does with the GitHub token of your session                     |
+|                             | `#start`         | show or hide the card with your first steps                                                      |
+
+The steps to send your packages fold when you have a set. The example report
+and what the server reads with your GitHub token always fold.
 
 ## Get started
 
@@ -558,12 +563,12 @@ takes the set name from the tree, the host or the scan. It sends only the
 name that you type. The client sends no path, no store hash and no private
 name. The local report uses schema 1.
 
-`/me/settings#shared` shows an example. It runs a made-up closure through the
+The fold `/me/settings#shared` shows an example. It runs a made-up closure through the
 same filter as `submit`. `openssl 3.0.15` goes with its version.
 `curl 8.11.1-acme-fix` goes with `"version": null` and `"modified": true`.
 `acme-billing` and the name of the tree do not go. The host names `web-1`
-and `laptop` go only with `--with-outputs`: the section shows that report
-too, with its risk. The section also says
+and `laptop` go only with `--with-outputs`: the fold shows that report
+too, with its risk. The fold also says
 what the server keeps and who sees it. It also states the risk: the report
 tells which public packages run on your machines and their versions, so a
 person who reads it can find the known advisories that can affect you.

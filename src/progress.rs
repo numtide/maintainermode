@@ -280,20 +280,12 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
 pub(crate) fn goal_box(app: &App, login: &str) -> Html {
     let goal = goal_of(app, login).unwrap_or(0);
     html!(
-        "<div id=\"goal\">{}</div>",
-        section(
-            html!("{} Weekly goal", icon(octicon!("pulse"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
-                 <label for=\"goal-n\" class=\"f6\">Pull requests to review each week, Monday to Sunday, UTC (0 removes the goal)</label>\
-                 <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{goal}\">\
-                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-                 <p class=\"note f6 color-fg-muted mb-0\">Set a number you can keep. A careful review counts for more than many quick ones. \
-                 <a href=\"/me/progress\">Your progress</a> shows how far you are.</p></div>"
-            )
-        )
+        "<form method=\"post\" action=\"/me/progress\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
+         <label for=\"goal-n\">Pull requests to review each week</label>\
+         <input class=\"form-control input-narrow\" type=\"number\" min=\"0\" max=\"{MAX_GOAL}\" id=\"goal-n\" name=\"goal\" value=\"{goal}\">\
+         <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
+         <p class=\"note f6 color-fg-muted mt-2\">Monday to Sunday, UTC. 0 removes the goal. \
+         A careful review counts for more than many quick ones. <a href=\"/me/progress\">Your progress</a> shows how far you are.</p>"
     )
 }
 

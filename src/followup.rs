@@ -575,27 +575,24 @@ pub(crate) fn settings_box(app: &App, login: &str) -> Html {
     } else {
         "Not saved yet: this is the default."
     };
+    let note = if committer || plan.action == Action::Merge {
+        COMMITTER_NOTE
+    } else {
+        ""
+    };
     html!(
-        "<div id=\"followup\">{}</div>",
-        crate::ui::section(
-            html!("{} Your pull requests", icon(octicon!("git-pull-request"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row\"><p>The default follow-up plan of each pull request you open. \
-                 Change the plan of one pull request on its page.</p>\
-                 <form method=\"post\" action=\"/me/settings/followup\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
-                 <label for=\"followup-default-days\">If nobody reviews in</label>\
-                 <input class=\"form-control input-narrow\" type=\"number\" min=\"1\" max=\"{MAX_DAYS}\" id=\"followup-default-days\" name=\"days\" value=\"{}\">\
-                 <span>days:</span>\
-                 <select class=\"form-select\" name=\"action\" aria-label=\"what to do then\">{}</select>\
-                 <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
-                 <p class=\"note f6 color-fg-muted mt-2 mb-0\">{state} A saved plan puts a reminder in your inbox and your feed at the deadline. \
-                 A review by someone else before the deadline cancels the reminder. {COMMITTER_NOTE}</p></div>",
-                plan.days,
-                options(plan.action)
-            )
-        )
+        "<p class=\"mb-2\">The default plan of each pull request you open. \
+         Change the plan of one pull request on its page.</p>\
+         <form method=\"post\" action=\"/me/settings/followup\" class=\"d-flex flex-wrap flex-items-center gap-2\">\
+         <label for=\"followup-default-days\">If nobody reviews in</label>\
+         <input class=\"form-control input-narrow\" type=\"number\" min=\"1\" max=\"{MAX_DAYS}\" id=\"followup-default-days\" name=\"days\" value=\"{}\">\
+         <span>days:</span>\
+         <select class=\"form-select\" name=\"action\" aria-label=\"what to do then\">{}</select>\
+         <button class=\"btn btn-sm\" type=\"submit\">Save</button></form>\
+         <p class=\"note f6 color-fg-muted mt-2\">{state} At the deadline, a saved plan puts a reminder in your inbox and your feed. \
+         A review by someone else before the deadline cancels the reminder. {note}</p>",
+        plan.days,
+        options(plan.action)
     )
 }
 
@@ -997,7 +994,7 @@ pub(crate) mod tests {
             Plans::built_in(true)
         );
         let html = settings_box(&app, "alice");
-        assert!(html.contains("<div id=\"followup\">"));
+        assert!(html.contains("action=\"/me/settings/followup\""));
         assert!(html.contains("<option value=\"ask\" selected>"));
         assert!(html.contains("Not saved yet"));
         let form = |d: &str, a: &str| {

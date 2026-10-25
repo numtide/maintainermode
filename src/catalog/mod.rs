@@ -1241,7 +1241,7 @@ pub(crate) fn subscriptions(app: &crate::web::App, login: &str) -> Vec<Subject> 
 
 /// The `#feed` section of `/me/settings`.
 pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> Html {
-    let feed = match app.store.feed_token(login).ok().flatten() {
+    match app.store.feed_token(login).ok().flatten() {
         Some(t) => html!(
             "<p>Add this link to a feed reader. It is private: anyone with it reads what you watch, and the advisories and releases of your package set.</p>\
              <input class=\"form-control width-full mb-2\" readonly value=\"{}/feed/{t}\" aria-label=\"feed link\">\
@@ -1250,16 +1250,7 @@ pub(crate) fn feed_box(app: &crate::web::App, login: &str) -> Html {
         ),
         None => "<form method=\"post\" action=\"/me/feed\"><button class=\"btn btn-sm\" type=\"submit\">Make a feed link</button></form>"
             .into(),
-    };
-    html!(
-        "<div id=\"feed\">{}</div>",
-        crate::ui::section(
-            html!("{} Atom feed", icon(octicon!("rss"))),
-            None,
-            None,
-            html!("<div class=\"Box-row\">{feed}</div>")
-        )
-    )
+    }
 }
 
 pub(crate) struct Event {

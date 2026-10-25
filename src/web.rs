@@ -570,24 +570,16 @@ pub(crate) fn stat(n: usize, label: &str, hint: impl Into<Html>) -> Html {
 pub(crate) fn tags_box(app: &App, login: &str) -> Html {
     let area = app.snap().areas.get(login).cloned().unwrap_or_default();
     html!(
-        "<div id=\"tags\">{}</div>",
-        crate::ui::section(
-            html!("{} Tags", icon(octicon!("tag"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row f6\">For you on <a href=\"/review\">/review</a> holds {} paths you maintain, \
-                 {} you own in ci/OWNERS, {} you changed this year, and your tags.</div>\
-                 <div class=\"Box-row\"><form method=\"post\" action=\"/me/tags\">\
-                 <label class=\"f6\" for=\"tags-list\">Path prefixes you want to see, one per line, like <code>pkgs/development/python-modules</code></label>\
-                 <textarea class=\"form-control width-full my-2\" id=\"tags-list\" name=\"tags\" rows=\"3\">{}</textarea>\
-                 <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form></div>",
-                area.maintains.len(),
-                area.owns.len(),
-                area.committed.len(),
-                area.tags.join("\n")
-            ),
-        )
+        "<p class=\"mb-2\">For you on <a href=\"/review\">/review</a> holds {} paths you maintain, \
+         {} you own in ci/OWNERS, {} you changed this year, and your tags.</p>\
+         <form method=\"post\" action=\"/me/tags\">\
+         <label class=\"f6\" for=\"tags-list\">Your tags: path prefixes, one per line, such as <code>pkgs/development/python-modules</code></label>\
+         <textarea class=\"form-control width-full my-2\" id=\"tags-list\" name=\"tags\" rows=\"3\">{}</textarea>\
+         <button class=\"btn btn-sm\" type=\"submit\">Save tags</button></form>",
+        area.maintains.len(),
+        area.owns.len(),
+        area.committed.len(),
+        area.tags.join("\n")
     )
 }
 

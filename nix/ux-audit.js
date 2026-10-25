@@ -679,7 +679,12 @@ function audit(deviceWidth) {
     )) {
       const cs = getComputedStyle(el);
       if (el.tagName === "A" && cs.display === "inline") continue;
-      const r = el.getBoundingClientRect();
+      // a click on the label of a checkbox or radio works it: the label is the target
+      const label =
+        el.tagName === "INPUT" &&
+        (el.type === "checkbox" || el.type === "radio") &&
+        el.closest("label");
+      const r = (label || el).getBoundingClientRect();
       if (r.width === 0 || r.height === 0) continue;
       if (r.width < 24 || r.height < 24)
         smallTargets.push(

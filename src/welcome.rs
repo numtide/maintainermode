@@ -309,15 +309,7 @@ pub fn settings_box(app: &App, login: &str) -> Html {
         )
     };
     html!(
-        "<div id=\"start\">{}</div>",
-        crate::ui::section(
-            html!("{} Get started", icon(octicon!("checklist"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row d-flex flex-wrap flex-items-center gap-2\"><span class=\"flex-auto\">{text}</span>{form}</div>"
-            )
-        )
+        "<div class=\"d-flex flex-wrap flex-items-center gap-2\"><span class=\"flex-auto\">{text}</span>{form}</div>"
     )
 }
 

@@ -499,6 +499,51 @@ section.Box > .Box-header {
 .input-narrow {
   max-width: 140px;
 }
+/* the label is part of the tap target of its checkbox */
+input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  vertical-align: middle;
+}
+label:has(> input[type="checkbox"]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+
+/* a row of /me/settings: the label beside its controls, above them on a phone */
+.setting {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+.setting-label {
+  flex: 0 0 160px;
+  margin: 0;
+  font-size: 14px;
+}
+.setting-body {
+  flex: 1 1 360px;
+  min-width: 0;
+}
+.setting-body > :last-child {
+  margin-bottom: 0;
+}
+.fold > summary {
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--fgColor-muted);
+  cursor: pointer;
+}
 
 .menu {
   position: relative;
