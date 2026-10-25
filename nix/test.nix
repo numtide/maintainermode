@@ -124,7 +124,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -D /tmp/merge.h -o /dev/null http://127.0.0.1:8790/merge && grep -qi '^location: /review?tab=ready' /tmp/merge.h")
     machine.succeed("curl -s -D /tmp/committer.h -o /dev/null http://127.0.0.1:8790/committer && grep -qi '^location: /review?tab=ready' /tmp/committer.h")
     machine.succeed("curl -s -D /tmp/bumps.h -o /dev/null http://127.0.0.1:8790/bumps && grep -qi '^location: /review?tab=bumps' /tmp/bumps.h")
-    machine.succeed("curl -sf 'http://127.0.0.1:8790/review?tab=ready' -o /tmp/merge && grep -q 'aria-current=\"page\">Ready to merge <span class=\"Counter\">0</span>' /tmp/merge")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/review?tab=ready' -o /tmp/merge && grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge</a>' /tmp/merge && grep -q 'href=\"/review\">Needs review</a>' /tmp/merge")
     machine.succeed("grep -q 'Work in progress.' /tmp/merge && grep -q 'Nothing is ready yet.' /tmp/merge")
     machine.succeed("grep -q 'Maintainer Mode never merges' /tmp/merge && grep -q 'A committer sees the section' /tmp/merge && grep -q 'Approved by a maintainer' /tmp/merge")
     machine.fail("grep -q 'href=\"/committer\"' /tmp/merge")
@@ -142,8 +142,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=docs&doc=personal' -o /tmp/doc && grep -q 'Your own view</h1>' /tmp/doc && grep -q 'href=\"/state?tab=docs&amp;doc=health#the-risk-score\"' /tmp/doc")
     machine.succeed("curl -s -D /tmp/sync.h -o /dev/null http://127.0.0.1:8790/sync && grep -qi '^location: /state?tab=status' /tmp/sync.h")
     machine.succeed("curl -sf http://127.0.0.1:8790/review -o /tmp/review")
-    machine.succeed("grep -q 'selected\" href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">0</span>' /tmp/review")
-    machine.succeed("grep -q 'href=\"/review?tab=bumps\">Bumps' /tmp/review && grep -q 'href=\"/review?tab=ready\">Ready to merge' /tmp/review")
+    machine.succeed("grep -q '<option value=\"unowned\" selected>No maintainer</option>' /tmp/review && grep -q 'No maintainer <span class=\"Counter\">0</span>' /tmp/review")
+    machine.succeed("grep -q '<option value=\"bumps\">Version bumps</option>' /tmp/review && ! grep -q -e 'href=\"/review?tab=ready\"' -e '<details class=\"review-more\" open>' /tmp/review")
     machine.succeed("grep -q '<title>Review · Maintainer Mode</title>' /tmp/review")
     # style sheets carry a hash in their name and stay cached for a year
     machine.succeed("grep -o 'href=\"/static/primer\\.[0-9a-f]*\\.css\"' /tmp/review | cut -d'\"' -f2 > /tmp/css.path")
@@ -163,7 +163,7 @@ pkgs.testers.runNixOSTest {
     machine.fail("grep -q 'nixpkgs index' /tmp/review")
     machine.succeed("curl -s -D /tmp/me1.h -o /dev/null http://127.0.0.1:8790/me && grep -q '^HTTP/1.1 308' /tmp/me1.h && grep -qi '^location: /packages?filter=mine' /tmp/me1.h")
     machine.succeed("curl -s -D /tmp/at.h -o /dev/null 'http://127.0.0.1:8790/search?q=@nobody' && grep -qi '^location: /u/nobody' /tmp/at.h")
-    machine.fail("grep -q -e 'tab=foryou' -e 'your-progress' /tmp/review")
+    machine.fail("grep -q -e 'tab=foryou' -e 'value=\"foryou\"' /tmp/review")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1 -o /tmp/api.json && grep -q '/api/v1/prs' /tmp/api.json && grep -q '/api/v1/people/<login>' /tmp/api.json")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/api/v1/prs?queue=foryou&login=nobody' -o /tmp/q1 && grep -q '\"items\":\\[\\]' /tmp/q1 && grep -q '\"next_cursor\":null' /tmp/q1")
     machine.succeed("curl -s -o /tmp/q2 -w '%{http_code}' 'http://127.0.0.1:8790/api/v1/prs?queue=foryou' > /tmp/q2.code && grep -q 400 /tmp/q2.code && grep -q 'needs login' /tmp/q2")
@@ -365,8 +365,8 @@ pkgs.testers.runNixOSTest {
     for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start"]:
         machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
-    machine.succeed("grep -q 'selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review")
-    machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review?tab=foryou\">For you' /tmp/s-ready")
+    machine.succeed("grep -q '<option value=\"foryou\" selected>For you</option>' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
+    machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review\">Needs review' /tmp/s-ready")
     machine.succeed("grep -q 'aria-current=\"page\">Mine <span' /tmp/s-packages")
     # the forms: the index is empty offline, so a package name is refused and
     # a directory is watched

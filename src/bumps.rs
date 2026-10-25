@@ -11,10 +11,11 @@ use crate::health::Health;
 use crate::html::{Html, html};
 use crate::links::pkg_key;
 use crate::model::Pr;
-use crate::ui::{Kind, Tone, badge, empty, item_row, pager, section};
+use crate::ui::{Kind, Tone, badge, empty, item_row, section};
 use crate::web::{App, Snapshot, ago};
 
-const GUIDE: &str = "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
+pub(crate) const GUIDE: &str =
+    "https://github.com/NixOS/nixpkgs/blob/master/pkgs/README.md#package-updates";
 
 #[derive(Debug, PartialEq)]
 pub struct Bump<'a> {
@@ -231,75 +232,9 @@ fn row_html(r: &Row) -> Html {
     )
 }
 
-/// The Bumps tab of `/review`. `rows` are all open bumps; `only_mine` keeps
-/// what the viewer maintains or watches.
-pub(crate) fn tab(
-    app: &App,
-    index: &Index,
-    viewer: Option<&str>,
-    mut rows: Vec<Row>,
-    only_mine: bool,
-    after: Option<u64>,
-) -> Html {
-    let only_mine = only_mine && viewer.is_some();
-    if let (true, Some(v)) = (only_mine, viewer) {
-        rows = mine(app, index, v, true, rows);
-    }
-    let json = match (only_mine, viewer) {
-        (true, Some(v)) => format!(
-            "/api/v1/prs?queue=bumps&login={}",
-            crate::github::urlencode(v)
-        ),
-        _ => "/api/v1/prs?queue=bumps".to_string(),
-    };
-    let mut out = html!(
-        "<p>Open pull requests with a title like <code>name: old -&gt; new</code>. Most come from r-ryantm. Oldest first. \
-         Before you approve one, read <a href=\"{GUIDE}\">how nixpkgs reviews a package update</a>.</p>"
-    );
-    let href = if only_mine {
-        "/review?tab=bumps&filter=mine"
-    } else {
-        "/review?tab=bumps"
-    };
-    if viewer.is_some() {
-        let link = |on: bool, href: &str, label: &str| {
-            if on {
-                html!("<strong>{label}</strong>")
-            } else {
-                html!("<a href=\"{href}\">{label}</a>")
-            }
-        };
-        out.push(&html!(
-            "<p class=\"f6\">Show: {} · {}</p>",
-            link(!only_mine, "/review?tab=bumps", "all"),
-            link(
-                only_mine,
-                "/review?tab=bumps&filter=mine",
-                "what you maintain or watch"
-            )
-        ));
-    }
-    out.push(&html!(
-        "<p class=\"f6 color-fg-muted\">{} open{}. <a href=\"{json}\">JSON</a></p>",
-        rows.len(),
-        median_age_days(&rows, Utc::now())
-            .map(|d| format!(", median age {d} days"))
-            .unwrap_or_default()
-    ));
-    if rows.is_empty() {
-        out.push(&Html::from(
-            "<div class=\"blankslate\"><p>No open version bump.</p></div>",
-        ));
-        return out;
-    }
-    let (page, next) = crate::review::paged(&rows, after, |r| r.pr.number);
-    out.push(&Html::from("<div class=\"Box\">"));
-    for r in page {
-        out.push(&row_html(r));
-    }
-    out.push(&Html::from("</div>"));
-    out.push(&pager(href, next.as_deref()));
-    out
+/// The rows of Version bumps on `/review`.
+pub(crate) fn rows(rows: &[Row]) -> Html {
+    rows.iter().map(row_html).collect()
 }
 
 pub(crate) fn row_json(r: &Row) -> Value {

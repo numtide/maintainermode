@@ -99,26 +99,26 @@ The queues:
 
 - **`foryou`**: pull requests that need review and touch what `login`
   maintains, owns in `ci/OWNERS` or changed this year. It needs `login`, a
-  session or an API token. For your own login, it is the For you tab of
-  `/review`: the packages of your machines first, then what you maintain,
-  then what you watch.
+  session or an API token. For your own login, it is For you on `/review`:
+  the packages of your machines first, then what you maintain, then what you
+  watch.
 - **`unowned`**: pull requests that need review, with no maintainer.
 - **`firsttime`**: first contributions with no review from another person,
-  the oldest first. See [personal.md](personal.md#first-timers). The author
-  does not need a review record.
+  the oldest first. See [personal.md](personal.md#first-time-authors). The
+  author does not need a review record.
 - **`bumps`**: all open version bumps, the oldest first. With `login`, only what
-  that login maintains.
+  that login maintains; for your own login, also what you watch.
 - **`all`**: every pull request that needs review, the oldest first.
 - **`ready`**: pull requests ready to merge. The other sections are the lists
   of the committer view. `yours` is the section "In your areas": it needs
   your own login, and you must be a committer. Each row has `why`.
 
-For `foryou`, `unowned`, `firsttime` and `all`, the parameters `q`,
-`sort` (`oldest`, `newest`, `updated`), `checks` (`pass`, `fail`,
-`pending`), `reviews` (`none`, `some`), `conflicts` (`hide`) and
-`base` narrow and order the list, as the filter bar of `/review` does (see
-[personal.md](personal.md#review-for-you)). For your own login, the list leaves out the
-pull requests you hid on the site, and `hidden` gives their count. Each row of
+For every queue but `ready`, the parameters `q`, `sort` (`oldest`, `newest`,
+`updated`), `checks` (`pass`, `fail`, `pending`), `reviews` (`none`, `some`),
+`conflicts` (`hide`) and `base` narrow and order the list, as the filter bar
+of `/review` does (see [personal.md](personal.md#review-for-you)). For your
+own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
+requests you hid on the site, and `hidden` gives their count. Each row of
 your own `foryou` has `why`: the reasons it is yours, such as
 `"you maintain: hello"`.
 
