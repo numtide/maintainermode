@@ -173,6 +173,18 @@ fn stream(
     args: &[&str],
     ok: &[i32],
     limit: StdDuration,
+    each: impl FnMut(&str) -> bool,
+) -> Result<Option<i32>> {
+    stream_by(dir, args, ok, limit, b'\n', each)
+}
+
+/// [`stream`] with records that end with `end`, such as the NUL of `-z`.
+fn stream_by(
+    dir: &Path,
+    args: &[&str],
+    ok: &[i32],
+    limit: StdDuration,
+    end: u8,
     mut each: impl FnMut(&str) -> bool,
 ) -> Result<Option<i32>> {
     use std::io::{BufRead, Read};
@@ -197,12 +209,14 @@ fn stream(
     let mut stopped = false;
     loop {
         line.clear();
-        match out.read_until(b'\n', &mut line) {
+        match out.read_until(end, &mut line) {
             Ok(0) | Err(_) => break,
             Ok(_) => {}
         }
-        let l = String::from_utf8_lossy(&line);
-        if !each(l.trim_end_matches('\n')) {
+        if line.last() == Some(&end) {
+            line.pop();
+        }
+        if !each(&String::from_utf8_lossy(&line)) {
             stopped = true;
             break;
         }
@@ -395,6 +409,44 @@ impl Mirror {
         Ok(stream(&self.dir, &args, &[0, 1], limit, |_| true)? == Some(0))
     }
 
+    /// The paths that `head` changes since its merge base with `base`, the
+    /// first `max` of them, or None when the copy lacks one of the two
+    /// commits. `diff-tree` compares trees only, so a large change stays
+    /// cheap.
+    pub fn changed(
+        &self,
+        base: &str,
+        head: &str,
+        max: usize,
+        limit: StdDuration,
+    ) -> Result<Option<Vec<String>>> {
+        hex(head)?;
+        if base.starts_with('-') {
+            bail!("not a commit: {base:?}");
+        }
+        let mut at = String::new();
+        let found = stream(
+            &self.dir,
+            &["merge-base", base, head],
+            &[0, 1, 128],
+            limit,
+            |l| {
+                at = l.to_string();
+                true
+            },
+        )?;
+        if found != Some(0) || at.is_empty() {
+            return Ok(None);
+        }
+        let mut paths = Vec::new();
+        let args = ["diff-tree", "-r", "-z", "--name-only", &at, head];
+        stream_by(&self.dir, &args, &[0], limit, 0, |p| {
+            paths.push(p.to_string());
+            paths.len() < max
+        })?;
+        Ok(Some(paths))
+    }
+
     /// The reflog of `branch`, oldest first, from its last entry before
     /// `since` on. git lists the newest entry first, so the read stops
     /// there.
@@ -445,6 +497,11 @@ fn time(a: &Archive, key: &str) -> Result<Option<DateTime<Utc>>> {
     Ok(a.get(key)?
         .and_then(|v| DateTime::parse_from_rfc3339(&v).ok())
         .map(|t| t.with_timezone(&Utc)))
+}
+
+/// One full fetch ended, so the copy has every branch and head.
+fn copied(a: &Archive) -> bool {
+    time(a, FULL).ok().flatten().is_some()
 }
 
 /// When the reflogs of the copy start, or None before the first full fetch.
@@ -614,6 +671,14 @@ pub async fn run(app: Arc<App>, dir: PathBuf) {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => tracing::warn!("git copy of {}: {e:#}", a.repo),
                 Err(e) => tracing::warn!("git copy of {}: {e}", a.repo),
+            }
+            if a.repo.eq_ignore_ascii_case(crate::events::REPO) && copied(a) {
+                let (app2, m2) = (app.clone(), m.clone());
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || crate::changed::fill(&app2, &m2)).await
+                {
+                    tracing::warn!("git copy: file lists: {e}");
+                }
             }
         }
         let wait =

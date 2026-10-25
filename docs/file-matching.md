@@ -280,7 +280,8 @@ The upload stays `schema: 1`. It gets one optional field, `files`:
 
 Two limits apply:
 
-- `Pr.files` holds the first 50 paths only. A pull request with
+- `Pr.files` holds the first 50 paths, or up to 10 000 on a server with the
+  git copy ("Full file lists" in [data.md](data.md#the-git-copy)). A pull request with
   `changed_files` above 50 is a mass change. It goes to the Core group, unless
   one of its 50 paths is specific.
 - Issues seldom name a path. The name match of today stays for issues. A file

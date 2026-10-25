@@ -114,7 +114,8 @@ impl App {
     }
 
     pub fn recompute(&self) -> Result<()> {
-        let prs = self.store.prs()?;
+        let mut prs = self.store.prs()?;
+        crate::changed::apply(&mut prs);
         let index = self.index.read().unwrap();
         let own = Ownership::new(&index);
         let ledger = ledger::compute(&prs, |p| own.orphan(p), Utc::now());

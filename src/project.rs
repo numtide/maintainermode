@@ -18,7 +18,7 @@ use crate::store::{Live, Store};
 
 const PR_LABELS: usize = 30;
 const ISSUE_LABELS: usize = 20;
-const FILES: usize = 50;
+pub(crate) const FILES: usize = 50;
 const REVIEWS: usize = 30;
 const REVIEW_COMMENTS: usize = 5;
 const COMMENTS: usize = 30;
