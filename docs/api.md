@@ -109,9 +109,9 @@ The queues:
 - **`bumps`**: all open version bumps, the oldest first. With `login`, only what
   that login maintains; for your own login, also what you watch.
 - **`all`**: every pull request that needs review, the oldest first.
-- **`ready`**: pull requests ready to merge. The other sections are the lists
-  of the committer view. `yours` is the section "In your areas": it needs
-  your own login, and you must be a committer. Each row has `why`.
+- **`ready`**: pull requests ready to merge. The other sections are the other
+  lists of the tab Ready to merge. `yours` is the section "In your areas": it
+  needs your own login, and you must be a committer. Each row has `why`.
 
 For every queue but `ready`, the parameters `q`, `sort` (`oldest`, `newest`,
 `updated`), `checks` (`pass`, `fail`, `pending`), `reviews` (`none`, `some`),

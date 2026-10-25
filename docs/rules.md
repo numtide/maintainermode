@@ -104,6 +104,10 @@ first. In the Ready to merge queue, the pull requests of authors with more
 recent counted reviews come first. Section 4 tells how the ledger weighs
 them.
 
+The tab Ready to merge (`/review?tab=ready`) also links to looser lists,
+such as security fixes and backports. They do not need a counted review.
+[For committers](personal.md#for-committers) tells what each list shows.
+
 ### 4. How the ledger is calculated
 
 The ledger is a function of public GitHub data and the clock only. Nobody

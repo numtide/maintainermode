@@ -458,6 +458,10 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ),
     ("/review?tab=ready", By(&["/api/v1/prs?queue=ready"])),
     (
+        "/review?tab=ready&section=ready",
+        By(&["/api/v1/prs?queue=ready&section=ready"]),
+    ),
+    (
         "/review?tab=ready&section=yours",
         By(&["/api/v1/prs?queue=ready&section=yours"]),
     ),
@@ -1221,7 +1225,7 @@ pub(crate) mod tests {
             .map(|(id, _)| format!("/review?tab={id}"))
             .collect();
         v.extend(
-            crate::committer::sections()
+            crate::committer::tests::sections()
                 .iter()
                 .map(|s| format!("/review?tab=ready&section={s}")),
         );
