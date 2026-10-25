@@ -236,7 +236,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("test -f /var/lib/maintainer-mode/archive/NixOS/nixpkgs.sqlite")
     # offline, the first git copy fails, and the status says why
     machine.wait_until_succeeds("test -f /var/lib/maintainer-mode-git/NixOS/nixpkgs.git/HEAD")
-    machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/git.json && grep -q '\"git\":{' /tmp/git.json && grep -q 'git fetch: ' /tmp/git.json")
+    machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/git.json && grep -q '\"git\":{' /tmp/git.json && grep -q 'git fetch: ' /tmp/git.json && grep -q '\"logs_from\":null' /tmp/git.json")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/git && grep -q 'NixOS/nixpkgs (git)' /tmp/git && grep -q 'the first copy of every branch' /tmp/git")
     machine.succeed("maintainer-mode archive export --db /var/lib/maintainer-mode/maintainer-mode.sqlite --repo NixOS/nixpkgs --out /tmp/export 2> /tmp/export.log && grep -q '0 items of NixOS/nixpkgs' /tmp/export.log")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' http://127.0.0.1:8790/me/feed > /tmp/csrf && grep -q 403 /tmp/csrf")

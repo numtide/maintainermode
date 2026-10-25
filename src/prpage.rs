@@ -1043,29 +1043,60 @@ pub(crate) fn ci_text(ci: Option<&str>) -> Html {
     }
 }
 
-fn reach_html(r: &crate::reach::Reach) -> Html {
+/// "8 minutes", "5 hours", "3 days".
+fn delay_words(d: chrono::Duration) -> String {
+    let m = d.num_minutes().max(1);
+    let (n, unit) = if m < 120 {
+        (m, "minute")
+    } else if m < 48 * 60 {
+        (m / 60, "hour")
+    } else {
+        (m / (24 * 60), "day")
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+fn reach_html(r: &crate::reach::Reach, merged: Option<DateTime<Utc>>) -> Html {
     if !r.in_copy {
         return "<span class=\"color-fg-muted\">the git copy of this server does not have the merge commit yet</span>".into();
     }
-    let names = |contains: bool| -> Vec<Html> {
-        r.steps
-            .iter()
-            .filter(|s| s.contains == contains)
-            .map(|s| html!("<span class=\"branch-name\">{}</span>", s.branch))
-            .collect()
+    let mut first = true;
+    let mut name = |s: &crate::reach::Step| -> Html {
+        let b = html!("<span class=\"branch-name\">{}</span>", s.branch);
+        match s.at.zip(merged) {
+            Some((at, m)) => {
+                let after = if std::mem::take(&mut first) {
+                    "after the merge"
+                } else {
+                    "after"
+                };
+                html!(
+                    "{b} <span class=\"color-fg-muted\" title=\"{}\">{} {after}</span>",
+                    at.format("%Y-%m-%d %H:%M UTC").to_string(),
+                    delay_words(at - m)
+                )
+            }
+            None => b,
+        }
     };
+    let yes: Vec<Html> = r
+        .steps
+        .iter()
+        .filter(|s| s.contains)
+        .map(&mut name)
+        .collect();
+    let no: Vec<Html> = r.steps.iter().filter(|s| !s.contains).map(name).collect();
     let mut parts = Vec::new();
-    let (yes, no) = (names(true), names(false));
     if !yes.is_empty() {
         parts.push(html!(
             "<span class=\"color-fg-success\">in</span> {}",
-            crate::html::join(yes, " ")
+            crate::html::join(yes, ", ")
         ));
     }
     if !no.is_empty() {
         parts.push(html!(
             "<span class=\"color-fg-muted\">not yet in</span> {}",
-            crate::html::join(no, " ")
+            crate::html::join(no, ", ")
         ));
     }
     crate::html::join(parts, " · ")
@@ -1584,7 +1615,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             notes: notes.as_ref(),
             mine: mine.as_ref(),
             extra_actions: next,
-            reached: reach.as_ref().map(reach_html),
+            reached: reach.as_ref().map(|r| reach_html(r, pr.merged_at)),
             queue: place_block(pr, &place, &credits, for_you, &here, hide),
         })
     };
@@ -2115,5 +2146,37 @@ mod tests {
             split_template("We have things done here.\n"),
             ("We have things done here.\n", None)
         );
+    }
+
+    #[test]
+    fn each_step_says_how_long_after_the_merge_it_came() {
+        let t = |s: &str| DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc);
+        let step = |b: &str, contains: bool, at: Option<&str>| crate::reach::Step {
+            branch: b.into(),
+            channel: false,
+            contains,
+            at: at.map(t),
+        };
+        let r = crate::reach::Reach {
+            commit: "abc".into(),
+            in_copy: true,
+            steps: vec![
+                step("master", true, Some("2026-10-25T12:08:00Z")),
+                step("nixos-unstable-small", true, None),
+                step("nixpkgs-unstable", true, Some("2026-10-28T13:00:00Z")),
+                step("nixos-unstable", false, None),
+            ],
+        };
+        let h = reach_html(&r, Some(t("2026-10-25T12:00:00Z"))).to_string();
+        assert!(h.contains("master</span> <span class=\"color-fg-muted\" title=\"2026-10-25 12:08 UTC\">8 minutes after the merge</span>, <span class=\"branch-name\">nixos-unstable-small</span>, "), "{h}");
+        assert!(h.contains(">3 days after</span>"), "{h}");
+        assert!(
+            h.contains("not yet in</span> <span class=\"branch-name\">nixos-unstable</span>"),
+            "{h}"
+        );
+        assert_eq!(delay_words(chrono::Duration::seconds(20)), "1 minute");
+        assert_eq!(delay_words(chrono::Duration::minutes(119)), "119 minutes");
+        assert_eq!(delay_words(chrono::Duration::hours(5)), "5 hours");
+        assert_eq!(delay_words(chrono::Duration::hours(49)), "2 days");
     }
 }
