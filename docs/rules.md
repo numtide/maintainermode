@@ -286,7 +286,9 @@ show it. Its rows in the review lists show a mark, such as
 nixpkgs, month by month. Each number is a total. No number names a person.
 The page shows charts of complete months, for the last 2 years, the last 5
 years (the default) or all of history (`?range=2y`, `?range=all`). Each
-chart has a table with its values. The JSON has every month.
+chart has a table with its values. When the lines of a chart stop before
+the last month, because a share waits until its whole period has passed,
+its note gives the last month with a value. The JSON has every month.
 
 - **Bots.** A bot is an account that GitHub marks as a bot, or one of the
   community automation accounts that GitHub lists as users: `r-ryantm` (the
