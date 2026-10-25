@@ -11,7 +11,7 @@ use axum::routing::get;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -32,6 +32,8 @@ const API: &str = "https://api.github.com";
 /// GitHub's REST API serves at most 3000 files of a pull request; a review
 /// page needs far fewer.
 const FILE_CAP: usize = 100;
+/// The paths from the git copy that the page lists; the API gives all.
+const PATHS_SHOWN: usize = 1000;
 const PER_PAGE: usize = 100;
 /// A patch longer than this shows as a note and a link.
 const PATCH_LINES: usize = 1500;
@@ -1298,7 +1300,39 @@ fn why(e: &str) -> Html {
     }
 }
 
-fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> Html {
+/// The paths from the git copy that the diff above does not show.
+fn paths_html(n: u64, paths: &[String], shown: &HashSet<&str>) -> Html {
+    let rest: Vec<&String> = paths
+        .iter()
+        .filter(|p| !shown.contains(p.as_str()))
+        .collect();
+    if rest.is_empty() {
+        return Html::new();
+    }
+    let items = rest.iter().take(PATHS_SHOWN).map(|p| {
+        html!(
+            "<li><a class=\"text-mono f6\" href=\"{}\">{}</a></li>",
+            file_anchor(n, p),
+            p.as_str()
+        )
+    });
+    let more = match rest.len().saturating_sub(PATHS_SHOWN) {
+        0 => Html::new(),
+        m => html!(
+            "<p class=\"f6 color-fg-muted\">And {m} more. <a href=\"{}/files\">See all on GitHub</a></p>",
+            github_url(n)
+        ),
+    };
+    html!(
+        "<details class=\"Box mb-3\"><summary class=\"Box-header\">The paths of {} more files, from the git copy</summary>\
+         <div class=\"Box-body\"><ul class=\"list-style-none\">{}</ul>{more}</div></details>",
+        rest.len(),
+        crate::html::join(items, "")
+    )
+}
+
+/// `full` is the list of every path, from the git copy.
+fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>, full: Option<&[String]>) -> Html {
     let mut out = html!(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"files\">{} Files changed <span class=\"Counter\">{}</span></h2>",
         icon(octicon!("file-diff")),
@@ -1311,6 +1345,9 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> Html {
                 why(e),
                 github_url(pr.number)
             ));
+            if let Some(all) = full {
+                out.push(&paths_html(pr.number, all, &HashSet::new()));
+            }
         }
         Ok(f) => {
             if f.files.is_empty() {
@@ -1321,12 +1358,21 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> Html {
             for file in &f.files {
                 out.push(&file_html(pr.number, file));
             }
-            if f.capped {
-                out.push(&html!(
+            match full.filter(|_| f.capped) {
+                Some(all) => {
+                    let shown: HashSet<&str> = f
+                        .files
+                        .iter()
+                        .flat_map(|x| std::iter::once(x.path.as_str()).chain(x.previous.as_deref()))
+                        .collect();
+                    out.push(&paths_html(pr.number, all, &shown));
+                }
+                None if f.capped => out.push(&html!(
                     "<div class=\"flash mb-4\">This page shows the first {} files. <a href=\"{}/files\">See all on GitHub</a></div>",
                     f.files.len(),
                     github_url(pr.number)
-                ));
+                )),
+                None => {}
             }
         }
     }
@@ -1635,7 +1681,11 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         s.committers.is(&pr.author),
     ));
     out.push(&description_html(pr, &talk));
-    out.push(&files_html(pr, &files));
+    out.push(&files_html(
+        pr,
+        &files,
+        crate::changed::full(pr).as_deref().map(Vec::as_slice),
+    ));
     out.push(&talk_html(pr, &talk));
     page.body(out).render(&app, viewer.as_deref())
 }
@@ -1693,6 +1743,8 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "additions": pr.additions,
         "deletions": pr.deletions,
         "changed_files": pr.changed_files,
+        "paths": pr.files,
+        "paths_complete": crate::changed::complete(pr),
         "ci": pr.ci,
         "mergeable": pr.mergeable,
         "head": pr.head_oid,
@@ -1833,6 +1885,41 @@ mod tests {
         assert!(html.contains("https://github.com/NixOS/nixpkgs/pull/5/files#diff-"));
         f.patch = Some("+x\n".repeat(PATCH_LINES + 1));
         assert!(file_html(5, &f).contains("A large diff"));
+    }
+
+    #[test]
+    fn the_git_copy_lists_the_paths_past_the_diff() {
+        let mut p = pr(5, "alice", 0);
+        p.changed_files = 3;
+        let file = |path: &str, previous: Option<&str>| File {
+            path: path.into(),
+            previous: previous.map(String::from),
+            status: "renamed".into(),
+            additions: 0,
+            deletions: 0,
+            patch: None,
+        };
+        let shown: Result<Arc<Files>, String> = Ok(Arc::new(Files {
+            head: "h".into(),
+            files: vec![file("new.nix", Some("old.nix"))],
+            capped: true,
+        }));
+        let all: Vec<String> = ["old.nix", "new.nix", "b<c>.nix", "d.nix"]
+            .map(String::from)
+            .to_vec();
+        let h = files_html(&p, &shown, Some(&all)).to_string();
+        assert!(
+            h.contains("The paths of 2 more files, from the git copy"),
+            "{h}"
+        );
+        assert!(
+            h.contains(">b&lt;c&gt;.nix</a>") && h.contains(">d.nix</a>"),
+            "{h}"
+        );
+        assert!(!h.contains(">old.nix</a>") && !h.contains("This page shows the first"));
+        assert!(files_html(&p, &shown, None).contains("This page shows the first 1 files"));
+        let failed: Result<Arc<Files>, String> = Err(NOT_LIVE.into());
+        assert!(files_html(&p, &failed, Some(&all)).contains("The paths of 4 more files"));
     }
 
     #[test]

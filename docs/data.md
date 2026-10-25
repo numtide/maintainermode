@@ -298,6 +298,32 @@ only place that holds the code and its review history.
   `fetch: fast-forward`, and not the whole command line with up to 200
   refspecs. The reflogs start with the first full fetch: `GET /api/v1/sync`
   gives that time as `logs_from`, under `archive`, `git`.
+- **Full file lists.** The archive keeps the first 50 files of a pull
+  request. For a pull request with more files, the server reads the full
+  list from the copy. It finds the merge base of the head and the base
+  branch (for a merged pull request, the first parent of its merge commit)
+  with `git merge-base`. Then `git diff-tree -r -z --name-only` gives the
+  paths from that commit to the head. `diff-tree` compares trees, not the
+  contents of files. A list holds up to 10 000 paths. A renamed file gives
+  its old path and its new path. After each pass, the task of the copy
+  computes up to 50 missing lists, open pull requests first, with a limit
+  of 20 seconds on each git call. It keeps each list in memory, for each
+  head and base, while the pull request has a row. A restart computes the
+  lists again. When the copy does not have the head yet, the task tries
+  again after 10 minutes. The next recompute of the pages uses the lists.
+  These facts use the full list:
+  - the packages, modules and areas that a pull request touches: the
+    pull request page, `touches` in the API, and the pull requests on the
+    pages of packages, modules and areas;
+  - the review lists and For you, which match a pull request to the areas
+    of people;
+  - "no maintainer and no owner", in the queues and in the ledger;
+  - the kind of change in the panel of the pull request page;
+  - the areas in the metrics, for the pull requests that have a row.
+
+  The `history` facts of older pull requests keep the first 50 files. The
+  diff on the pull request page comes from GitHub, at most 100 files.
+
 - **Reading.** `/state?tab=status` and `GET /api/v1/sync` (under `archive`,
   `git`) give the counts, the size, the times and the last error. On the
   server, the service user owns the copy, so root reads it with
@@ -313,7 +339,9 @@ only place that holds the code and its review history.
 
 - Each pull request reads its first 30 reviews, the first 5 inline comments of
   each, the last 30 comments, the last 30 pushes and the first 50 files. A very
-  busy pull request can lose a trigger or a void past those limits.
+  busy pull request can lose a trigger or a void past those limits. A
+  server with the git copy reads every file of a pull request there: see
+  "Full file lists" in [the git copy](#the-git-copy).
 - Ownership of a pull request is judged against today's nixpkgs, not the
   nixpkgs of the day of the review.
 - The sweep covers derivations in the swept sets, and NixOS modules. A package
@@ -329,7 +357,7 @@ only place that holds the code and its review history.
 
 - **From the `pr` row.** The header and one panel show the title, author, state, draft, base branch, age, size, checks, labels and the disclosed AI use, the queue, the reviews that moved it, and the packages and modules the pull request touches, with their maintainers and the approvals on the current head. [rules.md](rules.md#the-pull-request-page) describes the panel.
 - **Reached.** For a merged pull request, the row "Reached" tells which branches and channels hold its merge commit, and which do not yet. The server reads it from the [git copy](#the-git-copy) with `git for-each-ref --contains`, and keeps each answer for a minute. The branches follow the flow of the nixpkgs `CONTRIBUTING.md`: `staging`, `staging-next`, then `master` or `release-YY.MM` (`staging-nixos` goes to the trunk directly; another base goes to `master`). Then the channel branches of the trunk: `nixos-unstable-small`, `nixpkgs-unstable` and `nixos-unstable`, or `nixos-YY.MM-small`, `nixpkgs-YY.MM-darwin` and `nixos-YY.MM`. A channel branch moves when its channel moves. A branch that the copy does not have is left out. Each branch that holds the commit also shows how long after the merge it got it, for example "nixos-unstable 3 days after". The time comes from the [reflog](#the-git-copy) of the branch: the oldest entry whose commit holds the merge commit (`git merge-base --is-ancestor`). The search starts at the merge time and asks about few entries; a forced update starts a new search. It is the time when the copy saw the change, up to about 5 minutes after GitHub. A branch that held the commit at the start of its reflog has no time, and a pull request merged before the reflogs start has none. One page view spends at most 40 `git merge-base` calls and 5 seconds on the times. A time never changes, so the server keeps up to 20 000 of them in memory. The API gives the same as `reached`: the commit, `in_copy`, and a `steps` list of `branch`, `channel`, `contains` and `at` (RFC 3339, or `null` when the time is not known). It is `null` for a pull request that is not merged, or on a server without the git copy. Branches change in the copy every 5 minutes, so a new channel shows up to about 6 minutes late.
-- **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the bot token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub.
+- **The diff.** The server reads the changed files from the GitHub REST API, at most 100 files. It uses its own tokens only: the GitHub App token, then the bot token. It never uses the tokens that people lend. A binary file or a very large diff shows a note and a link to GitHub. When GitHub gives fewer files than the pull request changes and the [git copy](#the-git-copy) has the full list, the page lists the paths of the other files, up to 1000, each with a link to its diff on GitHub. When the diff cannot be read, the page lists the paths from the copy, if it has the full list.
 - **The conversation.** The description, the reviews, the inline comments and the comments come from the archive when it has a copy. If the copy is not current, one GraphQL query reads the first 100 of each kind. The page shows the latest 300 reviews and comments. A link opens the rest on GitHub.
 - **Who makes the server read GitHub.** Only signed-in people do. Anonymous visitors and the API get the cache or the archive copy. If neither has the data, they get a note and a link to GitHub.
 - **Budget.** The archive walk comes first. The server stops live reads on a token that has less than 1000 points left, until its limit resets. The server starts at most 20 live reads a minute. When two people open the same page at the same time, the server reads GitHub once.
@@ -338,7 +366,7 @@ only place that holds the code and its review history.
 - **Safety.** The page renders Markdown from GitHub without raw HTML. HTML shows as text, except `<details>`, `<summary>` and `<b>` with no attributes. The page closes each of these tags that the text leaves open. Only web and mail links stay. An image shows as a link, so the page loads nothing from other sites.
 - **To act**, use "Review the diff on GitHub" or "Open on GitHub" in the page header. Maintainer Mode writes nothing to nixpkgs.
 - A pull request that is not in the `pr` table gets a short page with a link to GitHub.
-- `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. A pull request with no `pr` row gets 404 and `{"error": …, "url": …}`.
+- `GET /api/v1/prs/<number>` gives the same data as JSON. It holds no data about the person who asks. It never makes the server read GitHub. `files_error` or `discussion_error` tells why a part is missing. `paths` is the list of changed paths that the pages use: the full list from the git copy, or the first 50 files. `paths_complete` is false while the list is cut. A pull request with no `pr` row gets 404 and `{"error": …, "url": …}`.
 
 ```sh
 curl https://<host>/api/v1/prs/123456

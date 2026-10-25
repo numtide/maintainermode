@@ -8,6 +8,7 @@ mod attrs;
 mod builds;
 mod bumps;
 mod catalog;
+mod changed;
 mod channels;
 mod chart;
 mod cli_login;
