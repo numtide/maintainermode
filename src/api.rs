@@ -146,7 +146,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         path: "/api/v1/prs/:number",
-        about: "One pull request: its state, its reviews, its place in the queues, the packages and modules it touches, whether it is treewide or too large to link, its files, its discussion, the merge decision, and the branches and channels that hold its merge commit.",
+        about: "One pull request: its state, its reviews, its place in the queues, the packages and modules it touches, whether it is treewide or too large to link, its files, its discussion, the merge decision, and the branches and channels that hold its merge commit. A pull request older than the synced data comes from the archive; `from` says which.",
         params: &[need("number", Type::Int, "the number of the pull request")],
         private: false,
         answered: true,

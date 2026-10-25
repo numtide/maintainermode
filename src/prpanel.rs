@@ -788,7 +788,7 @@ pub(crate) fn bumped<'a>(index: &'a Index, touched: &[Touched], b: &Bump) -> Opt
     pkgs.next().is_none().then_some(first)
 }
 
-fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
+fn change_lines(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
     let pr = c.pr;
     let mut lines = Html::new();
     let mut what = html!("<span class=\"Label\">{}</span>", kind.word());
@@ -894,7 +894,11 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
             )
         ));
     }
-    block("change", "What changes", lines)
+    lines
+}
+
+fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
+    block("change", "What changes", change_lines(c, kind, b))
 }
 
 fn ai_text(ai: Option<&str>) -> Html {
@@ -1519,6 +1523,28 @@ pub(crate) fn render(c: &Ctx) -> Html {
     out.push(&actions_html(c));
     out.push(&Html::from(
         "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You approve or ask for changes on GitHub.</div></section>",
+    ));
+    out
+}
+
+/// The panel of a pull request from the archive: where it reached and what
+/// it changes. The other blocks tell about the live state of nixpkgs and of
+/// the pull request, so they stay on the panel of the synced ones.
+pub(crate) fn render_archived(c: &Ctx) -> Html {
+    let kind = kind(c.pr, c.files.ok());
+    let b = bump(&c.pr.title);
+    let mut out = Html::from(
+        "<section class=\"Box mb-4\" id=\"decide\" aria-labelledby=\"decide-heading\">\
+         <div class=\"Box-header\"><h2 class=\"Box-title\" id=\"decide-heading\">At a glance</h2></div>",
+    );
+    if let Some(r) = c.reached.as_ref().filter(|_| c.pr.merged_at.is_some()) {
+        out.push(&html!(
+            "<div class=\"Box-row\" id=\"decide-reached\"><h3 class=\"decide-title\">Reached</h3>{r}</div>"
+        ));
+    }
+    out.push(&html!(
+        "<div class=\"Box-row\" id=\"decide-change\"><h3 class=\"decide-title\">What changes</h3><ul class=\"decide-list\">{}</ul></div></section>",
+        change_lines(c, kind, b.as_ref())
     ));
     out
 }

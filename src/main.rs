@@ -1222,6 +1222,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 v["ci"].as_str().unwrap_or("-"),
                 v["queue"]["queue"].as_str().unwrap_or("-")
             );
+            if v["from"] == "archive" {
+                out!("  from the archive: older than the synced data");
+            }
             if let Some(m) = size_mark(&v) {
                 out!("  {m}");
             }

@@ -15,7 +15,7 @@ removed, not redirected.
 | --------------------------------------------- | ---------------------------------------------------------------- |
 | `GET /api/v1`                                 | the list of endpoints and pages                                  |
 | `GET /api/v1/prs`                             | open pull requests in one queue, paged                           |
-| `GET /api/v1/prs/<number>`                    | one pull request (see [data.md](data.md))                        |
+| `GET /api/v1/prs/<number>`                    | one pull request, synced or archived (see [data.md](data.md))    |
 | `GET /api/v1/people/<login>`                  | the public profile of a login, and what it maintains             |
 | `GET /api/v1/needs`                           | what waits for you (private)                                     |
 | `GET /api/v1/mine`                            | your packages, as the filters of `/packages` (private)           |

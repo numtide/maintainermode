@@ -2,10 +2,12 @@
 //! The archive keeps the first 50 files of a pull request; the copy has
 //! every commit, so `git diff-tree` gives the rest. Only a cut list is
 //! computed, once per head, in the task of the copy. The pages use it from
-//! their next recompute on.
+//! their next recompute on. A pull request with no row gets its list when a
+//! page asks for it: [`of_one`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::path::Path;
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
 use crate::mirror::Mirror;
@@ -16,6 +18,10 @@ use crate::web::App;
 pub const MAX: usize = 10_000;
 const PER_PASS: usize = 50;
 const LIMIT: Duration = Duration::from_secs(20);
+/// A page view waits this long for each git call.
+const VIEW_LIMIT: Duration = Duration::from_secs(5);
+/// The lists of pull requests with no row; the map starts again when full.
+const VIEWED: usize = 256;
 /// A head that the copy does not have yet is asked for again after this.
 const RETRY: Duration = Duration::from_secs(600);
 
@@ -26,6 +32,10 @@ struct Lists {
 }
 
 static LISTS: LazyLock<RwLock<Lists>> = LazyLock::new(Default::default);
+
+type Viewed = HashMap<String, (Instant, Option<Arc<Vec<String>>>)>;
+
+static VIEWED_LISTS: LazyLock<Mutex<Viewed>> = LazyLock::new(Default::default);
 
 /// GitHub counts more files than the archived list holds. A row with the
 /// full list in it stays cut, so that its list stays.
@@ -55,7 +65,39 @@ pub fn full(pr: &Pr) -> Option<Arc<Vec<String>>> {
         return None;
     }
     let (k, _) = key(pr)?;
-    LISTS.read().unwrap().full.get(&k).cloned()
+    let kept = LISTS.read().unwrap().full.get(&k).cloned();
+    kept.or_else(|| VIEWED_LISTS.lock().unwrap().get(&k)?.1.clone())
+}
+
+/// The full list of a cut pull request that has no row, read from the copy
+/// on the first page view. A miss is kept for [`RETRY`].
+pub fn of_one(dir: &Path, pr: &Pr) -> Option<Arc<Vec<String>>> {
+    if !cut(pr) {
+        return None;
+    }
+    let (k, against) = key(pr)?;
+    if let Some(l) = LISTS.read().unwrap().full.get(&k) {
+        return Some(l.clone());
+    }
+    if let Some((at, l)) = VIEWED_LISTS.lock().unwrap().get(&k) {
+        if l.is_some() || at.elapsed() < RETRY {
+            return l.clone();
+        }
+    }
+    let m = Mirror::of(dir, crate::events::REPO);
+    let got = match m.changed(&against, &pr.head_oid, MAX, VIEW_LIMIT) {
+        Ok(l) => l.map(Arc::new),
+        Err(e) => {
+            tracing::warn!("git copy: the files of #{}: {e:#}", pr.number);
+            None
+        }
+    };
+    let mut v = VIEWED_LISTS.lock().unwrap();
+    if v.len() >= VIEWED {
+        v.clear();
+    }
+    v.insert(k, (Instant::now(), got.clone()));
+    got
 }
 
 /// The list has every path that the pull request changes.
@@ -196,7 +238,7 @@ mod tests {
         w(&["commit", "--quiet", "-m", "later"]);
         w(&["merge", "--quiet", "--no-ff", "-m", "merge", "pr"]);
         let merge = w(&["rev-parse", "HEAD"]);
-        let m = Mirror::of(&d, "o/r");
+        let m = Mirror::of(&d, crate::events::REPO);
         m.init().unwrap();
         git(&[
             "-C",
@@ -249,6 +291,24 @@ mod tests {
         apply(&mut rows);
         assert_eq!(rows[0].files, all);
         assert!(complete(&rows[0]));
+        let mut old = p.clone();
+        old.number = 10;
+        old.merged_at = Some(chrono::Utc::now());
+        old.merge_commit = Some(merge.clone());
+        assert!(full(&old).is_none());
+        assert_eq!(of_one(&d, &old).as_deref(), Some(&all));
+        assert_eq!(full(&old).as_deref(), Some(&all));
+        assert!(complete(&old));
+        old.head_oid = "1".repeat(40);
+        assert_eq!(of_one(&d, &old), None);
+        assert!(
+            VIEWED_LISTS
+                .lock()
+                .unwrap()
+                .values()
+                .any(|(_, l)| l.is_none())
+        );
+        assert!(!complete(&old));
         let _ = std::fs::remove_dir_all(&d);
     }
 }
