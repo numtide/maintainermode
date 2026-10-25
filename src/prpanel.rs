@@ -798,6 +798,9 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
             pr.base
         ));
     }
+    if let Some(t) = &pr.treewide {
+        what.push(&html!(" <span class=\"Label\">{}</span>", t.mark()));
+    }
     lines.push(&line("Kind", what));
     if let Some(b) = b {
         let mut v = html!("<code>{}</code> → <code>{}</code>", b.from, b.to);
@@ -811,7 +814,12 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
         }
         lines.push(&line("Version", v));
     }
-    let touched = if c.touched.is_empty() {
+    let touched = if let Some(t) = crate::links::TooLarge::of(pr) {
+        html!(
+            "<span class=\"color-fg-attention\">none: it changes {} files, too many to link to packages and people</span>",
+            crate::chart::thousands(t.files as i64)
+        )
+    } else if c.touched.is_empty() {
         unknown("no package or module in the index matches its files or title")
     } else {
         let mut s: Vec<Html> = c
@@ -842,11 +850,19 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
             })
             .collect();
         let rest = s.split_off(s.len().min(SHOWN_SUBJECTS));
+        let unlisted = pr.treewide.map_or(0, |t| {
+            (t.packages + t.modules).saturating_sub(c.touched.len())
+        });
         let mut out = crate::html::join(s, ", ");
         if !rest.is_empty() {
+            let tail = if unlisted > 0 {
+                html!(" and {unlisted} more")
+            } else {
+                Html::new()
+            };
             out.push(&html!(
-                "<details><summary class=\"f6 color-fg-muted\">{} more</summary>{}</details>",
-                rest.len(),
+                "<details><summary class=\"f6 color-fg-muted\">{} more</summary>{}{tail}</details>",
+                rest.len() + unlisted,
                 crate::html::join(rest, ", ")
             ));
         }
@@ -1126,7 +1142,9 @@ fn people_block(c: &Ctx) -> Html {
             crate::html::join(facts, " ")
         ),
     ));
-    let m = if c.touched.is_empty() {
+    let m = if crate::links::TooLarge::of(pr).is_some() {
+        unknown("too large to link, see Touches")
+    } else if c.touched.is_empty() {
         unknown("no package or module in the index matches")
     } else if maintainers.is_empty() {
         let teams: BTreeSet<&String> = c.touched.iter().flat_map(|t| t.teams.iter()).collect();
@@ -1953,5 +1971,61 @@ mod tests {
             !html.contains("decide-missing"),
             "a closed pull request needs no checks"
         );
+    }
+
+    #[test]
+    fn the_panel_marks_a_treewide_pull_request_once_and_a_too_large_one_in_touches() {
+        let (mut p, index, h, _) = sample_ctx_parts();
+        p.labels.clear();
+        p.title = "treewide: use hash".into();
+        p.treewide = crate::links::Treewide::of(340, 0);
+        let touched: Vec<Touched> = (0..50)
+            .map(|i| {
+                let subject = Subject::Pkg(format!("p{i}"));
+                Touched {
+                    flags: crate::catalog::Flags::of(&Default::default(), &index, &h, &subject),
+                    subject,
+                    maintainers: vec![],
+                    teams: vec![],
+                    approved_by: vec![],
+                }
+            })
+            .collect();
+        let mut plain = p.clone();
+        plain.treewide = None;
+        let mut huge = plain.clone();
+        let committers = Committers::default();
+        let author = crate::profile::Facts::default();
+        let c = Ctx {
+            pr: &p,
+            body: None,
+            files: Err("not read"),
+            touched: &touched,
+            index: &index,
+            health: &h,
+            committers: &committers,
+            author: &author,
+            hydra: &[],
+            notes: None,
+            mine: None,
+            extra_actions: Html::new(),
+            reached: None,
+            queue: Html::new(),
+        };
+        let html = render(&c).into_string();
+        assert_eq!(html.matches("treewide · 340 packages").count(), 1);
+        assert!(html.contains(">334 more</summary>"), "{html}");
+        assert!(html.contains("p49</a> and 290 more</details>"));
+        let c = Ctx { pr: &plain, ..c };
+        assert!(render(&c).as_str().contains(">44 more</summary>"));
+        huge.changed_files = 19_485;
+        let c = Ctx {
+            pr: &huge,
+            touched: &[],
+            ..c
+        };
+        assert!(render(&c).as_str().contains(
+            "<span class=\"decide-label\">Touches</span> <span class=\"color-fg-attention\">none: it changes 19,485 files, too many to link to packages and people</span>"
+        ));
     }
 }

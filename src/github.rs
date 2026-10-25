@@ -342,6 +342,7 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         labels: labels(n),
         association: n["authorAssociation"].as_str().unwrap_or("").to_string(),
         ai: ai_marker(n),
+        treewide: None,
     })
 }
 

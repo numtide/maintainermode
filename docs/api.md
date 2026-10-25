@@ -101,7 +101,7 @@ The queues:
   maintains, owns in `ci/OWNERS` or changed this year. It needs `login`, a
   session or an API token. For your own login, it is For you on `/review`:
   the packages of your machines first, then what you maintain, then what you
-  watch.
+  watch. The treewide pull requests come last, in the same order.
 - **`unowned`**: pull requests that need review, with no maintainer.
 - **`firsttime`**: first contributions with no review from another person,
   the oldest first. See [personal.md](personal.md#first-time-authors). The
@@ -121,6 +121,19 @@ own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
 requests you hid on the site, and `hidden` gives their count. Each row of
 your own `foryou` has `why`: the reasons it is yours, such as
 `"you maintain: hello"`.
+
+Each row has `treewide`. It is `null`, or for a
+[treewide](rules.md#treewide-pull-requests) pull request the count of the
+packages and modules that it touches, such as
+`{"packages": 340, "modules": 0}`. The pull requests of
+`/api/v1/packages/<name>`, `/api/v1/modules/<file>` and `/api/v1/areas/<path>`
+and `GET /api/v1/prs/<number>` have the same field.
+
+Each row also has `too_large`. It is `null`, or for a pull request
+[too large to link](rules.md#pull-requests-too-large-to-link) the count of
+the files that it changes, such as `{"files": 19485}`. Then its `files` is
+empty, and its `treewide` is `null`. `GET /api/v1/prs/<number>` has the same
+field.
 
 Your machines, subscriptions and tags are private. They count only when
 `login` is the caller. Then the answer has `Cache-Control: private, no-store`.

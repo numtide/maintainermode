@@ -22,9 +22,13 @@ pub struct Entry {
     pub approved_by: Vec<String>,
     /// Logins whose review on this pull request earned credit.
     pub credited_by: Vec<String>,
+    /// The paths that match it to the areas of people: none when it is
+    /// [`too_large`](Entry::too_large), so that it reaches nobody.
     pub files: Vec<String>,
     /// No member's area covers it: the newcomer bucket.
     pub unowned: bool,
+    pub treewide: Option<crate::links::Treewide>,
+    pub too_large: Option<crate::links::TooLarge>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -80,6 +84,7 @@ pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -
             credited_by.push(r.author.clone());
         }
     }
+    let too_large = crate::links::TooLarge::of(pr);
     Entry {
         number: pr.number,
         title: pr.title.clone(),
@@ -94,8 +99,14 @@ pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -
         reviewers,
         approved_by,
         credited_by,
-        files: pr.files.clone(),
+        files: if too_large.is_some() {
+            Vec::new()
+        } else {
+            pr.files.clone()
+        },
         unowned: false,
+        treewide: pr.treewide,
+        too_large,
     }
 }
 

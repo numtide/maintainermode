@@ -113,6 +113,8 @@ fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
 const IN_THE_QUEUES: &str =
     "<a href=\"/state?tab=rules#2-whose-pull-requests-appear\">in the queues</a>";
 
+const TREEWIDE_LINK: &str = "<a href=\"/state?tab=rules#treewide-pull-requests\">Treewide</a>";
+
 const CHECKLIST: &str = "<details class=\"review-check\"><summary>What to check</summary><ul class=\"ml-3 mt-1\">\
 <li>Is <code>meta</code> complete: description, homepage, license, maintainers, mainProgram?</li>\
 <li>Are the hashes fixed-output and pinned?</li>\
@@ -125,7 +127,8 @@ fn intro(tab: &str) -> Html {
     let queues = Html::from(IN_THE_QUEUES);
     match tab {
         "foryou" => html!(
-            "Pull requests {queues} that touch your machines come first, then what you maintain, then what you watch."
+            "Pull requests {queues} that touch your machines come first, then what you maintain, then what you watch. {} pull requests come last.",
+            Html::from(TREEWIDE_LINK)
         ),
         "unowned" => html!(
             "Pull requests {queues} with no maintainer, team or <code>ci/OWNERS</code> line: a first review needs no special knowledge.{}",
@@ -828,6 +831,7 @@ mod tests {
         let v = serde_json::to_value(&list.rows).unwrap();
         assert_eq!(v[1]["why"][0], "you watch: a");
         assert_eq!(v[0]["number"], 3);
+        assert!(v[0]["treewide"].is_null());
         let shown = ReviewList::new(&src, &hidden, true, &Opts::default());
         assert_eq!(shown.entries().len(), 1);
         assert!(
@@ -860,6 +864,8 @@ mod tests {
             credited_by: vec![],
             files: vec![],
             unowned: false,
+            treewide: None,
+            too_large: None,
         }
     }
 
