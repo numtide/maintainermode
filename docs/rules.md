@@ -319,6 +319,21 @@ chart has a table with its values. The JSON has every month.
   with their median age in days. The server calculates them after each change of rows
   and after each health update, not on each request. `GET /api/v1/metrics`
   gives them under `packages`. They contain no personal data.
+- **Maintainers.** How the packages (one for each package name) and the
+  NixOS modules spread over the people who maintain them. A member of a
+  team in `meta.teams` counts as a maintainer. The numbers are: the
+  maintainers; the packages and modules with no maintainer, one, two, and
+  three or more; and the maintainers by how many packages and modules they
+  maintain (1, 2-3, 4-10, 11-30, 31-100, 101 or more), with the share of
+  the load that each group carries. The load of a package or a module is 1,
+  plus the commits of the last 365 days on master that changed its file or
+  its directory. The [git copy](data.md#the-git-copy) gives these commits,
+  once a day; merges do not count. The packages that share one file share
+  its commits, and the maintainers of a package share its load equally.
+  Also the median load, and the fewest maintainers who carry half of the
+  load. A server without the git copy counts 1 for each package and
+  module. No page and no API shows the load of one person.
+  `GET /api/v1/metrics` gives them under `packages.maintainers`.
 
 So that no number points at a person, a share or a percentile of fewer than
 20 pull requests or people is null, and a count of people below 3 is null.

@@ -28,6 +28,7 @@ mod html;
 mod hygiene;
 mod ledger;
 mod links;
+mod load;
 
 mod me;
 mod metrics;

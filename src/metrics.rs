@@ -145,8 +145,8 @@ pub const REVIEWS_FROM: (i32, u32) = (2016, 10);
 
 /// Groups smaller than this give no share, and a count of people below
 /// [`FEWEST_PEOPLE`] is not shown, so that no figure points at a person.
-const SMALLEST_GROUP: usize = 20;
-const FEWEST_PEOPLE: usize = 3;
+pub(crate) const SMALLEST_GROUP: usize = 20;
+pub(crate) const FEWEST_PEOPLE: usize = 3;
 
 impl Facts {
     pub fn bot(&self) -> bool {

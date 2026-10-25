@@ -58,6 +58,8 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
     };
     if !maintains {
         out.push(&crate::first::section(app));
+    } else if crate::load::light(app, login) {
+        out.push(&crate::first::help_section(app));
     }
     out
 }
