@@ -52,8 +52,11 @@ pub fn module_name(file: &str) -> String {
 pub struct Links {
     pub prs: HashMap<String, Vec<u64>>,
     pub issues: HashMap<String, Vec<u64>>,
+    /// Kept for [`Links::one`], so a page does not walk the index again.
+    look: std::sync::Arc<Lookup>,
 }
 
+#[derive(Default)]
 struct Lookup {
     by_area: HashMap<String, Vec<String>>,
     by_name: HashMap<String, Vec<String>>,
@@ -145,8 +148,11 @@ fn add(map: &mut HashMap<String, Vec<u64>>, mut keys: Vec<String>, number: u64) 
 }
 
 pub fn build(index: &Index, prs: &[Pr], issues: &[Issue]) -> Links {
-    let look = Lookup::new(index);
-    let mut links = Links::default();
+    let look = std::sync::Arc::new(Lookup::new(index));
+    let mut links = Links {
+        look: look.clone(),
+        ..Links::default()
+    };
     for pr in prs.iter().filter(|p| TooLarge::of(p).is_none()) {
         let mut keys = Vec::new();
         look.names(&subject::of_title(&pr.title), &mut keys);
@@ -169,6 +175,24 @@ pub fn build(index: &Index, prs: &[Pr], issues: &[Issue]) -> Links {
         v.sort_unstable_by(|a, b| b.cmp(a));
     }
     links
+}
+
+impl Links {
+    /// The links of one pull request that is not in the rows, with the
+    /// lookup of the last recompute.
+    pub fn one(&self, pr: &Pr) -> Links {
+        let mut links = Links {
+            look: self.look.clone(),
+            ..Links::default()
+        };
+        if TooLarge::of(pr).is_none() {
+            let mut keys = Vec::new();
+            self.look.names(&subject::of_title(&pr.title), &mut keys);
+            self.look.paths(&pr.files, &mut keys);
+            add(&mut links.prs, keys, pr.number);
+        }
+        links
+    }
 }
 
 /// From this many packages and modules on, a pull request is treewide. Each

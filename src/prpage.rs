@@ -597,7 +597,7 @@ async fn old(app: &App, n: u64) -> Option<Old> {
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let links = crate::links::build(&index, std::slice::from_ref(&pr), &[]);
+    let links = s.links.one(&pr);
     crate::links::mark_treewide(&links, std::slice::from_mut(&mut pr));
     let touched = touched(&s, &links, &index, &h, &pr);
     drop(index);

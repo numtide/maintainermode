@@ -385,12 +385,19 @@ impl Mirror {
     ) -> Result<Option<(Vec<String>, Vec<String>)>> {
         hex(commit)?;
         let refs: Vec<String> = names.iter().map(|n| format!("refs/heads/{n}")).collect();
+        // a commit from 2020 takes about 0.6 s on nixpkgs
+        let limit = StdDuration::from_secs(10);
         let list = |with: Option<&str>| -> Result<Vec<String>> {
             let contains = with.map(|c| format!("--contains={c}"));
             let mut args = vec!["for-each-ref", "--format=%(refname:strip=2)"];
             args.extend(contains.as_deref());
             args.extend(refs.iter().map(String::as_str));
-            Ok(self.run(&args)?.lines().map(String::from).collect())
+            let mut out = Vec::new();
+            stream(&self.dir, &args, &[0], limit, |l| {
+                out.push(l.to_string());
+                true
+            })?;
+            Ok(out)
         };
         if self
             .run(&["cat-file", "-e", &format!("{commit}^{{commit}}")])
