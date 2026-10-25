@@ -7,6 +7,7 @@
 let
   cfg = config.services.maintainer-mode;
   state = "/var/lib/maintainer-mode";
+  gitCopy = cfg.archive.git && cfg.archive.repositories != [ ];
   credentials = lib.filter (c: c.path != null) [
     {
       id = "client_secret";
@@ -158,6 +159,12 @@ in
         default = 300;
         description = "Items the archive walk fetches per repository in each pass. A pass starts every 5 minutes.";
       };
+
+      git = lib.mkOption {
+        type = lib.types.bool;
+        default = true;
+        description = "Keep a git copy of each repository in `repositories`: every branch and tag, and the head of every pull request, with the heads that a force push replaced. NixOS/nixpkgs takes about 7 GB on disk.";
+      };
     };
 
     rescan = {
@@ -251,6 +258,8 @@ in
         MAINTAINER_MODE_CHANNELS = lib.concatStringsSep "," cfg.channels;
         MAINTAINER_MODE_ARCHIVE_REPOS = lib.concatStringsSep "," cfg.archive.repositories;
         MAINTAINER_MODE_ARCHIVE_ITEMS = toString cfg.archive.itemsPerPass;
+        MAINTAINER_MODE_ARCHIVE_GIT = lib.boolToString cfg.archive.git;
+        MAINTAINER_MODE_GIT_DIR = "/var/lib/maintainer-mode-git";
         HOME = state;
       }
       // lib.optionalAttrs (cfg.githubClientId != null) {
@@ -290,20 +299,31 @@ in
         MAINTAINER_MODE_RESCAN_TIMEOUT = toString cfg.rescan.timeout;
         MAINTAINER_MODE_RESCAN_MEMORY_MB = toString cfg.rescan.memoryMB;
       };
-      # git fetches the git inputs of a scanned flake, inside the sandbox
-      path = lib.optional cfg.rescan.enable pkgs.git;
+      # git keeps the git copy of the archive, and fetches the git inputs
+      # of a scanned flake inside the sandbox
+      path = lib.optional (cfg.rescan.enable || gitCopy) pkgs.git;
       serviceConfig = {
         ExecStart = "${lib.getExe cfg.package} serve";
         DynamicUser = true;
-        StateDirectory = "maintainer-mode";
+        # the git copy has its own state directory, so that a host can keep
+        # its gigabytes out of the snapshots and backups of the database
+        StateDirectory = [ "maintainer-mode" ] ++ lib.optional gitCopy "maintainer-mode-git";
         WorkingDirectory = state;
         LoadCredential = map (c: "${c.id}:${c.path}") credentials;
         # a reload copies the credentials again without a restart; the
         # service reads the new copies within a minute (systemd >= 260)
         RefreshOnReload = "credentials";
         Restart = "on-failure";
-        # the daily sweep of nixpkgs peaks near 2 GB
-        MemoryMax = if cfg.rescan.enable then "${toString (4096 + cfg.rescan.memoryMB)}M" else "4G";
+        # the daily sweep of nixpkgs peaks near 2 GB, and the index-pack of
+        # a first git copy of nixpkgs near 800 MB
+        MemoryMax = "${
+          toString (
+            4096 + (if cfg.rescan.enable then cfg.rescan.memoryMB else 0) + (if gitCopy then 1024 else 0)
+          )
+        }M";
+        # git runs with oom_score_adj 1000, so the kernel kills it first;
+        # the server goes on and fetches again later
+        OOMPolicy = "continue";
         PrivateTmp = true;
         ProtectSystem = "strict";
         ProtectHome = true;

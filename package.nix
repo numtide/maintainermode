@@ -3,6 +3,7 @@
   rustPlatform,
   callPackage,
   makeWrapper,
+  git,
   # anything that answers `nix eval --json --file`; null leaves `nix` from PATH
   evaluator ? null,
 }:
@@ -30,6 +31,7 @@ rustPlatform.buildRustPackage {
   env.PRIMER_DIR = "${primer}";
 
   nativeBuildInputs = [ makeWrapper ];
+  nativeCheckInputs = [ git ];
 
   postInstall = lib.optionalString (evaluator != null) ''
     wrapProgram $out/bin/maintainer-mode \

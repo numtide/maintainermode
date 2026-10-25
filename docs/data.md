@@ -250,6 +250,59 @@ The export writes one `ndjson.zst` file per 10 000 numbers. To archive more
 repositories, add them to `services.maintainer-mode.archive.repositories`.
 An empty list turns the archive off.
 
+## The git copy
+
+Maintainer Mode keeps a git copy of each archived repository, next to the
+archive of its issues and pull requests. With the two, GitHub is not the
+only place that holds the code and its review history.
+
+- **What.** Every branch and tag, and the head of every pull request
+  (`refs/pull/<n>/head`), with full history. A deleted branch stays in the
+  copy. The test merges of GitHub (`refs/pull/<n>/merge`) are not kept.
+- **Replaced heads.** A force push replaces the head of a pull request.
+  The copy logs each change of a ref (`core.logAllRefUpdates=always`) and
+  never expires the log, so the old head stays:
+  `git rev-parse 'refs/pull/<n>/head@{1}'`. GitHub keeps only the newest
+  head, so the copy has the old heads from its first fetch on.
+- **When.** All branches and tags every 5 minutes, and at once after a push
+  event. The head of a pull request about 10 seconds after an event on it
+  (nixpkgs only, from the event log). Every branch and every head each 6
+  hours, to get what the events missed; an hour after a failed run.
+- **Storage.** A bare repository per repository, `<owner>/<name>.git`, in
+  `MAINTAINER_MODE_GIT_DIR` (default: `git` next to the database). The
+  NixOS module uses its own state directory, `/var/lib/maintainer-mode-git`,
+  so that a host can put the copy on a file system without snapshots and
+  backups. The refs are in the reftable format.
+- **Packing.** The first fetch takes all refs at once, so GitHub sends one
+  complete pack. A later fetch gets a thin pack, and git stores a second
+  full copy of each delta base next to it: about 350 KB per pull request
+  head in a sample. After each full fetch, `git repack --geometric=2`
+  merges the loose objects and the small packs, and leaves the large pack
+  as it is. A merge does not write again an object that the large pack
+  holds, so the second copies go; until a merge, they stay in the newest
+  packs. In a test, 300 recent heads took 26 MB as fetched and 3.3 MB after
+  the merge, in 12 seconds. Then git writes the commit-graph. The copy
+  never prunes and never runs `git gc`, so it deletes no object. A full
+  `git repack -a -d` of nixpkgs reads the whole pack again: 6 minutes with
+  6.9 GB resident, and more than 25 minutes under a limit of 2 GB. The copy
+  does not run it.
+- **Size.** In October 2026, NixOS/nixpkgs has 518 562 pull request heads.
+  76 % of them are in the history of a branch. The copy takes about 7 GB:
+  3.9 GB for the branches and about 3.2 GB for the other heads (from a
+  sample of 1 500 heads). The first fetch of nixpkgs uses about 800 MB of
+  memory in `index-pack`. git runs with `oom_score_adj` 1000, so the kernel
+  stops git, not the server, when memory runs out. The first fetch does not
+  run at the same time as a sweep of nixpkgs.
+- **Reading.** `/state?tab=status` and `GET /api/v1/sync` (under `archive`,
+  `git`) give the counts, the size, the times and the last error. On the
+  server, `git -C /var/lib/maintainer-mode-git/NixOS/nixpkgs.git log`
+  reads the copy.
+- **On and off.** The NixOS module turns the copy on; set
+  `services.maintainer-mode.archive.git = false` to turn it off. Outside the
+  module, the copy is off until `MAINTAINER_MODE_ARCHIVE_GIT=true`, so that
+  a local `serve` does not download gigabytes. The copy needs `git` 2.45 or
+  later in `PATH`; the module adds it.
+
 ## Known limits of slice one
 
 - Each pull request reads its first 30 reviews, the first 5 inline comments of

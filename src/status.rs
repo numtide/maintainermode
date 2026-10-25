@@ -220,6 +220,41 @@ fn archive_row(a: &Value) -> Html {
     crate::html::join(parts, " · ")
 }
 
+fn git_row(g: &Value) -> Html {
+    let mut parts = Vec::new();
+    if g["full_at"].is_null() {
+        parts.push(html!(
+            "the first copy of every branch and pull request head started {}",
+            when(&g["tried_at"])
+        ));
+    } else {
+        parts.push(html!(
+            "{} branches, {} tags and {} pull request heads ({:.1} GB)",
+            g["branches"],
+            g["tags"],
+            g["pull_request_heads"],
+            g["bytes"].as_f64().unwrap_or(0.0) / 1e9
+        ));
+        parts.push(html!(
+            "{} old heads kept after force pushes",
+            g["replaced_heads"]
+        ));
+        parts.push(html!(
+            "branches every {}, a pull request head within seconds of its event, everything every {} hours · fetched {} · everything fetched {}",
+            minutes(g["branches_every_seconds"].as_i64().unwrap_or(0)),
+            g["full_every_hours"],
+            when(&g["fetched_at"]),
+            when(&g["full_at"])
+        ));
+    }
+    if let Some(e) = g["last_error"].as_str() {
+        parts.push(html!(
+            "<span class=\"color-fg-attention\">last error: {e}</span>"
+        ));
+    }
+    crate::html::join(parts, " · ")
+}
+
 fn when(v: &Value) -> String {
     v.as_str()
         .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
@@ -525,6 +560,12 @@ pub(crate) fn body(app: &App) -> Html {
                 Html::text(a["repo"].as_str().unwrap_or("")),
                 archive_row(a),
             ));
+            if a["git"].is_object() {
+                out.push(&kv(
+                    html!("{} (git)", a["repo"].as_str().unwrap_or("")),
+                    git_row(&a["git"]),
+                ));
+            }
         }
         out.push(&Html::from("</div>"));
     }

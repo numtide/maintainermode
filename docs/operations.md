@@ -26,6 +26,8 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_S3_CREDENTIALS_FILE`  | file with the access key id and the secret key              |
 | `MAINTAINER_MODE_ARCHIVE_REPOS`        | repositories to archive; default `NixOS/nixpkgs`            |
 | `MAINTAINER_MODE_ARCHIVE_ITEMS`        | items the archive walk fetches per repository and pass      |
+| `MAINTAINER_MODE_ARCHIVE_GIT`          | `true` turns on the git copy of the archived repositories   |
+| `MAINTAINER_MODE_GIT_DIR`              | where the git copy lives, default `git` next to the DB      |
 | `MAINTAINER_MODE_RESCAN`               | `true` turns on the server rescans of public flakes         |
 | `MAINTAINER_MODE_RESCAN_BWRAP`         | the `bwrap` program, default `bwrap`                        |
 | `MAINTAINER_MODE_RESCAN_PRLIMIT`       | the `prlimit` program, default `prlimit`                    |

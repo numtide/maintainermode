@@ -695,6 +695,7 @@ impl Archive {
             "items_per_pass": self.budget,
             "last_pass": self.get("pass_ended")?,
             "last_error": self.get("last_error")?.filter(|e| !e.is_empty()),
+            "git": crate::mirror::status(self)?,
         }))
     }
 
