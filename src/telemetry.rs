@@ -516,8 +516,11 @@ pub(crate) fn render(app: &App) -> String {
         &mut out,
         "maintainer_mode_events_last_insert_timestamp_seconds",
         "gauge",
-        "When an insert last added an event; 0 before the first one.",
-        EVENTS_LAST_INSERT_MS.load(Relaxed) as f64 / 1000.0,
+        "When an insert last added an event, or the start of the process before the first one.",
+        match EVENTS_LAST_INSERT_MS.load(Relaxed) {
+            0 => *START.get_or_init(unix_now),
+            ms => ms as f64 / 1000.0,
+        },
     );
     for (what, prefix) in [
         (Recompute::All, "maintainer_mode_recompute"),
