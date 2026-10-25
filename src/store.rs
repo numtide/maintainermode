@@ -165,6 +165,7 @@ impl Store {
                PRIMARY KEY (session, key)
              );
              CREATE INDEX IF NOT EXISTS needs_seen_at ON needs_seen (at);
+             CREATE INDEX IF NOT EXISTS pr_state ON pr (state);
              CREATE TABLE IF NOT EXISTS followup (
                login TEXT NOT NULL,
                number INTEGER NOT NULL,
