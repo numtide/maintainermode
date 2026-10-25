@@ -69,7 +69,7 @@ pub(crate) fn picks(s: &Snapshot, index: &Index, h: &Health, now: DateTime<Utc>)
         }
         let review = prs
             .iter()
-            .filter(|p| !p.is_draft && p.created_at >= since)
+            .filter(|p| !p.is_draft && p.created_at >= since && p.treewide.is_none())
             .max_by_key(|p| p.created_at)
             .map(|p| {
                 (

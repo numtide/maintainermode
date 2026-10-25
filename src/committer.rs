@@ -305,7 +305,7 @@ pub fn board(prs: &[Pr], ledger: &Ledger, index: &Index, links: &Links) -> Board
         &mut b.backports,
         &mut b.waiting,
     ] {
-        rows.sort_by_key(|r| (r.waiting_since, r.entry.number));
+        rows.sort_by_key(|r| (r.entry.treewide.is_some(), r.waiting_since, r.entry.number));
     }
     b
 }
@@ -364,12 +364,18 @@ fn lines(list: &[Line], empty_text: &'static str) -> Html {
         if let Some(t) = l.since {
             meta.push(&html!(" · waiting {} since the approval", ago(t)));
         }
+        let badges: Vec<Html> = e
+            .treewide
+            .as_ref()
+            .map(crate::web::treewide_badge)
+            .into_iter()
+            .collect();
         out.push(&item_row(
             Some(Kind::PR_OPEN),
             crate::prpage::title_link(e.number, Html::text(&e.title), "Link--primary text-bold"),
             "",
             meta,
-            &[],
+            &badges,
             html!("<span class=\"ml-2\">{}</span>", ci_label(e)),
         ));
     }
@@ -569,12 +575,15 @@ pub(crate) fn yours_list<'a>(
     login: &str,
 ) -> Vec<(&'a Entry, String)> {
     let mine = yours(app, s, login);
-    s.queues
+    let mut out: Vec<(&Entry, String)> = s
+        .queues
         .merge
         .iter()
         .filter(|e| e.author != login)
         .filter_map(|e| mine(e).map(|why| (e, why)))
-        .collect()
+        .collect();
+    out.sort_by_key(|(e, _)| e.treewide.is_some());
+    out
 }
 
 fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec<Line<'a>> {
