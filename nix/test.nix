@@ -7,6 +7,7 @@ pkgs.testers.runNixOSTest {
       imports = [ self.nixosModules.default ];
       services.maintainer-mode.enable = true;
       services.maintainer-mode.githubAppId = 1;
+      services.maintainer-mode.metrics.listen = "127.0.0.1:9431";
       services.maintainer-mode.channels = [
         "nixos-unstable"
         "nixos-26.05"
@@ -113,6 +114,10 @@ pkgs.testers.runNixOSTest {
     machine.wait_for_unit("maintainer-mode.service")
     machine.wait_for_open_port(8790)
     machine.succeed("curl -sf http://127.0.0.1:8790/healthz")
+    machine.wait_for_open_port(9431)
+    machine.succeed("curl -sf http://127.0.0.1:9431/metrics -o /tmp/metrics && grep -q '^maintainer_mode_build_info{' /tmp/metrics && grep -q '^maintainer_mode_http_requests_total{route=\"/healthz\",method=\"GET\",status=\"200\"} ' /tmp/metrics")
+    machine.succeed("grep -q '^maintainer_mode_sync_pull_requests_stored ' /tmp/metrics && grep -q '^maintainer_mode_process_resident_memory_bytes ' /tmp/metrics")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/metrics > /tmp/m404 && grep -qx 404 /tmp/m404")
     machine.succeed("curl -sf http://127.0.0.1:8790/ -o /tmp/page && grep -q 'Maintainer Mode' /tmp/page")
     machine.succeed("grep -q 'id=\"intro\"' /tmp/page && grep -q 'nixpkgs/blob/master/CONTRIBUTING.md\">nixpkgs contributor guide' /tmp/page")
     machine.succeed("! grep -q -e 'Subhead-heading' -e '/intro/dismiss' /tmp/page && grep -o '<h1' /tmp/page | wc -l > /tmp/h1 && grep -qx 1 /tmp/h1 && grep -q 'mb-2\">Tools that make it easier' /tmp/page")

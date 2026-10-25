@@ -58,6 +58,13 @@ in
       default = "127.0.0.1:8790";
     };
 
+    metrics.listen = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "127.0.0.1:9431";
+      description = "Address of a second listener that serves only the Prometheus `/metrics`. It has no authentication: keep it on localhost. Null turns it off.";
+    };
+
     domain = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -254,6 +261,9 @@ in
         MAINTAINER_MODE_ARCHIVE_GIT = lib.boolToString cfg.archive.git;
         MAINTAINER_MODE_GIT_DIR = "/var/lib/maintainer-mode-git";
         HOME = state;
+      }
+      // lib.optionalAttrs (cfg.metrics.listen != null) {
+        MAINTAINER_MODE_METRICS_LISTEN = cfg.metrics.listen;
       }
       // lib.optionalAttrs (cfg.githubClientId != null) {
         GITHUB_CLIENT_ID = cfg.githubClientId;

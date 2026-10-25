@@ -86,6 +86,7 @@ skip /feed/:token
 skip /static/:file
 skip /robots.txt
 skip /healthz
+skip /metrics
 skip /api/v1
 skip /api/v1/
 skip /api/v1/status

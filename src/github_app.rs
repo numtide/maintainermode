@@ -171,6 +171,7 @@ impl GithubApp {
             .map(|t| t.with_timezone(&Utc))
             .unwrap_or_else(|| Utc::now() + Duration::hours(1));
         *cached = Some((token.clone(), expires_at));
+        crate::telemetry::name_token("app", &token);
         Ok(token)
     }
 }

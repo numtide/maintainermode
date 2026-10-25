@@ -182,7 +182,9 @@ async fn graphql_call(
         .bearer_auth(token)
         .json(&json!({ "query": query, "variables": vars }))
         .send()
-        .await?;
+        .await
+        .inspect_err(|_| crate::telemetry::graphql_answer(token, None))?;
+    crate::telemetry::graphql_answer(token, Some(&resp));
     if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
         return Ok(Outcome::BadToken(token.to_string()));
     }
