@@ -2,13 +2,13 @@
 //! head of every pull request. A forced update leaves the old commit in the
 //! reflog, so the copy keeps the versions that a force push replaced.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant};
 
 use crate::archive::Archive;
@@ -45,6 +45,7 @@ const ERROR: &str = "git_error";
 const REPLACED: &str = "git_replaced";
 const BYTES: &str = "git_bytes";
 const COUNTS: &str = "git_counts";
+const LOGS_FROM: &str = "git_logs_from";
 
 pub struct Mirror {
     pub dir: PathBuf,
@@ -87,12 +88,58 @@ pub struct Counts {
     pub heads: usize,
 }
 
-fn git(dir: &Path, args: &[&str]) -> Result<String> {
+/// One change of a branch, from its reflog.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Logged {
+    /// Unix time of the change in the copy.
+    pub at: i64,
+    pub commit: String,
+    /// The new commit holds the old one: `git fetch` logged a fast-forward.
+    pub ff: bool,
+}
+
+impl Logged {
+    /// A line of `--format=%gd %H %gs` with `--date=unix`.
+    fn parse(line: &str) -> Option<Self> {
+        let (selector, rest) = line.split_once(' ')?;
+        let at = selector
+            .rsplit_once("@{")?
+            .1
+            .strip_suffix('}')?
+            .parse()
+            .ok()?;
+        let (commit, subject) = rest.split_once(' ').unwrap_or((rest, ""));
+        Some(Logged {
+            at,
+            commit: commit.to_string(),
+            ff: subject.ends_with(": fast-forward"),
+        })
+    }
+}
+
+pub struct Reflog {
+    /// Oldest first.
+    pub entries: Vec<Logged>,
+    /// The first entry is the first of the reflog.
+    pub whole: bool,
+}
+
+fn hex(commit: &str) -> Result<()> {
+    if commit.is_empty() || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        bail!("not a commit id: {commit:?}");
+    }
+    Ok(())
+}
+
+fn spawn(dir: &Path, args: &[&str]) -> Result<Child> {
     let child = Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // without it, each reflog entry of a fetch holds the whole command
+        // line: the URL and up to 200 refspecs
+        .envs((args.first() == Some(&"fetch")).then_some(("GIT_REFLOG_ACTION", "fetch")))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -101,13 +148,85 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
     // the kernel kills git, not the server, when the service runs out of
     // memory; git starts index-pack later, which inherits the score
     let _ = std::fs::write(format!("/proc/{}/oom_score_adj", child.id()), "1000");
-    let out = child.wait_with_output()?;
+    Ok(child)
+}
+
+fn failed(args: &[&str], stderr: &[u8]) -> anyhow::Error {
+    let err = String::from_utf8_lossy(stderr);
+    let last = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("");
+    anyhow!("git {}: {}", args[0], last.trim())
+}
+
+fn git(dir: &Path, args: &[&str]) -> Result<String> {
+    let out = spawn(dir, args)?.wait_with_output()?;
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        let last = err.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("");
-        bail!("git {}: {}", args[0], last.trim());
+        return Err(failed(args, &out.stderr));
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Runs git and gives each line of its output to `each` until `each`
+/// returns false. git is killed after `limit`. Returns the exit code, one
+/// of `ok`, or None when `each` stopped git.
+fn stream(
+    dir: &Path,
+    args: &[&str],
+    ok: &[i32],
+    limit: StdDuration,
+    mut each: impl FnMut(&str) -> bool,
+) -> Result<Option<i32>> {
+    use std::io::{BufRead, Read};
+    use std::sync::mpsc::{RecvTimeoutError, channel};
+    let mut child = spawn(dir, args)?;
+    let stdout = child.stdout.take().context("git output")?;
+    let mut stderr = child.stderr.take().context("git errors")?;
+    let child = Arc::new(Mutex::new(child));
+    let (done, wait) = channel::<()>();
+    let watch = {
+        let child = child.clone();
+        std::thread::spawn(move || {
+            let late = matches!(wait.recv_timeout(limit), Err(RecvTimeoutError::Timeout));
+            if late {
+                let _ = child.lock().unwrap_or_else(|e| e.into_inner()).kill();
+            }
+            late
+        })
+    };
+    let mut out = std::io::BufReader::new(stdout);
+    let mut line = Vec::new();
+    let mut stopped = false;
+    loop {
+        line.clear();
+        match out.read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {}
+        }
+        let l = String::from_utf8_lossy(&line);
+        if !each(l.trim_end_matches('\n')) {
+            stopped = true;
+            break;
+        }
+    }
+    drop(out);
+    drop(done);
+    let late = watch.join().unwrap_or(false);
+    let mut child = child.lock().unwrap_or_else(|e| e.into_inner());
+    if stopped {
+        let _ = child.kill();
+    }
+    let status = child.wait()?;
+    let mut err = Vec::new();
+    let _ = stderr.read_to_end(&mut err);
+    if late {
+        bail!("git {}: no answer in {:.1} s", args[0], limit.as_secs_f64());
+    }
+    if stopped {
+        return Ok(None);
+    }
+    match status.code() {
+        Some(c) if ok.contains(&c) => Ok(Some(c)),
+        _ => Err(failed(args, &err)),
+    }
 }
 
 impl Mirror {
@@ -250,9 +369,7 @@ impl Mirror {
         commit: &str,
         names: &[String],
     ) -> Result<Option<(Vec<String>, Vec<String>)>> {
-        if !commit.bytes().all(|b| b.is_ascii_hexdigit()) || commit.is_empty() {
-            bail!("not a commit id: {commit:?}");
-        }
+        hex(commit)?;
         let refs: Vec<String> = names.iter().map(|n| format!("refs/heads/{n}")).collect();
         let list = |with: Option<&str>| -> Result<Vec<String>> {
             let contains = with.map(|c| format!("--contains={c}"));
@@ -268,6 +385,44 @@ impl Mirror {
             return Ok(None);
         }
         Ok(Some((list(None)?, list(Some(commit))?)))
+    }
+
+    /// Whether `commit` is in the history of `of`, which can be any commit.
+    pub fn holds(&self, of: &str, commit: &str, limit: StdDuration) -> Result<bool> {
+        hex(commit)?;
+        hex(of)?;
+        let args = ["merge-base", "--is-ancestor", commit, of];
+        Ok(stream(&self.dir, &args, &[0, 1], limit, |_| true)? == Some(0))
+    }
+
+    /// The reflog of `branch`, oldest first, from its last entry before
+    /// `since` on. git lists the newest entry first, so the read stops
+    /// there.
+    pub fn reflog(&self, branch: &str, since: i64, limit: StdDuration) -> Result<Reflog> {
+        let name = format!("refs/heads/{branch}");
+        let args = [
+            "reflog",
+            "show",
+            "--date=unix",
+            "--format=%gd %H %gs",
+            &name,
+        ];
+        let mut entries = Vec::new();
+        let read = stream(&self.dir, &args, &[0], limit, |line| {
+            match Logged::parse(line) {
+                Some(e) => {
+                    let more = e.at >= since;
+                    entries.push(e);
+                    more
+                }
+                None => true,
+            }
+        })?;
+        entries.reverse();
+        Ok(Reflog {
+            entries,
+            whole: read.is_some(),
+        })
     }
 
     pub fn bytes(&self) -> Result<u64> {
@@ -292,6 +447,44 @@ fn time(a: &Archive, key: &str) -> Result<Option<DateTime<Utc>>> {
         .map(|t| t.with_timezone(&Utc)))
 }
 
+/// When the reflogs of the copy start, or None before the first full fetch.
+pub fn logs_from(a: &Archive) -> Result<Option<DateTime<Utc>>> {
+    time(a, LOGS_FROM)
+}
+
+/// The first entry of the reflog of the trunk, which the first full fetch
+/// wrote. It never changes, so it is read once.
+fn note_logs_from(a: &Archive, m: &Mirror) -> Result<()> {
+    if time(a, LOGS_FROM)?.is_some() {
+        return Ok(());
+    }
+    let Some(trunk) = ["master", "main"].into_iter().find(|b| {
+        m.run(&["rev-parse", "--verify", "-q", &format!("refs/heads/{b}")])
+            .is_ok()
+    }) else {
+        return Ok(());
+    };
+    let name = format!("refs/heads/{trunk}");
+    let args = [
+        "reflog",
+        "show",
+        "--date=unix",
+        "--format=%gd %H %gs",
+        &name,
+    ];
+    let mut first = None;
+    stream(&m.dir, &args, &[0], StdDuration::from_secs(600), |line| {
+        if let Some(e) = Logged::parse(line) {
+            first = Some(e.at);
+        }
+        true
+    })?;
+    if let Some(t) = first.and_then(|s| DateTime::from_timestamp(s, 0)) {
+        a.set(LOGS_FROM, &t.to_rfc3339())?;
+    }
+    Ok(())
+}
+
 /// After a failure, the next full fetch waits [`RETRY_HOURS`], so that a
 /// first copy that runs out of memory does not download nixpkgs again on
 /// each pass.
@@ -305,6 +498,9 @@ fn pass(a: &Archive, m: &Mirror, branches: bool, numbers: &[u64]) -> Result<()> 
     let now = Utc::now();
     let full = time(a, FULL)?;
     let fetched = (|| -> Result<Option<Fetched>> {
+        if !m.dir.join("HEAD").exists() {
+            a.set(LOGS_FROM, "")?;
+        }
         m.init()?;
         if full_due(full, time(a, TRIED)?, now) {
             a.set(TRIED, &now.to_rfc3339())?;
@@ -342,6 +538,9 @@ fn pass(a: &Archive, m: &Mirror, branches: bool, numbers: &[u64]) -> Result<()> 
                 a.set(REPLACED, &(n + f.forced).to_string())?;
             }
             a.set(BYTES, &m.bytes()?.to_string())?;
+            if let Err(e) = note_logs_from(a, m) {
+                tracing::warn!("git copy of {}: read the reflog: {e:#}", a.repo);
+            }
             Ok(())
         }
         Err(e) => {
@@ -443,6 +642,7 @@ pub fn status(a: &Archive) -> Result<Value> {
         "replaced_heads": num(REPLACED)?,
         "bytes": num(BYTES)?,
         "full_at": a.get(FULL)?,
+        "logs_from": logs_from(a)?,
         "tried_at": tried,
         "fetched_at": a.get(FETCHED)?,
         "branches_every_seconds": BRANCHES_EVERY.as_secs(),
@@ -471,6 +671,25 @@ mod tests {
         assert!(full_due(Some(at(1)), Some(at(0)), at(7)));
         assert!(!full_due(Some(at(1)), Some(at(7)), at(7)));
         assert!(full_due(Some(at(1)), Some(at(7)), at(8)));
+    }
+
+    #[test]
+    fn a_reflog_line_gives_its_time_commit_and_kind() {
+        let c = "a0f29511336cfd2e11d5351c07dddbd912476cd6";
+        assert_eq!(
+            Logged::parse(&format!(
+                "master@{{1792949909}} {c} fetch --porcelain https://x +refs/heads/*:refs/heads/*: fast-forward"
+            )),
+            Some(Logged {
+                at: 1792949909,
+                commit: c.into(),
+                ff: true
+            })
+        );
+        let forced = Logged::parse(&format!("heads/a@b@{{7}} {c} fetch: forced-update")).unwrap();
+        assert_eq!((forced.at, forced.ff), (7, false));
+        assert_eq!(Logged::parse(&format!("x@{{7}} {c}")).unwrap().commit, c);
+        assert_eq!(Logged::parse("x@{now} abc y"), None);
     }
 
     #[test]
@@ -561,5 +780,34 @@ mod tests {
             first
         );
         assert!(m.bytes().unwrap() > 0);
+        let limit = StdDuration::from_secs(10);
+        assert!(m.holds(&first, &first, limit).unwrap());
+        assert!(!m.holds(&first, &second, limit).unwrap());
+        assert!(m.holds("--all", &first, limit).is_err());
+        let log = m.reflog("master", i64::MIN, limit).unwrap();
+        assert!(log.whole);
+        assert_eq!(log.entries.len(), 1);
+        assert_eq!(
+            m.run(&["reflog", "show", "--format=%gs", "refs/pull/1/head"])
+                .unwrap()
+                .lines()
+                .collect::<Vec<_>>(),
+            ["fetch: forced-update", "fetch: storing ref"]
+        );
+        assert_eq!(
+            (log.entries[0].commit.as_str(), log.entries[0].ff),
+            (first.as_str(), false)
+        );
+        let none = m.reflog("master", log.entries[0].at + 1, limit).unwrap();
+        assert!(!none.whole && none.entries.len() == 1);
+        let stopped = stream(&m.dir, &["rev-list", "--all"], &[0], limit, |_| false);
+        assert_eq!(stopped.unwrap(), None);
+        let a = Archive::open(&up.0, "o/r", 10).unwrap();
+        assert_eq!(logs_from(&a).unwrap(), None);
+        note_logs_from(&a, &m).unwrap();
+        assert_eq!(
+            logs_from(&a).unwrap().map(|t| t.timestamp()),
+            Some(log.entries[0].at)
+        );
     }
 }
