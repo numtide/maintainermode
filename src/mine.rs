@@ -351,17 +351,6 @@ pub(crate) fn rank(rows: &mut [Row]) {
     });
 }
 
-/// The rows of [`Filter::Mine`] that need attention, for the home page.
-pub(crate) fn needs_you(app: &App, login: &str) -> Vec<Row> {
-    let i = Interests::of(app, login);
-    let s = app.snap();
-    let h = app.health.read().unwrap().clone();
-    let index = app.index.read().unwrap();
-    let mut rows = i.rows(&s, &index, &h, Some(&app.hydra), Filter::Mine, "");
-    rows.retain(|r| attention(&r.flags));
-    rows
-}
-
 /// Pull requests for the For you tab of a person: those that touch the
 /// packages of their machines, then what they maintain, own, changed or
 /// tagged, then what they watch. The same [`order`] as the packages.
