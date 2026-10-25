@@ -212,6 +212,10 @@ the checklist of the nixpkgs template ("Things done") folds.
 - **Actions.** Approve and Request changes open the diff on GitHub. You
   write the review there. Maintainer Mode writes nothing to nixpkgs.
 
+A pull request that is older than the synced data comes from the archive
+(see [data.md](data.md#the-pull-request-page)). Its panel shows only
+Reached and What changes.
+
 `GET /api/v1/prs/<n>` gives the facts of the panel that are the same for all
 people: `decision`, `blockers` (each with `kind`, `level` and `text`),
 `checks` (each with `ok`, `text` and `guide`), `treewide` (`null`, or

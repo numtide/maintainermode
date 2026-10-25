@@ -540,7 +540,13 @@ async fn files(app: &App, pr: &Pr, live: bool) -> Result<Arc<Files>, String> {
     .await
 }
 
-async fn archived(app: &App, n: u64) -> Option<Talk> {
+/// One read of the archive by number, the primary key: no scan. `read`
+/// runs on the parsed copy of a pull request.
+async fn from_archive<T: Send + 'static>(
+    app: &App,
+    n: u64,
+    read: impl FnOnce(&Value) -> Option<T> + Send + 'static,
+) -> Option<T> {
     let a = app
         .archive
         .iter()
@@ -550,10 +556,56 @@ async fn archived(app: &App, n: u64) -> Option<Talk> {
     tokio::task::spawn_blocking(move || {
         let json = a.item(n).ok()??.json?;
         let v: Value = serde_json::from_str(&json).ok()?;
-        (v["__typename"] == "PullRequest").then(|| talk_of(&v, "archive"))
+        if v["__typename"] != "PullRequest" {
+            return None;
+        }
+        read(&v)
     })
     .await
     .ok()?
+}
+
+async fn archived(app: &App, n: u64) -> Option<Talk> {
+    from_archive(app, n, |v| Some(talk_of(v, "archive"))).await
+}
+
+/// A pull request with no `pr` row, built from its archive copy with the
+/// projection of the rows.
+struct Old {
+    pr: Pr,
+    talk: Arc<Talk>,
+    touched: Vec<Touched>,
+}
+
+/// The touches come from the files and the title, with the functions of
+/// the recompute, for this one pull request.
+async fn old(app: &App, n: u64) -> Option<Old> {
+    let (mut pr, talk) = from_archive(app, n, |v| {
+        Some((crate::project::pr(v)?, talk_of(v, "archive")))
+    })
+    .await?;
+    if let Some(dir) = app.git_dir.clone().filter(|_| crate::changed::cut(&pr)) {
+        let p = pr.clone();
+        let full = tokio::task::spawn_blocking(move || crate::changed::of_one(&dir, &p))
+            .await
+            .ok()
+            .flatten();
+        if let Some(list) = full {
+            pr.files = list.to_vec();
+        }
+    }
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let index = app.index.read().unwrap();
+    let links = crate::links::build(&index, std::slice::from_ref(&pr), &[]);
+    crate::links::mark_treewide(&links, std::slice::from_mut(&mut pr));
+    let touched = touched(&s, &links, &index, &h, &pr);
+    drop(index);
+    Some(Old {
+        pr,
+        talk: Arc::new(talk),
+        touched,
+    })
 }
 
 /// The archive copy, parsed once per update and kept in the cache.
@@ -966,9 +1018,14 @@ impl Touched {
     }
 }
 
-fn touched(s: &Snapshot, index: &Index, h: &crate::health::Health, pr: &Pr) -> Vec<Touched> {
-    let mut keys: Vec<&String> = s
-        .links
+fn touched(
+    s: &Snapshot,
+    links: &crate::links::Links,
+    index: &Index,
+    h: &crate::health::Health,
+    pr: &Pr,
+) -> Vec<Touched> {
+    let mut keys: Vec<&String> = links
         .prs
         .iter()
         .filter(|(_, ns)| ns.contains(&pr.number))
@@ -1199,29 +1256,38 @@ fn place_block(
     )
 }
 
-fn sub_line(pr: &Pr) -> Html {
+/// `dated` gives the dates in place of the ages, for a pull request older
+/// than the synced data.
+fn sub_line(pr: &Pr, dated: bool) -> Html {
     let author = html!("<a href=\"/u/{0}\">{0}</a>", pr.author);
     let base = html!("<span class=\"branch-name\">{}</span>", pr.base);
-    let opened = ago(pr.created_at);
+    let when = |t: DateTime<Utc>| {
+        if dated {
+            format!("on {}", t.format("%Y-%m-%d"))
+        } else {
+            format!("{} ago", ago(t))
+        }
+    };
+    let opened = when(pr.created_at);
     match (pr.merged_at, pr.closed_at) {
         (Some(t), _) => html!(
-            "{} from {author} into {base} · opened {opened} ago · merged {} ago{}",
+            "{} from {author} into {base} · opened {opened} · merged {}{}",
             state_label(pr),
-            ago(t),
+            when(t),
             pr.merged_by
                 .as_deref()
                 .map(|m| html!(" by <a href=\"/u/{0}\">{0}</a>", m))
                 .unwrap_or_default()
         ),
         (None, Some(t)) => html!(
-            "{} from {author} into {base} · opened {opened} ago · closed {} ago",
+            "{} from {author} into {base} · opened {opened} · closed {}",
             state_label(pr),
-            ago(t)
+            when(t)
         ),
         _ => html!(
-            "{} {author} wants to merge into {base} · opened {opened} ago · updated {} ago",
+            "{} {author} wants to merge into {base} · opened {opened} · updated {}",
             state_label(pr),
-            ago(pr.updated_at)
+            when(pr.updated_at)
         ),
     }
 }
@@ -1300,12 +1366,8 @@ fn why(e: &str) -> Html {
     }
 }
 
-/// The paths from the git copy that the diff above does not show.
-fn paths_html(n: u64, paths: &[String], shown: &HashSet<&str>) -> Html {
-    let rest: Vec<&String> = paths
-        .iter()
-        .filter(|p| !shown.contains(p.as_str()))
-        .collect();
+/// A folded list of paths, each with a link to its diff on GitHub.
+fn paths_html(n: u64, rest: &[&String], summary: &str) -> Html {
     if rest.is_empty() {
         return Html::new();
     }
@@ -1324,14 +1386,18 @@ fn paths_html(n: u64, paths: &[String], shown: &HashSet<&str>) -> Html {
         ),
     };
     html!(
-        "<details class=\"Box mb-3\"><summary class=\"Box-header\">The paths of {} more files, from the git copy</summary>\
+        "<details class=\"Box mb-3\"><summary class=\"Box-header\">{summary}</summary>\
          <div class=\"Box-body\"><ul class=\"list-style-none\">{}</ul>{more}</div></details>",
-        rest.len(),
         crate::html::join(items, "")
     )
 }
 
-/// `full` is the list of every path, from the git copy.
+fn files_word(n: usize) -> &'static str {
+    if n == 1 { "file" } else { "files" }
+}
+
+/// `full` is the list of every path, from the git copy. Without it, a diff
+/// that cannot be read leaves the paths of the row, from the archive.
 fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>, full: Option<&[String]>) -> Html {
     let mut out = html!(
         "<h2 class=\"f4 mt-4 mb-2\" id=\"files\">{} Files changed <span class=\"Counter\">{}</span></h2>",
@@ -1345,9 +1411,25 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>, full: Option<&[String
                 why(e),
                 github_url(pr.number)
             ));
-            if let Some(all) = full {
-                out.push(&paths_html(pr.number, all, &HashSet::new()));
-            }
+            let (all, from) = match full {
+                Some(all) => (all, "the git copy"),
+                None => (pr.files.as_slice(), "the archive"),
+            };
+            let all: Vec<&String> = all.iter().collect();
+            let summary = if all.len() as u64 >= pr.changed_files {
+                format!(
+                    "The paths of {} {}, from {from}",
+                    all.len(),
+                    files_word(all.len())
+                )
+            } else {
+                format!(
+                    "The paths of the first {} of {} files, from {from}",
+                    all.len(),
+                    pr.changed_files
+                )
+            };
+            out.push(&paths_html(pr.number, &all, &summary));
         }
         Ok(f) => {
             if f.files.is_empty() {
@@ -1365,7 +1447,16 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>, full: Option<&[String
                         .iter()
                         .flat_map(|x| std::iter::once(x.path.as_str()).chain(x.previous.as_deref()))
                         .collect();
-                    out.push(&paths_html(pr.number, all, &shown));
+                    let rest: Vec<&String> = all
+                        .iter()
+                        .filter(|p| !shown.contains(p.as_str()))
+                        .collect();
+                    let summary = format!(
+                        "The paths of {} more {}, from the git copy",
+                        rest.len(),
+                        files_word(rest.len())
+                    );
+                    out.push(&paths_html(pr.number, &rest, &summary));
                 }
                 None if f.capped => out.push(&html!(
                     "<div class=\"flash mb-4\">This page shows the first {} files. <a href=\"{}/files\">See all on GitHub</a></div>",
@@ -1565,18 +1656,85 @@ async fn notes(
         .map(|l| notes_of(l, &repo, &pname, &b))
 }
 
+fn heading(pr: &Pr) -> Html {
+    html!(
+        "{} <span class=\"text-nowrap\"><span class=\"color-fg-muted\">#{}</span>{}</span>",
+        pr.title,
+        pr.number,
+        github_icon(pr.number)
+    )
+}
+
+const ARCHIVE_DOC: &str = "/state?tab=docs&doc=data#the-archive-of-issues-and-pull-requests";
+
+/// What the archive and the git copy have. The queue, Needs you, the
+/// follow-up plan, Hide and the checks of the packaging are for open pull
+/// requests in the synced data, so they are left out.
+async fn old_page(app: &App, viewer: Option<&str>, old: Old) -> Response {
+    let pr = &old.pr;
+    let (files, reach) = tokio::join!(files(app, pr, viewer.is_some()), crate::reach::of(app, pr));
+    let talk: Result<Arc<Talk>, String> = Ok(old.talk.clone());
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let mine: Option<std::collections::BTreeSet<String>> =
+        viewer.map(|v| crate::sets::set_attrs(app, v).into_iter().collect());
+    let panel = {
+        let index = app.index.read().unwrap();
+        crate::prpanel::render_archived(&crate::prpanel::Ctx {
+            pr,
+            body: Some(old.talk.body.as_str()),
+            files: match &files {
+                Ok(f) => Ok(&f.files),
+                Err(e) => Err(e.as_str()),
+            },
+            touched: &old.touched,
+            index: &index,
+            health: &h,
+            committers: &s.committers,
+            author: &crate::profile::Facts::default(),
+            hydra: &[],
+            notes: None,
+            mine: mine.as_ref(),
+            extra_actions: Html::new(),
+            reached: reach.as_ref().map(|r| reach_html(r, pr.merged_at)),
+            queue: Html::new(),
+        })
+    };
+    let mut out = html!(
+        "<p class=\"f6 color-fg-muted mb-3\" id=\"from-archive\">{} This pull request is older than the synced data, so this page comes from the <a href=\"{ARCHIVE_DOC}\">archive</a> of this server.</p>",
+        icon(octicon!("info"))
+    );
+    out.push(&panel);
+    out.push(&description_html(pr, &talk));
+    out.push(&files_html(
+        pr,
+        &files,
+        crate::changed::full(pr).as_deref().map(Vec::as_slice),
+    ));
+    out.push(&talk_html(pr, &talk));
+    Page::new(Section::Review, format!("#{} {}", pr.number, pr.title))
+        .heading(heading(pr))
+        .sub(sub_line(pr, true))
+        .actions(exits(pr.number))
+        .body(out)
+        .render(app, viewer)
+}
+
 async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u64>) -> Response {
     let viewer = app.viewer(&headers);
     let s = app.snap();
     let Some(pr) = s.pr_at.get(&n).map(|&i| &s.pr_data[i]) else {
-        return not_synced(&app, viewer.as_deref(), n);
+        return match old(&app, n).await {
+            Some(o) => old_page(&app, viewer.as_deref(), o).await,
+            None => not_synced(&app, viewer.as_deref(), n),
+        };
     };
     let live = viewer.is_some();
     let h = app.health.read().unwrap().clone();
     let bump = crate::prpanel::bump(&pr.title);
     let (list, source) = {
         let index = app.index.read().unwrap();
-        let list = touched(&s, &index, &h, pr);
+        let list = touched(&s, &s.links, &index, &h, pr);
         let source = bump.as_ref().and_then(|b| bump_source(&index, &list, b));
         (list, source)
     };
@@ -1666,12 +1824,8 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         })
     };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
-        .heading(html!(
-            "{} <span class=\"text-nowrap\"><span class=\"color-fg-muted\">#{n}</span>{}</span>",
-            pr.title,
-            github_icon(n)
-        ))
-        .sub(sub_line(pr))
+        .heading(heading(pr))
+        .sub(sub_line(pr, false))
         .actions(exits(n));
     let mut out = panel;
     out.push(&crate::followup::pr_box(
@@ -1692,7 +1846,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
 
 pub(crate) fn not_in_data(n: u64) -> String {
     format!(
-        "pull request #{n} is not in the synced data; see {}",
+        "pull request #{n} is not in the synced data or in the archive; see {}",
         github_url(n)
     )
 }
@@ -1700,25 +1854,51 @@ pub(crate) fn not_in_data(n: u64) -> String {
 /// The same data as the page, with nothing that depends on who asks.
 pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
     let s = app.snap();
-    let pr = s.pr_at.get(&n).map(|&i| &s.pr_data[i])?;
-    let (files, talk) = tokio::join!(files(app, pr, false), talk(app, pr, false));
-    let h = app.health.read().unwrap().clone();
-    let list = touched(&s, &app.index.read().unwrap(), &h, pr);
-    let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
+    if let Some(pr) = s.pr_at.get(&n).map(|&i| &s.pr_data[i]) {
+        let (files, talk) = tokio::join!(files(app, pr, false), talk(app, pr, false));
+        let h = app.health.read().unwrap().clone();
+        let list = touched(&s, &s.links, &app.index.read().unwrap(), &h, pr);
+        return Some(value(app, pr, files, talk, &list, Some(&s)).await);
+    }
+    let Old { pr, talk, touched } = old(app, n).await?;
+    let files = files(app, &pr, false).await;
+    Some(value(app, &pr, files, Ok(talk), &touched, None).await)
+}
+
+/// `synced` is the snapshot that holds the row. A pull request from the
+/// archive has no queue, no credits, no checks and no live state.
+async fn value(
+    app: &App,
+    pr: &Pr,
+    files: Result<Arc<Files>, String>,
+    talk: Result<Arc<Talk>, String>,
+    list: &[Touched],
+    synced: Option<&Snapshot>,
+) -> Value {
+    let credits: Vec<&Credit> = synced
+        .map(|s| {
+            s.ledger
+                .credits
+                .iter()
+                .filter(|c| c.pr == pr.number)
+                .collect()
+        })
+        .unwrap_or_default();
     let decision = crate::prpanel::summary(
         pr,
         talk.as_ref().ok().map(|t| t.body.as_str()),
         files.as_ref().ok().map(|f| f.files.as_slice()),
     );
     let blockers = crate::prpanel::blockers(pr, &crate::prpanel::rebuilds(&pr.labels));
-    let checks = {
+    let checks = synced.map(|_| {
         let f = match &files {
             Ok(f) => Ok(f.files.as_slice()),
             Err(e) => Err(e.as_str()),
         };
         let kind = crate::prpanel::kind(pr, f.ok());
-        crate::prpanel::checks_of(pr, f, &list, &app.index.read().unwrap(), kind)
-    };
+        crate::prpanel::checks_of(pr, f, list, &app.index.read().unwrap(), kind)
+    });
+    let live = |v: Value| if synced.is_some() { v } else { Value::Null };
     let (files, files_error) = match files {
         Ok(f) => (json!(*f), Value::Null),
         Err(e) => (Value::Null, json!(e)),
@@ -1727,8 +1907,9 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         Ok(t) => (json!(*t), Value::Null),
         Err(e) => (Value::Null, json!(e)),
     };
-    Some(json!({
+    json!({
         "number": pr.number,
+        "from": if synced.is_some() { "synced" } else { "archive" },
         "title": pr.title,
         "url": pr.url,
         "author": pr.author,
@@ -1745,12 +1926,12 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "changed_files": pr.changed_files,
         "paths": pr.files,
         "paths_complete": crate::changed::complete(pr),
-        "ci": pr.ci,
-        "mergeable": pr.mergeable,
+        "ci": live(json!(pr.ci)),
+        "mergeable": live(json!(pr.mergeable)),
         "head": pr.head_oid,
         "reached": crate::reach::of(app, pr).await,
         "ai": pr.ai,
-        "queue": place(&s, pr),
+        "queue": synced.map(|s| place(s, pr)),
         "credits": credits,
         "touches": list.iter().map(Touched::json).collect::<Vec<_>>(),
         "treewide": pr.treewide,
@@ -1763,8 +1944,8 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "decision": decision,
         "blockers": blockers,
         "checks": checks,
-        "review_on_github": format!("{}/files", github_url(n)),
-    }))
+        "review_on_github": format!("{}/files", github_url(pr.number)),
+    })
 }
 
 #[cfg(test)]
@@ -1921,7 +2102,18 @@ mod tests {
         assert!(!h.contains(">old.nix</a>") && !h.contains("This page shows the first"));
         assert!(files_html(&p, &shown, None).contains("This page shows the first 1 files"));
         let failed: Result<Arc<Files>, String> = Err(NOT_LIVE.into());
-        assert!(files_html(&p, &failed, Some(&all)).contains("The paths of 4 more files"));
+        assert!(
+            files_html(&p, &failed, Some(&all)).contains("The paths of 4 files, from the git copy")
+        );
+        p.files = vec!["a.nix".into()];
+        let h = files_html(&p, &failed, None).to_string();
+        assert!(
+            h.contains("The paths of the first 1 of 3 files, from the archive")
+                && h.contains(">a.nix</a>"),
+            "{h}"
+        );
+        p.changed_files = 1;
+        assert!(files_html(&p, &failed, None).contains("The paths of 1 file, from the archive"));
     }
 
     #[test]
@@ -2027,6 +2219,7 @@ mod tests {
         let v: Value = serde_json::from_str(&api).unwrap();
         assert_eq!(v["files"]["files"][0]["additions"], 1);
         assert_eq!(v["discussion"]["body"], "**bold** <b>raw</b> <i>no</i>");
+        assert_eq!(v["from"], "synced");
         assert_eq!(v["queue"]["queue"], "none");
         assert_eq!(v["decision"]["kind"], "update");
         assert_eq!(v["decision"]["bump"]["to"], "<2>");
@@ -2077,6 +2270,78 @@ mod tests {
         assert_eq!(v["discussion"]["body"], "first copy");
         assert_eq!(v["discussion"]["omitted"], 5);
         assert_eq!(v["discussion"]["notes"].as_array().unwrap().len(), NOTE_CAP);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_pull_request_with_no_row_comes_from_the_archive() {
+        let f = crate::project::tests::fixtures();
+        let item = f["archive"]["300123"].clone();
+        let file = item["files"]["nodes"][0]["path"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let mut app = crate::sets::tests::app(&[]);
+        app.index.write().unwrap().pkgs.insert(
+            "python311Packages.phonopy".into(),
+            crate::area::Package {
+                pname: "phonopy".into(),
+                version: "2.22.1".into(),
+                file: Some(file.clone()),
+                ..Default::default()
+            },
+        );
+        let dir = std::env::temp_dir().join(format!("mm-prpage-old-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let a = crate::archive::Archive::open(&dir, crate::archive::DEFAULT_REPO, 0).unwrap();
+        a.put(300123, &item, Utc::now()).unwrap();
+        a.put(453372, &f["archive"]["453372"], Utc::now()).unwrap();
+        Arc::get_mut(&mut app).unwrap().archive = vec![Arc::new(a)];
+        app.recompute().unwrap();
+        assert!(app.snap().pr_at.is_empty());
+
+        let (status, html) =
+            body(pr_page(State(app.clone()), HeaderMap::new(), Path(300123)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(html.contains("older than the synced data"), "{html}");
+        assert!(html.contains("python311Packages.phonopy: 2.22.0 -&gt; 2.22.1"));
+        assert!(html.contains("opened on 2024-03-30 · merged on 2024-03-30 by"));
+        assert!(html.contains("href=\"/p/python311Packages.phonopy\""));
+        assert!(html.contains("The paths of 1 file, from the archive"));
+        assert!(html.contains(&format!(">{file}</a>")));
+        assert!(html.contains("From the archive of this server"));
+        for live in [
+            "id=\"decide-queue\"",
+            "id=\"decide-missing\"",
+            "id=\"decide-builds\"",
+            "id=\"decide-people\"",
+            "Review checklist",
+        ] {
+            assert!(!html.contains(live), "{live}");
+        }
+
+        let (status, api) = body(api_pr(State(app.clone()), Path(300123)).await).await;
+        assert_eq!(status, StatusCode::OK);
+        let v: Value = serde_json::from_str(&api).unwrap();
+        assert_eq!(v["from"], "archive");
+        assert_eq!(v["state"], "MERGED");
+        assert_eq!(v["paths"], json!([file]));
+        assert_eq!(v["paths_complete"], true);
+        assert_eq!(v["touches"][0]["key"], "pkg:python311Packages.phonopy");
+        assert_eq!(v["discussion"]["source"], "archive");
+        assert_eq!(v["decision"]["kind"], "update");
+        for k in ["queue", "checks", "ci", "mergeable"] {
+            assert!(v[k].is_null(), "{k}");
+        }
+        assert_eq!(v["credits"], json!([]));
+
+        for n in [453372, 1] {
+            let (_, html) =
+                body(pr_page(State(app.clone()), HeaderMap::new(), Path(n)).await).await;
+            assert!(html.contains("not in the data of this site"), "#{n}");
+            let (status, _) = body(api_pr(State(app.clone()), Path(n)).await).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "#{n}");
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 
