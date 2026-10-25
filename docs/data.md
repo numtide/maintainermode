@@ -287,16 +287,18 @@ only place that holds the code and its review history.
   6.9 GB resident, and more than 25 minutes under a limit of 2 GB. The copy
   does not run it.
 - **Size.** In October 2026, NixOS/nixpkgs has 518 562 pull request heads.
-  76 % of them are in the history of a branch. The copy takes about 7 GB:
-  3.9 GB for the branches and about 3.2 GB for the other heads (from a
-  sample of 1 500 heads). The first fetch of nixpkgs uses about 800 MB of
-  memory in `index-pack`. git runs with `oom_score_adj` 1000, so the kernel
-  stops git, not the server, when memory runs out. The first fetch does not
-  run at the same time as a sweep of nixpkgs.
+  76 % of them are in the history of a branch. The first copy, on
+  2026-10-25, took 33 minutes and 5.1 GB, with one pack of 4.7 GB. Its
+  `index-pack` uses about 800 MB of memory. The pack that it writes fills
+  the file cache up to the memory limit of the service, and the kernel
+  frees that cache. git runs with `oom_score_adj` 1000, so the kernel stops
+  git, not the server, when memory runs out. A full fetch does not run at
+  the same time as a sweep of nixpkgs.
 - **Reading.** `/state?tab=status` and `GET /api/v1/sync` (under `archive`,
   `git`) give the counts, the size, the times and the last error. On the
-  server, `git -C /var/lib/maintainer-mode-git/NixOS/nixpkgs.git log`
-  reads the copy.
+  server, the service user owns the copy, so root reads it with
+  `git -c safe.directory='*' -C /var/lib/maintainer-mode-git/NixOS/nixpkgs.git`.
+  `git reflog refs/pull/<n>/head` lists each head that the copy saw.
 - **On and off.** The NixOS module turns the copy on; set
   `services.maintainer-mode.archive.git = false` to turn it off. Outside the
   module, the copy is off until `MAINTAINER_MODE_ARCHIVE_GIT=true`, so that
