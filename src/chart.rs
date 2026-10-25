@@ -60,7 +60,8 @@ fn nice(x: f64) -> f64 {
 fn scale(lo: f64, hi: f64) -> (f64, f64, f64) {
     let span = if hi > lo { hi - lo } else { hi.abs().max(1.0) };
     let step = nice(span / 3.0);
-    ((lo / step).floor() * step, (hi / step).ceil() * step, step)
+    let (a, b) = ((lo / step).floor() * step, (hi / step).ceil() * step);
+    (a, if b > a { b } else { a + step }, step)
 }
 
 fn compact(v: f64) -> String {
@@ -145,6 +146,14 @@ impl Chart<'_> {
     }
 
     pub(crate) fn render(&self) -> Html {
+        if self.months.is_empty() {
+            return html!(
+                "<figure class=\"chart\" id=\"{id}\"><figcaption><h3 class=\"chart-title\">{title}</h3>\
+                 <p class=\"chart-note\">No complete month yet.</p></figcaption></figure>",
+                id = self.id,
+                title = self.title,
+            );
+        }
         let tops = self.tops();
         let all = tops.iter().flatten().flatten().copied();
         let (lo, hi) = all.fold((0f64, 0f64), |(lo, hi), v| (lo.min(v), hi.max(v)));
@@ -616,5 +625,31 @@ mod tests {
         let h = c.render();
         assert!(h.contains("Open &lt;now&gt;"));
         assert!(h.contains("<title>2026-01: new: 1; old: 3</title>"));
+    }
+
+    #[test]
+    fn a_chart_without_values_draws_no_nan() {
+        assert_eq!(scale(0.0, 0.0), (0.0, 0.5, 0.5));
+        let none = vec!["2026-01".to_string()];
+        for months in [&none, &Vec::new()] {
+            for form in [Form::Stack, Form::Lines, Form::Bars] {
+                let c = Chart {
+                    id: "t",
+                    title: "t",
+                    note: Html::new(),
+                    months,
+                    form,
+                    unit: Unit::Count,
+                    series: vec![Series {
+                        name: "a",
+                        class: "o1",
+                        values: vec![None; months.len()],
+                    }],
+                    gap: None,
+                };
+                let h = c.render().to_string();
+                assert!(!h.contains("NaN") && !h.contains("d=\"Z\""), "{h}");
+            }
+        }
     }
 }
