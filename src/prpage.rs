@@ -1753,6 +1753,8 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "queue": place(&s, pr),
         "credits": credits,
         "touches": list.iter().map(Touched::json).collect::<Vec<_>>(),
+        "treewide": pr.treewide,
+        "too_large": crate::links::TooLarge::of(pr),
         "reviews": pr.reviews,
         "files": files,
         "files_error": files_error,

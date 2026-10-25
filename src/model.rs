@@ -52,6 +52,10 @@ pub struct Pr {
     /// The AI tool the pull request discloses, or "disclosed" when it names none.
     #[serde(default)]
     pub ai: Option<String>,
+    /// Not stored: each recompute sets it from the links, by
+    /// [`crate::links::mark_treewide`].
+    #[serde(skip)]
+    pub treewide: Option<crate::links::Treewide>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

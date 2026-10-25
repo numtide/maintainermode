@@ -117,6 +117,9 @@ impl App {
         let mut prs = self.store.prs()?;
         crate::changed::apply(&mut prs);
         let index = self.index.read().unwrap();
+        let issues = self.store.issues()?;
+        let links = crate::links::build(&index, &prs, &issues);
+        crate::links::mark_treewide(&links, &mut prs);
         let own = Ownership::new(&index);
         let ledger = ledger::compute(&prs, |p| own.orphan(p), Utc::now());
         let areas: HashMap<String, Area> = self
@@ -126,8 +129,6 @@ impl App {
             .map(|m| (m.login.clone(), Area::of(m, &index)))
             .collect();
         let queues = queue::build(&prs, &ledger, |p| own.orphan(p));
-        let issues = self.store.issues()?;
-        let links = crate::links::build(&index, &prs, &issues);
         let pr_at = prs.iter().enumerate().map(|(i, p)| (p.number, i)).collect();
         let reviewed_by = dossier::by_reviewer(&prs);
         let issue_at = issues
@@ -370,6 +371,11 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
+/// The mark of a treewide pull request in a list.
+pub(crate) fn treewide_badge(t: &crate::links::Treewide) -> Html {
+    crate::ui::badge(crate::ui::Tone::Neutral, Html::text(&t.mark()))
+}
+
 /// As [`entry_rows`], with the age as the wait when `waiting`; `extra`
 /// gives each row HTML under its meta line and after its buttons.
 pub(crate) fn review_rows(
@@ -386,6 +392,10 @@ pub(crate) fn review_rows(
         }
         if e.unowned {
             badges.push(badge(Tone::Attention, "no maintainer"));
+        }
+        badges.extend(e.treewide.as_ref().map(treewide_badge));
+        if let Some(t) = &e.too_large {
+            badges.push(badge(Tone::Attention, Html::text(&t.mark())));
         }
         let age = if waiting {
             html!(
@@ -1148,6 +1158,8 @@ mod tests {
             credited_by: vec![],
             files: vec![file.into()],
             unowned,
+            treewide: None,
+            too_large: None,
         }
     }
 
@@ -1220,6 +1232,67 @@ mod tests {
         assert_eq!(why[&2], ["on your machines: curl", "you watch: curl"]);
         assert_eq!(why[&3], ["you watch: nixos/modules/services/web-servers/"]);
         assert_eq!(why[&6], ["on your machines: jq"]);
+    }
+
+    #[test]
+    fn treewide_pull_requests_come_last_in_for_you_in_the_same_order() {
+        let mut s = Snapshot::default();
+        let wide = crate::links::Treewide::of(340, 0);
+        let hello = "pkgs/by-name/he/hello/package.nix";
+        s.queues.review = vec![
+            entry(1, "x", hello, false),
+            entry(2, "x", "pkgs/by-name/cu/curl/package.nix", false),
+            entry(3, "x", hello, false),
+            entry(4, "x", "pkgs/by-name/jq/jq/package.nix", false),
+        ];
+        s.queues.review[0].treewide = wide;
+        s.queues.review[1].treewide = wide;
+        s.areas.insert(
+            "bob".into(),
+            Area {
+                maintains: vec!["pkgs/by-name/he/hello".into()],
+                ..Default::default()
+            },
+        );
+        s.links.prs.insert("pkg:curl".into(), vec![2]);
+        s.links.prs.insert("pkg:jq".into(), vec![4]);
+        let machines: std::collections::HashSet<String> =
+            ["pkg:jq".to_string(), "pkg:curl".to_string()].into();
+        let ranked = crate::mine::rank_prs(&s, "bob", &[], &machines);
+        let numbers: Vec<u64> = ranked.iter().map(|e| e.number).collect();
+        assert_eq!(numbers, [4, 3, 2, 1]);
+        let rows = entry_rows(&ranked).into_string();
+        assert_eq!(rows.matches("treewide · 340 packages").count(), 2);
+        assert!(rows.find("pr 3") < rows.find("treewide"));
+    }
+
+    #[test]
+    fn a_pull_request_too_large_to_link_reaches_nobody_and_stays_in_the_queue() {
+        let mut p = crate::ledger::tests::pr(7, "x", 0);
+        p.files = vec!["pkgs/by-name/he/hello/package.nix".into()];
+        p.changed_files = 19_485;
+        let e = crate::queue::entry(&p, &Ledger::default(), &Default::default());
+        assert!(e.files.is_empty());
+        let mut s = Snapshot::default();
+        s.queues.review = vec![e];
+        s.areas.insert(
+            "bob".into(),
+            Area {
+                maintains: vec!["pkgs/by-name/he/hello".into()],
+                ..Default::default()
+            },
+        );
+        let watched = vec!["area:pkgs/by-name".to_string()];
+        assert!(review_bucket(&s, Some("bob"), Some(&watched), "foryou").is_empty());
+        let all = review_bucket(&s, None, None, "all");
+        assert!(
+            entry_rows(&all)
+                .into_string()
+                .contains("too large · 19,485 files")
+        );
+        let v = serde_json::to_value(all[0]).unwrap();
+        assert_eq!(v["too_large"]["files"], 19_485);
+        assert!(v["treewide"].is_null());
     }
 
     #[test]

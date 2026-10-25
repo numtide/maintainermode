@@ -35,7 +35,7 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 | 6     | An open pull request in the review queue changes a package of your machines or a package you maintain. Your review on its last commit removes it.                                                                                  | the pull request |
 | 7     | A package you maintain has a newer upstream release, or its last Hydra build on master or a channel, or a dependency of it, failed ([the build watch](health.md#the-build-watch)).                                                 | the package page |
 
-In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
+In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. In cause 6, a [treewide](rules.md#treewide-pull-requests) pull request comes after the others, with its mark, such as "treewide · 340 packages". A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 
 The server uses only data that it already has. These signals are not in the list:
 
@@ -164,7 +164,7 @@ Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in
 
 "All of nixpkgs" at the top right opens the catalog, as a visitor sees it, at `/packages?filter=all`. Its "Your packages" button goes back. `/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
 
-**The order.** The list puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request. Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". A filter does not repeat its own reason on its rows. Each row also shows its health flags. The list shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
+**The order.** The list puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request that is not [treewide](rules.md#treewide-pull-requests). Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". A filter does not repeat its own reason on its rows. Each row also shows its health flags. The list shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
 
 The Hydra flag comes from [the build watch](health.md#the-build-watch), or from a package page that read a failed build in the last hour. The list itself never asks Hydra.
 
@@ -344,7 +344,7 @@ maintain" filter. The "I watch" filter shows each item with its flags, and a
 
 A committer also sees the tab **Ready to merge** (`/review?tab=ready`, see [For committers](#for-committers)). The address works for everyone.
 
-Sign in, and `/review` shows **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. Signed out, `/review` shows **No maintainer**, and For you is not a choice.
+Sign in, and `/review` shows **For you**. For you looks at the packages of your machines, `meta.maintainers`, `meta.teams`, `ci/OWNERS`, the paths you changed this year, your tags, and every package, module or directory you watch. It uses the order of your packages: pull requests that touch the packages of your machines come first, then those on what you maintain, own, changed or tagged, then those on what you watch. In each group, the oldest comes first. [Treewide](rules.md#treewide-pull-requests) pull requests come after all the others, in the same order. Every review list marks their rows, for example "treewide · 340 packages". A pull request [too large to link](rules.md#pull-requests-too-large-to-link) is never in For you. Signed out, `/review` shows **No maintainer**, and For you is not a choice.
 
 The first row of the list tells in one sentence what the list holds. On No maintainer, "What to check" opens the checks that a first review can do.
 
@@ -401,7 +401,9 @@ The page counts the synced data only: the last 60 days and every open pull reque
 
 **The inbox.** `/inbox` shows the events of your Atom feed: what
 happened in the last 30 days to your own pull requests, to what you watch
-and to your package set. The newest event comes first. Filter the list by
+and to your package set. The newest event comes first. A pull request that
+touches more than one thing you watch gives one event, not one for each
+thing. Filter the list by
 kind (your pull requests, pull request, issue, advisory, release, Hydra
 build) or by subscription. "Mark all read" marks every event as read. Only
 you see your inbox.

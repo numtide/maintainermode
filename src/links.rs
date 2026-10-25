@@ -147,7 +147,7 @@ fn add(map: &mut HashMap<String, Vec<u64>>, mut keys: Vec<String>, number: u64) 
 pub fn build(index: &Index, prs: &[Pr], issues: &[Issue]) -> Links {
     let look = Lookup::new(index);
     let mut links = Links::default();
-    for pr in prs {
+    for pr in prs.iter().filter(|p| TooLarge::of(p).is_none()) {
         let mut keys = Vec::new();
         look.names(&subject::of_title(&pr.title), &mut keys);
         look.paths(&pr.files, &mut keys);
@@ -169,6 +169,87 @@ pub fn build(index: &Index, prs: &[Pr], issues: &[Issue]) -> Links {
         v.sort_unstable_by(|a, b| b.cmp(a));
     }
     links
+}
+
+/// From this many packages and modules on, a pull request is treewide. Each
+/// attribute counts, so a Python application counts two times; the limit
+/// stays well above an update of 20 Python libraries.
+pub const TREEWIDE: usize = 40;
+
+/// From this many changed files on, a pull request is too large to link: no
+/// package, module, directory or person gets it. The git copy keeps no more
+/// paths, so a longer list is an arbitrary part. A wrong base, a bad merge or
+/// a reformat of all of nixpkgs goes above.
+pub const TOO_LARGE: usize = crate::changed::MAX;
+
+/// The packages and modules that a treewide pull request touches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Treewide {
+    pub packages: usize,
+    pub modules: usize,
+}
+
+fn count(n: usize, word: &str) -> String {
+    let s = if n == 1 { "" } else { "s" };
+    format!("{} {word}{s}", crate::chart::thousands(n as i64))
+}
+
+impl Treewide {
+    /// The one test of a treewide pull request.
+    pub fn of(packages: usize, modules: usize) -> Option<Treewide> {
+        (packages + modules >= TREEWIDE).then_some(Treewide { packages, modules })
+    }
+
+    /// "treewide · 340 packages": the mark of its rows.
+    pub fn mark(&self) -> String {
+        let what = match (self.packages, self.modules) {
+            (p, 0) => count(p, "package"),
+            (0, m) => count(m, "module"),
+            (p, m) => format!("{} and {}", count(p, "package"), count(m, "module")),
+        };
+        format!("treewide · {what}")
+    }
+}
+
+/// A pull request that is too large to link, and the files it changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TooLarge {
+    pub files: u64,
+}
+
+impl TooLarge {
+    /// The one test of a pull request that is too large to link: GitHub's
+    /// count, or a list that the git copy cut.
+    pub fn of(pr: &Pr) -> Option<TooLarge> {
+        let files = pr.changed_files.max(pr.files.len() as u64);
+        (files >= TOO_LARGE as u64).then_some(TooLarge { files })
+    }
+
+    /// "too large · 19,485 files": the mark of its rows.
+    pub fn mark(&self) -> String {
+        format!("too large · {}", count(self.files as usize, "file"))
+    }
+}
+
+/// Sets [`Pr::treewide`] from the links of each pull request.
+pub fn mark_treewide(links: &Links, prs: &mut [Pr]) {
+    let mut counts: HashMap<u64, (usize, usize)> = HashMap::new();
+    for (key, numbers) in &links.prs {
+        let module = key.starts_with("module:");
+        for n in numbers {
+            let c = counts.entry(*n).or_default();
+            if module {
+                c.1 += 1;
+            } else {
+                c.0 += 1;
+            }
+        }
+    }
+    for p in prs {
+        p.treewide = counts
+            .get(&p.number)
+            .and_then(|&(packages, modules)| Treewide::of(packages, modules));
+    }
 }
 
 #[cfg(test)]
@@ -242,6 +323,77 @@ mod tests {
             l.prs["module:nixos/modules/services/web-servers/nginx/default.nix"],
             [3, 2]
         );
+    }
+
+    #[test]
+    fn a_pull_request_is_treewide_from_40_packages_and_modules() {
+        assert_eq!(Treewide::of(39, 0), None);
+        assert_eq!(
+            Treewide::of(30, 10),
+            Some(Treewide {
+                packages: 30,
+                modules: 10
+            })
+        );
+        let mark = |p, m| {
+            Treewide {
+                packages: p,
+                modules: m,
+            }
+            .mark()
+        };
+        assert_eq!(mark(340, 0), "treewide · 340 packages");
+        assert_eq!(mark(0, 41), "treewide · 41 modules");
+        assert_eq!(mark(39, 1), "treewide · 39 packages and 1 module");
+
+        let mut links = Links::default();
+        for i in 0..39 {
+            links.prs.insert(pkg_key(&format!("p{i}")), vec![2, 1]);
+        }
+        links
+            .prs
+            .insert(module_key("nixos/modules/services/a.nix"), vec![1]);
+        let mut prs = vec![pr(1, "alice", 0), pr(2, "bob", 0), pr(3, "carol", 0)];
+        prs[2].treewide = Treewide::of(50, 0);
+        mark_treewide(&links, &mut prs);
+        assert_eq!(
+            prs[0].treewide,
+            Some(Treewide {
+                packages: 39,
+                modules: 1
+            })
+        );
+        assert_eq!(prs[1].treewide, None, "39 packages are not treewide");
+        assert_eq!(prs[2].treewide, None, "each recompute decides again");
+    }
+
+    #[test]
+    fn a_pull_request_too_large_to_link_links_to_nothing() {
+        let hello = "pkgs/by-name/he/hello/package.nix".to_string();
+        let mut big = pr(1, "alice", 0);
+        big.title = "hello: 2.12 -> 2.13".into();
+        big.files = vec![hello.clone()];
+        big.changed_files = 19_485;
+        let mut cut = pr(2, "bob", 0);
+        cut.files = vec![hello.clone(); TOO_LARGE];
+        cut.changed_files = 6_000;
+        let mut wide = pr(3, "carol", 0);
+        wide.files = vec![hello; 50];
+        wide.changed_files = 2_914;
+        assert_eq!(TooLarge::of(&big), Some(TooLarge { files: 19_485 }));
+        assert_eq!(TooLarge::of(&cut), Some(TooLarge { files: 10_000 }));
+        assert_eq!(TooLarge::of(&wide), None);
+        assert_eq!(
+            TooLarge { files: 19_485 }.mark(),
+            "too large · 19,485 files"
+        );
+        let l = build(&index(), &[big, cut, wide], &[]);
+        assert_eq!(l.prs["pkg:hello"], [3]);
+        let t = Treewide {
+            packages: 3_400,
+            modules: 0,
+        };
+        assert_eq!(t.mark(), "treewide · 3,400 packages");
     }
 
     #[test]

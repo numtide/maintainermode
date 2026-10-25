@@ -869,8 +869,9 @@ fn print_entries(v: &Value) -> Result<()> {
             .filter(|_| waiting)
             .map(|t| format!("  (waiting {})", web::age_words(t.to_utc())))
             .unwrap_or_default();
+        let mark = size_mark(e).map(|m| format!("  ({m})")).unwrap_or_default();
         out!(
-            "#{:<7} {:<20} {}{age}",
+            "#{:<7} {:<20} {}{age}{mark}",
             e["number"],
             e["author"].as_str().unwrap_or(""),
             e["title"].as_str().unwrap_or("")
@@ -880,6 +881,16 @@ fn print_entries(v: &Value) -> Result<()> {
         eprintln!("{} in all; next page: --cursor {c}", v["total"]);
     }
     Ok(())
+}
+
+fn size_mark(v: &Value) -> Option<String> {
+    let treewide = serde_json::from_value::<links::Treewide>(v["treewide"].clone());
+    let too_large = serde_json::from_value::<links::TooLarge>(v["too_large"].clone());
+    match (treewide, too_large) {
+        (Ok(t), _) => Some(t.mark()),
+        (_, Ok(t)) => Some(t.mark()),
+        _ => None,
+    }
 }
 
 fn data_dir(db: &std::path::Path) -> PathBuf {
@@ -1211,6 +1222,9 @@ async fn run(cli: Cli) -> Result<i32> {
                 v["ci"].as_str().unwrap_or("-"),
                 v["queue"]["queue"].as_str().unwrap_or("-")
             );
+            if let Some(m) = size_mark(&v) {
+                out!("  {m}");
+            }
             for t in v["touches"].as_array().into_iter().flatten() {
                 out!("  touches {}", t["name"].as_str().unwrap_or(""));
             }

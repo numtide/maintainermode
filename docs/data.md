@@ -317,6 +317,9 @@ only place that holds the code and its review history.
     pages of packages, modules and areas;
   - the review lists and For you, which match a pull request to the areas
     of people;
+  - the [treewide](rules.md#treewide-pull-requests) mark, and the place of
+    a treewide pull request in the lists. A list of 10 000 paths is
+    [too large to link](rules.md#pull-requests-too-large-to-link);
   - "no maintainer and no owner", in the queues and in the ledger;
   - the kind of change in the panel of the pull request page;
   - the areas in the metrics, for the pull requests that have a row.

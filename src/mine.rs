@@ -166,9 +166,9 @@ pub(crate) struct Row {
 }
 
 /// An open advisory, a newer upstream release, a failing Hydra build or an
-/// open pull request.
+/// open pull request that is not treewide.
 pub(crate) fn attention(f: &Flags) -> bool {
-    f.advisories > 0 || f.upstream.is_some() || f.build_failed || f.open_prs > 0
+    f.advisories > 0 || f.upstream.is_some() || f.build_failed || f.open_prs > f.open_treewide
 }
 
 /// One package name for an attribute of a machine report, as
@@ -362,7 +362,8 @@ pub(crate) fn rank(rows: &mut [Row]) {
 
 /// Pull requests for the For you tab of a person: those that touch the
 /// packages of their machines, then what they maintain, own, changed or
-/// tagged, then what they watch. The same [`order`] as the packages.
+/// tagged, then what they watch. The same [`order`] as the packages. The
+/// treewide pull requests come after all others, in the same order.
 pub(crate) fn for_you<'a>(app: &App, s: &'a Snapshot, login: &str) -> Vec<&'a Entry> {
     for_you_why(app, s, login)
         .into_iter()
@@ -437,7 +438,7 @@ pub(crate) fn rank_prs_why<'a>(
         })
         .filter(|(w, _, _)| w.machine || w.maintain || w.watch)
         .collect();
-    list.sort_by_key(|(w, e, _)| (order(*w, false), e.number));
+    list.sort_by_key(|(w, e, _)| (e.treewide.is_some(), order(*w, false), e.number));
     list.into_iter().map(|(_, e, l)| (e, l)).collect()
 }
 

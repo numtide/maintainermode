@@ -791,7 +791,13 @@ fn review(i: &Inputs) -> Vec<Item> {
             })
             .filter(|(w, _)| w.machine || w.maintain)
             .collect();
-    list.sort_by_key(|(w, e)| (crate::mine::order(*w, false), e.number));
+    list.sort_by_key(|(w, e)| {
+        (
+            e.treewide.is_some(),
+            crate::mine::order(*w, false),
+            e.number,
+        )
+    });
     list.into_iter()
         .enumerate()
         .filter_map(|(pos, (why, e))| {
@@ -815,6 +821,9 @@ fn review(i: &Inputs) -> Vec<Item> {
             }
             if why.maintain {
                 labels.push((Tone::Neutral, "you maintain".into()));
+            }
+            if let Some(t) = &e.treewide {
+                labels.push((Tone::Neutral, t.mark()));
             }
             let detail = format!(
                 "#{} by {}, {} old.{}",
@@ -1247,6 +1256,7 @@ mod tests {
             labels: vec![],
             association: String::new(),
             ai: None,
+            treewide: None,
         }
     }
 
@@ -1279,6 +1289,8 @@ mod tests {
             credited_by: vec![],
             files: p.files.clone(),
             unowned: false,
+            treewide: p.treewide,
+            too_large: None,
         }
     }
 
@@ -1667,6 +1679,24 @@ mod tests {
         w.s.pr_data[i].pushes.push(now());
         assert_eq!(keys(&w.items()), ["pr:10", "pr:11"]);
         assert!(find(&w.items(), "pr:11").detail.contains("New commits"));
+    }
+
+    #[test]
+    fn a_treewide_pull_request_to_review_comes_last_with_its_mark() {
+        let mut w = World::new();
+        let mut wide = pr(10, "dave", 1);
+        wide.treewide = crate::links::Treewide::of(340, 0);
+        w.add(wide, &["curl"]);
+        w.add(pr(11, "erin", 1), &["jq"]);
+        let items = w.items();
+        assert_eq!(keys(&items), ["pr:11", "pr:10"]);
+        let labels =
+            |it: &Item| -> Vec<String> { it.labels.iter().map(|(_, l)| l.clone()).collect() };
+        assert_eq!(
+            labels(&items[1]),
+            ["on your machines", "treewide · 340 packages"]
+        );
+        assert_eq!(labels(&items[0]), ["you maintain"]);
     }
 
     #[test]

@@ -77,7 +77,10 @@ pub fn routes() -> Router<Shared> {
 /// changes, so an area's count is a lookup.
 pub fn open_by_dir(prs: &[Pr]) -> HashMap<String, usize> {
     let mut out: HashMap<String, usize> = HashMap::new();
-    for pr in prs.iter().filter(|p| p.is_open()) {
+    for pr in prs
+        .iter()
+        .filter(|p| p.is_open() && crate::links::TooLarge::of(p).is_none())
+    {
         let mut dirs: HashSet<&str> = HashSet::new();
         for f in &pr.files {
             let mut p = f.as_str();
@@ -209,8 +212,19 @@ impl Subject {
     }
 }
 
-/// Pull requests and issues of a subject, newest first.
+/// Pull requests and issues of a subject, newest first. The treewide pull
+/// requests come after the others.
 pub(crate) fn attached<'a>(
+    s: &'a Snapshot,
+    index: &Index,
+    subject: &Subject,
+) -> (Vec<&'a Pr>, Vec<&'a Issue>) {
+    let (mut prs, issues) = attached_newest_first(s, index, subject);
+    prs.sort_by_key(|p| p.treewide.is_some());
+    (prs, issues)
+}
+
+fn attached_newest_first<'a>(
     s: &'a Snapshot,
     index: &Index,
     subject: &Subject,
@@ -241,6 +255,7 @@ pub(crate) fn attached<'a>(
             let mut prs: Vec<&Pr> = s
                 .pr_data
                 .iter()
+                .filter(|p| crate::links::TooLarge::of(p).is_none())
                 .filter(|p| p.files.iter().any(|f| under(f, path)))
                 .collect();
             prs.sort_by_key(|p| std::cmp::Reverse(p.number));
@@ -518,6 +533,8 @@ pub(crate) struct Flags {
     pub(crate) advisories: usize,
     unmaintained: bool,
     pub(crate) open_prs: usize,
+    /// The treewide pull requests among `open_prs`.
+    pub(crate) open_treewide: usize,
     pub(crate) open_issues: usize,
     /// Packages only.
     pub(crate) score: Option<Score>,
@@ -528,7 +545,7 @@ pub(crate) struct Flags {
 
 impl Flags {
     pub(crate) fn of(s: &Snapshot, index: &Index, h: &Health, subject: &Subject) -> Flags {
-        let (prs, issues) = attached(s, index, subject);
+        let (prs, issues) = attached_newest_first(s, index, subject);
         let (upstream, advisories, unmaintained, score) = match subject {
             Subject::Pkg(attr) => {
                 let p = index.pkgs.get(attr);
@@ -555,6 +572,10 @@ impl Flags {
             advisories,
             unmaintained,
             open_prs: prs.iter().filter(|p| p.is_open()).count(),
+            open_treewide: prs
+                .iter()
+                .filter(|p| p.is_open() && p.treewide.is_some())
+                .count(),
             open_issues: issues.iter().filter(|i| i.is_open()).count(),
             score,
             build_failed: false,
@@ -667,11 +688,12 @@ pub(crate) fn pr_row(p: &Pr) -> Html {
         (None, Some(t)) => format!("closed {} ago", ago(t)),
         _ => format!("opened {} ago", ago(p.created_at)),
     };
-    let badges = if p.is_draft {
+    let mut badges = if p.is_draft {
         vec![badge(Tone::Neutral, "draft")]
     } else {
         Vec::new()
     };
+    badges.extend(p.treewide.as_ref().map(crate::web::treewide_badge));
     item_row(
         Some(kind),
         crate::prpage::title_link(p.number, Html::text(&p.title), "Link--primary text-bold"),
@@ -1466,6 +1488,7 @@ fn pr_json(p: &Pr) -> Value {
         "number": p.number, "title": p.title, "url": p.url, "author": p.author,
         "state": p.state, "draft": p.is_draft, "ci": p.ci,
         "created_at": p.created_at, "merged_at": p.merged_at, "closed_at": p.closed_at,
+        "treewide": p.treewide,
     })
 }
 
@@ -2083,6 +2106,56 @@ pub(crate) mod tests {
         );
         let ids: Vec<&str> = e.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids, ["pr-2-pull request opened", "issue-1-issue opened"]);
+    }
+
+    #[test]
+    fn a_treewide_pull_request_comes_last_on_a_package_page_with_its_mark() {
+        let pr = |n: u64| crate::ledger::tests::pr(n, "bob", 0);
+        let mut wide = pr(3);
+        wide.treewide = crate::links::Treewide::of(340, 0);
+        let mut s = Snapshot {
+            pr_data: vec![pr(1), pr(2), wide],
+            ..Default::default()
+        };
+        s.pr_at = [(1, 0), (2, 1), (3, 2)].into();
+        s.links.prs.insert("pkg:hello".into(), vec![3, 2, 1]);
+        s.links.prs.insert("pkg:curl".into(), vec![3]);
+        let hello = Subject::Pkg("hello".into());
+        let (prs, _) = attached(&s, &Index::default(), &hello);
+        let numbers: Vec<u64> = prs.iter().map(|p| p.number).collect();
+        assert_eq!(numbers, [2, 1, 3]);
+        assert!(pr_row(prs[2]).as_str().contains("treewide · 340 packages"));
+        assert!(!pr_row(prs[0]).as_str().contains("treewide"));
+        assert_eq!(pr_json(prs[2])["treewide"]["packages"], 340);
+        assert!(pr_json(prs[0])["treewide"].is_null());
+        let flags = |sub: &Subject| Flags::of(&s, &Index::default(), &Health::default(), sub);
+        let f = flags(&hello);
+        assert_eq!((f.open_prs, f.open_treewide), (3, 1));
+        assert!(crate::mine::attention(&f));
+        let f = flags(&Subject::Pkg("curl".into()));
+        assert_eq!(f.meta(), "1 open PR");
+        assert!(
+            !crate::mine::attention(&f),
+            "a treewide pull request alone needs no attention"
+        );
+    }
+
+    #[test]
+    fn a_pull_request_too_large_to_link_is_on_no_directory() {
+        let mut small = crate::ledger::tests::pr(1, "a", 0);
+        small.files = vec!["pkgs/a/b.nix".into()];
+        let mut big = crate::ledger::tests::pr(2, "b", 0);
+        big.files = vec!["pkgs/a/b.nix".into()];
+        big.changed_files = 20_118;
+        let d = open_by_dir(&[small.clone(), big.clone()]);
+        assert_eq!(d["pkgs/a"], 1);
+        let mut s = Snapshot {
+            pr_data: vec![small, big],
+            ..Default::default()
+        };
+        s.pr_at = [(1, 0), (2, 1)].into();
+        let (prs, _) = attached(&s, &Index::default(), &Subject::Area("pkgs/a".into()));
+        assert_eq!(prs.iter().map(|p| p.number).collect::<Vec<_>>(), [1]);
     }
 
     #[test]

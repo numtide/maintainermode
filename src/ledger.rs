@@ -282,6 +282,7 @@ pub(crate) mod tests {
             labels: vec![],
             association: String::new(),
             ai: None,
+            treewide: None,
         }
     }
 

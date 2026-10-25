@@ -345,6 +345,7 @@ mod tests {
         assert_eq!(title, "Rules and numbers");
         assert!(html.contains("id=\"the-rules\""));
         assert!(html.contains("id=\"the-state-of-nixpkgs\""));
+        assert!(html.contains("id=\"treewide-pull-requests\""));
         assert!(!html.contains("<h1"));
     }
 

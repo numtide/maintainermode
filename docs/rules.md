@@ -181,8 +181,10 @@ the checklist of the nixpkgs template ("Things done") folds.
   rebuilds, the panel tells you to consider staging. These numbers come from
   [the nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md#changes-causing-mass-rebuilds).
 - **What changes.** The kind (new package, update, fix, removal, refactor,
-  module change), the version from the title (`hello: 2.12 -> 2.13`), the
-  version on master, and the packages and modules that the files touch.
+  module change), the mark of a [treewide](#treewide-pull-requests) pull
+  request, the version from the title (`hello: 2.12 -> 2.13`), the version
+  on master, and the packages and modules that the files touch. The page
+  names the first 50 of them, and counts all of them.
 - **Risk.** The `10.rebuild-*` labels for each platform, and the base branch.
 - **Upstream.** Only for an update. The `meta.changelog` link, the GitHub
   releases of the source, and a flag when the first number of the version
@@ -211,8 +213,10 @@ the checklist of the nixpkgs template ("Things done") folds.
   write the review there. Maintainer Mode writes nothing to nixpkgs.
 
 `GET /api/v1/prs/<n>` gives the facts of the panel that are the same for all
-people: `decision`, `blockers` (each with `kind`, `level` and `text`) and
-`checks` (each with `ok`, `text` and `guide`).
+people: `decision`, `blockers` (each with `kind`, `level` and `text`),
+`checks` (each with `ok`, `text` and `guide`), `treewide` (`null`, or
+the counts `packages` and `modules`) and `too_large` (`null`, or the count
+`files`).
 
 ## Routing: what you see, and what counts
 
@@ -244,6 +248,37 @@ pull requests have their own list on `/review`: Show **No maintainer**. A new
 reviewer can start there: a check of the packaging (complete `meta`, pinned
 hashes, `platforms`, a missing `versionCheckHook`) needs no expert knowledge.
 Most first reviews find these problems.
+
+### Treewide pull requests
+
+A pull request is **treewide** when it touches 40 or more packages and
+modules. The count holds each attribute and module that its files or its
+title link to: the list "Touches" of the pull request page. Thus a Python
+application can count two times, as `python3Packages.<name>` and as
+`<name>`.
+
+A treewide pull request stays in every list. It comes after the other pull
+requests in For you, in Needs you, and in the pull requests of a package,
+module or directory. Among themselves, the treewide pull requests keep the
+order of the list. The other lists keep their order. These lists and the
+review lists mark its row, for example "treewide · 340 packages". The panel
+of the pull request page shows the same mark. In your packages, a treewide
+pull request alone does not make a package need attention.
+
+### Pull requests too large to link
+
+A pull request is **too large to link** when it changes 10 000 files or
+more: by the count of GitHub, or by the list of the
+[git copy](data.md#the-git-copy). The git copy keeps no more paths, so a
+longer list is only a part. A wrong base branch, a bad merge or a reformat
+of all of nixpkgs goes above this limit.
+
+Such a pull request links to no package, module, directory or person. It is
+not on their pages, not in For you, not in Needs you, not in the inbox and
+not in the counts of open pull requests. Its own page and the queues still
+show it. Its rows in the review lists show a mark, such as
+"too large · 19,485 files". In the panel of its page, "Touches" says
+"none: it changes 19,485 files, too many to link to packages and people".
 
 ## The state of nixpkgs
 
