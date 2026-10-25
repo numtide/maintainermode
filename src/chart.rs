@@ -115,6 +115,23 @@ fn latest(v: &[Option<f64>]) -> Option<(usize, f64)> {
 }
 
 impl Chart<'_> {
+    /// A line that ends before the last month says why: a share waits until
+    /// its whole period has passed.
+    fn ends(&self) -> Html {
+        let last = self
+            .series
+            .iter()
+            .filter_map(|s| s.values.iter().rposition(Option::is_some))
+            .max();
+        match last {
+            Some(i) if i + 1 < self.months.len() => html!(
+                " The last value is for {}: a later month shows once its whole period has passed.",
+                self.months[i]
+            ),
+            _ => Html::new(),
+        }
+    }
+
     fn band(&self) -> f64 {
         W / self.months.len().max(1) as f64
     }
@@ -265,13 +282,14 @@ impl Chart<'_> {
         let summary = self.summary();
         html!(
             "<figure class=\"chart\" id=\"{id}\"><figcaption><h3 class=\"chart-title\">{title}</h3>\
-             <p class=\"chart-note\">{note}</p></figcaption>{legend}\
+             <p class=\"chart-note\">{note}{ends}</p></figcaption>{legend}\
              <svg class=\"chart-svg\" viewBox=\"0 0 {W} {H}\" role=\"img\" aria-labelledby=\"{id}-t {id}-d\">\
              <title id=\"{id}-t\">{title}</title><desc id=\"{id}-d\">{summary}</desc>{svg}</svg>\
              <details class=\"chart-table\"><summary>Table</summary>{table}</details></figure>",
             id = self.id,
             title = self.title,
             note = &self.note,
+            ends = self.ends(),
             legend = self.legend(),
             table = self.table(),
         )
@@ -651,5 +669,33 @@ mod tests {
                 assert!(!h.contains("NaN") && !h.contains("d=\"Z\""), "{h}");
             }
         }
+    }
+
+    #[test]
+    fn a_line_that_ends_early_tells_its_last_month() {
+        let months: Vec<String> = ["2026-01", "2026-02", "2026-03"].map(String::from).into();
+        let chart = |values: Vec<Option<f64>>| {
+            Chart {
+                id: "t",
+                title: "t",
+                note: Html::from("Note."),
+                months: &months,
+                form: Form::Lines,
+                unit: Unit::Share,
+                series: vec![Series {
+                    name: "a",
+                    class: "c1",
+                    values,
+                }],
+                gap: None,
+            }
+            .render()
+            .to_string()
+        };
+        assert!(chart(vec![Some(0.5), Some(0.4), None]).contains(
+            "Note. The last value is for 2026-02: a later month shows once its whole period has passed."
+        ));
+        assert!(!chart(vec![Some(0.5), None, Some(0.4)]).contains("The last value"));
+        assert!(!chart(vec![None, None, None]).contains("The last value"));
     }
 }
