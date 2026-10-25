@@ -5,7 +5,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -477,6 +477,50 @@ impl Mirror {
         })
     }
 
+    /// For each of `keys`, the commits on `branch` after `since` that change
+    /// a path at or under it. Merges are left out: the commits they merge
+    /// hold their changes.
+    pub fn touched(
+        &self,
+        branch: &str,
+        since: DateTime<Utc>,
+        keys: &HashSet<String>,
+        limit: StdDuration,
+    ) -> Result<HashMap<String, u32>> {
+        let name = format!("refs/heads/{branch}");
+        let since = format!("--since={}", since.to_rfc3339());
+        let args = [
+            "log",
+            &since,
+            "--no-merges",
+            "--format=%x00",
+            "--name-only",
+            &name,
+        ];
+        let mut counts: HashMap<String, u32> = HashMap::new();
+        let mut commit: HashSet<&str> = HashSet::new();
+        stream(&self.dir, &args, &[0], limit, |line| {
+            if line == "\0" {
+                for k in commit.drain() {
+                    *counts.entry(k.to_string()).or_default() += 1;
+                }
+                return true;
+            }
+            let mut p = line;
+            while !p.is_empty() {
+                if let Some(k) = keys.get(p) {
+                    commit.insert(k.as_str());
+                }
+                p = p.rsplit_once('/').map_or("", |(dir, _)| dir);
+            }
+            true
+        })?;
+        for k in commit.drain() {
+            *counts.entry(k.to_string()).or_default() += 1;
+        }
+        Ok(counts)
+    }
+
     pub fn bytes(&self) -> Result<u64> {
         let out = self.run(&["count-objects", "-v"])?;
         Ok(out
@@ -679,6 +723,12 @@ pub async fn run(app: Arc<App>, dir: PathBuf) {
                 {
                     tracing::warn!("git copy: file lists: {e}");
                 }
+                let (app2, m2) = (app.clone(), m.clone());
+                if let Err(e) =
+                    tokio::task::spawn_blocking(move || crate::load::refresh(&app2, &m2)).await
+                {
+                    tracing::warn!("git copy: the commits of the last year: {e}");
+                }
             }
         }
         let wait =
@@ -874,5 +924,39 @@ mod tests {
             logs_from(&a).unwrap().map(|t| t.timestamp()),
             Some(log.entries[0].at)
         );
+    }
+
+    #[test]
+    fn touched_counts_each_commit_once_for_each_key_it_changes() {
+        let up = Up::new("touched");
+        let write = |path: &str, text: &str| {
+            let f = up.0.join("up").join(path);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, text).unwrap();
+            up.git(&["-C", "up", "add", "-A"]);
+        };
+        write("pkgs/a/default.nix", "1");
+        write("pkgs/a/fix.patch", "1");
+        up.commit("a: init");
+        write("pkgs/a/default.nix", "2");
+        write("pkgs/b.nix", "1");
+        up.commit("a, b");
+        write("other/x", "1");
+        up.commit("other");
+        let m = up.mirror();
+        m.init().unwrap();
+        m.full().unwrap();
+        let keys: HashSet<String> = ["pkgs/a", "pkgs/b.nix", "pkgs/c"].map(String::from).into();
+        let limit = StdDuration::from_secs(10);
+        let got = m
+            .touched("master", Utc::now() - Duration::days(1), &keys, limit)
+            .unwrap();
+        assert_eq!(got.get("pkgs/a"), Some(&2));
+        assert_eq!(got.get("pkgs/b.nix"), Some(&1));
+        assert_eq!(got.get("pkgs/c"), None);
+        let later = m
+            .touched("master", Utc::now() + Duration::days(1), &keys, limit)
+            .unwrap();
+        assert!(later.is_empty());
     }
 }

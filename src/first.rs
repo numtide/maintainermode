@@ -1,6 +1,7 @@
-//! Packages for a first contribution. A newcomer does better on a small
-//! package with no maintainer and something recent to do than on glibc, or
-//! on an issue that has been stuck for years.
+//! Packages for a first contribution, and packages that need help. A
+//! newcomer does better on a small package with no maintainer and
+//! something recent to do than on glibc, or on an issue that has been
+//! stuck for years.
 
 use chrono::{DateTime, Duration, Utc};
 
@@ -198,6 +199,60 @@ pub(crate) fn section(app: &App) -> Html {
     html!(
         "<div id=\"first\">{}</div>",
         crate::ui::section("A first package to work on", None, None, body)
+    )
+}
+
+/// Packages with an open advisory in master, the highest risk first.
+pub(crate) fn need_help(s: &Snapshot, index: &Index, h: &Health) -> Vec<(Subject, Flags)> {
+    let mut help: Vec<(Subject, Flags)> = h
+        .advisories
+        .keys()
+        .filter(|a| {
+            index
+                .pkgs
+                .get(*a)
+                .is_some_and(|p| index.by_pname.get(&p.pname) == Some(*a))
+        })
+        .map(|a| {
+            let sub = Subject::Pkg(a.clone());
+            let f = Flags::of(s, index, h, &sub);
+            (sub, f)
+        })
+        .filter(|(_, f)| f.risk() > 0)
+        .collect();
+    help.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
+    help
+}
+
+/// The list of the home page for a person who maintains a little: work
+/// that helps, and packages to adopt.
+pub(crate) fn help_section(app: &App) -> Html {
+    let s = app.snap();
+    let h = app.health.read().unwrap().clone();
+    let list = {
+        let index = app.index.read().unwrap();
+        need_help(&s, &index, &h)
+    };
+    let body = if list.is_empty() {
+        empty(if h.tracker_at.is_none() {
+            "The health data is not read yet."
+        } else {
+            "No package has an open advisory right now."
+        })
+    } else {
+        let rows: Html = list
+            .iter()
+            .take(SHOWN)
+            .map(|(sub, f)| crate::catalog::subject_row(sub, f, "", ""))
+            .collect();
+        html!(
+            "<div class=\"Box-row f6 color-fg-muted\">Packages with an open advisory in master, the highest risk first. \
+             Fix one. When it has no maintainer, add yourself to <code>meta.maintainers</code>.</div>{rows}"
+        )
+    };
+    html!(
+        "<div id=\"help\">{}</div>",
+        crate::ui::section("Packages that need help", None, None, body)
     )
 }
 

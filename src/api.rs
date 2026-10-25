@@ -420,6 +420,7 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
             "/api/v1/mine?filter=mine",
             "/api/v1/people/:login",
             "/api/v1/first",
+            "/api/v1/need-help",
             "/api/v1/prs?queue=unowned",
             "/api/v1/prs?queue=ready",
         ]),
@@ -950,31 +951,13 @@ struct Prs {
     pub private: bool,
 }
 
-/// Packages with an open advisory in master, the highest risk first.
 fn need_help(app: &App) -> Vec<Value> {
-    use crate::catalog::{Flags, Subject, SubjectRow};
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let mut help: Vec<(Subject, Flags)> = h
-        .advisories
-        .keys()
-        .filter(|a| {
-            index
-                .pkgs
-                .get(*a)
-                .is_some_and(|p| index.by_pname.get(&p.pname) == Some(*a))
-        })
-        .map(|a| {
-            let sub = Subject::Pkg(a.clone());
-            let f = Flags::of(&s, &index, &h, &sub);
-            (sub, f)
-        })
-        .filter(|(_, f)| f.risk() > 0)
-        .collect();
-    help.sort_by_key(|(sub, f)| (f.rank(), sub.label()));
-    help.iter()
-        .map(|(sub, f)| json!(SubjectRow::new(sub, f)))
+    crate::first::need_help(&s, &index, &h)
+        .iter()
+        .map(|(sub, f)| json!(crate::catalog::SubjectRow::new(sub, f)))
         .collect()
 }
 

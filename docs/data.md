@@ -324,6 +324,14 @@ only place that holds the code and its review history.
   The `history` facts of older pull requests keep the first 50 files. The
   diff on the pull request page comes from GitHub, at most 100 files.
 
+- **Commits of the last year.** Once a day, the task of the copy runs
+  `git log --since=<365 days ago> --no-merges --name-only` on master, with
+  a limit of 15 minutes. It counts, for the file or the directory of each
+  package and NixOS module, the commits that changed a path at or under it.
+  The counts stay in memory; a restart counts again. They give the load of
+  the [maintainers](rules.md#the-state-of-nixpkgs). On nixpkgs, one year
+  takes about 47 seconds.
+
 - **Reading.** `/state?tab=status` and `GET /api/v1/sync` (under `archive`,
   `git`) give the counts, the size, the times and the last error. On the
   server, the service user owns the copy, so root reads it with

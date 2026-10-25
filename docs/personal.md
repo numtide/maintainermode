@@ -60,7 +60,7 @@ A cookie (`mood`) keeps your last mood for one year.
 
 ### Below the list
 
-A row of buttons opens what the list leaves out: your inbox (with the number of unread events), your packages (`/packages?filter=mine`), your open pull requests on GitHub (with their number) and, for a committer, the Ready to merge tab (with its number). Then come the card with your first steps, until you hide it, and, when you maintain nothing, [a first package to work on](#a-first-package-to-work-on).
+A row of buttons opens what the list leaves out: your inbox (with the number of unread events), your packages (`/packages?filter=mine`), your open pull requests on GitHub (with their number) and, for a committer, the Ready to merge tab (with its number). Then come the card with your first steps, until you hide it, and, when you maintain nothing, [a first package to work on](#a-first-package-to-work-on). When your maintenance load is below the median, [packages that need help](#packages-that-need-help) come last.
 
 ### Snooze
 
@@ -284,6 +284,16 @@ Each row gives one task: review the newest pull request, or fix the newest
 issue. The newest task comes first. The list shows 8 rows. When no package
 fits, it links to the pull requests with no maintainer. After the task,
 add yourself to `meta.maintainers`.
+
+### Packages that need help
+
+The home page shows this list to a maintainer whose load is below the
+median load of all maintainers (see
+[Maintainers](rules.md#the-state-of-nixpkgs)). It lists the packages with
+an open advisory in master, the highest risk first, 8 rows. Fix one; when
+it has no maintainer, add yourself to `meta.maintainers`.
+`GET /api/v1/need-help` gives the whole list. Only you see whether the
+list shows on your home page; no page shows your load.
 
 Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card. Uploading the packages of your machines is not a step: see [My package set](#my-package-set).
 

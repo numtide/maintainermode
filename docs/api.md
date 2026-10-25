@@ -29,7 +29,7 @@ removed, not redirected.
 | `GET /api/v1/modules/<file>`                  | one NixOS module; `nixos/<name>` also works                      |
 | `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
 | `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name              |
-| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month                             |
+| `GET /api/v1/metrics`                         | the state of nixpkgs, month by month, and its maintainers        |
 | `GET /api/v1/status`                          | the counts and the rules of the queues                           |
 | `GET /api/v1/sync`                            | what the server has read, and how fresh it is                    |
 | `GET /api/v1/events`                          | the event log, as Server-Sent Events (see [data.md](data.md))    |

@@ -403,6 +403,8 @@ pub(crate) struct PackageStats {
     /// Packages whose open advisories master already fixes, while a channel
     /// still carries an affected version.
     pub(crate) fixed_in_master_only: usize,
+    /// How the packages and modules spread over their maintainers.
+    pub(crate) maintainers: crate::load::Spread,
     /// Open tracker issues that master and every channel already fix.
     pub(crate) tracker_issues_to_close: Vec<ToClose>,
 }
@@ -506,6 +508,7 @@ pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageS
     out.open_bumps = bumps.len();
     out.bumps_median_age_days = crate::bumps::median_age_days(&bumps, Utc::now());
     out.tracker_issues_to_close = to_close(s, index, h);
+    out.maintainers = crate::load::spread(index);
     out
 }
 

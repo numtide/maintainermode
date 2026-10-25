@@ -914,8 +914,76 @@ pub(crate) fn packages_section(app: &App) -> Html {
             "fixed in master and every channel; <a href=\"#tracker-issues-to-close\">the list</a>"
         ),
     ));
+    out.push(&maintainers_section(&p.maintainers));
     out.push(&to_close_section(&p.tracker_issues_to_close));
     out
+}
+
+/// It names nobody: the load of one person is a score.
+fn maintainers_section(m: &crate::load::Spread) -> Html {
+    if m.maintainers == 0 {
+        return Html::new();
+    }
+    let cost: Html = match m.since {
+        Some(t) => html!(
+            "1, plus the commits on master since {} that changed its file or directory",
+            t.format("%Y-%m-%d").to_string()
+        ),
+        None => "1: this server has no git copy to count commits".into(),
+    };
+    let rows: Vec<crate::chart::BarRow> = m
+        .buckets
+        .iter()
+        .map(|b| crate::chart::BarRow {
+            label: b.maintains.to_string(),
+            value: b.maintainers.unwrap_or(0) as f64,
+            tip: b
+                .maintainers
+                .map_or_else(|| "under 3".into(), |n| html!("{n}")),
+            cells: vec![Html::text(&pct(b.load_share))],
+        })
+        .collect();
+    let median = m
+        .median_load
+        .map_or_else(Html::new, |l| html!("; the median load is {l:.1}"));
+    let half = m.half_load_maintainers.map_or_else(Html::new, |n| {
+        stat(
+            n,
+            "carry half of the load",
+            html!(
+                "{} of the maintainers",
+                pct(Some(n as f64 / m.maintainers as f64))
+            ),
+        )
+    });
+    html!(
+        "<h2 class=\"f4 mt-4 mb-2\" id=\"maintainers\">Maintainers</h2>\
+         <div class=\"d-flex flex-wrap gap-2 mb-2\">{}{}{half}</div>{}",
+        stat(
+            m.maintainers,
+            "maintainers",
+            html!("people with a package or a module, team members included{median}")
+        ),
+        stat(
+            m.by_maintainers[1],
+            "with one maintainer",
+            html!(
+                "packages and modules; {} have two, {} three or more, {} none",
+                m.by_maintainers[2],
+                m.by_maintainers[3],
+                m.by_maintainers[0]
+            )
+        ),
+        crate::chart::bars(
+            "maintainer-load",
+            "Packages and modules per maintainer",
+            html!(
+                "The load of a package or a module is {cost}. Its maintainers share it. No page shows the load of one person."
+            ),
+            &["Packages and modules", "Maintainers", "Share of the load"],
+            &rows
+        )
+    )
 }
 
 fn to_close_section(list: &[crate::catalog::ToClose]) -> Html {
