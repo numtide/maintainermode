@@ -904,9 +904,9 @@ struct Search {
     output: Option<String>,
 }
 
-/// Signed out, the catalog of nixpkgs. Signed in, a filter bar on top:
-/// what is yours, ranked, or all of nixpkgs. A search of all of nixpkgs
-/// goes to `/search`, so old links keep working.
+/// Signed out, the catalog of nixpkgs. Signed in, the one list of what is
+/// yours, with a choice of its parts on top; `filter=all` is the catalog.
+/// A search of all of nixpkgs goes to `/search`, so old links keep working.
 async fn browse(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -920,37 +920,30 @@ async fn browse(
         let to = format!("/search?q={}", crate::github::urlencode(&q));
         return Redirect::to(&to).into_response();
     }
+    let catalog = Page::new(Section::Packages, "Packages, modules and directories")
+        .icon(octicon!("package"))
+        .sub(CATALOG_SUB);
     let Some(login) = viewer else {
-        return Page::new(Section::Packages, "Packages, modules and directories")
-            .icon(octicon!("package"))
-            .sub(CATALOG_SUB)
-            .body(catalog_body(&app, false))
-            .render(&app, None);
+        return catalog.body(catalog_body(&app, false)).render(&app, None);
     };
-    let interests = Interests::of(&app, &login);
-    let all = {
-        let index = app.index.read().unwrap();
-        index.by_pname.len() + index.modules.len()
-    };
-    let (tabs, step) = crate::mine::bar(&interests, filter, all);
-    let page = Page::new(
-        Section::Packages,
-        format!(
-            "Packages: {}",
-            tabs.iter()
-                .find(|t| t.current)
-                .map_or("", |t| t.label.as_str())
-        ),
-    )
-    .heading("Packages")
-    .icon(octicon!("package"))
-    .subnav(tabs);
     if filter == Filter::All {
-        return page
-            .sub(CATALOG_SUB)
-            .body(html!("{step}{}", catalog_body(&app, true)))
+        return catalog
+            .actions(html!(
+                "<a class=\"btn btn-sm\" href=\"/packages\">{} Your packages</a>",
+                icon(octicon!("package"))
+            ))
+            .body(catalog_body(&app, true))
             .render(&app, Some(&login));
     }
+    let interests = Interests::of(&app, &login);
+    let title = match filter {
+        Filter::Mine => "Your packages".to_string(),
+        f => format!("Your packages: {}", f.label()),
+    };
+    let page = Page::new(Section::Packages, title)
+        .heading("Packages")
+        .icon(octicon!("package"))
+        .subnav(crate::mine::bar(&interests, filter));
     let v = crate::mine::view(
         &app,
         &login,
@@ -965,7 +958,7 @@ async fn browse(
     );
     page.sub(v.sub)
         .actions(v.actions)
-        .body(html!("{step}{}", v.body))
+        .body(v.body)
         .render(&app, Some(&login))
 }
 
@@ -976,8 +969,9 @@ const CATALOG_SUB: &str = "Each one has a page with its health, issues and pull 
 fn catalog_body(app: &crate::web::App, signed_in: bool) -> Html {
     let s = app.snap();
     let index = app.index.read().unwrap();
-    let mut out = Html::from(
-        "<p class=\"color-fg-muted\">Use the search box at the top, or press <kbd>/</kbd>, to find a package, a module or a person.</p>",
+    let mut out = html!(
+        "<p class=\"color-fg-muted\">Use the search box at the top, or press <kbd>/</kbd>, to find a package, a module or a person.</p>{}",
+        crate::search::page_form("", "gap-2 mb-3")
     );
     if signed_in {
         out.push(&Html::from(

@@ -135,6 +135,34 @@ async fn every_signed_in_page_answers_and_stays_private() {
 }
 
 #[tokio::test]
+async fn a_visitor_gets_one_intro_one_list_and_one_row_of_links() {
+    let site = serve(signed_in_app()).await;
+    let a = site.get("/", None).await;
+    assert_eq!(a.status, StatusCode::OK);
+    assert_eq!(a.body.matches("<h1").count(), 1, "{}", a.body);
+    assert_eq!(a.body.matches("class=\"Box-title\"").count(), 1);
+    assert!(a.body.contains("id=\"intro\""));
+    assert!(
+        a.body
+            .contains("Box-title\">A first package to work on</h2>")
+    );
+    assert!(a.body.contains("class=\"search-inline"));
+    let links = a
+        .body
+        .split("aria-label=\"More in nixpkgs\">")
+        .nth(1)
+        .and_then(|s| s.split("</nav>").next())
+        .expect("a row of links");
+    for href in ["/review?tab=unowned", "/packages", "/state"] {
+        assert!(
+            links.contains(&format!("class=\"btn btn-sm\" href=\"{href}\"")),
+            "{href}"
+        );
+    }
+    assert!(!a.body.contains("Hide"));
+}
+
+#[tokio::test]
 async fn text_from_github_and_people_is_escaped() {
     let app = signed_in_app();
     {
@@ -174,11 +202,10 @@ async fn me_pages_show_their_parts() {
     let app = signed_in_app();
     let site = serve(app.clone()).await;
     for (filter, label) in [
-        ("mine", "Mine"),
+        ("mine", "All"),
         ("machines", "On my machines"),
         ("maintain", "I maintain"),
         ("watch", "I watch"),
-        ("all", "All of nixpkgs"),
     ] {
         let a = site
             .get(&format!("/packages?filter={filter}"), Some(SID))
@@ -191,13 +218,33 @@ async fn me_pages_show_their_parts() {
             a.body
         );
         assert!(a.body.contains("href=\"/packages\" aria-current=\"page\""));
+        assert!(a.body.contains("href=\"/packages?filter=all\">"));
+        assert!(!a.body.contains(">All of nixpkgs <span class=\"Counter\">"));
+    }
+    for filter in ["mine", "machines"] {
+        let a = site
+            .get(&format!("/packages?filter={filter}"), Some(SID))
+            .await;
         assert!(
             a.body
-                .contains("href=\"/me/settings#upload\">Upload the packages of your machines")
+                .contains("href=\"/me/settings#upload\">Upload the packages of your machines"),
+            "{filter}: {}",
+            a.body
         );
     }
+    let a = site.get("/packages?filter=all", Some(SID)).await;
+    assert!(
+        a.body.contains("Box-title\">Directories</h2>"),
+        "{}",
+        a.body
+    );
+    assert!(a.body.contains("href=\"/packages\">"));
+    assert!(!a.body.contains("aria-label=\"Views\""));
     let a = site.get("/packages", Some(SID)).await;
-    assert!(a.body.contains("aria-current=\"page\">Mine"));
+    assert!(
+        a.body
+            .contains("href=\"/packages?filter=mine\" aria-current=\"page\">All")
+    );
     assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
     assert!(a.body.contains("you maintain"));
     let a = site.get("/packages?q=hel", Some(SID)).await;

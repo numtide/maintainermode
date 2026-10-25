@@ -32,6 +32,7 @@ impl Html {
         Html(s)
     }
 
+    #[cfg(test)]
     pub(crate) fn as_str(&self) -> &str {
         &self.0
     }

@@ -35,6 +35,15 @@ impl Filter {
         Filter::All,
     ];
 
+    /// The choice above the list. All of nixpkgs is the catalog, not a
+    /// part of what is yours: a button at the top right opens it.
+    pub(crate) const BAR: [Filter; 4] = [
+        Filter::Mine,
+        Filter::Machines,
+        Filter::Maintain,
+        Filter::Watch,
+    ];
+
     /// With no filter, a search goes to all of nixpkgs, so the search box
     /// of the home page and old links keep working.
     pub(crate) fn parse(s: Option<&str>, searching: bool) -> Filter {
@@ -59,9 +68,9 @@ impl Filter {
         }
     }
 
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
-            Filter::Mine => "Mine",
+            Filter::Mine => "All",
             Filter::Machines => "On my machines",
             Filter::Maintain => "I maintain",
             Filter::Watch => "I watch",
@@ -512,27 +521,14 @@ fn href(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
     out
 }
 
-/// The filter bar, and the step that asks for a machine report in place
-/// of the machines filter when there is none.
-pub(crate) fn bar(i: &Interests, current: Filter, all: usize) -> (Vec<Tab>, Html) {
-    let mut tabs = Vec::new();
-    for f in Filter::ALL {
-        if f == Filter::Machines && !i.has_machines && current != f {
-            continue;
-        }
-        let n = if f == Filter::All { all } else { i.count(f) };
-        tabs.push(Tab::new(href(f, "", None, None), f.label(), f == current).count(n));
-    }
-    let step = if i.has_machines {
-        Html::new()
-    } else {
-        html!(
-            "<div class=\"callout mb-3\">{} <a class=\"text-bold\" href=\"{UPLOAD}\">Upload the packages of your machines</a> \
-             <span class=\"color-fg-muted\">to see them first here.</span></div>",
-            icon(octicon!("upload"))
-        )
-    };
-    (tabs, step)
+/// The choice above the list: one chip for each part of what is yours,
+/// with its count. A part with no row stays, so its empty list can say how
+/// to fill it.
+pub(crate) fn bar(i: &Interests, current: Filter) -> Vec<Tab> {
+    Filter::BAR
+        .into_iter()
+        .map(|f| Tab::new(href(f, "", None, None), f.label(), f == current).count(i.count(f)))
+        .collect()
 }
 
 fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> Html {
@@ -551,16 +547,15 @@ fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> H
     )
 }
 
-const NOTICE: &str = "<details class=\"callout mb-3\"><summary class=\"text-bold py-1\">What the server keeps, and why</summary>\
-<p class=\"mt-2\">For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
-the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
-With <code>--with-outputs</code>, it also keeps the label of each output, such as a host name, and the outputs that hold each package. \
-It keeps the hash of your upload token, not the token. Only you see a private set: here, in your inbox, in your private feed, and in the private answers of the API and the MCP server. \
-No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
-<p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
-its name, its reference, its packages and its output labels there. For a flake that the server scans, the server also keeps the reason of the last failure. \
-It scans the flake only while you open your packages at least once in 90 days. \
-These attributes expire 90 days after the last good scan or your last visit. \"Delete\" deletes one set now.</p></details>";
+/// The last row of the list of what you watch, and of an empty list.
+fn watch_form() -> Html {
+    Html::from(
+        "<div class=\"Box-footer\"><form method=\"post\" action=\"/me/watch\" class=\"inline-form\">\
+         <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
+         <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form>\
+         <p class=\"f6 color-fg-muted mt-2 mb-0\">The news of what you watch reaches your <a href=\"/inbox\">inbox</a> and your <a href=\"/me/settings#feed\">Atom feed</a>.</p></div>",
+    )
+}
 
 /// What one filter of `/packages` shows for a person: `sub`, `actions`
 /// and `body` are HTML.
@@ -568,6 +563,55 @@ pub(crate) struct View {
     pub(crate) sub: Html,
     pub(crate) actions: Html,
     pub(crate) body: Html,
+}
+
+/// A row of chips that narrow the list: (href, label, count, current).
+fn chips(name: &str, lead: Html, links: Vec<(String, String, Option<usize>, bool)>) -> Html {
+    let chips: Html = links
+        .into_iter()
+        .map(|(href, label, n, on)| {
+            let accent = if on { " Label--accent" } else { "" };
+            let cur = if on { " aria-current=\"page\"" } else { "" };
+            let count = n
+                .map(|n| html!(" <span class=\"Counter\">{n}</span>"))
+                .unwrap_or_default();
+            html!(
+                "<a class=\"Label tap-label{accent}\" href=\"{href}\"{}>{label}{count}</a>",
+                Html::from(cur)
+            )
+        })
+        .collect();
+    html!(
+        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"{name}\">\
+         <span class=\"f6 color-fg-muted\">{lead}</span>{chips}</nav>"
+    )
+}
+
+/// The sets of the person, each with its count of packages, as links to
+/// the filter of each one.
+fn sets_nav(i: &Interests, current: Option<&str>) -> Html {
+    if i.sets.is_empty() {
+        return Html::new();
+    }
+    let mut links = vec![(
+        href(Filter::Machines, "", None, None),
+        "All sets".to_string(),
+        None,
+        current.is_none(),
+    )];
+    links.extend(i.sets.iter().map(|(name, keys)| {
+        (
+            href(Filter::Machines, "", Some(name), None),
+            name.clone(),
+            Some(keys.len()),
+            current == Some(name.as_str()),
+        )
+    }));
+    chips(
+        "Sets",
+        html!("{} Set:", icon(octicon!("device-desktop"))),
+        links,
+    )
 }
 
 /// The outputs of one set, each with its count of packages, as links to
@@ -596,25 +640,7 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> Html {
             current == Some(l),
         )
     }));
-    let chips: Html = links
-        .into_iter()
-        .map(|(href, label, n, on)| {
-            let accent = if on { " Label--accent" } else { "" };
-            let cur = if on { " aria-current=\"page\"" } else { "" };
-            let count = n
-                .map(|n| html!(" <span class=\"Counter\">{n}</span>"))
-                .unwrap_or_default();
-            html!(
-                "<a class=\"Label tap-label{accent}\" href=\"{href}\"{}>{label}{count}</a>",
-                Html::from(cur)
-            )
-        })
-        .collect();
-    html!(
-        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"Outputs of {set}\">\
-         <span class=\"f6 color-fg-muted\">{} Where it runs:</span>{chips}</nav>",
-        icon(octicon!("device-desktop"))
-    )
+    chips(&format!("Outputs of {set}"), "Where it runs:".into(), links)
 }
 
 /// One set of the machines filter, and one output label of that set.
@@ -623,6 +649,9 @@ pub(crate) struct Pick<'a> {
     pub(crate) set: Option<&'a str>,
     pub(crate) output: Option<&'a str>,
 }
+
+const SUB: &str = "The packages of your machines come first, then what you maintain, then what you watch. \
+                   Only you see this list.";
 
 /// An unknown set or `None` shows all of them; an unknown output shows the
 /// whole set.
@@ -656,8 +685,7 @@ pub(crate) fn view(
     let mut actions = Html::new();
     match f {
         Filter::Machines => {
-            out.push(&crate::sets::summary(app, login, set));
-            out.push(&Html::from(NOTICE));
+            out.push(&sets_nav(i, set));
             if let Some(name) = set {
                 out.push(&outputs_nav(i, name, output));
             }
@@ -682,7 +710,7 @@ pub(crate) fn view(
         out.push(&search_form(f, q, set, output));
     }
     let (page, next) = crate::review::paged_by_offset(&rows, after);
-    let list: Html = page
+    let mut list: Html = page
         .iter()
         .map(|r| {
             let status = if f == Filter::Watch && r.why.watch {
@@ -697,70 +725,60 @@ pub(crate) fn view(
             row_html(&index, &ch, r, f.marks(r.why), status)
         })
         .collect();
-    let blank: Html = if !q.is_empty() {
-        "Nothing matches.".into()
-    } else {
-        match f {
-            Filter::Mine => html!(
-                "Nothing yet. <a href=\"{UPLOAD}\">Upload the packages of your machines</a>, or watch a package in <a href=\"/packages?filter=watch\">I watch</a>."
-            ),
-            Filter::Machines if i.has_machines => {
-                "This set has no package that the nixpkgs index of this server knows.".into()
+    let upload = html!("<a href=\"{UPLOAD}\">Upload the packages of your machines</a>");
+    if list.is_empty() {
+        list = empty(if !q.is_empty() {
+            "Nothing matches.".into()
+        } else {
+            match f {
+                Filter::Mine => {
+                    html!("Nothing yet. {upload}, or watch a package, a module or a directory.")
+                }
+                Filter::Machines if i.has_machines => {
+                    "This set has no package that the nixpkgs index of this server knows.".into()
+                }
+                Filter::Machines => html!(
+                    "No report yet. {upload}: make an upload token, then run <code>maintainer-mode scan</code> and \
+                     <code>maintainer-mode submit</code> on your machine."
+                ),
+                Filter::Maintain => html!(
+                    "nixpkgs does not name you in <code>meta.maintainers</code> yet. Read <a href=\"{}\">maintainers/README.md</a> to become a maintainer, \
+                     and start with <a href=\"/#first\">a first package</a>.",
+                    crate::welcome::MAINTAINERS_README
+                ),
+                Filter::Watch | Filter::All => "You watch nothing yet.".into(),
             }
-            Filter::Machines => html!(
-                "No report yet. Make an <a href=\"{UPLOAD}\">upload token</a>, then run <code>maintainer-mode scan</code> and \
-                 <code>maintainer-mode submit</code> on your machine."
-            ),
-            Filter::Maintain => html!(
-                "nixpkgs does not name you in <code>meta.maintainers</code> yet. Read <a href=\"{}\">maintainers/README.md</a> to become a maintainer.",
-                crate::welcome::MAINTAINERS_README
-            ),
-            Filter::Watch | Filter::All => "You watch nothing yet. Write a name below, or press Watch on the page of a package, a module or a directory.".into(),
+        });
+        if q.is_empty() && f == Filter::Mine {
+            list.push(&watch_form());
         }
-    };
+    } else if f == Filter::Mine && !i.has_machines {
+        list.push(&html!(
+            "<div class=\"Box-footer f6\">{} {upload} to see them first here.</div>",
+            icon(octicon!("upload"))
+        ));
+    }
+    if f == Filter::Watch {
+        list.push(&watch_form());
+    }
     let title = match (set, output) {
         (Some(n), Some(o)) => html!("Packages of {n} on {o}"),
         (Some(n), None) => html!("Packages of {n}"),
         (None, _) => f.title().into(),
     };
-    out.push(&section(
-        title,
-        Some(rows.len()),
-        None,
-        if list.is_empty() { empty(blank) } else { list },
-    ));
+    let narrowed = !q.is_empty() || set.is_some();
+    out.push(&section(title, narrowed.then_some(rows.len()), None, list));
     out.push(&pager(&href(f, q, set, output), next.as_deref()));
-    if f == Filter::Watch {
-        out.push(&section(
-            "Watch more",
-            None,
-            None,
-            "<div class=\"Box-row\"><form method=\"post\" action=\"/me/watch\" class=\"inline-form\">\
-             <input class=\"form-control flex-auto\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
-             <button class=\"btn btn-primary\" type=\"submit\">Watch</button></form></div>",
-        ));
-    }
     if f == Filter::Machines {
-        out.push(&crate::rescan::panel(app, login));
+        out.push(&crate::sets::manage(app, login));
     }
-    let sub: Html = match f {
-        Filter::Mine => "The packages of your machines first, then what you maintain, then what you watch. \
-                         In each group, those that need attention come first."
-            .into(),
-        Filter::Machines => "The packages of your sets: your machine reports and your flakes. \
-                             Pick one set, or see all of them. A set that you show on your profile is public. \
-                             New advisories and upstream releases for them reach your inbox and your Atom feed."
-            .into(),
-        Filter::Maintain => html!(
-            "Packages and NixOS modules whose <code>meta.maintainers</code> or <code>meta.teams</code> name you. \
-             Change the list in nixpkgs. Everybody can see it on <a href=\"/u/{login}?tab=maintains\">your public profile</a>."
-        ),
-        Filter::Watch | Filter::All => "The packages, modules and directories you watch. \
-                          Their news reaches your <a href=\"/inbox\">inbox</a> and your <a href=\"/me/settings#feed\">Atom feed</a>."
-            .into(),
-    };
+    actions.push(&html!(
+        " <a class=\"btn btn-sm\" href=\"{}\">{} All of nixpkgs</a>",
+        href(Filter::All, "", None, None),
+        icon(octicon!("package"))
+    ));
     View {
-        sub: html!("{sub} Only you see this list."),
+        sub: SUB.into(),
         actions,
         body: out,
     }
@@ -969,19 +987,26 @@ mod tests {
     }
 
     #[test]
-    fn without_a_report_the_bar_asks_for_one() {
+    fn the_bar_keeps_every_part_of_the_list_and_not_the_catalog() {
         let index = index();
         let none = Interests::build(&index, "alice", &[], &[], false);
-        let (tabs, step) = bar(&none, Filter::Mine, 7);
-        assert_eq!(tabs.len(), 4);
-        assert!(!tabs.iter().any(|t| t.href.contains("machines")));
-        assert!(step.contains("href=\"/me/settings#upload\""));
-        assert_eq!(tabs.last().unwrap().count, Some(7));
+        let tabs = bar(&none, Filter::Mine);
+        let hrefs: Vec<&str> = tabs.iter().map(|t| t.href.as_str()).collect();
+        assert_eq!(
+            hrefs,
+            [
+                "/packages?filter=mine",
+                "/packages?filter=machines",
+                "/packages?filter=maintain",
+                "/packages?filter=watch"
+            ]
+        );
+        assert_eq!(tabs[1].count, Some(0));
+        assert!(tabs[0].current && !tabs[1].current);
         let some = Interests::build(&index, "alice", &["vim".into()], &[], true);
-        let (tabs, step) = bar(&some, Filter::Mine, 7);
-        assert_eq!(tabs.len(), 5);
-        assert!(step.is_empty());
+        let tabs = bar(&some, Filter::Machines);
         assert_eq!(tabs[1].count, Some(1));
+        assert!(tabs[1].current);
     }
 
     #[test]

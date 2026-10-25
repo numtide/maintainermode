@@ -236,10 +236,10 @@ mod tests {
     #[test]
     fn the_tag_follows_the_data_and_the_cookies() {
         let none = HeaderMap::new();
-        let mut intro = HeaderMap::new();
-        intro.insert(header::COOKIE, "intro=hidden".parse().unwrap());
+        let mut mood = HeaderMap::new();
+        mood.insert(header::COOKIE, "mood=review".parse().unwrap());
         let before = tag(&none);
-        assert_ne!(before, tag(&intro));
+        assert_ne!(before, tag(&mood));
         touch();
         assert_ne!(before, tag(&none));
     }

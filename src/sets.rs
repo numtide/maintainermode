@@ -1,7 +1,7 @@
 //! A person's named package sets: the nixpkgs attributes of their uploaded
 //! reports and of their scanned flakes. A public flake set shows on the
 //! profile. Only the owner reads a private set: on their pages, and in
-//! their private API and MCP answers.
+//! their private API answers.
 
 use axum::Json;
 use axum::Router;
@@ -20,7 +20,7 @@ use crate::html::{Html, html};
 use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
 use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put, SetOutputs};
-use crate::ui::{Page, Section, Tab};
+use crate::ui::{Page, Section};
 use crate::web::{App, Shared, ago, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
@@ -481,43 +481,39 @@ fn small_form(action: &str, name: &str, extra: &'static str, class: &str, label:
     )
 }
 
-/// The sets box of the machines filter: a picker, then one row per set
-/// with its facts, its public switch and its Delete button. `current` is
-/// the set the list shows; `None` shows all of them.
-pub(crate) fn summary(app: &App, login: &str, current: Option<&str>) -> Html {
+const NOTICE: &str = "<div class=\"Box-row f6\"><h3 class=\"f5 mb-2\">What the server keeps, and why</h3>\
+<p>For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
+the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
+With <code>--with-outputs</code>, it also keeps the label of each output, such as a host name, and the outputs that hold each package. \
+It keeps the hash of your upload token, not the token. Only you see a private set: here, in your inbox, in your private feed, and in the private answers of the API. \
+No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
+<p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
+its name, its reference, its packages and its output labels there. For a flake that the server scans, the server also keeps the reason of the last failure. \
+It scans the flake only while you open your packages at least once in 90 days. \
+These attributes expire 90 days after the last good scan or your last visit. \"Delete\" deletes one set now.</p></div>";
+
+/// The sets box of the machines filter, folded under the list: one row
+/// per set with its facts, its public switch and its Delete button, then
+/// the public flakes and what the server keeps.
+pub(crate) fn manage(app: &App, login: &str) -> Html {
     let sets = app.store.sets(login).unwrap_or_default();
     let scans = scans_by_name(app, login);
     let views = set_views(&sets, &scans, None, None).unwrap_or_default();
     let index_at = app.store.get_time("index_at").ok().flatten();
-    summary_view(&views, login, current, index_at)
+    html!(
+        "<details class=\"Box mb-4\" id=\"sets\"><summary class=\"Box-header\">\
+         <h2 class=\"Box-title d-inline\">{} Your sets <span class=\"Counter\">{}</span></h2></summary>\
+         {}{}{NOTICE}</details>",
+        icon(octicon!("device-desktop")),
+        views.len(),
+        set_rows(&views, login, index_at),
+        crate::rescan::panel(app, login),
+        NOTICE = Html::from(NOTICE)
+    )
 }
 
-fn summary_view(
-    sets: &[SetView],
-    login: &str,
-    current: Option<&str>,
-    index_at: Option<DateTime<Utc>>,
-) -> Html {
-    if sets.is_empty() {
-        return Html::new();
-    }
-    let mut tabs = vec![Tab::new(machines_href(None), "All sets", current.is_none())];
-    for s in sets {
-        tabs.push(
-            Tab::new(
-                machines_href(Some(s.name)),
-                Html::text(s.name),
-                current == Some(s.name),
-            )
-            .count(s.set.data.as_ref().map_or(0, |d| d.attrs.len())),
-        );
-    }
-    let mut out = html!(
-        "<div class=\"Box mb-3\" id=\"sets\"><div class=\"Box-header\"><h2 class=\"Box-title\">{} Your sets</h2></div>\
-         <div class=\"Box-row pb-0\">{}</div>",
-        icon(octicon!("device-desktop")),
-        crate::ui::subnav_named(&tabs, "Sets")
-    );
+fn set_rows(sets: &[SetView], login: &str, index_at: Option<DateTime<Utc>>) -> Html {
+    let mut out = Html::new();
     for s in sets {
         let mut labels = html!(
             "<span class=\"Label\">{}</span>",
@@ -572,7 +568,6 @@ fn summary_view(
             small_form("/me/sets/delete", s.name, "", " btn-danger", "Delete"),
         ));
     }
-    out.push(&Html::from("</div>"));
     out
 }
 
