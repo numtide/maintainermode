@@ -277,8 +277,8 @@ are true:
 - It has no maintainer and no team.
 - It is not broken and not insecure. Its risk score is not high.
 - It has 3 open issues and pull requests or fewer.
-- It has an open issue, or an open pull request that is not a draft, from
-  the last 60 days.
+- It has an open issue, or an open pull request that is not a draft and not
+  [treewide](rules.md#treewide-pull-requests), from the last 60 days.
 
 Each row gives one task: review the newest pull request, or fix the newest
 issue. The newest task comes first. The list shows 8 rows. When no package
