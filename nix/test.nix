@@ -337,7 +337,7 @@ pkgs.testers.runNixOSTest {
                       ("/u/alice", "u"), ("/packages", "packages"), ("/state", "state")]:
         signed_in(path, f"/tmp/s-{out}")
         machine.succeed(f"grep -q 'menu-login\">alice<' /tmp/s-{out}")
-    machine.succeed("grep -q 'Needs you <span class=\"Counter\">' /tmp/s-home && grep -q 'aria-label=\"Moods\"' /tmp/s-home && grep -q 'Your packages that need you' /tmp/s-home && grep -q 'href=\"/packages?filter=mine\"' /tmp/s-home")
+    machine.succeed("grep -q 'Needs you <span class=\"Counter\">' /tmp/s-home && grep -q 'aria-label=\"Moods\"' /tmp/s-home && grep -q 'aria-label=\"More for you\"' /tmp/s-home && grep -q 'href=\"/packages?filter=mine\"' /tmp/s-home")
     machine.succeed("! grep -q 'Pull requests for you to review' /tmp/s-home && grep -q 'Keys: <kbd>j</kbd>' /tmp/s-home")
     machine.succeed("curl -sf -o /tmp/pub-home http://127.0.0.1:8790/ && ! grep -q -e 'Needs you' -e '<script>' /tmp/pub-home")
     signed_in("/?mood=review", "/tmp/s-mood")

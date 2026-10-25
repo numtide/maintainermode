@@ -9,7 +9,7 @@ use axum::response::Response;
 use axum::routing::get;
 use serde::Deserialize;
 
-use crate::catalog::{Flags, Subject, person_events, subject_row};
+use crate::catalog::{Flags, Subject, subject_row};
 use crate::html::{Html, html};
 use crate::queue::Entry;
 use crate::ui::{Kind, Page, Section, empty, item_row};
@@ -144,137 +144,62 @@ fn dashboard(app: &App, login: &str, mood: crate::needs::Mood, headers: &HeaderM
     let s = app.snap();
     let mut out = Html::from("<h1 class=\"sr-only\">Home</h1>");
     out.push(&crate::needs::section(app, login, mood, headers));
+    out.push(&more_links(app, &s, login));
     out.push(&crate::welcome::card(app, login));
-
-    let unread = app.inbox.get(login);
-    let events = person_events(app, login);
-    let news: Html = events
-        .iter()
-        .take(5)
-        .map(|e| {
-            html!(
-                "<div class=\"Box-row f6\"><span class=\"color-fg-muted\">{} ago · {}</span> {}</div>",
-                ago(e.at),
-                e.subject,
-                crate::prpage::link(&e.url, Html::text(&e.title), "")
-            )
-        })
-        .collect();
-    out.push(&section(
-        html!(
-            "{} Inbox{}",
-            icon(octicon!("inbox")),
-            if unread > 0 {
-                html!(" <span class=\"Counter\">{unread}</span>")
-            } else {
-                Html::new()
-            }
-        ),
-        Some(("/inbox", "open the inbox")),
-        if news.is_empty() {
-            empty("Nothing new. <a href=\"/packages?filter=watch\">Watch</a> packages, modules or directories to hear about them.")
-        } else {
-            news
-        },
-    ));
-
-    let mine = crate::mine::needs_you(app, login);
-    let mine_html: Html = {
-        let ch = app.channels.read().unwrap().clone();
+    let maintains = {
         let index = app.index.read().unwrap();
-        mine.iter()
-            .take(SHOWN)
-            .map(|r| crate::mine::row_html(&index, &ch, r, r.why, ""))
-            .collect()
+        let m = crate::catalog::maintained(&index, login);
+        !m.packages.is_empty() || !m.modules.is_empty()
     };
-    out.push(&section(
-        html!(
-            "{} Your packages that need you",
-            icon(octicon!("package"))
-        ),
-        Some(("/packages?filter=mine", "all your packages")),
-        if mine_html.is_empty() {
-            empty("Nothing needs you now. The packages of your machines, what you maintain and what you watch show here when they get an advisory, a new release, a failed build or a pull request.")
-        } else {
-            mine_html
-        },
-    ));
-
-    let mut own: Vec<&crate::model::Pr> = s
-        .pr_data
-        .iter()
-        .filter(|p| p.is_open() && p.author.eq_ignore_ascii_case(login))
-        .collect();
-    own.sort_by_key(|p| std::cmp::Reverse(p.updated_at));
-    let own_html: Html = own
-        .iter()
-        .take(SHOWN)
-        .map(|p| {
-            let state = if p.is_draft {
-                "draft"
-            } else if s.queues.merge.iter().any(|e| e.number == p.number) {
-                "ready to merge"
-            } else if p.mergeable == "CONFLICTING" {
-                "has a conflict"
-            } else if matches!(p.ci.as_deref(), Some("FAILURE" | "ERROR")) {
-                "checks fail"
-            } else if p.reviews.iter().any(|r| r.state == "APPROVED") {
-                "approved, waiting"
-            } else if p.reviews.is_empty() {
-                "waiting for a first review"
-            } else {
-                "in review"
-            };
-            html!(
-                "<div class=\"Box-row d-flex flex-items-start gap-2\"><span class=\"flex-auto min-width-0\">{}</span>\
-                 <span class=\"Label flex-shrink-0\">{state}</span></div>",
-                crate::prpage::title_link(
-                    p.number,
-                    html!("#{} {}", p.number, p.title),
-                    "Link--primary"
-                )
-            )
-        })
-        .collect();
-    out.push(&section(
-        html!(
-            "{} Your open pull requests",
-            icon(octicon!("git-pull-request"))
-        ),
-        Some((
-            &format!("https://github.com/NixOS/nixpkgs/pulls/{login}"),
-            "on GitHub",
-        )),
-        if own_html.is_empty() {
-            empty("You have no open pull request.")
-        } else {
-            own_html
-        },
-    ));
-
-    let maintains = app
-        .index
-        .read()
-        .unwrap()
-        .maintainers
-        .get(login)
-        .is_some_and(|m| !m.is_empty());
     if !maintains {
         out.push(&crate::first::section(app));
     }
+    out
+}
 
+/// What the list above leaves out: the history in the inbox, every package
+/// and every open pull request of the person, and for a committer the
+/// merge queue.
+fn more_links(app: &App, s: &crate::web::Snapshot, login: &str) -> Html {
+    let counter = |n: usize| {
+        if n > 0 {
+            html!(" <span class=\"Counter\">{n}</span>")
+        } else {
+            Html::new()
+        }
+    };
+    let own = s
+        .pr_data
+        .iter()
+        .filter(|p| p.is_open() && p.author.eq_ignore_ascii_case(login))
+        .count();
+    let mut links = vec![
+        html!(
+            "<a class=\"btn btn-sm\" href=\"/inbox\">{} Inbox{}</a>",
+            icon(octicon!("inbox")),
+            counter(app.inbox.get(login))
+        ),
+        html!(
+            "<a class=\"btn btn-sm\" href=\"/packages?filter=mine\">{} Your packages</a>",
+            icon(octicon!("package"))
+        ),
+        html!(
+            "<a class=\"btn btn-sm\" href=\"https://github.com/NixOS/nixpkgs/pulls/{login}\">{} Your pull requests{}</a>",
+            icon(octicon!("git-pull-request")),
+            counter(own)
+        ),
+    ];
     if s.committers.is(login) {
-        out.push(&section(
-            html!("{} You can merge", icon(octicon!("git-merge"))),
-            Some(("/review?tab=ready", "Ready to merge")),
-            html!(
-                "<div class=\"Box-row\">{} pull requests are ready to merge. \
-                 <a href=\"/review?tab=ready\">See them</a>. The ones on what you maintain come first.</div>",
-                s.queues.merge.len()
-            ),
+        links.push(html!(
+            "<a class=\"btn btn-sm\" href=\"/review?tab=ready\">{} Ready to merge{}</a>",
+            icon(octicon!("git-merge")),
+            counter(s.queues.merge.len())
         ));
     }
-    out
+    html!(
+        "<nav class=\"d-flex flex-wrap gap-2 mb-4\" aria-label=\"More for you\">{}</nav>",
+        crate::html::join(links, "")
+    )
 }
 
 #[derive(Deserialize)]

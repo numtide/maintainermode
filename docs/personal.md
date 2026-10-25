@@ -19,7 +19,7 @@ Only you see `/inbox` and the pages under `/me`. The server sends each answer th
 
 ## Needs you
 
-Sign in, and the home page starts with **Needs you**. It is a list of open items. Each item is one thing that waits for you. Each item has one primary action: push its title to open its page. The most urgent item comes first. Only you see the list.
+Sign in, and the home page starts with **Needs you**. It is the one list of the home page: a list of open items. Each item is one thing that waits for you. Each item has one primary action: push its title to open its page. The most urgent item comes first. Only you see the list.
 
 The list does not show what happened. The [inbox](#the-menu) does that. The list shows what is still open. When the cause of an item is gone, the item leaves the list.
 
@@ -57,6 +57,10 @@ The chips above the list select a mood. Each chip shows its count.
 | Maintain         | `/?mood=maintain` | cause 7, and cause 1 for a package you maintain        |
 
 A cookie (`mood`) keeps your last mood for one year.
+
+### Below the list
+
+A row of buttons opens what the list leaves out: your inbox (with the number of unread events), your packages (`/packages?filter=mine`), your open pull requests on GitHub (with their number) and, for a committer, the Ready to merge tab (with its number). Then come the card with your first steps, until you hide it, and, when you maintain nothing, [a first package to work on](#a-first-package-to-work-on).
 
 ### Snooze
 
@@ -171,7 +175,7 @@ The Hydra flag comes from [the build watch](health.md#the-build-watch), or from 
 
 **Where it runs.** A set that you send with `--with-outputs` (see [My package set](#my-package-set)) knows which output holds each package. Each row of that set then says where the package runs, such as "on web-1, laptop and 2 more". It shows at most three labels. Each label links to the filter of that output. When you pick that set, the line "Where it runs" shows a link for each output, with its count. An output link adds `&output=<label>`, such as `/packages?filter=machines&set=infra&output=web-1`. The list then shows only the packages of that output. `output` works only with `set`. An unknown label shows the whole set.
 
-The home page uses the same order. Its section "Your packages that need you" shows the rows of Mine that need attention. It links to `/packages?filter=mine`.
+Needs you on the home page uses the same order for its package items (causes 1, 6 and 7). Below it, "Your packages" links to `/packages?filter=mine`.
 
 **Old addresses.** These addresses redirect:
 
