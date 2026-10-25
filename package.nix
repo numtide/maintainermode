@@ -6,6 +6,8 @@
   git,
   # anything that answers `nix eval --json --file`; null leaves `nix` from PATH
   evaluator ? null,
+  # the git commit, for maintainer_mode_build_info on /metrics
+  rev ? null,
 }:
 let
   primer = callPackage ./nix/primer.nix { classes = ./src; };
@@ -28,7 +30,10 @@ rustPlatform.buildRustPackage {
 
   cargoLock.lockFile = ./Cargo.lock;
 
-  env.PRIMER_DIR = "${primer}";
+  env = {
+    PRIMER_DIR = "${primer}";
+  }
+  // lib.optionalAttrs (rev != null) { MAINTAINER_MODE_REV = rev; };
 
   nativeBuildInputs = [ makeWrapper ];
   nativeCheckInputs = [ git ];

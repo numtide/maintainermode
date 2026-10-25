@@ -230,6 +230,7 @@ impl Log {
         tx.commit()?;
         if added > 0 {
             self.head.send_replace(w.next_seq - 1);
+            crate::telemetry::events_added(added);
         }
         Ok(added)
     }

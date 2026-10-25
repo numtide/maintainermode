@@ -33,6 +33,7 @@
           pkgs = nixpkgs.legacyPackages.${system};
           maintainer-mode = pkgs.callPackage ./package.nix {
             evaluator = iets.packages.${system}.classic or null;
+            rev = self.rev or self.dirtyRev or null;
           };
         in
         {

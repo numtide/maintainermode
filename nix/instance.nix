@@ -68,6 +68,7 @@ in
         githubAppInstallationId
         ;
       githubClientId = if cfg.githubClientSecretFile == null then null else cfg.githubClientId;
+      metrics.listen = "127.0.0.1:9431";
     };
   };
 }

@@ -60,6 +60,7 @@ mod severity;
 mod status;
 mod store;
 mod subject;
+mod telemetry;
 mod trace;
 mod ui;
 mod upstream;
@@ -164,6 +165,10 @@ enum Command {
     Serve {
         #[arg(long, env = "MAINTAINER_MODE_LISTEN", default_value = "127.0.0.1:8790")]
         listen: String,
+        /// A second listener that serves only the Prometheus `/metrics`;
+        /// off when absent. It has no authentication.
+        #[arg(long, env = "MAINTAINER_MODE_METRICS_LISTEN")]
+        metrics_listen: Option<String>,
         #[arg(
             long,
             env = "MAINTAINER_MODE_DB",
@@ -779,7 +784,7 @@ async fn background(app: Arc<App>, every: u64) {
                 }
             }
         }
-        server_tokens.extend(app.bot_token.iter().map(|s| s.get()));
+        server_tokens.extend(app.bot());
         let mut server = github::Client::new(server_tokens.clone());
         let mut client = if server.has_token() {
             github::Client::new(server_tokens.clone())
@@ -916,6 +921,7 @@ async fn run(cli: Cli) -> Result<i32> {
     match cli.command {
         Command::Serve {
             listen,
+            metrics_listen,
             db,
             public_url,
             client_id,
@@ -933,6 +939,7 @@ async fn run(cli: Cli) -> Result<i32> {
             git_dir,
             rescan,
         } => {
+            telemetry::started();
             let rescan = rescan.config()?;
             let S3 {
                 s3_endpoint,
@@ -1042,6 +1049,16 @@ async fn run(cli: Cli) -> Result<i32> {
             if let Some(b) = bucket {
                 tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
                 tokio::spawn(events::copy(app.clone(), b));
+            }
+            if let Some(addr) = metrics_listen {
+                let listener = tokio::net::TcpListener::bind(&addr).await?;
+                tracing::info!("metrics on {addr}");
+                let router = telemetry::router(app.clone());
+                tokio::spawn(async move {
+                    if let Err(e) = axum::serve(listener, router).await {
+                        tracing::warn!("metrics listener: {e:#}");
+                    }
+                });
             }
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             tracing::info!("listening on {listen}");

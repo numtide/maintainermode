@@ -9,6 +9,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | Variable                               | Meaning                                                     |
 | -------------------------------------- | ----------------------------------------------------------- |
 | `MAINTAINER_MODE_LISTEN`               | listen address, default `127.0.0.1:8790`                    |
+| `MAINTAINER_MODE_METRICS_LISTEN`       | listen address of `/metrics`; off when not set              |
 | `MAINTAINER_MODE_DB`                   | SQLite path                                                 |
 | `MAINTAINER_MODE_PUBLIC_URL`           | the public URL; the OAuth callback is `<url>/auth/callback` |
 | `GITHUB_CLIENT_ID`                     | OAuth app client id                                         |
@@ -38,6 +39,51 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
 
 CI is the flake's `checks`: `nix flake check`.
+
+## Metrics
+
+The server serves Prometheus metrics in the text format 0.0.4. Set `--metrics-listen <address>` or `MAINTAINER_MODE_METRICS_LISTEN`. The server then opens a second listener that serves only `GET /metrics`. The main port answers 404 for `/metrics`.
+
+In the NixOS module, set `services.maintainer-mode.metrics.listen`, for example to `"127.0.0.1:9431"`. The default is `null`, and the listener is off. `nix/instance.nix` sets `127.0.0.1:9431`.
+
+Keep the listener on localhost. It has no authentication. Do not send it through the reverse proxy: there, every request comes from 127.0.0.1, so the server cannot tell the operator from a visitor.
+
+A scrape does the work of one request to `/api/v1/sync`, and it reads two files in `/proc/self`.
+
+| Metric                                                                 | Type      | Labels                      | Meaning                                                                     |
+| ---------------------------------------------------------------------- | --------- | --------------------------- | --------------------------------------------------------------------------- |
+| `maintainer_mode_build_info`                                           | gauge     | `version`, `commit`         | always 1; `commit` is `unknown` when the build does not know it             |
+| `maintainer_mode_http_requests_total`                                  | counter   | `route`, `method`, `status` | requests to the main port; `route` is the route template or `unmatched`     |
+| `maintainer_mode_http_request_duration_seconds`                        | histogram | `route`                     | time until the response head                                                |
+| `maintainer_mode_http_signed_in_requests_total`                        | counter   |                             | requests whose handler found a valid session; no login                      |
+| `maintainer_mode_process_resident_memory_bytes`                        | gauge     |                             | resident memory                                                             |
+| `maintainer_mode_process_open_fds`                                     | gauge     |                             | open file descriptors                                                       |
+| `maintainer_mode_process_start_time_seconds`                           | gauge     |                             | unix time of the start                                                      |
+| `maintainer_mode_events_inserted_total`                                | counter   |                             | events added to the event log                                               |
+| `maintainer_mode_events_last_insert_timestamp_seconds`                 | gauge     |                             | time of the last insert that added an event; 0 until the first one          |
+| `maintainer_mode_recompute_duration_seconds`                           | gauge     |                             | wall time of the last finished recompute of the snapshot                    |
+| `maintainer_mode_recompute_packages_duration_seconds`                  | gauge     |                             | the same for the package statistics                                         |
+| `maintainer_mode_recompute_metrics_duration_seconds`                   | gauge     |                             | the same for the numbers of nixpkgs                                         |
+| `maintainer_mode_recompute_total`, `_packages_total`, `_metrics_total` | counter   |                             | finished runs of each                                                       |
+| `maintainer_mode_github_rate_remaining`                                | gauge     | `token`                     | GraphQL points left, from the last answer                                   |
+| `maintainer_mode_github_rate_reset_timestamp_seconds`                  | gauge     | `token`                     | the time when that budget is full again                                     |
+| `maintainer_mode_github_requests_total`                                | counter   | `kind`, `status`            | requests to the GitHub GraphQL API; `status` is `error` when no answer came |
+| `maintainer_mode_sync_*`                                               | gauge     | see below                   | the data of `/api/v1/sync`                                                  |
+
+`maintainer_mode_events_last_insert_timestamp_seconds` is the time of the insert, not the time of the event. A GH Archive backfill adds old events, so the `events.newest` of `/api/v1/sync` can be a day old while the log grows.
+
+The `token` label is `app` for the installation token of the GitHub App and `bot` for the bot token. Both rate metrics come from the last answer to that token. After the reset time, the budget is full again, but the gauge keeps its value until the next answer. A lent token has no rate metric. `maintainer_mode_sync_tokens_lent` gives the number of lent tokens. `kind` is always `graphql`: the REST requests go out from many places, and the server does not count them.
+
+### The `maintainer_mode_sync_*` gauges
+
+Each scrape turns the JSON of `/api/v1/sync` into gauges. A new field in that JSON becomes a gauge, with no change to the metrics code.
+
+- The name is `maintainer_mode_sync_` and the path of keys, joined with `_`. Each character other than `a-z`, `A-Z`, `0-9` and `_` becomes `_`. For example, `archive.git.bytes` becomes `maintainer_mode_sync_archive_git_bytes`.
+- A number gives its value. `true` gives 1 and `false` gives 0.
+- An RFC 3339 time gives the unix time, and the name ends in `_timestamp_seconds`. For example, `passes.last_ended` becomes `maintainer_mode_sync_passes_last_ended_timestamp_seconds`.
+- Other strings, `null`, and arrays of numbers or strings give no gauge.
+- Each object in an array gets a label from its first key among `repo`, `channel`, `source`, `name` and `id`. That key gives no gauge. An object with none of these keys gets the label `i`, its position in the array. For example, `archive[].items` becomes `maintainer_mode_sync_archive_items{repo="NixOS/nixpkgs"}`. When an outer array already uses the label, the inner label gets a number, such as `name2`.
+- An object keyed by names stays in the path. For example, `health.sources.cve.at` becomes `maintainer_mode_sync_health_sources_cve_at_timestamp_seconds`.
 
 ## UX audit
 

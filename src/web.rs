@@ -19,6 +19,7 @@ use crate::ledger::{self, Ledger};
 use crate::metrics::{self, Report};
 use crate::queue::{self, Entry, Queues};
 use crate::store::Store;
+use crate::telemetry::Recompute;
 
 /// Pull request pages read GitHub on a miss of the cache; crawlers must
 /// not walk them.
@@ -114,6 +115,7 @@ impl App {
     }
 
     pub fn recompute(&self) -> Result<()> {
+        let start = std::time::Instant::now();
         let mut prs = self.store.prs()?;
         crate::changed::apply(&mut prs);
         let index = self.index.read().unwrap();
@@ -168,6 +170,7 @@ impl App {
         });
         drop(index);
         self.reassess();
+        crate::telemetry::recomputed(Recompute::All, start.elapsed());
         Ok(())
     }
 
@@ -190,19 +193,23 @@ impl App {
     /// Walks every package and every open pull request, so it runs when the
     /// index, the pull requests or the health data change, not on a request.
     pub fn recompute_packages(&self) {
+        let start = std::time::Instant::now();
         let s = self.snap();
         let h = self.health.read().unwrap().clone();
         let p = crate::catalog::package_stats(&s, &self.index.read().unwrap(), &h);
         *self.packages.write().unwrap() = Arc::new(p);
         crate::assets::touch();
+        crate::telemetry::recomputed(Recompute::Packages, start.elapsed());
     }
 
     /// Reads every stored pull request, so it runs after a sync pass rather
     /// than on each request.
     pub fn recompute_metrics(&self) -> Result<()> {
+        let start = std::time::Instant::now();
         let facts = metrics::merge(self.store.facts()?, &self.snap().pr_data);
         *self.metrics.write().unwrap() = Arc::new(metrics::compute(&facts, Utc::now()));
         crate::assets::touch();
+        crate::telemetry::recomputed(Recompute::Metrics, start.elapsed());
         Ok(())
     }
 
@@ -228,7 +235,19 @@ impl App {
 
     pub(crate) fn viewer(&self, headers: &HeaderMap) -> Option<String> {
         let id = cookie(headers, "session")?;
-        self.store.session(&id).ok().flatten().map(|s| s.login)
+        self.store
+            .session(&id)
+            .ok()
+            .flatten()
+            .map(|s| s.login)
+            .inspect(|_| crate::telemetry::saw_session())
+    }
+
+    /// The current bot token, named so that /metrics shows its budget.
+    pub(crate) fn bot(&self) -> Option<String> {
+        let t = self.bot_token.as_ref()?.get();
+        crate::telemetry::name_token("bot", &t);
+        Some(t)
     }
 
     /// The session, or the API token of the person.
@@ -272,6 +291,7 @@ pub fn router(app: Shared) -> Router {
         .layer(axum::middleware::from_fn(crate::me::no_store))
         .layer(axum::middleware::from_fn(same_origin))
         .layer(axum::middleware::from_fn(crate::assets::etag))
+        .layer(axum::middleware::from_fn(crate::telemetry::track))
         .with_state(app)
 }
 

@@ -1292,7 +1292,7 @@ pub(crate) async fn tokens(app: &App) -> Vec<String> {
             tokens.push(t);
         }
     }
-    tokens.extend(app.bot_token.iter().map(|s| s.get()));
+    tokens.extend(app.bot());
     tokens
 }
 
