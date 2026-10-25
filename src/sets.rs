@@ -20,7 +20,7 @@ use crate::html::{Html, html};
 use crate::mine::MACHINES;
 use crate::report::{Found, MAX_PACKAGES, PublicList, Report, ScanOutput, Source, Upload};
 use crate::store::{DEFAULT_SET, MAX_SETS, NamedSet, PackageSet, Put, SetOutputs};
-use crate::ui::{Page, Section, Tab, section};
+use crate::ui::{Page, Section, Tab};
 use crate::web::{App, Shared, ago, icon, octicon, random_id};
 
 pub const RETENTION_DAYS: i64 = 90;
@@ -576,31 +576,31 @@ fn summary_view(
     out
 }
 
-/// The `#upload` section of `/me/settings`.
+/// The `#upload` section of `/me/settings`. The steps fold once the
+/// person has a set.
 pub(crate) fn token_box(app: &App, login: &str) -> Html {
     let state = match app.store.upload_token_at(login).ok().flatten() {
         Some(at) => html!(
-            "<p>You made an upload token on {}. The server shows a token once and keeps only its hash.</p>\
+            "<p class=\"mb-2\">You made an upload token on {}.</p>\
              <form method=\"post\" action=\"/me/upload-token\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">Replace the token</button></form> \
              <form method=\"post\" action=\"/me/upload-token/delete\" class=\"d-inline\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Revoke the token</button></form>",
             at.get(..10).unwrap_or(&at)
         ),
         None => "<form method=\"post\" action=\"/me/upload-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an upload token</button></form>".into(),
     };
+    let open = if app.store.sets(login).unwrap_or_default().is_empty() {
+        " open"
+    } else {
+        ""
+    };
     html!(
-        "<div id=\"upload\">{}</div>",
-        section(
-            html!("{} Upload token", icon(octicon!("key"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row\"><p>Send the packages of your machines, and they show first in \
-                 <a href=\"{MACHINES}\">On my machines</a> on the packages page. Only names that nixpkgs knows leave your machine.</p></div>\
-                 {}<div class=\"Box-row\"><ol class=\"ml-3\">{}</ol>{state}</div>",
-                shared(app),
-                steps(app.public_url.trim_end_matches('/'), None)
-            )
-        )
+        "<p class=\"mb-1\">Send the packages of your machines. They show first in <a href=\"{MACHINES}\">On my machines</a>. \
+         Only names that nixpkgs knows leave your machine.</p>\
+         <details class=\"fold\"{open}><summary>How to send them</summary><ol class=\"ml-3 mt-2\">{}</ol></details>\
+         <details class=\"fold mb-2\" id=\"shared\"><summary>What leaves your machine, and what the server keeps</summary>{}</details>\
+         {state}",
+        steps(app.public_url.trim_end_matches('/'), None),
+        shared(app)
     )
 }
 
@@ -695,21 +695,21 @@ fn shared(app: &App) -> Html {
         .map_or(app.public_url.as_str(), |(_, h)| h)
         .trim_end_matches('/');
     html!(
-        "<div class=\"Box-row\" id=\"shared\"><h3 class=\"f5 mb-2\">What leaves your machine</h3>\
+        "<div class=\"mt-2\"><h4 class=\"f5 mb-2\">What leaves your machine</h4>\
          <p>An example. The scan of the flake <code>{name}</code> reads two machines, {hosts}, and finds three packages:</p>\
          <ul class=\"ml-3 mb-2\">{rows}<li>the name <code>{name}</code>: never sent. The set name <code>infra</code> is what you type with <code>--name</code>.</li>\
          <li>the machine names {hosts}: sent only with <code>--with-outputs</code>.</li>\
          <li>the store paths: kept in the local file for <code>maintainer-mode why</code>, never sent.</li></ul>\
          <p>The tool then sends only this. No path, no store hash, no host name:</p>\
          <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{json}</pre>\
-         <h4 class=\"f5 mb-2\" id=\"with-outputs\">With <code>--with-outputs</code></h4>\
+         <h5 class=\"f5 mb-2\" id=\"with-outputs\">With <code>--with-outputs</code></h5>\
          <p>The report also tells which machine runs each package. Then the page can say \"on web-1, laptop\" and filter by machine. \
          It sends the label of each output: the name of each NixOS, nix-darwin or Home Manager configuration, \
          and the attribute path of each package, devShell and check. Each package gets the numbers of its outputs:</p>\
          <pre class=\"p-2 color-bg-subtle f6 overflow-auto\">{with_json}</pre>\
          <p class=\"mb-0\"><strong>The risk.</strong> Your host names then leave your machine. A host name can tell the name of a customer, \
          a project or a place. Use <code>--with-outputs</code> only when you can share these names.</p></div>\
-         <div class=\"Box-row\"><h3 class=\"f5 mb-2\">What the server keeps, and who sees it</h3><ul class=\"ml-3 mb-2\">\
+         <div class=\"mt-3\"><h4 class=\"f5 mb-2\">What the server keeps, and who sees it</h4><ul class=\"ml-3 mb-2\">\
          <li>It keeps the set name, the package names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision. \
          With <code>--with-outputs</code>, it also keeps the output labels and which package each one holds.</li>\
          <li>Only you see it, when you sign in. It never shows on public pages or in public numbers. Only a public flake that you mark with <code>--public-flake</code> shows on your profile.</li>\
@@ -778,7 +778,7 @@ fn steps(base: &str, token: Option<&str>) -> Html {
              <code>export</code> prints the exact report that <code>submit</code> sends. Read it first. \
              Give each flake its own set with <code>--name</code>, such as <code>--name infra</code>. A new upload replaces the set of that name. \
              Add <code>--with-outputs</code> to both commands to see which host runs each package. It also sends your host names: \
-             <a href=\"/me/settings#with-outputs\">read the risk</a> first.".into(),
+             <a href=\"/me/settings#shared\">read the risk</a> first.".into(),
             &format!(
                 "maintainer-mode{server} export\nmaintainer-mode{server} submit --name infra"
             ),

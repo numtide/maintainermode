@@ -230,7 +230,7 @@ async fn me_pages_show_their_parts() {
         "goal",
         "start",
     ] {
-        assert!(a.body.contains(&format!("<div id=\"{id}\">")), "#{id}");
+        assert!(a.body.contains(&format!(" id=\"{id}\">")), "#{id}");
     }
     let a = site.get("/review", Some(SID)).await;
     assert!(

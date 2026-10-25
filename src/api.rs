@@ -1234,11 +1234,7 @@ pub(crate) mod tests {
                 .iter()
                 .map(|k| format!("/inbox?kind={}", k.key())),
         );
-        v.extend(
-            crate::me::SETTINGS
-                .iter()
-                .map(|(id, _)| format!("/me/settings#{id}")),
-        );
+        v.extend(crate::me::sections().map(|id| format!("/me/settings#{id}")));
         let skips = crate::web::ux_pages::entries().skips;
         v.extend(
             get_routes()

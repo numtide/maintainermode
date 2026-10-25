@@ -9,8 +9,9 @@ use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 
-use crate::ui::{Page, Personal, Section, Tab};
-use crate::web::{Shared, octicon};
+use crate::html::{Html, html};
+use crate::ui::{Page, Personal, Section, Tab, section};
+use crate::web::{App, Shared, icon, octicon};
 
 pub fn routes() -> Router<Shared> {
     Router::new()
@@ -53,41 +54,69 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-pub(crate) const SETTINGS: [(&str, &str); 9] = [
-    ("notifications", "Notifications"),
-    ("followup", "Pull requests"),
-    ("feed", "Feed"),
-    ("upload", "Upload"),
-    ("api", "API token"),
-    ("tags", "Tags"),
-    ("goal", "Goal"),
-    ("start", "Get started"),
-    ("github", "GitHub"),
+/// A section: its id, its label and what it shows.
+type Row = (&'static str, &'static str, fn(&App, &str) -> Html);
+
+/// The boxes of `/me/settings` and the sections in each. Other pages,
+/// `PAGES` in api.rs, nix/test.nix and the redirects after each form link
+/// to the section ids.
+const GROUPS: [(&str, &str, &str, &[Row]); 4] = [
+    (
+        "news",
+        "News",
+        octicon!("bell"),
+        &[
+            ("notifications", "Unread count", crate::notify::settings_box),
+            ("feed", "Atom feed", crate::catalog::feed_box),
+            ("followup", "Follow-up plan", crate::followup::settings_box),
+        ],
+    ),
+    (
+        "reviews",
+        "Reviews",
+        octicon!("eye"),
+        &[
+            ("tags", "Tags", crate::web::tags_box),
+            ("goal", "Weekly goal", crate::progress::goal_box),
+        ],
+    ),
+    (
+        "machines",
+        "Your machines",
+        octicon!("device-desktop"),
+        &[("upload", "Upload", crate::sets::token_box)],
+    ),
+    (
+        "account",
+        "Account",
+        octicon!("person"),
+        &[
+            ("api", "API token", crate::apitoken::settings_box),
+            ("github", "GitHub sign-in", github_box),
+            ("start", "Get started", crate::welcome::settings_box),
+        ],
+    ),
 ];
+
+/// The id of each section of `/me/settings`.
+#[cfg(test)]
+pub(crate) fn sections() -> impl Iterator<Item = &'static str> {
+    GROUPS
+        .iter()
+        .flat_map(|(_, _, _, list)| list.iter().map(|(id, _, _)| *id))
+}
 
 /// What the server does with the GitHub token of a session. Keep it in
 /// step with the lent tokens part of docs/data.md.
-fn github_box() -> crate::html::Html {
-    let body = crate::html::Html::from(
-        "<div class=\"Box-row\"><p>When you sign in, the server keeps the GitHub token of your session. \
-         It uses the token for one read that helps you: the paths you changed in nixpkgs, when you sign in and then once a day.</p>\
+fn github_box(_: &App, _: &str) -> Html {
+    Html::from(
+        "<p>The server keeps the GitHub token of your session. Sign out to delete it from this server. \
+         You can also revoke it in your <a href=\"https://github.com/settings/applications\">GitHub settings</a>.</p>\
+         <details class=\"fold\"><summary>What the server reads with it</summary>\
+         <p>It reads one thing for you: the paths you changed in nixpkgs, when you sign in and then once a day.</p>\
          <p>Shared work, such as the archive of nixpkgs, uses the server's own tokens. \
          When they have less than 1000 points left, your token can pay for shared reads that keep the data fresh: \
-         at most a tenth of its budget in each rate limit window. It never pays for the walk back through history.</p>\
-         <p class=\"mb-0\">Sign out to delete the token from this server. \
-         You can also revoke it in your <a href=\"https://github.com/settings/applications\">GitHub settings</a>.</p></div>",
-    );
-    crate::html::html!(
-        "<div id=\"github\">{}</div>",
-        crate::ui::section(
-            crate::html::html!(
-                "{} Your GitHub sign-in",
-                crate::web::icon(crate::web::octicon!("key"))
-            ),
-            None,
-            None,
-            body
-        )
+         at most a tenth of its budget in each rate limit window. It never pays for the walk back through history.</p></details>",
     )
 }
 
@@ -95,26 +124,32 @@ async fn settings_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    let body = [
-        crate::notify::settings_box(&app, &login),
-        crate::followup::settings_box(&app, &login),
-        crate::catalog::feed_box(&app, &login),
-        crate::sets::token_box(&app, &login),
-        crate::apitoken::settings_box(&app, &login),
-        crate::web::tags_box(&app, &login),
-        crate::progress::goal_box(&app, &login),
-        crate::welcome::settings_box(&app, &login),
-        github_box(),
-    ]
-    .into_iter()
-    .collect::<crate::html::Html>();
-    let jump = SETTINGS
+    let body: Html = GROUPS
         .iter()
-        .map(|(id, label)| Tab::new(format!("#{id}"), *label, false))
+        .map(|(group, title, symbol, list)| {
+            let rows: Html = list
+                .iter()
+                .map(|(id, label, render)| {
+                    html!(
+                        "<div class=\"Box-row setting\" id=\"{id}\"><h3 class=\"setting-label\">{label}</h3>\
+                         <div class=\"setting-body\">{}</div></div>",
+                        render(&app, &login)
+                    )
+                })
+                .collect();
+            html!(
+                "<div id=\"{group}\">{}</div>",
+                section(html!("{} {title}", icon(symbol)), None, None, rows)
+            )
+        })
+        .collect();
+    let jump = GROUPS
+        .iter()
+        .map(|(id, title, _, _)| Tab::new(format!("#{id}"), *title, false))
         .collect();
     Page::new(Section::Personal(Personal::Settings), "Settings")
         .icon(octicon!("gear"))
-        .sub("Choices and tokens that apply to you only. Only you see this page.")
+        .sub("Only you see this page.")
         .subnav(jump)
         .body(body)
         .render(&app, Some(&login))
@@ -192,9 +227,18 @@ mod tests {
             "private, no-store"
         );
         let html = body(r).await;
-        for (id, _) in SETTINGS {
+        for (id, ..) in GROUPS {
             assert!(html.contains(&format!("<div id=\"{id}\">")), "#{id}");
             assert!(html.contains(&format!("href=\"#{id}\"")), "link to #{id}");
+        }
+        assert_eq!(sections().count(), 9);
+        for id in sections() {
+            assert_eq!(
+                html.matches(&format!("<div class=\"Box-row setting\" id=\"{id}\">"))
+                    .count(),
+                1,
+                "#{id}"
+            );
         }
         for action in [
             "/me/notify",

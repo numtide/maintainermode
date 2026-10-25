@@ -10,8 +10,8 @@ use chrono::Utc;
 
 use crate::html::{Html, html};
 use crate::sets::token_hash;
-use crate::ui::{Page, Section, section};
-use crate::web::{App, Shared, icon, octicon, random_id};
+use crate::ui::{Page, Section};
+use crate::web::{App, Shared, octicon, random_id};
 
 const HASH: &str = "api_token_hash";
 const AT: &str = "api_token_at";
@@ -41,7 +41,7 @@ fn made_at(app: &App, login: &str) -> Option<String> {
 pub fn settings_box(app: &App, login: &str) -> Html {
     let state = match made_at(app, login) {
         Some(at) => html!(
-            "<p>You made a token on {}. The server shows a token once and keeps only its hash.</p>\
+            "<p class=\"mb-2\">You made a token on {}.</p>\
              <form method=\"post\" action=\"/me/api-token\" class=\"d-inline\"><button class=\"btn btn-sm\" type=\"submit\">Replace the token</button></form> \
              <form method=\"post\" action=\"/me/api-token/delete\" class=\"d-inline\"><button class=\"btn btn-sm btn-danger\" type=\"submit\">Revoke the token</button></form>",
             at.get(..10).unwrap_or(&at)
@@ -49,17 +49,9 @@ pub fn settings_box(app: &App, login: &str) -> Html {
         None => "<form method=\"post\" action=\"/me/api-token\"><button class=\"btn btn-sm btn-primary\" type=\"submit\">Make an API token</button></form>".into(),
     };
     html!(
-        "<div id=\"api\">{}</div>",
-        section(
-            html!("{} API token", icon(octicon!("key"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row\"><p>The <code>maintainer-mode</code> command and your own tools read your private data from \
-                 <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/api.md\">the API</a> with this token, \
-                 as <code>Authorization: Bearer</code>. It only reads.</p>{state}</div>"
-            )
-        )
+        "<p class=\"mb-2\">The <code>maintainer-mode</code> command and your own tools read your private data from \
+         <a href=\"https://github.com/numtide/maintainermode/blob/main/docs/api.md\">the API</a> with this token, \
+         as <code>Authorization: Bearer</code>. It only reads.</p>{state}"
     )
 }
 

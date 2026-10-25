@@ -415,7 +415,7 @@ pub(crate) fn settings_box(app: &App, login: &str) -> Html {
     let mut boxes = Html::new();
     for k in Kind::ALL {
         boxes.push(&html!(
-            "<div class=\"form-checkbox my-1\"><label><input type=\"checkbox\" name=\"k_{key}\" value=\"1\"{}> {} {}</label></div>",
+            "<label><input type=\"checkbox\" name=\"k_{key}\" value=\"1\"{}> {} {}</label>",
             if on.contains(&k) { " checked" } else { "" },
             k.icon(),
             k.label(),
@@ -423,17 +423,9 @@ pub(crate) fn settings_box(app: &App, login: &str) -> Html {
         ));
     }
     html!(
-        "<div id=\"notifications\">{}</div>",
-        crate::ui::section(
-            html!("{} Notifications", icon(octicon!("bell"))),
-            None,
-            None,
-            html!(
-                "<div class=\"Box-row\"><form method=\"post\" action=\"/me/notify\">\
-                 <p>Your <a href=\"/inbox\">inbox</a> shows every event. The unread count in the header includes only the kinds you choose here.</p>\
-                 {boxes}<button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form></div>"
-            )
-        )
+        "<form method=\"post\" action=\"/me/notify\">\
+         <p class=\"mb-2\">Your <a href=\"/inbox\">inbox</a> shows every event. The unread count includes only the kinds you check.</p>\
+         <div class=\"checks\">{boxes}</div><button class=\"btn btn-sm mt-2\" type=\"submit\">Save</button></form>"
     )
 }
 
