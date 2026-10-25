@@ -1,3 +1,5 @@
+<img src="src/logo.svg" alt="" width="72" align="right">
+
 # Maintainer Mode
 
 **Tools that make it easier to contribute to nixpkgs.**

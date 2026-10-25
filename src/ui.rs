@@ -297,13 +297,14 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> Html {
     } else {
         html!("{} · Maintainer Mode", p.title)
     };
-    let club = icon(octicon!("people"));
+    let logo = crate::assets::logo();
+    let icons = crate::assets::icons();
     let menu = menu(app, viewer, p.section);
     let nav = nav(p.section);
     let subnav = subnav(&p.subnav);
     let search = search_box(&p.query);
     let body = &p.body;
-    let sprite = crate::assets::sprite(&[&club, &menu, &nav, &search, &head, &subnav, body]);
+    let sprite = crate::assets::sprite(&[&menu, &nav, &search, &head, &subnav, body]);
     let css = crate::assets::stylesheets();
     let js = crate::assets::scripts();
     let nvd = if app.store.get("nvd_api").ok().flatten().is_some() {
@@ -318,13 +319,14 @@ fn document(app: &App, viewer: Option<&str>, p: &Page) -> Html {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title}</title>
+{icons}
 {css}
 {js}
 </head>
 <body class="color-bg-default color-fg-default">
 {sprite}<a class="skip-link" href="#main">Skip to content</a>
 <header class="Header site-header">
-  <a class="Header-link site-brand" href="/" aria-label="Maintainer Mode, home">{club}<span class="site-name">Maintainer Mode</span></a>
+  <a class="Header-link site-brand" href="/" aria-label="Maintainer Mode, home">{logo}<span class="site-name">Maintainer Mode</span></a>
   <a class="site-beta" href="{ISSUES}" title="Work in progress: pages, numbers and links can change or break. Tell us what is wrong or missing.">beta</a>
   <nav class="site-nav" aria-label="Main"><ul>{nav}</ul></nav>
   {search}

@@ -19,6 +19,11 @@ use crate::web::Shared;
 const PRIMER_CSS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/primer.css"));
 const CLUB_CSS: &str = include_str!("club.css");
 const KEYS_JS: &str = include_str!("keys.js");
+const LOGO_SVG: &str = include_str!("logo.svg");
+const FAVICON_SVG: &str = include_str!("favicon.svg");
+/// For browsers without SVG icons, and for iOS home screens.
+const FAVICON_PNG: &[u8] = include_bytes!("favicon-32.png");
+const TOUCH_PNG: &[u8] = include_bytes!("apple-touch-icon.png");
 /// One line per icon: the name, a tab, then the inside of its `<svg>`.
 const ICONS: &str = include_str!(concat!(env!("PRIMER_DIR"), "/icons.tsv"));
 
@@ -47,6 +52,31 @@ static PRIMER: LazyLock<Asset> = LazyLock::new(|| asset("primer", "css", CSS, PR
 static CLUB: LazyLock<Asset> = LazyLock::new(|| asset("club", "css", CSS, CLUB_CSS));
 static KEYS: LazyLock<Asset> =
     LazyLock::new(|| asset("keys", "js", "text/javascript; charset=utf-8", KEYS_JS));
+static FAVICON: LazyLock<Asset> =
+    LazyLock::new(|| asset("favicon", "svg", "image/svg+xml", FAVICON_SVG));
+
+/// The `<link>` tags of the icons.
+pub(crate) fn icons() -> Html {
+    html!(
+        "<link rel=\"icon\" href=\"/static/{}\" type=\"image/svg+xml\">\n<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">",
+        FAVICON.path
+    )
+}
+
+/// The logo inline in the header, whose bar is dark in both themes: the
+/// darker blue is lighter there, and the link names it.
+pub(crate) fn logo() -> Html {
+    static INLINE: LazyLock<String> = LazyLock::new(|| {
+        LOGO_SVG
+            .replace("#5277C3", "#94b6f2")
+            .replace("<title>Maintainer Mode</title>\n", "")
+            .replace(
+                " width=\"32\" height=\"32\">",
+                " width=\"28\" height=\"28\" class=\"site-logo\" aria-hidden=\"true\">",
+            )
+    });
+    Html::from(INLINE.as_str())
+}
 
 /// The `<link>` tags of the two style sheets.
 pub(crate) fn stylesheets() -> Html {
@@ -63,13 +93,28 @@ pub(crate) fn scripts() -> Html {
 }
 
 pub(crate) fn routes() -> Router<Shared> {
-    Router::new().route("/static/:file", get(static_file))
+    Router::new()
+        .route("/static/:file", get(static_file))
+        .route("/favicon.ico", get(|| async { png(FAVICON_PNG) }))
+        .route("/apple-touch-icon.png", get(|| async { png(TOUCH_PNG) }))
+}
+
+/// These names are fixed, so a browser keeps them for a day only.
+fn png(body: &'static [u8]) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 /// A name carries the hash of its content, so a browser may keep it for
 /// a year: new content gets a new name.
 async fn static_file(Path(file): Path<String>) -> Response {
-    match [&*PRIMER, &*CLUB, &*KEYS]
+    match [&*PRIMER, &*CLUB, &*KEYS, &*FAVICON]
         .into_iter()
         .find(|a| a.path == file)
     {
