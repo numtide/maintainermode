@@ -620,18 +620,6 @@ impl Flags {
         out.join(" · ")
     }
 
-    /// badges() puts the upstream badge last.
-    pub(crate) fn html(&self) -> Html {
-        let mut out = self.badges();
-        let upstream = self.upstream.as_ref().and_then(|_| out.pop());
-        let meta = self.meta();
-        if !meta.is_empty() {
-            out.push(html!("<span class=\"f6 color-fg-muted\">{meta}</span>"));
-        }
-        out.extend(upstream);
-        crate::html::join(out, " · ")
-    }
-
     pub(crate) fn json(&self) -> Value {
         json!({
             "risk": self.score.as_ref().map(|s| s.risk),
@@ -1803,7 +1791,7 @@ pub(crate) mod tests {
             .collect();
         // no maintainer outranks a prerelease repology reports, which counts for nothing
         assert_eq!(order, [("zzz".to_string(), 6), ("aaa".to_string(), 0)]);
-        assert!(rows[0].1.html().contains("risk 6"));
+        assert!(crate::html::join(rows[0].1.badges(), " ").contains("risk 6"));
     }
 
     #[test]

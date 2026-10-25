@@ -158,10 +158,19 @@ same ledger. Each counted review has a link to the review.
 
 ## The pull request page
 
-`/pr/<n>` starts with the panel **At a glance**. The panel helps you decide
-quickly. It shows only facts that the server has. When a source is missing,
-the panel says "unknown". It never guesses a value.
+`/pr/<n>` has four parts: the panel **At a glance**, the description, the
+files and the conversation. The header says who opened it, into which
+branch, and when it was opened and updated, or merged and by whom. The
+panel helps you decide quickly. It shows each fact once, and only facts
+that the server has. When a source is missing, the panel says "unknown". It
+never guesses a value. Details that you need less often fold: the labels,
+the touched packages after the first six, the checks that pass, the review
+checklist, and why the pull request is in its queue. In the description,
+the checklist of the nixpkgs template ("Things done") folds.
 
+- **Reached.** Only for a merged pull request, in the place of the
+  blockers: the branches and channels that hold its merge commit (see
+  [data.md](data.md#the-pull-request-page)).
 - **Blockers.** A draft, a conflict, failed checks, a reviewer who asked for
   changes and did not approve later, and an unusual base branch. A rebuild
   of 1000 or more packages on master or a release branch blocks. From 500
@@ -188,7 +197,12 @@ the panel says "unknown". It never guesses a value.
 - **What is missing.** The checks on the lines that the diff adds (hash
   form, `lib.fakeHash`, tests, `versionCheckHook`, the `meta` of a new
   package) and the packaging gaps of the package on master. Failed checks
-  come first. Passed checks fold.
+  come first. Passed checks fold. The review checklist of the nixpkgs docs
+  folds below them. Only for an open pull request.
+- **In Maintainer Mode.** The queue of the pull request, with a Hide button
+  for you. When it is in no queue, the reason (for example a draft). The
+  reviews that moved it. Why it is here folds: the authors whose pull
+  requests its author reviewed, and why it is in For you.
 - **Actions.** Approve and Request changes open the diff on GitHub. You
   write the review there. Maintainer Mode writes nothing to nixpkgs.
 
