@@ -32,6 +32,7 @@ mod mcp;
 mod me;
 mod metrics;
 mod mine;
+mod mirror;
 mod model;
 mod needs;
 mod nixpkgs;
@@ -217,6 +218,19 @@ enum Command {
         /// Items the archive walk fetches per repository and pass.
         #[arg(long, env = "MAINTAINER_MODE_ARCHIVE_ITEMS", default_value_t = 300)]
         archive_items: usize,
+        /// Keep a git copy of each archived repository: every branch and
+        /// tag, and the head of every pull request.
+        #[arg(
+            long = "archive-git",
+            env = "MAINTAINER_MODE_ARCHIVE_GIT",
+            default_value_t = false,
+            action = clap::ArgAction::Set,
+            value_parser = clap::builder::BoolishValueParser::new()
+        )]
+        archive_git: bool,
+        /// Where the git copy lives; default `git` next to the database.
+        #[arg(long, env = "MAINTAINER_MODE_GIT_DIR")]
+        git_dir: Option<PathBuf>,
         #[command(flatten)]
         rescan: Box<rescan::Args>,
     },
@@ -908,6 +922,8 @@ async fn run(cli: Cli) -> Result<i32> {
             s3,
             archive_repos,
             archive_items,
+            archive_git,
+            git_dir,
             rescan,
         } => {
             let rescan = rescan.config()?;
@@ -1010,6 +1026,10 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::spawn(events::archive(app.clone()));
             if !app.archive.is_empty() {
                 tokio::spawn(archive::walk(app.clone()));
+                if archive_git {
+                    let dir = git_dir.unwrap_or_else(|| data_dir(&db).join("git"));
+                    tokio::spawn(mirror::run(app.clone(), dir));
+                }
             }
             tokio::spawn(rescan::run(app.clone()));
             if let Some(b) = bucket {

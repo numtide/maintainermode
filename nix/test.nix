@@ -240,6 +240,10 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /tmp/a1 -w '%{http_code}' http://127.0.0.1:8790/api/v1/archive/NixOS/nixpkgs/1 > /tmp/a1.code && grep -q 404 /tmp/a1.code && grep -q 'not in the archive yet' /tmp/a1")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/api/v1/archive/NixOS/nix/1 > /tmp/a2.code && grep -q 404 /tmp/a2.code")
     machine.succeed("test -f /var/lib/maintainer-mode/archive/NixOS/nixpkgs.sqlite")
+    # offline, the first git copy fails, and the status says why
+    machine.wait_until_succeeds("test -f /var/lib/maintainer-mode-git/NixOS/nixpkgs.git/HEAD")
+    machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/git.json && grep -q '\"git\":{' /tmp/git.json && grep -q 'git fetch: ' /tmp/git.json")
+    machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/git && grep -q 'NixOS/nixpkgs (git)' /tmp/git && grep -q 'the first copy of every branch' /tmp/git")
     machine.succeed("maintainer-mode archive export --db /var/lib/maintainer-mode/maintainer-mode.sqlite --repo NixOS/nixpkgs --out /tmp/export 2> /tmp/export.log && grep -q '0 items of NixOS/nixpkgs' /tmp/export.log")
     machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/me/runs/review > /tmp/runs1 && grep -q 303 /tmp/runs1")
