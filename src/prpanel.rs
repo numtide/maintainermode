@@ -728,6 +728,11 @@ pub(crate) struct Ctx<'a> {
     pub buttons: Html,
     /// Buttons another feature adds at the end of the actions row, like Next.
     pub extra_actions: Html,
+    /// For a merged pull request, the branches that hold it, in the place
+    /// of the blockers.
+    pub reached: Option<Html>,
+    /// Its place in the queues of Maintainer Mode, as a block.
+    pub queue: Html,
 }
 
 /// A long error, like a failed connection with its URL, shows as a short
@@ -822,7 +827,6 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
         let mut s: Vec<Html> = c
             .touched
             .iter()
-            .take(SHOWN_SUBJECTS)
             .map(|t| {
                 let version = match &t.subject {
                     Subject::Pkg(a) if b.is_none() => c
@@ -847,10 +851,16 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
                 )
             })
             .collect();
-        if c.touched.len() > SHOWN_SUBJECTS {
-            s.push(html!("{} more", c.touched.len() - SHOWN_SUBJECTS));
+        let rest = s.split_off(s.len().min(SHOWN_SUBJECTS));
+        let mut out = crate::html::join(s, ", ");
+        if !rest.is_empty() {
+            out.push(&html!(
+                "<details><summary class=\"f6 color-fg-muted\">{} more</summary>{}</details>",
+                rest.len(),
+                crate::html::join(rest, ", ")
+            ));
         }
-        crate::html::join(s, ", ")
+        out
     };
     lines.push(&line("Touches", touched));
     lines.push(&line(
@@ -863,7 +873,79 @@ fn change_block(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
             if pr.changed_files == 1 { "" } else { "s" }
         ),
     ));
+    if pr.ai.is_some() {
+        lines.push(&line("AI use", ai_text(pr.ai.as_deref())));
+    }
+    if !pr.labels.is_empty() {
+        lines.push(&html!(
+            "<li><details><summary class=\"f6 color-fg-muted\">Labels ({})</summary>{}</details></li>",
+            pr.labels.len(),
+            crate::html::join(
+                pr.labels
+                    .iter()
+                    .map(|l| html!("<span class=\"Label mr-1\">{l}</span>")),
+                " "
+            )
+        ));
+    }
     block("change", "What changes", lines)
+}
+
+fn ai_text(ai: Option<&str>) -> Html {
+    match ai {
+        None => "none disclosed in the last commit or the description".into(),
+        Some(crate::github::OTHER_FORM) => {
+            "attributed in a form the nixpkgs policy does not accept: not an <code>Assisted-by:</code> trailer"
+                .into()
+        }
+        Some("disclosed") => "disclosed".into(),
+        Some(t) => html!("disclosed: {t}"),
+    }
+}
+
+/// The review guidance of the nixpkgs docs, for the checks no program runs.
+fn guide() -> Html {
+    let items: [(&str, String); 6] = [
+        (
+            "The commit messages follow the nixpkgs format, like <code>hello: 2.12 -&gt; 2.13</code> or <code>nixos/nginx: fix the test</code>.",
+            format!("{NIXPKGS}/CONTRIBUTING.md#commit-conventions"),
+        ),
+        (
+            "<code>meta</code> is complete: <code>description</code>, <code>homepage</code>, <code>license</code>, <code>maintainers</code>, <code>mainProgram</code>.",
+            format!("{NIXPKGS}/pkgs/README.md#meta-attributes"),
+        ),
+        (
+            "Sources are fixed-output and pinned by a hash. No <code>lib.fakeHash</code> is left.",
+            format!("{NIXPKGS}/pkgs/README.md#sources"),
+        ),
+        (
+            "A command-line tool has <code>versionCheckHook</code>, or another check that runs it.",
+            "https://nixos.org/manual/nixpkgs/unstable/#versioncheckhook".to_string(),
+        ),
+        (
+            "<code>meta.platforms</code> matches what upstream supports.",
+            format!("{NIXPKGS}/pkgs/README.md#meta-attributes"),
+        ),
+        (
+            "The tests run: <code>passthru.tests</code>, the NixOS test of a module, or nixpkgs-review.",
+            format!("{NIXPKGS}/pkgs/README.md#package-tests"),
+        ),
+    ];
+    let items: Html = items
+        .iter()
+        .map(|(text, href)| {
+            html!(
+                "<li>{} <a href=\"{href}\">Guide</a></li>",
+                Html::from(*text)
+            )
+        })
+        .collect();
+    html!(
+        "<li><details><summary class=\"f6 color-fg-muted\">Review checklist</summary>\
+         <ul class=\"ml-3 mt-1\">{items}</ul>\
+         <p class=\"f6 color-fg-muted mt-1\">From <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">CONTRIBUTING.md</a> \
+         and <a href=\"{NIXPKGS}/pkgs/README.md#reviewing-contributions\">pkgs/README.md</a>.</p></details></li>"
+    )
 }
 
 fn risk_block(pr: &Pr, rebuilds: &[Rebuild]) -> Html {
@@ -1351,6 +1433,7 @@ fn missing_block(list: &[Check]) -> Html {
             passed.iter().map(|c| check_li(c)).collect::<Html>()
         ));
     }
+    lines.push(&guide());
     html!(
         "<div class=\"decide-block decide-wide\" id=\"decide-missing\"><h3 class=\"decide-title\">What is missing \
          <span class=\"text-normal\">· packages as on master</span></h3><ul class=\"decide-list\">{lines}</ul></div>"
@@ -1427,7 +1510,12 @@ pub(crate) fn render(c: &Ctx) -> Html {
         "<section class=\"Box mb-4\" id=\"decide\" aria-labelledby=\"decide-heading\">\
          <div class=\"Box-header\"><h2 class=\"Box-title\" id=\"decide-heading\">At a glance</h2></div>",
     );
-    out.push(&blockers_html(&blockers(c.pr, &rebuilds)));
+    match c.reached.as_ref().filter(|_| c.pr.merged_at.is_some()) {
+        Some(r) => out.push(&html!(
+            "<div class=\"Box-row\" id=\"decide-reached\"><h3 class=\"decide-title\">Reached</h3>{r}</div>"
+        )),
+        None => out.push(&blockers_html(&blockers(c.pr, &rebuilds))),
+    }
     out.push(&Html::from("<div class=\"decide-grid\">"));
     out.push(&change_block(c, kind, b.as_ref()));
     out.push(&risk_block(c.pr, &rebuilds));
@@ -1437,7 +1525,10 @@ pub(crate) fn render(c: &Ctx) -> Html {
     out.push(&builds_block(c));
     out.push(&people_block(c));
     out.push(&security_block(c));
-    out.push(&missing_block(&checks(c, kind)));
+    if c.pr.is_open() {
+        out.push(&missing_block(&checks(c, kind)));
+    }
+    out.push(&c.queue);
     out.push(&Html::from("</div>"));
     out.push(&actions_html(c));
     out.push(&Html::from(
@@ -1763,6 +1854,8 @@ mod tests {
             mine: None,
             buttons: Html::new(),
             extra_actions: Html::new(),
+            reached: None,
+            queue: Html::new(),
         };
         assert_eq!(security_block(&c).as_str(), "");
         let body = "Fixes CVE-2026-26001 again.";
@@ -1805,6 +1898,8 @@ mod tests {
             mine: None,
             buttons: Html::new(),
             extra_actions: Html::new(),
+            reached: None,
+            queue: Html::new(),
         };
         let html = render(&visitor);
         let order = [
@@ -1858,6 +1953,8 @@ mod tests {
             mine: Some(&mine),
             buttons: "<b>buttons</b>".into(),
             extra_actions: "<a id=\"next\">Next</a>".into(),
+            reached: None,
+            queue: Html::new(),
             ..visitor
         };
         let html = render(&signed_in);
@@ -1890,6 +1987,8 @@ mod tests {
             mine: None,
             buttons: Html::new(),
             extra_actions: Html::new(),
+            reached: None,
+            queue: Html::new(),
         };
         let html = render(&c);
         assert!(html.contains("It is closed."));
@@ -1897,6 +1996,9 @@ mod tests {
         assert!(!html.contains("decide-security"));
         assert!(!html.contains("decide-upstream"));
         assert!(html.contains("unknown: no 10.rebuild label yet"));
-        assert!(html.contains("Checks on the diff: unknown"));
+        assert!(
+            !html.contains("decide-missing"),
+            "a closed pull request needs no checks"
+        );
     }
 }

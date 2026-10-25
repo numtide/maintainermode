@@ -25,12 +25,11 @@ use crate::html::{Html, html};
 use crate::ledger::{self, Credit, Dropped};
 use crate::model::Pr;
 use crate::queue::{self, Entry};
-use crate::ui::{Page, Section, kv};
+use crate::ui::{Page, Section};
 use crate::web::{App, Shared, Snapshot, ago, icon, octicon};
 
 const PULL: &str = "https://github.com/NixOS/nixpkgs/pull/";
 const API: &str = "https://api.github.com";
-use crate::web::NIXPKGS;
 /// GitHub's REST API serves at most 3000 files of a pull request; a review
 /// page needs far fewer.
 const FILE_CAP: usize = 100;
@@ -1051,18 +1050,6 @@ fn touched(s: &Snapshot, index: &Index, h: &crate::health::Health, pr: &Pr) -> V
         .collect()
 }
 
-fn ai_text(ai: Option<&str>) -> Html {
-    match ai {
-        None => "none disclosed in the last commit or the description".into(),
-        Some(crate::github::OTHER_FORM) => {
-            "attributed in a form the nixpkgs policy does not accept: not an <code>Assisted-by:</code> trailer"
-                .into()
-        }
-        Some("disclosed") => "disclosed".into(),
-        Some(t) => html!("disclosed: {t}"),
-    }
-}
-
 fn state_label(pr: &Pr) -> Html {
     let (ic, class, word) = match pr.state.as_str() {
         "MERGED" => (icon(octicon!("git-merge")), "Label--success", "merged"),
@@ -1099,21 +1086,6 @@ pub(crate) fn ci_text(ci: Option<&str>) -> Html {
     }
 }
 
-fn mergeable_text(m: &str) -> &'static str {
-    match m {
-        "MERGEABLE" => "<span class=\"color-fg-success\">merges cleanly</span>",
-        "CONFLICTING" => "<span class=\"Label Label--danger\">conflict</span>",
-        _ => "<span class=\"color-fg-muted\">not known yet</span>",
-    }
-}
-
-fn people(logins: &[String]) -> Html {
-    if logins.is_empty() {
-        return "<span class=\"color-fg-muted\">none</span>".into();
-    }
-    crate::web::people(logins)
-}
-
 fn reach_html(r: &crate::reach::Reach) -> Html {
     if !r.in_copy {
         return "<span class=\"color-fg-muted\">the git copy of this server does not have the merge commit yet</span>".into();
@@ -1142,250 +1114,126 @@ fn reach_html(r: &crate::reach::Reach) -> Html {
     crate::html::join(parts, " · ")
 }
 
-fn about(pr: &Pr, reach: Option<&crate::reach::Reach>) -> Html {
-    let labels: Html = if pr.labels.is_empty() {
-        "<span class=\"color-fg-muted\">none</span>".into()
-    } else {
-        pr.labels
-            .iter()
-            .map(|l| html!("<span class=\"Label mr-1\">{l}</span>"))
-            .collect()
+/// `here` says why the pull request is in its queue and, for the viewer,
+/// in For you; `hide` is the viewer's Hide or Show again button.
+fn place_block(
+    pr: &Pr,
+    p: &Place,
+    credits: &[&Credit],
+    for_you: bool,
+    here: &[String],
+    hide: Html,
+) -> Html {
+    let li = |label: &str, value: Html| {
+        html!("<li><span class=\"decide-label\">{label}</span> {value}</li>")
     };
-    let when = match (pr.merged_at, pr.closed_at) {
+    let mut lines = Html::new();
+    if pr.is_open() {
+        let queue: Html = match p.queue {
+            "merge" => "<a href=\"/review?tab=ready\">Ready to merge</a>".into(),
+            "review" => {
+                let mut buckets: Vec<Html> = Vec::new();
+                if for_you {
+                    buckets.push("<a href=\"/review?tab=foryou\">for you</a>".into());
+                }
+                if p.unowned {
+                    buckets.push("<a href=\"/review?tab=unowned\">no maintainer</a>".into());
+                }
+                buckets.push("<a href=\"/review?tab=all\">all</a>".into());
+                html!("Needs review: {}", crate::html::join(buckets, ", "))
+            }
+            _ => "<span class=\"color-fg-muted\">in no queue</span>".into(),
+        };
+        // in a queue, each reason is a blocker, an approval or a review
+        // that the panel already shows
+        let why = if p.why.is_empty() || p.queue != "none" {
+            Html::new()
+        } else {
+            html!(
+                " <span class=\"f6 color-fg-muted\">· {}</span>",
+                p.why.join("; ")
+            )
+        };
+        lines.push(&li("Queue", html!("{queue}{why}{hide}")));
+    }
+    let moved: Vec<Html> = credits
+        .iter()
+        .filter_map(|c| {
+            let status = match &c.dropped {
+                Some(Dropped::DailyCap) => return None,
+                None => Html::new(),
+                Some(Dropped::Voided { by, url }) => html!(
+                    " · <a class=\"Label Label--danger\" href=\"{url}\">voided</a> by {}",
+                    crate::web::person_link(by)
+                ),
+            };
+            Some(html!(
+                "<a href=\"/u/{r}\">{r}</a> <a class=\"f6\" href=\"{u}\">{} ago</a>{status}",
+                ago(c.at),
+                r = c.reviewer,
+                u = c.review_url,
+            ))
+        })
+        .collect();
+    if !moved.is_empty() || pr.is_open() {
+        let list = if moved.is_empty() {
+            "<span class=\"color-fg-muted\">none yet</span>".into()
+        } else {
+            crate::html::join(moved, ", ")
+        };
+        lines.push(&li(
+            "Reviews that moved it",
+            html!(
+                "{list} <a class=\"f6\" href=\"/state?tab=rules#1-a-review-that-moves-a-pull-request\">what counts</a>"
+            ),
+        ));
+    }
+    let mut more: Vec<Html> = here.iter().map(|h| Html::text(h)).collect();
+    if p.unowned {
+        more.push(
+            "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files"
+                .into(),
+        );
+    }
+    if !more.is_empty() {
+        lines.push(&html!(
+            "<li><details><summary class=\"f6 color-fg-muted\">Why it is here</summary><ul class=\"ml-3 f6\">{}</ul></details></li>",
+            more.into_iter().map(|m| html!("<li>{m}</li>")).collect::<Html>()
+        ));
+    }
+    if lines.is_empty() {
+        return lines;
+    }
+    html!(
+        "<div class=\"decide-block decide-wide\" id=\"decide-queue\"><h3 class=\"decide-title\">In Maintainer Mode</h3><ul class=\"decide-list\">{lines}</ul></div>"
+    )
+}
+
+fn sub_line(pr: &Pr) -> Html {
+    let author = html!("<a href=\"/u/{0}\">{0}</a>", pr.author);
+    let base = html!("<span class=\"branch-name\">{}</span>", pr.base);
+    let opened = ago(pr.created_at);
+    match (pr.merged_at, pr.closed_at) {
         (Some(t), _) => html!(
-            "{} ago, merged {} ago{}",
-            ago(pr.created_at),
+            "{} from {author} into {base} · opened {opened} ago · merged {} ago{}",
+            state_label(pr),
             ago(t),
             pr.merged_by
                 .as_deref()
                 .map(|m| html!(" by <a href=\"/u/{0}\">{0}</a>", m))
                 .unwrap_or_default()
         ),
-        (None, Some(t)) => html!("{} ago, closed {} ago", ago(pr.created_at), ago(t)),
+        (None, Some(t)) => html!(
+            "{} from {author} into {base} · opened {opened} ago · closed {} ago",
+            state_label(pr),
+            ago(t)
+        ),
         _ => html!(
-            "{} ago, updated {} ago",
-            ago(pr.created_at),
+            "{} {author} wants to merge into {base} · opened {opened} ago · updated {} ago",
+            state_label(pr),
             ago(pr.updated_at)
         ),
-    };
-    let mut out = Html::from(
-        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">About</h2></div>",
-    );
-    out.push(&kv("State", state_label(pr)));
-    out.push(&kv(
-        "Author",
-        html!(
-            "<a href=\"/u/{a}\">{a}</a>{}",
-            if pr.association.is_empty() {
-                Html::new()
-            } else {
-                html!(
-                    " <span class=\"color-fg-muted f6\">{}</span>",
-                    pr.association.to_lowercase().replace('_', " ")
-                )
-            },
-            a = pr.author
-        ),
-    ));
-    out.push(&kv(
-        "Base",
-        html!("<span class=\"branch-name\">{}</span>", pr.base),
-    ));
-    out.push(&kv("Labels", labels));
-    out.push(&kv("Age", when));
-    if let Some(r) = reach {
-        out.push(&kv("Reached", reach_html(r)));
     }
-    out.push(&kv(
-        "Size",
-        html!(
-            "<span class=\"color-fg-success\">+{}</span> <span class=\"color-fg-danger\">−{}</span> in {} file{}",
-            pr.additions,
-            pr.deletions,
-            pr.changed_files,
-            if pr.changed_files == 1 { "" } else { "s" }
-        ),
-    ));
-    if pr.is_open() {
-        out.push(&kv("Checks", ci_text(pr.ci.as_deref())));
-        out.push(&kv("Mergeable", mergeable_text(&pr.mergeable)));
-    }
-    out.push(&kv("AI use", ai_text(pr.ai.as_deref())));
-    out.push(&Html::from("</div>"));
-    out
-}
-
-/// `here` says why the pull request is in its queue and, for the viewer,
-/// in For you; `hide` is the viewer's Hide or Show again button.
-fn place_html(p: &Place, credits: &[&Credit], for_you: bool, here: &[String], hide: Html) -> Html {
-    let mut out = Html::from(
-        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">In Maintainer Mode</h2></div>",
-    );
-    let queue: Html = match p.queue {
-        "merge" => "<a href=\"/review?tab=ready\">Ready to merge</a>".into(),
-        "review" => {
-            let mut buckets: Vec<Html> = Vec::new();
-            if for_you {
-                buckets.push("<a href=\"/review?tab=foryou\">for you</a>".into());
-            }
-            if p.unowned {
-                buckets.push("<a href=\"/review?tab=unowned\">no maintainer</a>".into());
-            }
-            buckets.push("<a href=\"/review?tab=all\">all</a>".into());
-            html!("Needs review: {}", crate::html::join(buckets, ", "))
-        }
-        _ => "<span class=\"color-fg-muted\">in no queue</span>".into(),
-    };
-    out.push(&kv("Queue", html!("{queue}{hide}")));
-    if !here.is_empty() {
-        out.push(&kv("Why it is here", Html::text(&here.join("; "))));
-    }
-    if !p.why.is_empty() {
-        out.push(&kv(
-            if p.queue == "merge" {
-                "Why"
-            } else {
-                "Why not ready"
-            },
-            Html::text(&p.why.join("; ")),
-        ));
-    }
-    if p.unowned {
-        out.push(&kv(
-            "No maintainer",
-            "no <code>meta.maintainers</code>, <code>meta.teams</code> or <code>ci/OWNERS</code> line covers its files.",
-        ));
-    }
-    out.push(&kv("Approved head", people(&p.approved_by)));
-    let mut rows = Html::new();
-    for c in credits {
-        let status = match &c.dropped {
-            Some(Dropped::DailyCap) => continue,
-            None => Html::new(),
-            Some(Dropped::Voided { by, url }) => html!(
-                " · <a class=\"Label Label--danger\" href=\"{url}\">voided</a> by {}",
-                crate::web::person_link(by)
-            ),
-        };
-        rows.push(&html!(
-            "<div><a href=\"/u/{r}\">{r}</a> · <a href=\"{u}\">review</a> {} ago{status}</div>",
-            ago(c.at),
-            r = c.reviewer,
-            u = c.review_url,
-        ));
-    }
-    if rows.is_empty() {
-        rows = "<span class=\"color-fg-muted\">none yet</span>".into();
-    }
-    out.push(&kv(
-        "Reviews that moved it",
-        html!(
-            "{rows}<div class=\"f6 color-fg-muted\">A change, a reply or a merge followed in {} days. \
-             <a href=\"/state?tab=rules#1-a-review-that-moves-a-pull-request\">Why it matters</a></div>",
-            ledger::MOVE_DAYS
-        ),
-    ));
-    out.push(&Html::from("</div>"));
-    out
-}
-
-fn touched_html(list: &[Touched]) -> Html {
-    let mut out = Html::from(
-        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title\">What it touches</h2></div>",
-    );
-    if list.is_empty() {
-        out.push(&Html::from(
-            "<div class=\"Box-row color-fg-muted\">No package or NixOS module in the index matches its files or its title.</div>",
-        ));
-    }
-    for t in list {
-        let approved = if t.approved_by.is_empty() {
-            Html::new()
-        } else {
-            html!(
-                " · <span class=\"color-fg-success\">{} approved by {}</span>",
-                icon(octicon!("check-circle-fill")),
-                people(&t.approved_by)
-            )
-        };
-        let teams = if t.teams.is_empty() {
-            Html::new()
-        } else {
-            html!(" · teams {}", t.teams.join(", "))
-        };
-        out.push(&html!(
-            "<div class=\"Box-row\"><div class=\"d-flex flex-items-center flex-wrap gap-2\">\
-             <a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a> {}</div>\
-             <div class=\"f6 color-fg-muted mt-1\">maintainers {}{teams}{approved}</div></div>",
-            t.subject.href(),
-            t.subject.icon(),
-            t.subject.label(),
-            t.flags.html(),
-            people(&t.maintainers),
-        ));
-    }
-    out.push(&Html::from("</div>"));
-    out
-}
-
-fn checklist(pr: &Pr) -> Html {
-    let items: [(&'static str, String); 7] = [
-        (
-            "The commit messages follow the nixpkgs format, like <code>hello: 2.12 -&gt; 2.13</code> or <code>nixos/nginx: fix the test</code>.",
-            format!("{NIXPKGS}/CONTRIBUTING.md#commit-conventions"),
-        ),
-        (
-            "<code>meta</code> is complete: <code>description</code>, <code>homepage</code>, <code>license</code>, <code>maintainers</code>, <code>mainProgram</code>.",
-            format!("{NIXPKGS}/pkgs/README.md#meta-attributes"),
-        ),
-        (
-            "Sources are fixed-output and pinned by a hash. No <code>lib.fakeHash</code> is left.",
-            format!("{NIXPKGS}/pkgs/README.md#sources"),
-        ),
-        (
-            "A command-line tool has <code>versionCheckHook</code>, or another check that runs it.",
-            "https://nixos.org/manual/nixpkgs/unstable/#versioncheckhook".to_string(),
-        ),
-        (
-            "<code>meta.platforms</code> matches what upstream supports.",
-            format!("{NIXPKGS}/pkgs/README.md#meta-attributes"),
-        ),
-        (
-            "The tests run: <code>passthru.tests</code>, the NixOS test of a module, or nixpkgs-review.",
-            format!("{NIXPKGS}/pkgs/README.md#package-tests"),
-        ),
-        (
-            "AI use is disclosed with an <code>Assisted-by:</code> trailer.",
-            format!("{NIXPKGS}/CONTRIBUTING.md#automationai-policy"),
-        ),
-    ];
-    let mut out = html!(
-        "<div class=\"Box mb-4\"><div class=\"Box-header\"><h2 class=\"Box-title d-inline\">{} Review checklist</h2> \
-         <span class=\"f6 text-normal color-fg-muted\">from <a href=\"{NIXPKGS}/CONTRIBUTING.md#how-to-review-pull-requests\">CONTRIBUTING.md</a> \
-         and <a href=\"{NIXPKGS}/pkgs/README.md#reviewing-contributions\">pkgs/README.md</a></span></div><div class=\"Box-row\"><ul class=\"ml-3\">",
-        icon(octicon!("checklist"))
-    );
-    for (text, href) in &items {
-        out.push(&html!(
-            "<li>{} <a href=\"{href}\">Guide</a></li>",
-            Html::from(*text)
-        ));
-    }
-    out.push(&Html::from("</ul>"));
-    let title_ok = !crate::subject::of_title(&pr.title).is_empty();
-    out.push(&html!(
-        "<p class=\"f6 color-fg-muted mt-2\">The title {}. AI use: {}.</p></div>",
-        Html::from(if title_ok {
-            "names what it changes"
-        } else {
-            "does not start with <code>name:</code>"
-        }),
-        ai_text(pr.ai.as_deref())
-    ));
-    out.push(&Html::from(
-        "<div class=\"Box-footer f6 color-fg-muted\">Maintainer Mode writes nothing to nixpkgs. You write your review on GitHub.</div></div>",
-    ));
-    out
 }
 
 fn exits(n: u64) -> Html {
@@ -1497,12 +1345,44 @@ fn files_html(pr: &Pr, files: &Result<Arc<Files>, String>) -> Html {
     out
 }
 
+/// The description, and its part from the "Things done" heading of the
+/// nixpkgs pull request template on.
+fn split_template(body: &str) -> (&str, Option<&str>) {
+    let mut at = 0;
+    for line in body.split_inclusive('\n') {
+        let t = line.trim();
+        if t.starts_with('#')
+            && t.trim_start_matches('#')
+                .trim()
+                .eq_ignore_ascii_case("things done")
+        {
+            return (&body[..at], Some(&body[at..]));
+        }
+        at += line.len();
+    }
+    (body, None)
+}
+
 fn description_html(pr: &Pr, talk: &Result<Arc<Talk>, String>) -> Html {
     let body = match talk {
         Ok(t) if t.body.trim().is_empty() => {
             "<p class=\"color-fg-muted\">No description.</p>".into()
         }
-        Ok(t) => markdown(&t.body),
+        Ok(t) => {
+            let (main, template) = split_template(&t.body);
+            let mut h = if main.trim().is_empty() {
+                "<p class=\"color-fg-muted\">No description apart from the template.</p>".into()
+            } else {
+                markdown(main)
+            };
+            if let Some(rest) = template {
+                h.push(&html!(
+                    "<details class=\"mt-2\"><summary class=\"f6 color-fg-muted\">The template checklist</summary>{}</details>",
+                    markdown(rest)
+                ));
+            }
+            h
+        }
         Err(e) => html!(
             "<p class=\"color-fg-muted\">The description could not be read: {}. <a href=\"{}\">Read it on GitHub</a></p>",
             why(e),
@@ -1761,6 +1641,8 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
                 Html::new()
             },
             extra_actions: next,
+            reached: reach.as_ref().map(reach_html),
+            queue: place_block(pr, &place, &credits, for_you, &here, hide),
         })
     };
     let page = Page::new(Section::Review, format!("#{n} {}", pr.title))
@@ -1769,13 +1651,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             pr.title,
             github_icon(n)
         ))
-        .sub(html!(
-            "{} <a href=\"/u/{a}\">{a}</a> wants to merge into <span class=\"branch-name\">{}</span> · opened {} ago",
-            state_label(pr),
-            pr.base,
-            ago(pr.created_at),
-            a = pr.author
-        ))
+        .sub(sub_line(pr))
         .actions(exits(n));
     let mut out = panel;
     out.push(&crate::followup::pr_box(
@@ -1785,10 +1661,6 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         s.committers.is(&pr.author),
     ));
     out.push(&description_html(pr, &talk));
-    out.push(&about(pr, reach.as_ref()));
-    out.push(&place_html(&place, &credits, for_you, &here, hide));
-    out.push(&touched_html(&list));
-    out.push(&checklist(pr));
     out.push(&files_html(pr, &files));
     out.push(&talk_html(pr, &talk));
     page.body(out).render(&app, viewer.as_deref())
@@ -2281,5 +2153,26 @@ mod tests {
         assert_eq!(place.queue, "none");
         assert!(place.why.contains(&"it is a draft".to_string()));
         assert!(place.why.iter().any(|w| w.contains("not in the queues")));
+    }
+
+    #[test]
+    fn the_template_checklist_folds_away() {
+        let body = "Fixes the build.\n\n## Things done\n\n- [x] Built on x86_64-linux\n";
+        assert_eq!(
+            split_template(body),
+            (
+                "Fixes the build.\n\n",
+                Some("## Things done\n\n- [x] Built on x86_64-linux\n")
+            )
+        );
+        assert_eq!(
+            split_template("## things DONE"),
+            ("", Some("## things DONE"))
+        );
+        assert_eq!(split_template("No template.\n"), ("No template.\n", None));
+        assert_eq!(
+            split_template("We have things done here.\n"),
+            ("We have things done here.\n", None)
+        );
     }
 }
