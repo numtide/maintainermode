@@ -481,16 +481,7 @@ fn small_form(action: &str, name: &str, extra: &'static str, class: &str, label:
     )
 }
 
-const NOTICE: &str = "<div class=\"Box-row f6\"><h3 class=\"f5 mb-2\">What the server keeps, and why</h3>\
-<p>For each set, the server keeps its name, the nixpkgs attributes that its index knows, the upload time, \
-the scan time and the nixpkgs revision. It drops all other names. The name is only what you give with <code>--name</code>. \
-With <code>--with-outputs</code>, it also keeps the label of each output, such as a host name, and the outputs that hold each package. \
-It keeps the hash of your upload token, not the token. Only you see a private set: here, in your inbox, in your private feed, and in the private answers of the API. \
-No public page, number or API reads it. There is no admin view. A set expires 90 days after its last upload.</p>\
-<p class=\"mb-0\">A public flake set also keeps its flake reference and output. When you show it on your profile, everybody can see \
-its name, its reference, its packages and its output labels there. For a flake that the server scans, the server also keeps the reason of the last failure. \
-It scans the flake only while you open your packages at least once in 90 days. \
-These attributes expire 90 days after the last good scan or your last visit. \"Delete\" deletes one set now.</p></div>";
+const NOTICE: &str = "<div class=\"Box-row f6\"><a href=\"/me/settings#shared\">What the server keeps, and who sees it</a></div>";
 
 /// The sets box of the machines filter, folded under the list: one row
 /// per set with its facts, its public switch and its Delete button, then
@@ -708,6 +699,8 @@ fn shared(app: &App) -> Html {
          <li>It keeps the set name, the package names, the versions that nixpkgs has, the count of names not sent, the scan time and the nixpkgs revision. \
          With <code>--with-outputs</code>, it also keeps the output labels and which package each one holds.</li>\
          <li>Only you see it, when you sign in. It never shows on public pages or in public numbers. Only a public flake that you mark with <code>--public-flake</code> shows on your profile.</li>\
+         <li>A public flake set also keeps its flake reference and output, and the reason of the last failed scan. \
+         The server scans the flake only while you open your packages at least once in {RETENTION_DAYS} days.</li>\
          <li>The admin of {host} can read the server database.</li>\
          <li>The server deletes it {RETENTION_DAYS} days after the upload. The <em>Delete</em> button of a set on <a href=\"{MACHINES}\">On my machines</a> deletes it now.</li></ul>\
          <p class=\"mb-0\"><strong>The risk.</strong> The report tells which public packages run on your machines, and their versions. \
