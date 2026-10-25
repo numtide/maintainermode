@@ -73,6 +73,23 @@ pub struct Void {
     pub at: DateTime<Utc>,
 }
 
+/// Logins of community automation that GitHub lists as users, or whose
+/// GraphQL login has no `[bot]` suffix. The archive keeps only the login of
+/// the person who merged, so this list is the only bot test for mergers.
+const AUTOMATION: [&str; 4] = [
+    "r-ryantm",
+    "nixpkgs-merge-bot",
+    "nixpkgs-ci",
+    "github-actions",
+];
+
+/// The nixpkgs-update bot, which opens most version bumps.
+pub const UPDATE_BOT: &str = "r-ryantm";
+
+pub fn automation(login: &str) -> bool {
+    login.ends_with("[bot]") || AUTOMATION.iter().any(|a| login.eq_ignore_ascii_case(a))
+}
+
 impl Review {
     /// The numeric id after `#pullrequestreview-`, which is how a void names it.
     pub fn id(&self) -> &str {
@@ -81,11 +98,19 @@ impl Review {
             .map(|(_, id)| id)
             .unwrap_or("")
     }
+
+    pub fn bot(&self) -> bool {
+        self.author_is_bot || automation(&self.author)
+    }
 }
 
 impl Pr {
     pub fn is_open(&self) -> bool {
         self.state == "OPEN"
+    }
+
+    pub fn bot(&self) -> bool {
+        self.author_is_bot || automation(&self.author)
     }
 }
 

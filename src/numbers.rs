@@ -410,7 +410,7 @@ pub(crate) fn numbers(app: &App, range: Range) -> Html {
                 "Opened, by who opened them",
                 html!(
                     "The update bot is {} (nixpkgs-update). Most other bot pull requests are backports.",
-                    metrics::UPDATE_BOT
+                    crate::model::UPDATE_BOT
                 ),
                 Form::Stack,
                 Unit::Count,
