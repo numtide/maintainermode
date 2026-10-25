@@ -2,13 +2,12 @@
 //! person who signed in.
 
 use axum::Router;
-use axum::extract::{Query, Request, State};
+use axum::extract::{Request, State};
 use axum::http::HeaderMap;
 use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
-use serde::Deserialize;
 
 use crate::ui::{Page, Personal, Section, Tab};
 use crate::web::{Shared, octicon};
@@ -54,33 +53,24 @@ pub async fn no_store(req: Request, next: Next) -> Response {
     res
 }
 
-pub(crate) const SETTINGS: [(&str, &str); 11] = [
+pub(crate) const SETTINGS: [(&str, &str); 9] = [
     ("notifications", "Notifications"),
     ("followup", "Pull requests"),
     ("feed", "Feed"),
     ("upload", "Upload"),
-    ("llm", "LLMs"),
-    ("mcp", "MCP"),
-    ("workflows", "Workflows"),
+    ("api", "API token"),
     ("tags", "Tags"),
     ("goal", "Goal"),
     ("start", "Get started"),
     ("github", "GitHub"),
 ];
 
-#[derive(Deserialize)]
-struct SettingsQuery {
-    /// GitHub adds it when it sends the person back after an App install.
-    setup_action: Option<String>,
-}
-
 /// What the server does with the GitHub token of a session. Keep it in
 /// step with the lent tokens part of docs/data.md.
 fn github_box() -> crate::html::Html {
     let body = crate::html::Html::from(
         "<div class=\"Box-row\"><p>When you sign in, the server keeps the GitHub token of your session. \
-         It uses the token for reads that help you: the paths you changed in nixpkgs, when you sign in; \
-         the runs of your review workflow; and the workflows you start from this site.</p>\
+         It uses the token for one read that helps you: the paths you changed in nixpkgs, when you sign in and then once a day.</p>\
          <p>Shared work, such as the archive of nixpkgs, uses the server's own tokens. \
          When they have less than 1000 points left, your token can pay for shared reads that keep the data fresh: \
          at most a tenth of its budget in each rate limit window. It never pays for the walk back through history.</p>\
@@ -101,26 +91,16 @@ fn github_box() -> crate::html::Html {
     )
 }
 
-async fn settings_page(
-    State(app): State<Shared>,
-    headers: HeaderMap,
-    Query(q): Query<SettingsQuery>,
-) -> Response {
+async fn settings_page(State(app): State<Shared>, headers: HeaderMap) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    if q.setup_action.is_some() {
-        crate::actions::forget_check(&app, &login);
-    }
-    let workflows = crate::actions::repos_box(&app, &login).await;
     let body = [
         crate::notify::settings_box(&app, &login),
         crate::followup::settings_box(&app, &login),
         crate::catalog::feed_box(&app, &login),
         crate::sets::token_box(&app, &login),
-        crate::llm::llm_box(&app, &login),
-        crate::llm::mcp_box(&app, &login),
-        workflows,
+        crate::apitoken::settings_box(&app, &login),
         crate::web::tags_box(&app, &login),
         crate::progress::goal_box(&app, &login),
         crate::welcome::settings_box(&app, &login),
@@ -202,23 +182,10 @@ mod tests {
     #[tokio::test]
     async fn one_settings_page_holds_every_section() {
         let app = crate::sets::tests::app(&[]);
-        let r = settings_page(
-            State(app.clone()),
-            HeaderMap::new(),
-            Query(SettingsQuery { setup_action: None }),
-        )
-        .await;
+        let r = settings_page(State(app.clone()), HeaderMap::new()).await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
         let h = signed_in(&app, "alice");
-        crate::actions::store_check(
-            &app,
-            "alice",
-            &crate::workflows::Check {
-                at: chrono::Utc::now(),
-                lines: vec![],
-            },
-        );
-        let r = settings_page(State(app), h, Query(SettingsQuery { setup_action: None })).await;
+        let r = settings_page(State(app), h).await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(
             r.headers().get(header::CACHE_CONTROL).unwrap(),
@@ -234,9 +201,7 @@ mod tests {
             "/me/settings/followup",
             "/me/feed",
             "/me/upload-token",
-            "/me/settings/llm",
-            "/me/settings/workflows",
-            "/me/settings/workflows/check",
+            "/me/api-token",
             "/me/tags",
             "/me/progress",
             "/me/start",

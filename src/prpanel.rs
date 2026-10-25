@@ -692,13 +692,6 @@ fn title_checks(pr: &Pr) -> Vec<Check> {
     out
 }
 
-/// The latest nixpkgs-review run of the viewer for this pull request.
-pub(crate) enum Run {
-    Found(crate::workflows::Run),
-    None,
-    Unknown(String),
-}
-
 /// What one GitHub release list tells about a version bump.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Notes {
@@ -720,12 +713,9 @@ pub(crate) struct Ctx<'a> {
     pub author: &'a crate::profile::Facts,
     /// Per package: the last Hydra build a page view already read.
     pub hydra: &'a [(String, Option<Last>)],
-    /// `None` for a visitor.
-    pub run: Option<&'a Run>,
     pub notes: Option<&'a Notes>,
     /// The packages of the viewer's machines; `None` for a visitor.
     pub mine: Option<&'a BTreeSet<String>>,
-    pub buttons: Html,
     /// Buttons another feature adds at the end of the actions row, like Next.
     pub extra_actions: Html,
     /// For a merged pull request, the branches that hold it, in the place
@@ -1065,27 +1055,6 @@ pub(crate) fn github_repo(src_url: &str) -> Option<String> {
 fn builds_block(c: &Ctx) -> Html {
     let mut lines = Html::new();
     lines.push(&line("Checks", ci_text(c.pr.ci.as_deref())));
-    if let Some(run) = c.run {
-        let v = match run {
-            Run::Found(r) => {
-                let (class, word) = match (r.status.as_str(), r.conclusion.as_deref()) {
-                    ("completed", Some("success")) => ("color-fg-success", "succeeded".to_string()),
-                    ("completed", Some(x)) => ("color-fg-danger", x.replace('_', " ")),
-                    (s, _) => ("color-fg-attention", s.replace('_', " ")),
-                };
-                html!(
-                    "<a class=\"{class}\" href=\"{}\">{word}</a>{}",
-                    r.url,
-                    r.created_at
-                        .map(|t| html!(" <span class=\"color-fg-muted f6\">{} ago</span>", ago(t)))
-                        .unwrap_or_default()
-                )
-            }
-            Run::None => "<span class=\"color-fg-muted\">none in your last runs</span>".into(),
-            Run::Unknown(e) => unknown(e),
-        };
-        lines.push(&line("Your nixpkgs-review", v));
-    }
     for (attr, last) in c.hydra.iter().take(SHOWN_HYDRA) {
         let job = Hydra::package_job(attr);
         let v = match last {
@@ -1476,10 +1445,9 @@ fn actions_html(c: &Ctx) -> Html {
         "<div class=\"Box-footer d-flex flex-items-center flex-wrap gap-2\" id=\"decide-actions\">\
          <a class=\"btn btn-sm btn-primary\" href=\"{review}\" title=\"opens the diff on GitHub; choose Review changes, then Approve\">{} Approve on GitHub</a>\
          <a class=\"btn btn-sm\" href=\"{review}\" title=\"opens the diff on GitHub; choose Review changes, then Request changes\">{} Request changes on GitHub</a>\
-         {}{}</div>",
+         {}</div>",
         icon(octicon!("check-circle-fill")),
         icon(octicon!("file-diff")),
-        c.buttons,
         c.extra_actions
     )
 }
@@ -1849,10 +1817,8 @@ mod tests {
             committers: &committers,
             author: &author,
             hydra: &[],
-            run: None,
             notes: None,
             mine: None,
-            buttons: Html::new(),
             extra_actions: Html::new(),
             reached: None,
             queue: Html::new(),
@@ -1882,7 +1848,6 @@ mod tests {
         let files: Vec<File> = vec![];
         let hydra = vec![("curl".to_string(), None)];
         let mine: BTreeSet<String> = ["curl".to_string()].into();
-        let run = Run::None;
         let visitor = Ctx {
             pr: &p,
             body: Some("Fixes CVE-2026-1111."),
@@ -1893,10 +1858,8 @@ mod tests {
             committers: &committers,
             author: &author,
             hydra: &hydra,
-            run: None,
             notes: None,
             mine: None,
-            buttons: Html::new(),
             extra_actions: Html::new(),
             reached: None,
             queue: Html::new(),
@@ -1939,19 +1902,12 @@ mod tests {
             "failed checks come first, passed ones fold"
         );
         assert!(missing[passed..].contains("The title names what it changes."));
-        for private in [
-            "on your machines",
-            "Your nixpkgs-review",
-            "/me/runs/review",
-            "Next",
-        ] {
+        for private in ["on your machines", "Next"] {
             assert!(!html.contains(private), "{private} shows to a visitor");
         }
 
         let signed_in = Ctx {
-            run: Some(&run),
             mine: Some(&mine),
-            buttons: "<b>buttons</b>".into(),
             extra_actions: "<a id=\"next\">Next</a>".into(),
             reached: None,
             queue: Html::new(),
@@ -1959,9 +1915,8 @@ mod tests {
         };
         let html = render(&signed_in);
         assert!(html.contains("on your machines: curl"));
-        assert!(html.contains("Your nixpkgs-review"));
         let row = &html[html.find("id=\"decide-actions\"").unwrap()..];
-        assert!(row.find("<b>buttons</b>").unwrap() < row.find("id=\"next\"").unwrap());
+        assert!(row.contains("id=\"next\""));
     }
 
     #[test]
@@ -1982,10 +1937,8 @@ mod tests {
             committers: &committers,
             author: &author,
             hydra: &[],
-            run: None,
             notes: None,
             mine: None,
-            buttons: Html::new(),
             extra_actions: Html::new(),
             reached: None,
             queue: Html::new(),

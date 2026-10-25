@@ -349,7 +349,7 @@ struct Line<'a> {
     since: Option<DateTime<Utc>>,
 }
 
-fn lines(list: &[Line], empty_text: &'static str, act: crate::actions::Act) -> Html {
+fn lines(list: &[Line], empty_text: &'static str) -> Html {
     if list.is_empty() {
         return empty(empty_text);
     }
@@ -373,11 +373,7 @@ fn lines(list: &[Line], empty_text: &'static str, act: crate::actions::Act) -> H
             "",
             meta,
             &[],
-            html!(
-                "<span class=\"ml-2\">{}</span>{}",
-                ci_label(e),
-                act.buttons(e.number)
-            ),
+            html!("<span class=\"ml-2\">{}</span>", ci_label(e)),
         ));
     }
     out
@@ -402,7 +398,6 @@ pub(crate) fn ready_tab(
     viewer: Option<&str>,
     after: Option<u64>,
 ) -> Html {
-    let act = crate::actions::Act::of(app, viewer);
     let first = after.is_none();
     let mut out = html!(
         "<p class=\"f6\">Maintainer Mode never merges. Each row links to GitHub, and you decide. \
@@ -413,7 +408,7 @@ pub(crate) fn ready_tab(
         Some(login) if first => {
             let list = in_your_areas(app, s, login);
             let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&section=yours", "see all"));
-            out.push(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more, act));
+            out.push(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more));
         }
         None if first => out.push(&note(html!(
             "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
@@ -431,7 +426,7 @@ pub(crate) fn ready_tab(
     let rows = if page.is_empty() {
         empty("Nothing is ready yet.")
     } else {
-        entry_rows(page, act)
+        entry_rows(page)
     };
     out.push(&section(
         "Ready to merge",
@@ -456,7 +451,7 @@ pub(crate) fn ready_tab(
             html!(
                 "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
                 Html::from(sub),
-                lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty, act)
+                lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty)
             ),
         ));
     }
@@ -516,7 +511,6 @@ pub(crate) fn board_page(
     id: &str,
     after: Option<u64>,
 ) -> Option<Html> {
-    let act = crate::actions::Act::of(app, viewer);
     let back =
         Html::from("<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>");
     if id == "yours" {
@@ -525,7 +519,7 @@ pub(crate) fn board_page(
         let (page, next) = crate::review::paged_by_offset(&list, after);
         return Some(html!(
             "{back}{}{}",
-            yours_section(page, list.len(), None, act),
+            yours_section(page, list.len(), None),
             pager("/review?tab=ready&section=yours", next.as_deref())
         ));
     }
@@ -541,7 +535,7 @@ pub(crate) fn board_page(
             html!(
                 "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
                 Html::from(sub),
-                lines(&rows_of(page), empty_text, act)
+                lines(&rows_of(page), empty_text)
             ),
         ),
         pager(&format!("/review?tab=ready&section={id}"), next.as_deref())
@@ -584,12 +578,7 @@ fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec
         .collect()
 }
 
-fn yours_section(
-    page: &[Line],
-    total: usize,
-    more: Option<(&str, &str)>,
-    act: crate::actions::Act,
-) -> Html {
+fn yours_section(page: &[Line], total: usize, more: Option<(&str, &str)>) -> Html {
     section(
         "In your areas",
         Some(total),
@@ -597,11 +586,7 @@ fn yours_section(
         html!(
             "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
              Only you see this section.</div>{}",
-            lines(
-                page,
-                "Nothing ready touches your areas or what you watch.",
-                act
-            )
+            lines(page, "Nothing ready touches your areas or what you watch.")
         ),
     )
 }

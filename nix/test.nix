@@ -7,7 +7,6 @@ pkgs.testers.runNixOSTest {
       imports = [ self.nixosModules.default ];
       services.maintainer-mode.enable = true;
       services.maintainer-mode.githubAppId = 1;
-      services.maintainer-mode.githubAppSlug = "test-app";
       services.maintainer-mode.channels = [
         "nixos-unstable"
         "nixos-26.05"
@@ -163,8 +162,6 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'Data from the last 60 days' /tmp/review")
     machine.fail("grep -q 'nixpkgs index' /tmp/review")
     machine.succeed("curl -s -D /tmp/me1.h -o /dev/null http://127.0.0.1:8790/me && grep -q '^HTTP/1.1 308' /tmp/me1.h && grep -qi '^location: /packages?filter=mine' /tmp/me1.h")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/runs > /tmp/me2 && grep -q 303 /tmp/me2")
-    machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/actions && grep -q 'href=\"https://github.com/apps/test-app\"' /tmp/actions")
     machine.succeed("curl -s -D /tmp/at.h -o /dev/null 'http://127.0.0.1:8790/search?q=@nobody' && grep -qi '^location: /u/nobody' /tmp/at.h")
     machine.fail("grep -q -e 'tab=foryou' -e 'your-progress' /tmp/review")
     machine.succeed("curl -sf http://127.0.0.1:8790/api/v1 -o /tmp/api.json && grep -q '/api/v1/prs' /tmp/api.json && grep -q '/api/v1/people/<login>' /tmp/api.json")
@@ -245,9 +242,7 @@ pkgs.testers.runNixOSTest {
     machine.wait_until_succeeds("curl -sf http://127.0.0.1:8790/api/v1/sync -o /tmp/git.json && grep -q '\"git\":{' /tmp/git.json && grep -q 'git fetch: ' /tmp/git.json")
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=status' -o /tmp/git && grep -q 'NixOS/nixpkgs (git)' /tmp/git && grep -q 'the first copy of every branch' /tmp/git")
     machine.succeed("maintainer-mode archive export --db /var/lib/maintainer-mode/maintainer-mode.sqlite --repo NixOS/nixpkgs --out /tmp/export 2> /tmp/export.log && grep -q '0 items of NixOS/nixpkgs' /tmp/export.log")
-    machine.succeed("curl -sf http://127.0.0.1:8790/actions -o /tmp/page && grep -q 'Sign in to run workflows' /tmp/page")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d pr=1 http://127.0.0.1:8790/me/runs/review > /tmp/runs1 && grep -q 303 /tmp/runs1")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' -d pr=1 http://127.0.0.1:8790/me/runs/review > /tmp/runs2 && grep -q 403 /tmp/runs2")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Sec-Fetch-Site: same-site' http://127.0.0.1:8790/me/feed > /tmp/csrf && grep -q 403 /tmp/csrf")
     machine.fail("curl -sf http://127.0.0.1:8790/a/..%2Fetc")
     # the event stream never ends, so curl stops at its time limit (exit 28);
     # curl creates the body file only when data arrives
@@ -267,16 +262,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/upload-token > /tmp/r4 && grep -q 303 /tmp/r4")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/me/settings > /tmp/r5 && grep -q 303 /tmp/r5")
     machine.succeed("curl -s -D /tmp/r5.h -o /dev/null http://127.0.0.1:8790/me/settings && grep -qi '^cache-control: private, no-store' /tmp/r5.h")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d review_repo=a/b -d update_repo=a/b -d nixpkgs_fork=a/c http://127.0.0.1:8790/me/settings/workflows > /tmp/r12 && grep -q 303 /tmp/r12")
-    machine.succeed("curl -s -D /tmp/check.h -o /dev/null -X POST http://127.0.0.1:8790/me/settings/workflows/check && grep -q '^HTTP/1.1 303' /tmp/check.h && grep -qi '^cache-control: private, no-store' /tmp/check.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d tags=pkgs http://127.0.0.1:8790/me/tags > /tmp/r13 && grep -q 303 /tmp/r13")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/feed > /tmp/r14 && grep -q 303 /tmp/r14")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -d llm_ok=1 http://127.0.0.1:8790/me/settings/llm > /tmp/r6 && grep -q 303 /tmp/r6")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/mcp-token > /tmp/r7 && grep -q 303 /tmp/r7")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' -d '{}' http://127.0.0.1:8790/mcp > /tmp/r8 && grep -q 401 /tmp/r8")
-    machine.succeed("curl -s -D /tmp/r9.h -o /dev/null -X POST -H 'Authorization: Bearer nope' -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}' http://127.0.0.1:8790/mcp && grep -q '^HTTP/1.1 401' /tmp/r9.h && grep -qi '^www-authenticate: Bearer' /tmp/r9.h")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/mcp > /tmp/r10 && grep -q 405 /tmp/r10")
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/claude/pr/1 > /tmp/r11 && grep -q 303 /tmp/r11")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/api-token > /tmp/r7 && grep -q 303 /tmp/r7")
     # a pull request that is not in the data gets a short page with a GitHub link
     machine.succeed("curl -s -o /tmp/pr1 -w '%{http_code}' http://127.0.0.1:8790/pr/1 > /tmp/pr1.code && grep -q 200 /tmp/pr1.code")
     machine.succeed("grep -q 'href=\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1 && grep -q 'not in the data of this site' /tmp/pr1")
@@ -344,7 +332,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"curl -s {cookie} -D {out}.h -o {out} -w '%{{http_code}}' -X POST {data} '{base}{path}' > {out}.code && grep -qx {code} {out}.code")
         machine.succeed(f"grep -qi '^cache-control: private, no-store' {out}.h")
 
-    for path, out in [("/", "home"), ("/inbox", "inbox"), ("/me/settings", "settings"), ("/me/runs", "runs"),
+    for path, out in [("/", "home"), ("/inbox", "inbox"), ("/me/settings", "settings"),
                       ("/me/progress", "progress"), ("/review", "review"), ("/review?tab=ready", "ready"),
                       ("/u/alice", "u"), ("/packages", "packages"), ("/state", "state")]:
         signed_in(path, f"/tmp/s-{out}")
@@ -374,9 +362,9 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q 'No report yet.' /tmp/s-pk-machines && grep -q 'id=\"flakes\"' /tmp/s-pk-machines")
     machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
-    for anchor in ["notifications", "followup", "feed", "upload", "llm", "mcp", "workflows", "tags", "goal", "start"]:
+    for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start"]:
         machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
-    machine.succeed("grep -q 'Runs</h1>' /tmp/s-runs && grep -q 'Your weekly goal' /tmp/s-progress")
+    machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
     machine.succeed("grep -q 'selected\" href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review")
     machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review?tab=foryou\">For you' /tmp/s-ready")
     machine.succeed("grep -q 'aria-current=\"page\">Mine <span' /tmp/s-packages")
@@ -408,9 +396,6 @@ pkgs.testers.runNixOSTest {
     signed_in("/me/settings", "/tmp/s-settings5")
     machine.succeed("grep -q 'id=\"followup-default-days\" name=\"days\" value=\"10\"' /tmp/s-settings5 && grep -q 'Saved.' /tmp/s-settings5")
     form("/me/followup", "/tmp/f-plan0", "-d number=575334 -d days=5 -d action=merge", 400)
-    form("/me/settings/llm", "/tmp/f-llm", "-d llm_ok=1")
-    signed_in("/me/settings", "/tmp/s-settings3")
-    machine.succeed("grep -q 'name=\"llm_ok\" value=\"1\" checked' /tmp/s-settings3")
     form("/me/feed", "/tmp/f-feed")
     signed_in("/me/settings", "/tmp/s-settings4")
     machine.succeed("grep -o '/feed/[0-9a-f]*' /tmp/s-settings4 | head -1 > /tmp/feed.path && test -s /tmp/feed.path")
@@ -495,7 +480,7 @@ pkgs.testers.runNixOSTest {
     signed_in("/packages?filter=machines", "/tmp/s-pk-machines2")
     machine.succeed("grep -q 'Your sets' /tmp/s-pk-machines2 && grep -q 'set=site' /tmp/s-pk-machines2 && grep -q 'action=\"/me/sets/delete\"' /tmp/s-pk-machines2 && grep -q 'id=\"flakes\"' /tmp/s-pk-machines2")
     machine.succeed("curl -sf -o /tmp/pub2 http://127.0.0.1:8790/packages && ! grep -q -e 'on your machines' -e 'filter=' /tmp/pub2")
-    # the same views in the private API: the session, or the MCP token
+    # the same views in the private API: the session, or the API token
     signed_in("/api/v1/mine?filter=machines&set=site", "/tmp/s-mine.json")
     machine.succeed("grep -q '\"filter\":\"machines\"' /tmp/s-mine.json && grep -q '\"set\":\"site\"' /tmp/s-mine.json && grep -q '\"why\":\\[\"machine\"' /tmp/s-mine.json")
     signed_in("/api/v1/mine?filter=nope", "/tmp/s-mine-bad.json", 400)
@@ -509,21 +494,18 @@ pkgs.testers.runNixOSTest {
     for path in ["/api/v1/mine", "/api/v1/sets", "/api/v1/inbox", "/api/v1/progress"]:
         machine.succeed(f"curl -s -D /tmp/priv0.h -o /dev/null {base}{path} && grep -q '^HTTP/1.1 401' /tmp/priv0.h && grep -qi '^cache-control: private, no-store' /tmp/priv0.h")
         machine.succeed(f"curl -s -o /dev/null -w '%{{http_code}}' -H 'Authorization: Bearer nope' {base}{path} > /tmp/priv1.code && grep -qx 401 /tmp/priv1.code")
-    form("/me/mcp-token", "/tmp/f-mcp", code=200)
-    machine.succeed("grep -o 'value=\"[0-9a-f]\\{64\\}\" aria-label=\"MCP token\"' /tmp/f-mcp | cut -d'\"' -f2 > /tmp/mcp.token && test -s /tmp/mcp.token")
-    machine.succeed(f"curl -sf -D /tmp/bearer.h -o /tmp/bearer.json -H \"Authorization: Bearer $(cat /tmp/mcp.token)\" {base}/api/v1/sets && grep -qi '^cache-control: private, no-store' /tmp/bearer.h && cmp /tmp/bearer.json /tmp/s-sets.json")
-    machine.succeed(f"MAINTAINER_MODE_MCP_TOKEN=$(cat /tmp/mcp.token) maintainer-mode --server {base} mine --filter machines --set site > /tmp/cli-mine && grep -q 'machine' /tmp/cli-mine")
-    machine.succeed(f"MAINTAINER_MODE_MCP_TOKEN=$(cat /tmp/mcp.token) maintainer-mode --server {base} get /api/v1/progress > /tmp/cli-progress && grep -q '\"goal\":4' /tmp/cli-progress")
+    form("/me/api-token", "/tmp/f-api", code=200)
+    machine.succeed("grep -o 'value=\"[0-9a-f]\\{64\\}\" aria-label=\"API token\"' /tmp/f-api | cut -d'\"' -f2 > /tmp/api.token && test -s /tmp/api.token")
+    machine.succeed(f"curl -sf -D /tmp/bearer.h -o /tmp/bearer.json -H \"Authorization: Bearer $(cat /tmp/api.token)\" {base}/api/v1/sets && grep -qi '^cache-control: private, no-store' /tmp/bearer.h && cmp /tmp/bearer.json /tmp/s-sets.json")
+    machine.succeed(f"MAINTAINER_MODE_API_TOKEN=$(cat /tmp/api.token) maintainer-mode --server {base} mine --filter machines --set site > /tmp/cli-mine && grep -q 'machine' /tmp/cli-mine")
+    machine.succeed(f"MAINTAINER_MODE_API_TOKEN=$(cat /tmp/api.token) maintainer-mode --server {base} get /api/v1/progress > /tmp/cli-progress && grep -q '\"goal\":4' /tmp/cli-progress")
     machine.fail(f"maintainer-mode --server {base} get /api/v1/sets")
-    # the MCP tool and the endpoint give the same JSON
-    machine.succeed(f"curl -sf -o /tmp/mcp-sets.json -H \"Authorization: Bearer $(cat /tmp/mcp.token)\" -H 'Content-Type: application/json' -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"my_sets\",\"arguments\":{{}}}}}}' {base}/mcp && grep -q 'github:o/r' /tmp/mcp-sets.json")
-    machine.succeed(f"curl -sf -o /tmp/mcp-list.json -H \"Authorization: Bearer $(cat /tmp/mcp.token)\" -H 'Content-Type: application/json' -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}}' {base}/mcp && grep -q '\"name\":\"my_packages\"' /tmp/mcp-list.json && grep -q '\"name\":\"first_packages\"' /tmp/mcp-list.json")
     # the public views in the API
     machine.succeed(f"curl -sf -o /tmp/search.json '{base}/api/v1/search?q=hello' && grep -q '\"key\":\"pkg:hello\"' /tmp/search.json")
     machine.succeed(f"curl -s -o /tmp/search0.json -w '%{{http_code}}' {base}/api/v1/search > /tmp/search0.code && grep -qx 400 /tmp/search0.code && grep -q 'q is missing' /tmp/search0.json")
     machine.succeed(f"curl -sf -o /tmp/first.json {base}/api/v1/first && grep -q '\"total\":' /tmp/first.json")
     machine.succeed(f"curl -sf -o /tmp/help.json {base}/api/v1/need-help && grep -q '\"total\":' /tmp/help.json")
-    machine.succeed(f"curl -sf -o /tmp/index.json {base}/api/v1 && grep -q '\"page\":\"/packages?filter=machines&set=\"' /tmp/index.json && grep -q '\"mcp_tool\":\"my_sets\"' /tmp/index.json")
+    machine.succeed(f"curl -sf -o /tmp/index.json {base}/api/v1 && grep -q '\"page\":\"/packages?filter=machines&set=\"' /tmp/index.json")
     machine.succeed(f"maintainer-mode --server {base} search hello > /tmp/cli-search && grep -q 'pkg:hello' /tmp/cli-search")
     # each row of the set says where it runs; output= keeps one output
     signed_in("/packages?filter=machines&set=infra", "/tmp/s-infra")
@@ -538,7 +520,6 @@ pkgs.testers.runNixOSTest {
     signed_in("/api/v1/sets?output=other", "/tmp/s-sets-noset.json", 404)
     signed_in("/api/v1/mine?filter=machines&set=infra&output=other", "/tmp/s-mine-other.json")
     machine.succeed("grep -q '\"output\":\"other\"' /tmp/s-mine-other.json && grep -q '\"key\":\"pkg:hello\"' /tmp/s-mine-other.json && grep -q '{\"output\":\"other\",\"set\":\"infra\"}' /tmp/s-mine-other.json && ! grep -q 'requests' /tmp/s-mine-other.json")
-    machine.succeed(f"curl -sf -o /tmp/mcp-infra.json -H \"Authorization: Bearer $(cat /tmp/mcp.token)\" -H 'Content-Type: application/json' -d '{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"my_sets\",\"arguments\":{{\"set\":\"infra\",\"output\":\"other\"}}}}}}' {base}/mcp && grep -q 'package_outputs' /tmp/mcp-infra.json && ! grep -q 'isError\":true' /tmp/mcp-infra.json")
     machine.succeed("curl -s -o /tmp/r20 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"packages\":[{\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"1.2.3-acme-fix\"}]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r20.code && grep -q 400 /tmp/r20.code && grep -q 'does not have version 1.2.3-acme-fix' /tmp/r20")
     machine.succeed("curl -s -o /tmp/r21 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"source\":{\"name\":\"/home/me/tree\"},\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r21.code && grep -q 400 /tmp/r21.code && grep -q 'unknown field' /tmp/r21")
   '';

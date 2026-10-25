@@ -10,7 +10,6 @@ Every page has four tabs: Home, Review, Packages and nixpkgs. Your own pages are
 - **Get started**, until you hide the card (see below).
 - **Inbox** (`/inbox`), with the number of unread events.
 - **Progress** (`/me/progress`).
-- **Runs** (`/me/runs`): your workflow runs.
 - **Settings** (`/me/settings`).
 - **Sign out**.
 
@@ -146,7 +145,7 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 **Storage.** The server keeps the number of the pull request, N, the action and the start time for each plan. When the pull request leaves the synced data, the server deletes its plan. Your plans are private: no public page, count or API shows them.
 
-`GET /api/v1/needs` and the MCP tool `needs` give your plans and the events of your own pull requests. See [api.md](api.md#get-apiv1needs).
+`GET /api/v1/needs` gives your plans and the events of your own pull requests. See [api.md](api.md#get-apiv1needs).
 
 ## Your packages
 
@@ -226,30 +225,28 @@ always sees it, with a note on how to add one.
 | `#followup`      | the default follow-up plan of your pull requests (see [Your pull requests](#your-pull-requests)) |
 | `#feed`          | the private link of your Atom feed                                                               |
 | `#upload`        | the upload token for `maintainer-mode submit`                                                    |
-| `#llm`           | the LLM choice (see [actions.md](actions.md#llms-if-you-want-them))                              |
-| `#mcp`           | the MCP token                                                                                    |
-| `#workflows`     | the setup checklist and the repositories where "Review in CI" and "Update with nix-update" run   |
+| `#api`           | the API token for the `maintainer-mode` command and your own tools (see [api.md](api.md))        |
 | `#tags`          | the path prefixes that the For you tab of `/review` adds                                         |
 | `#goal`          | your weekly goal                                                                                 |
-| `#start`         | show or hide the Get started card                                                                |
+| `#start`         | show or hide the card with your first steps                                                      |
 
 ## Get started
 
 The home page shows a short introduction to visitors who are not signed in. It names the three ways to use Maintainer Mode. It links to the nixpkgs contributor guide (CONTRIBUTING.md). Press "Hide" to remove it. A cookie keeps it hidden for one year.
 
-After you sign in, the home page shows the Get started card. It is a checklist. Each step shows your real state: done, to do, or optional.
+After you sign in, the home page shows a card with three steps. Each step shows your real state: done, to do, or optional. The steps depend on whether nixpkgs names you in `meta.maintainers`.
 
-1. What you maintain, in the "I maintain" filter of `/packages`. Watch all of it in one step.
-2. What you watch. Watch a package, a module or a directory.
-3. The review queue for you, on `/review`. The step is done after your first review. It links to the rule that puts your own pull requests in the queues.
-4. Notifications. Make your private Atom feed in `/me/settings#feed`.
-5. Your system. Upload the packages of your machines in `/me/settings#upload`. They then come first in `/packages`.
-6. Actions. Follow the setup checklist in `/me/settings#workflows`.
-7. LLMs. They are off by default. Turn them on in `/me/settings#llm`.
-8. The nixpkgs guides: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual.
+If you maintain nothing yet, the card is **Start contributing**. It teaches you how to start:
 
-If you maintain nothing, the first step changes. It sends you to the pull requests with no maintainer on `/review`, with a checklist for a first review. It also links maintainers/README.md and
-the list below.
+1. Make a first review, on the pull requests with no maintainer on `/review`. The step says what to check, and links to the rule that puts your own pull requests in the queues. It is done after your first review.
+2. Pick a first package, from the list below. It is done when you watch something.
+3. Learn how nixpkgs works: CONTRIBUTING.md, pkgs/README.md, nixos/README.md, maintainers/README.md and the Nixpkgs manual. This step is optional.
+
+If you maintain packages or modules, the card is **Keep up with your packages**. It helps you keep up with them:
+
+1. Watch what you maintain, in the "I maintain" filter of `/packages`. Watch all of it in one step.
+2. Review the pull requests on them, in the For you tab of `/review`. It is done after your first review.
+3. Get the news: your inbox, or a private Atom feed from `/me/settings#feed`.
 
 ### A first package to work on
 
@@ -270,7 +267,7 @@ Each row gives one task: review the newest pull request, or fix the newest
 issue. The newest task comes first. The list shows 8 rows. After the task,
 add yourself to `meta.maintainers`.
 
-Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card.
+Press "Hide" on the card to remove it. Your menu shows "Get started" until you do. To show the card again, use `/me/settings#start`. Only you see the card. Uploading the packages of your machines is not a step: see [My package set](#my-package-set).
 
 ## What I maintain
 
@@ -339,7 +336,7 @@ Each tab shows 50 rows. "Next page" adds `?after=<number>`. On most tabs, it is 
 
 "Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for these queues. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
 
-The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The MCP tool `prs` and the CLI (`maintainer-mode prs --queue foryou --login <login>`) take the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own MCP token asks for your login. Then the answer has the rows and the order of the tab. In all other cases only your public area counts, in number order. See [api.md](api.md).
+The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The CLI (`maintainer-mode prs --queue foryou --login <login>`) takes the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own API token asks for your login. Then the answer has the rows and the order of the tab. In all other cases only your public area counts, in number order. See [api.md](api.md).
 
 ### First-timers
 
@@ -354,7 +351,7 @@ A pull request is on the tab when all of these are true:
 
 Maintainer Mode does not store the comments of other people. Thus a pull request with a comment but no review stays on the tab. The author does not need a review record: this tab does not use the queue rules. The tab is visible when you are signed in and when you are signed out.
 
-The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. The MCP tool `prs` takes the same name. Paging is the same as on the other tabs.
+The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. Paging is the same as on the other tabs.
 
 ## Your progress
 
@@ -623,7 +620,7 @@ restart of the server forgets all codes.
 - **Access.** Only the owner sees the "On my machines" filter and the
   "on your machines" marks. There is no admin view. No public page, count or
   API uses a private set. The private endpoints `/api/v1/sets` and
-  `/api/v1/mine` and their MCP tools `my_sets` and `my_packages` give your
+  `/api/v1/mine` give your
   sets, with their output labels, to you only (see
   [api.md](api.md#private-endpoints)). A public flake set shows only on the profile and in
   `GET /api/v1/people/<login>`, with its output labels: the outputs of a
@@ -704,9 +701,9 @@ run the package, such as "On web-1, laptop.", in place of "On your
 machines.". Their JSON in `GET /api/v1/needs` has `outputs`: a list of
 `{ "set", "output" }`.
 
-`GET /api/v1/sets` and the MCP tool `my_sets` give the labels of each set,
-and the labels of each package. `GET /api/v1/mine` and the MCP tool
-`my_packages` take `set` and `output`, as the page does. See
+`GET /api/v1/sets` gives the labels of each set,
+and the labels of each package. `GET /api/v1/mine` takes
+`set` and `output`, as the page does. See
 [api.md](api.md#get-apiv1sets).
 
 ### Public flake sets

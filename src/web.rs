@@ -70,8 +70,6 @@ pub struct App {
     pub oauth: Option<OAuth>,
     pub bot_token: Option<Arc<crate::secret::Secret>>,
     pub github_app: Option<crate::github_app::GithubApp>,
-    /// The App people install on their workflow repository.
-    pub github_app_slug: Option<String>,
     pub index: RwLock<Index>,
     pub snapshot: RwLock<Arc<Snapshot>>,
     pub secure_cookies: bool,
@@ -231,13 +229,10 @@ impl App {
         self.store.session(&id).ok().flatten().map(|s| s.login)
     }
 
-    /// The session, or the MCP token of a person who opts in: the MCP
-    /// server already gives that token the same private answers.
+    /// The session, or the API token of the person.
     pub(crate) fn caller(&self, headers: &HeaderMap) -> Option<String> {
-        self.viewer(headers).or_else(|| {
-            let login = crate::llm::mcp_login(self, crate::sets::bearer(headers)?)?;
-            crate::llm::opted_in(self, &login).then_some(login)
-        })
+        self.viewer(headers)
+            .or_else(|| crate::apitoken::login_of(self, crate::sets::bearer(headers)?))
     }
 }
 
@@ -261,13 +256,11 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::catalog::routes())
         .merge(crate::search::routes())
         .merge(crate::profile::routes())
-        .merge(crate::actions::routes())
+        .merge(crate::apitoken::routes())
         .merge(crate::sets::routes())
         .merge(crate::cli_login::routes())
-        .merge(crate::llm::routes())
         .merge(crate::progress::routes())
         .merge(crate::prpage::routes())
-        .merge(crate::mcp::routes())
         .merge(crate::rescan::routes())
         .merge(crate::welcome::routes())
         .merge(crate::notify::routes())
@@ -359,8 +352,8 @@ pub(crate) fn people(logins: &[String]) -> Html {
 }
 
 /// One `Box-row` per entry, to go in a [`crate::ui::section`].
-pub(crate) fn entry_rows(entries: &[&Entry], act: crate::actions::Act) -> crate::html::Html {
-    review_rows(entries, act, false, |_| Default::default())
+pub(crate) fn entry_rows(entries: &[&Entry]) -> crate::html::Html {
+    review_rows(entries, false, |_| Default::default())
 }
 
 /// "11 months", "3 weeks": for a sentence, where `ago` is for a column.
@@ -380,7 +373,6 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
 /// gives each row HTML under its meta line and after its buttons.
 pub(crate) fn review_rows(
     entries: &[&Entry],
-    act: crate::actions::Act,
     waiting: bool,
     extra: impl Fn(&Entry) -> (Html, Html),
 ) -> Html {
@@ -419,11 +411,7 @@ pub(crate) fn review_rows(
             "",
             meta,
             &badges,
-            html!(
-                "<span class=\"ml-2\">{}</span>{}{end}",
-                ci_label(e),
-                act.buttons(e.number)
-            ),
+            html!("<span class=\"ml-2\">{}</span>{end}", ci_label(e)),
         ));
     }
     out

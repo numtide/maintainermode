@@ -132,6 +132,11 @@ impl Store {
              DROP TABLE IF EXISTS mail_skip;
              DROP TABLE IF EXISTS mail_once;
              DELETE FROM setting WHERE key IN ('digest_email', 'digest_confirmed', 'digest_at', 'test_mail_at', 'notify_mine_now');
+             -- what the workflow buttons and the LLM choice kept; drop these lines
+             -- once every server has run them
+             DELETE FROM setting WHERE key IN ('review_repo', 'update_repo', 'nixpkgs_fork', 'workflows_check', 'llm_ok');
+             UPDATE OR REPLACE setting SET key = 'api_token_hash' WHERE key = 'mcp_token_hash';
+             UPDATE OR REPLACE setting SET key = 'api_token_at' WHERE key = 'mcp_token_at';
              UPDATE watch SET package = 'pkg:' || package WHERE instr(package, ':') = 0;
              CREATE TABLE IF NOT EXISTS session (
                id TEXT PRIMARY KEY,

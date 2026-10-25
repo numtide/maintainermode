@@ -131,7 +131,7 @@ async fn review_page(
     let v = viewer.as_deref();
     let s = app.snap();
     let tab = tab_id(q.tab.as_deref(), v.is_some());
-    let act = crate::actions::Act::of(&app, v);
+
     let foryou = v
         .map(|l| crate::mine::for_you_why(&app, &s, l))
         .unwrap_or_default();
@@ -211,7 +211,7 @@ async fn review_page(
                         "Nothing here."
                     })
                 } else {
-                    review_rows(page, act, tab == "firsttime", |e| {
+                    review_rows(page, tab == "firsttime", |e| {
                         let why = why_of
                             .get(&e.number)
                             .map(|w| why_line(w))

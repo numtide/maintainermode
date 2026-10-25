@@ -1,6 +1,6 @@
-mod actions;
 mod affected;
 mod api;
+mod apitoken;
 mod archive;
 mod area;
 mod assets;
@@ -27,8 +27,7 @@ mod html;
 mod hygiene;
 mod ledger;
 mod links;
-mod llm;
-mod mcp;
+
 mod me;
 mod metrics;
 mod mine;
@@ -65,7 +64,6 @@ mod upstream;
 mod version;
 mod web;
 mod welcome;
-mod workflows;
 
 use anyhow::{Context, Result, bail};
 use chrono::{Duration, Utc};
@@ -199,10 +197,6 @@ enum Command {
         /// Without it, the App's only installation is used.
         #[arg(long, env = "GITHUB_APP_INSTALLATION_ID")]
         github_app_installation_id: Option<u64>,
-        /// The slug of the GitHub App that people install on their workflow
-        /// repository, for the link on `/me/settings#workflows`.
-        #[arg(long, env = "MAINTAINER_MODE_GITHUB_APP_SLUG")]
-        github_app_slug: Option<String>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
         #[command(flatten)]
@@ -269,7 +263,7 @@ enum Command {
         )]
         db: PathBuf,
     },
-    /// Open pull requests in one queue: foryou (needs --login or MAINTAINER_MODE_MCP_TOKEN), unowned,
+    /// Open pull requests in one queue: foryou (needs --login or MAINTAINER_MODE_API_TOKEN), unowned,
     /// firsttime, bumps, all, or ready
     Prs {
         #[arg(long, default_value = "all", value_parser = api::QUEUES)]
@@ -303,13 +297,13 @@ enum Command {
         #[arg(long, default_value_t = api::LIMIT)]
         limit: usize,
     },
-    /// What needs you, the most urgent first; needs MAINTAINER_MODE_MCP_TOKEN
+    /// What needs you, the most urgent first; needs MAINTAINER_MODE_API_TOKEN
     Needs {
         #[arg(long, value_parser = api::MOODS)]
         mood: Option<String>,
     },
     /// Your packages, as the filters of /packages; needs
-    /// MAINTAINER_MODE_MCP_TOKEN
+    /// MAINTAINER_MODE_API_TOKEN
     Mine {
         #[arg(long, default_value = "mine", value_parser = api::FILTERS)]
         filter: String,
@@ -329,7 +323,7 @@ enum Command {
         cursor: Option<String>,
     },
     /// Print the JSON of any GET endpoint, such as /api/v1/sets; a private
-    /// one needs MAINTAINER_MODE_MCP_TOKEN
+    /// one needs MAINTAINER_MODE_API_TOKEN
     Get { path: String },
     /// The state of nixpkgs, month by month
     Metrics {
@@ -841,7 +835,7 @@ async fn background(app: Arc<App>, every: u64) {
 async fn fetch(server: &str, path: &str) -> Result<Value> {
     let url = format!("{}{path}", server.trim_end_matches('/'));
     let mut req = github::http().get(&url);
-    if let Some(t) = std::env::var("MAINTAINER_MODE_MCP_TOKEN")
+    if let Some(t) = std::env::var("MAINTAINER_MODE_API_TOKEN")
         .ok()
         .filter(|t| !t.trim().is_empty())
     {
@@ -918,7 +912,6 @@ async fn run(cli: Cli) -> Result<i32> {
             github_app_id,
             github_app_key_file,
             github_app_installation_id,
-            github_app_slug,
             sync_every,
             s3,
             archive_repos,
@@ -981,7 +974,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth,
                 bot_token: bot_token.clone(),
                 github_app,
-                github_app_slug: github_app_slug.filter(|s| !s.is_empty()),
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
                 hydra: Default::default(),
@@ -1067,7 +1059,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth: None,
                 bot_token: None,
                 github_app: None,
-                github_app_slug: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
@@ -1122,7 +1113,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 oauth: None,
                 bot_token: None,
                 github_app: None,
-                github_app_slug: None,
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),

@@ -60,7 +60,7 @@ pub(crate) fn data<'a>(
     }
 }
 
-pub(crate) fn view(v: &AreaView, actions: Html, act: Act) -> Page {
+pub(crate) fn view(v: &AreaView, actions: Html) -> Page {
     let path = v.path;
     let rows = &v.contents;
     let owners: Vec<Html> = v
@@ -108,7 +108,7 @@ pub(crate) fn view(v: &AreaView, actions: Html, act: Act) -> Page {
             subject_rows(rows),
         ));
     }
-    out.push(&v.subject.sections(act));
+    out.push(&v.subject.sections());
     page.body(out)
 }
 
@@ -124,11 +124,10 @@ pub(super) async fn page(
     }
     let subject = Subject::Area(path.clone());
     let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
-    let act = Act::of(&app, viewer.as_deref());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let page = view(&data(&s, &h, &index, &path), actions, act);
+    let page = view(&data(&s, &h, &index, &path), actions);
     drop(index);
     page.render(&app, viewer.as_deref())
 }

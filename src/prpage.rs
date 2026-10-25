@@ -17,7 +17,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
 
-use crate::actions::Act;
 use crate::archive::RESERVE;
 use crate::area::Index;
 use crate::catalog::{Flags, Subject};
@@ -50,8 +49,7 @@ const CACHE_ENTRIES: usize = 256;
 /// Live reads from GitHub per minute, for the whole server.
 const LIVE_PER_MINUTE: usize = 20;
 const NOTES_SECS: u64 = 1800;
-const RUNS_SECS: u64 = 120;
-/// The panel waits this long for a release list or a run list.
+/// The panel waits this long for a release list.
 const SIDE_SECS: u64 = 5;
 const RELEASES: usize = 30;
 const TIMED_CAP: usize = 1024;
@@ -159,7 +157,6 @@ pub struct Cache {
     files_flights: Flights<Files>,
     talk_flights: Flights<Talk>,
     releases: Timed<Vec<Release>>,
-    runs: Timed<Vec<crate::workflows::Run>>,
     budget: Budget,
 }
 
@@ -681,46 +678,6 @@ pub(crate) fn notes_of(
             .zip(from)
             .map(|(t, f)| format!("https://github.com/{repo}/compare/{}...{}", f.tag, t.tag)),
         breaking: to.is_some_and(|r| r.breaking),
-    }
-}
-
-fn mentions(name: &str, n: u64) -> bool {
-    let n = n.to_string();
-    name.split(|c: char| !c.is_ascii_digit()).any(|w| w == n)
-}
-
-/// The latest run of the viewer's review workflow that names this pull
-/// request, from their last runs, read with their own token.
-async fn review_run(app: &App, login: &str, n: u64) -> crate::prpanel::Run {
-    use crate::prpanel::Run;
-    let ttl = Duration::from_secs(RUNS_SECS);
-    let list = match timed_get(&app.pr_cache.runs, login, ttl) {
-        Some(l) => l,
-        None => {
-            let Some(token) = app.store.token_for(login).ok().flatten() else {
-                return Run::Unknown("no GitHub token in your session".into());
-            };
-            let repo = crate::actions::repos(app, login).review;
-            let read = tokio::time::timeout(
-                Duration::from_secs(SIDE_SECS),
-                crate::workflows::runs(&token, &repo, crate::workflows::REVIEW),
-            )
-            .await;
-            let out = Arc::new(match read {
-                Ok(Ok(runs)) => Ok(runs),
-                Ok(Err(e)) => Err(format!("{e:#}")),
-                Err(_) => Err(format!("GitHub did not answer in {SIDE_SECS} s")),
-            });
-            timed_put(&app.pr_cache.runs, login, ttl, out.clone());
-            out
-        }
-    };
-    match &*list {
-        Ok(runs) => runs
-            .iter()
-            .find(|r| mentions(&r.name, n))
-            .map_or(Run::None, |r| Run::Found(r.clone())),
-        Err(e) => Run::Unknown(e.clone()),
     }
 }
 
@@ -1546,17 +1503,10 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         let source = bump.as_ref().and_then(|b| bump_source(&index, &list, b));
         (list, source)
     };
-    let run = async {
-        match viewer.as_deref() {
-            Some(v) => Some(review_run(&app, v, n).await),
-            None => None,
-        }
-    };
-    let (files, talk, notes, run, reach) = tokio::join!(
+    let (files, talk, notes, reach) = tokio::join!(
         files(&app, pr, live),
         talk(&app, pr, live),
         notes(&app, live, source, bump),
-        run,
         crate::reach::of(&app, pr)
     );
     let place = place(&s, pr);
@@ -1599,7 +1549,6 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         _ => Html::new(),
     };
     let credits: Vec<&Credit> = s.ledger.credits.iter().filter(|c| c.pr == n).collect();
-    let act = Act::of(&app, viewer.as_deref());
     let author = crate::profile::facts(&app, &s, &pr.author);
     let hydra: Vec<(String, Option<crate::health::Last>)> = list
         .iter()
@@ -1632,14 +1581,8 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             committers: &s.committers,
             author: &author,
             hydra: &hydra,
-            run: run.as_ref(),
             notes: notes.as_ref(),
             mine: mine.as_ref(),
-            buttons: if pr.is_open() {
-                act.buttons(n)
-            } else {
-                Html::new()
-            },
             extra_actions: next,
             reached: reach.as_ref().map(reach_html),
             queue: place_block(pr, &place, &credits, for_you, &here, hide),
@@ -1747,7 +1690,7 @@ mod tests {
 
     async fn api_pr(State(app): State<Shared>, Path(n): Path<u64>) -> Response {
         let path = [("number".to_string(), n.to_string())].into();
-        let e = crate::api::tool("pr").unwrap();
+        let e = crate::api::tests::endpoint("/api/v1/prs/:number");
         crate::api::reply(&app, &HeaderMap::new(), e, path, json!({})).await
     }
 
@@ -2097,8 +2040,6 @@ mod tests {
         assert!(n.compare_url.is_none());
         let none = notes_of(&[], "curl/curl", "curl", &b);
         assert!(none.release_url.is_none() && !none.breaking);
-        assert!(mentions("nixpkgs-review #123 on x86_64-linux", 123));
-        assert!(!mentions("nixpkgs-review #1234", 123));
     }
 
     #[tokio::test]

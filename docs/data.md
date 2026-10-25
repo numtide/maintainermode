@@ -41,11 +41,9 @@ its known limits.
 - **Issues.** The body is read but not kept in the `issue` row: only the
   paths and the package name it gives are.
 - **Tokens.** When you log in, Maintainer Mode keeps your token. It pays for
-  reads that benefit you: the pages you open, and the data of your own
-  pull requests and of what you maintain, watch or run. The login asks for
-  no scope. The token reads public data, and it can start workflows only in
-  the repositories where you install the Maintainer Mode GitHub App (see
-  [Actions](actions.md)). Signing out deletes your session and its token. A
+  one read that benefits you: the paths you changed in nixpkgs, when you
+  sign in and then once a day. The login asks for no scope, so the token
+  reads public data only. Signing out deletes your session and its token. A
   session ends after 30 days, as its cookie does, and the server then
   deletes it with its token.
 - **Lent tokens and shared work.** The archive walk and the live refresh

@@ -48,12 +48,6 @@ in
       default = null;
     };
 
-    githubAppSlug = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = "maintainer-mode-app";
-      description = "Slug of the GitHub App that people install on their workflow repository. The default is the maintainermode.org app.";
-    };
-
     probes = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       readOnly = true;
@@ -72,7 +66,6 @@ in
         githubAppId
         githubAppKeyFile
         githubAppInstallationId
-        githubAppSlug
         ;
       githubClientId = if cfg.githubClientSecretFile == null then null else cfg.githubClientId;
     };
