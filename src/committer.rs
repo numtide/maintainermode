@@ -14,15 +14,13 @@ use crate::links::Links;
 use crate::model::Pr;
 use crate::queue::{self, Entry};
 use crate::store::Store;
-use crate::ui::{Kind, empty, item_row, note, pager, section};
+use crate::ui::{Kind, empty, item_row, pager, section};
 use crate::web::{Snapshot, ago, ci_label, entry_rows, person_link};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
 const MERGED_DAYS: i64 = 365;
 pub const SECURITY: &str = "1.severity: security";
-/// Rows of each board list on the first page of the tab.
-const PREVIEW: usize = 5;
-/// Rows of "Ready to merge" on the first page; later pages hold `review::PAGE`.
+/// Rows of the list on the first page of the tab; later pages hold `review::PAGE`.
 const FIRST: usize = 20;
 
 /// Logins are kept in lower case: `meta.maintainers` and GitHub disagree on case.
@@ -388,117 +386,140 @@ fn rows_of(rows: &[Row]) -> Vec<Line<'_>> {
         .collect()
 }
 
-/// The Ready to merge tab of `/review`. Its lists are public. A committer
-/// who signed in also gets "In your areas", which reads their private
-/// subscriptions.
+/// The Ready to merge tab of `/review`: one list, then a row of links to
+/// the other lists that have rows. The list is "In your areas" for a
+/// committer who signed in and has ready rows there, else the queue.
+/// `after` pages the queue.
 pub(crate) fn ready_tab(
     app: &crate::web::App,
     s: &Snapshot,
     viewer: Option<&str>,
     after: Option<u64>,
 ) -> Html {
-    let first = after.is_none();
-    let mut out = Html::from(
-        "<p class=\"f6\">Maintainer Mode never merges: each row links to GitHub, and you decide.</p>",
-    );
-    match viewer.filter(|v| s.committers.is(v)) {
-        Some(login) if first => {
-            let list = in_your_areas(app, s, login);
-            let more = (list.len() > PREVIEW).then_some(("/review?tab=ready&section=yours", "see all"));
-            out.push(&yours_section(&list[..list.len().min(PREVIEW)], list.len(), more));
-        }
-        None if first => out.push(&note(html!(
-            "A committer sees the section \"In your areas\" here. Maintainer Mode counts a login as a committer \
-             when it merged a pull request in the last {MERGED_DAYS} days, or when it is in the team {TEAM}."
-        ))),
-        _ => {}
-    }
     let all: Vec<&Entry> = s.queues.merge.iter().collect();
-    let (page, next) = if first {
-        let page = &all[..all.len().min(FIRST)];
-        (page, (all.len() > FIRST).then(|| FIRST.to_string()))
-    } else {
-        crate::review::paged_by_offset(&all, after)
-    };
-    let rows = if page.is_empty() {
-        empty("Nothing is ready yet.")
-    } else {
-        entry_rows(page)
-    };
-    out.push(&section(
-        "Ready to merge",
-        Some(all.len()),
-        None,
-        html!(
-            "<div class=\"Box-row f6 color-fg-muted\">Checks pass, there is no conflict, someone approved the current head, \
-             and a review on it led to a change, a reply or a merge. Authors with more recent reviews of this kind come first.</div>{rows}"
-        ),
-    ));
-    out.push(&pager("/review?tab=ready", next.as_deref()));
-    if !first {
-        return out;
+    if after.is_some() {
+        let (page, next) = crate::review::paged_by_offset(&all, after);
+        return html!(
+            "{}{}",
+            queue_section(page, all.len()),
+            pager("/review?tab=ready", next.as_deref())
+        );
     }
-    for (id, title, sub, rows, empty) in board_lists(&s.board) {
-        let href = format!("/review?tab=ready&section={id}");
-        let more = (rows.len() > PREVIEW).then_some((href.as_str(), "see all"));
-        out.push(&section(
-            title,
-            Some(rows.len()),
-            more,
+    let committer = viewer.filter(|v| s.committers.is(v));
+    let yours = committer
+        .map(|l| in_your_areas(app, s, l))
+        .unwrap_or_default();
+    let lead = match committer {
+        None => Html::from(
+            " A committer sees the section \"In your areas\" here. \
+             <a href=\"/state?tab=docs&amp;doc=personal#for-committers\">Who is a committer</a>",
+        ),
+        Some(_) if yours.is_empty() => {
+            Html::from(" Nothing ready touches your areas or what you watch.")
+        }
+        Some(_) => Html::new(),
+    };
+    let mut out = html!(
+        "<p class=\"f6\">Maintainer Mode never merges: each row links to GitHub, and you decide.{lead}</p>"
+    );
+    let mut others: Vec<(&str, &str, usize)> = Vec::new();
+    if yours.is_empty() {
+        let page = &all[..all.len().min(FIRST)];
+        out.push(&queue_section(page, all.len()));
+        out.push(&pager(
+            "/review?tab=ready",
+            (all.len() > FIRST).then(|| FIRST.to_string()).as_deref(),
+        ));
+    } else {
+        out.push(&yours_section(
+            &yours[..yours.len().min(FIRST)],
+            yours.len(),
+        ));
+        out.push(&pager(
+            "/review?tab=ready&section=yours",
+            (yours.len() > FIRST).then(|| FIRST.to_string()).as_deref(),
+        ));
+        others.push(("ready", "Ready to merge", all.len()));
+    }
+    others.extend(board_lists(&s.board).map(|(id, title, rows, _)| (id, title, rows.len())));
+    let links: Vec<Html> = others
+        .into_iter()
+        .filter(|(_, _, n)| *n > 0)
+        .map(|(id, title, n)| {
             html!(
-                "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
-                Html::from(sub),
-                lines(&rows_of(&rows[..rows.len().min(PREVIEW)]), empty)
-            ),
+                "<a class=\"btn btn-sm\" href=\"/review?tab=ready&amp;section={id}\">{title} <span class=\"Counter\">{n}</span></a>"
+            )
+        })
+        .collect();
+    if !links.is_empty() {
+        out.push(&html!(
+            "<nav class=\"d-flex flex-wrap gap-2 mb-4\" aria-label=\"Other lists\">{}</nav>",
+            crate::html::join(links, "")
         ));
     }
     out
 }
 
-type List<'a> = (
-    &'static str,
-    &'static str,
-    &'static str,
-    &'a [Row],
-    &'static str,
-);
+/// A list with its title, its count and one sentence above the rows.
+fn list_section(title: &'static str, total: usize, intro: &'static str, rows: Html) -> Html {
+    section(
+        title,
+        Some(total),
+        None,
+        html!(
+            "<div class=\"Box-row f6 color-fg-muted\">{}</div>{rows}",
+            Html::from(intro)
+        ),
+    )
+}
 
-/// The four lists of the board: id, title, intro, rows and the text when it
-/// is empty. The ids are the `section` values of the API.
+fn queue_section(page: &[&Entry], total: usize) -> Html {
+    let rows = if page.is_empty() {
+        empty("Nothing is ready yet.")
+    } else {
+        entry_rows(page)
+    };
+    list_section(
+        "Ready to merge",
+        total,
+        "Checks pass, no conflict, an approval on the current head, and a \
+         <a href=\"/state?tab=rules#3-ready-to-merge\">counted review</a>.",
+        rows,
+    )
+}
+
+type List<'a> = (&'static str, &'static str, &'a [Row], &'static str);
+
+/// The four lists of the board: id, title, rows and the text when it is
+/// empty. The ids are the `section` values of the API.
 fn board_lists(b: &Board) -> [List<'_>; 4] {
     [
         (
             "maintainer_approved",
             "Approved by a maintainer",
-            "An approval on the current head by a login in the <code>meta.maintainers</code> or <code>meta.teams</code> of a package or module it changes. No known conflict. Longest wait first.",
             &b.maintainer_approved,
             "No pull request waits with a maintainer's approval.",
         ),
         (
             "security",
             "Security fixes",
-            "Labelled <code>1.severity: security</code>, checks pass, no known conflict, and the current head is approved.",
             &b.security,
             "No security fix is ready.",
         ),
         (
             "backports",
             "Backports",
-            "To a <code>release-*</code> branch, checks pass, no known conflict, and the current head is approved.",
             &b.backports,
             "No backport is ready.",
         ),
-        (
-            "waiting",
-            "Waiting longest",
-            "Checks pass, no known conflict, and the current head is approved. Oldest approval first.",
-            &b.waiting,
-            "Nothing waits.",
-        ),
+        ("waiting", "Waiting longest", &b.waiting, "Nothing waits."),
     ]
 }
 
-/// One list of the board on its own page, paged by offset. `None` when no
+/// Each row of the board says why it is there. This sentence says the rest.
+const BOARD_INTRO: &str = "There is no known conflict. The longest wait comes first.";
+
+/// One list of the tab on its own page, paged by offset. `None` when no
 /// list has that id.
 pub(crate) fn board_page(
     app: &crate::web::App,
@@ -509,42 +530,35 @@ pub(crate) fn board_page(
 ) -> Option<Html> {
     let back =
         Html::from("<p class=\"f6\"><a href=\"/review?tab=ready\">Back to Ready to merge</a></p>");
-    if id == "yours" {
-        let login = viewer.filter(|v| s.committers.is(v))?;
-        let list = in_your_areas(app, s, login);
-        let (page, next) = crate::review::paged_by_offset(&list, after);
-        return Some(html!(
-            "{back}{}{}",
-            yours_section(page, list.len(), None),
-            pager("/review?tab=ready&section=yours", next.as_deref())
-        ));
-    }
-    let (id, title, sub, rows, empty_text) =
-        board_lists(&s.board).into_iter().find(|l| l.0 == id)?;
-    let (page, next) = crate::review::paged_by_offset(rows, after);
-    Some(html!(
-        "{back}{}{}",
-        section(
-            title,
-            Some(rows.len()),
-            None,
-            html!(
-                "<div class=\"Box-row f6 color-fg-muted\">{}</div>{}",
-                Html::from(sub),
-                lines(&rows_of(page), empty_text)
-            ),
-        ),
-        pager(&format!("/review?tab=ready&section={id}"), next.as_deref())
-    ))
-}
-
-/// The `section` values of `/review?tab=ready`: the board, and "yours"
-/// for a committer.
-#[cfg(test)]
-pub(crate) fn sections() -> Vec<&'static str> {
-    let mut out = vec!["yours"];
-    out.extend(board_lists(&Board::default()).map(|l| l.0));
-    out
+    let here = format!("/review?tab=ready&section={id}");
+    let (list, next) = match id {
+        "ready" => {
+            let all: Vec<&Entry> = s.queues.merge.iter().collect();
+            let (page, next) = crate::review::paged_by_offset(&all, after);
+            (queue_section(page, all.len()), next)
+        }
+        "yours" => {
+            let login = viewer.filter(|v| s.committers.is(v))?;
+            let list = in_your_areas(app, s, login);
+            let (page, next) = crate::review::paged_by_offset(&list, after);
+            (yours_section(page, list.len()), next)
+        }
+        _ => {
+            let (_, title, rows, empty_text) =
+                board_lists(&s.board).into_iter().find(|l| l.0 == id)?;
+            let (page, next) = crate::review::paged_by_offset(rows, after);
+            (
+                list_section(
+                    title,
+                    rows.len(),
+                    BOARD_INTRO,
+                    lines(&rows_of(page), empty_text),
+                ),
+                next,
+            )
+        }
+    };
+    Some(html!("{back}{list}{}", pager(&here, next.as_deref())))
 }
 
 /// The ready pull requests in a committer's areas, with why. Private:
@@ -574,21 +588,17 @@ fn in_your_areas<'a>(app: &crate::web::App, s: &'a Snapshot, login: &str) -> Vec
         .collect()
 }
 
-fn yours_section(page: &[Line], total: usize, more: Option<(&str, &str)>) -> Html {
-    section(
+fn yours_section(page: &[Line], total: usize) -> Html {
+    list_section(
         "In your areas",
-        Some(total),
-        more,
-        html!(
-            "<div class=\"Box-row f6 color-fg-muted\">Ready pull requests that touch your areas or what you watch. \
-             Only you see this section.</div>{}",
-            lines(page, "Nothing ready touches your areas or what you watch.")
-        ),
+        total,
+        "Only you see this section: ready pull requests in your areas and in what you watch.",
+        lines(page, "Nothing ready touches your areas or what you watch."),
     )
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::area::Package;
     use crate::ledger::tests::{pr, review, t};
@@ -684,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ready_tab_shows_a_preview_and_each_list_pages_on_its_own() {
+    fn the_ready_tab_shows_one_list_and_links_to_the_others() {
         let app = crate::sets::tests::app(&[]);
         let mut s = Snapshot::default();
         for n in 1..=60 {
@@ -699,23 +709,73 @@ mod tests {
         }
         let count = |html: &str| html.matches("class=\"Box-row").count();
         let tab = ready_tab(&app, &s, None, None);
-        let main = tab.split("Ready to merge").nth(1).unwrap();
-        assert_eq!(
-            count(main.split("Approved by a maintainer").next().unwrap()),
-            1 + FIRST
-        );
-        let security = tab.split("Security fixes").nth(1).unwrap();
-        let security = security.split("Backports").next().unwrap();
-        assert_eq!(count(security), 1 + PREVIEW);
-        assert!(tab.contains("href=\"/review?tab=ready&amp;section=security\">see all</a>"));
+        assert_eq!(tab.matches("<section").count(), 1);
+        assert_eq!(count(&tab), 1 + FIRST);
+        assert!(tab.contains("A committer sees the section"));
+        assert!(tab.contains(
+            "href=\"/review?tab=ready&amp;section=security\">Security fixes <span class=\"Counter\">60</span>"
+        ));
+        assert!(!tab.contains("Approved by a maintainer") && !tab.contains("section=ready\""));
         assert!(tab.contains("/review?tab=ready&amp;after=20\">Next page"));
+        let next = ready_tab(&app, &s, None, Some(20));
+        assert_eq!(count(&next), 1 + 40);
+        assert!(!next.contains("Other lists") && !next.contains("never merges"));
         let page = board_page(&app, &s, None, "security", None).unwrap();
         assert_eq!(count(&page), 1 + crate::review::PAGE);
         assert!(page.contains("/review?tab=ready&amp;section=security&amp;after=50\">Next page"));
         let last = board_page(&app, &s, None, "security", Some(50)).unwrap();
         assert_eq!(count(&last), 1 + 10);
         assert!(!last.contains("Next page"));
+        let queue = board_page(&app, &s, None, "ready", Some(50)).unwrap();
+        assert!(queue.contains("Ready to merge <span class=\"Counter\">60</span>"));
+        assert_eq!(count(&queue), 1 + 10);
         assert!(board_page(&app, &s, None, "yours", None).is_none());
         assert!(board_page(&app, &s, None, "nonsense", None).is_none());
+    }
+
+    #[test]
+    fn a_committer_sees_the_list_of_their_areas_first() {
+        let app = crate::sets::tests::app(&[]);
+        let mut s = Snapshot {
+            committers: Committers::build(&[], &[], &["carol".into()], None, t(0)),
+            ..Default::default()
+        };
+        s.areas.insert(
+            "carol".into(),
+            crate::area::Area {
+                maintains: vec!["pkgs/by-name/he".into()],
+                ..Default::default()
+            },
+        );
+        for n in 1..=30 {
+            let mut p = pr(n, "alice", 0);
+            if n % 10 == 0 {
+                p.files = vec!["pkgs/by-name/he/hello/package.nix".into()];
+            }
+            s.queues
+                .merge
+                .push(queue::entry(&p, &s.ledger, &Default::default()));
+        }
+        let tab = ready_tab(&app, &s, Some("carol"), None);
+        assert_eq!(tab.matches("<section").count(), 1);
+        assert!(tab.contains("In your areas <span class=\"Counter\">3</span>"));
+        assert!(tab.contains(
+            "href=\"/review?tab=ready&amp;section=ready\">Ready to merge <span class=\"Counter\">30</span>"
+        ));
+        assert!(!tab.contains("A committer sees the section") && !tab.contains("Next page"));
+        let page = board_page(&app, &s, Some("carol"), "yours", None).unwrap();
+        assert!(page.contains("In your areas <span class=\"Counter\">3</span>"));
+        s.areas.clear();
+        let tab = ready_tab(&app, &s, Some("carol"), None);
+        assert!(tab.contains("Nothing ready touches your areas"));
+        assert!(tab.contains("Ready to merge <span class=\"Counter\">30</span></h2>"));
+        assert!(!tab.contains("Other lists"));
+    }
+
+    /// The `section` values of `/review?tab=ready`.
+    pub(crate) fn sections() -> Vec<&'static str> {
+        let mut out = vec!["ready", "yours"];
+        out.extend(board_lists(&Board::default()).map(|l| l.0));
+        out
     }
 }

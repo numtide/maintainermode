@@ -796,7 +796,7 @@ limits, and why the feature is off by default.
 
 ## For committers
 
-**Ready to merge** (`/review?tab=ready`) shows what waits for a person with merge rights. A committer who signs in sees it as the second tab of `/review`, with the section **In your areas** at the top. Everyone can open the address. The home page of a committer links to it.
+**Ready to merge** (`/review?tab=ready`) shows what waits for a person with merge rights. A committer who signs in sees it as the second tab of `/review`. Everyone can open the address. The home page of a committer links to it.
 
 **Who is a committer.** Maintainer Mode counts a login as a committer when one of these is true:
 
@@ -805,19 +805,19 @@ limits, and why the feature is off by default.
 
 `/api/v1/status` shows the counts. No page or API lists the logins.
 
-**The sections.**
+**The lists.** The tab shows one list. For a committer who signed in, it is **In your areas** when that list has rows. Else it is **Ready to merge**. The list shows 20 rows. "Next page" shows the next 50. Below the list, a row of buttons opens the other lists that have rows, each with its count. Each list has its own page, with 50 rows on each page: `/review?tab=ready&section=<id>`.
 
-| Section                  | What it shows                                                                                                                                 |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| In your areas            | only for a committer who signed in: the ready-to-merge queue in your areas and in what you watch, 5 rows. Only you see it. Its id is `yours`. |
-| Ready to merge           | the ready-to-merge queue: 20 rows on the first page, then 50 on each page. Authors with more recent counted reviews come first.               |
-| Approved by a maintainer | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes     |
-| Security fixes           | the label `1.severity: security`, and ready                                                                                                   |
-| Backports                | a `release-*` base branch, and ready                                                                                                          |
-| Waiting longest          | ready, oldest approval first                                                                                                                  |
+| List                     | Id                    | What it shows                                                                                                                             |
+| ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| In your areas            | `yours`               | only for a committer who signed in: the Ready to merge queue in your areas and in what you watch. Only you see it.                        |
+| Ready to merge           | `ready`               | the [Ready to merge queue](rules.md#3-ready-to-merge). Authors with more recent counted reviews come first.                               |
+| Approved by a maintainer | `maintainer_approved` | an approval on the current head by a login in the `meta.maintainers` or `meta.teams` of a package or module that the pull request changes |
+| Security fixes           | `security`            | the label `1.severity: security`, and ready                                                                                               |
+| Backports                | `backports`           | a `release-*` base branch, and ready                                                                                                      |
+| Waiting longest          | `waiting`             | ready                                                                                                                                     |
 
-In the last three sections, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need a [counted review](rules.md#1-a-review-that-moves-a-pull-request). Each row says why it is on the list. The last four sections put the longest wait first. They and **In your areas** show on the first page only, with 5 rows each. "see all" opens the full section, 50 rows on each page: `/review?tab=ready&section=<id>`. The ids are `maintainer_approved`, `security`, `backports` and `waiting`, as in the API.
+In the last three lists, "ready" means that the checks pass, that there is no known conflict, and that the current head has an approval. The pull request does not need a [counted review](rules.md#1-a-review-that-moves-a-pull-request). The last four lists have no known conflict, and the longest wait comes first. Each of their rows says why it is on the list. The ids are the `section` values of the API.
 
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
-**The API.** `/api/v1/prs?queue=ready` gives the same lists without **In your areas**. It is the same for all callers, because your subscriptions are private.
+**The API.** `/api/v1/prs?queue=ready&section=<id>` gives each list. `section=yours` needs your own login, with a session or an API token, because your subscriptions are private.
