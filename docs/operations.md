@@ -50,25 +50,25 @@ Keep the listener on localhost. It has no authentication. Do not send it through
 
 A scrape does the work of one request to `/api/v1/sync`, and it reads two files in `/proc/self`.
 
-| Metric                                                                 | Type      | Labels                      | Meaning                                                                     |
-| ---------------------------------------------------------------------- | --------- | --------------------------- | --------------------------------------------------------------------------- |
-| `maintainer_mode_build_info`                                           | gauge     | `version`, `commit`         | always 1; `commit` is `unknown` when the build does not know it             |
-| `maintainer_mode_http_requests_total`                                  | counter   | `route`, `method`, `status` | requests to the main port; `route` is the route template or `unmatched`     |
-| `maintainer_mode_http_request_duration_seconds`                        | histogram | `route`                     | time until the response head                                                |
-| `maintainer_mode_http_signed_in_requests_total`                        | counter   |                             | requests whose handler found a valid session; no login                      |
-| `maintainer_mode_process_resident_memory_bytes`                        | gauge     |                             | resident memory                                                             |
-| `maintainer_mode_process_open_fds`                                     | gauge     |                             | open file descriptors                                                       |
-| `maintainer_mode_process_start_time_seconds`                           | gauge     |                             | unix time of the start                                                      |
-| `maintainer_mode_events_inserted_total`                                | counter   |                             | events added to the event log                                               |
-| `maintainer_mode_events_last_insert_timestamp_seconds`                 | gauge     |                             | time of the last insert that added an event; 0 until the first one          |
-| `maintainer_mode_recompute_duration_seconds`                           | gauge     |                             | wall time of the last finished recompute of the snapshot                    |
-| `maintainer_mode_recompute_packages_duration_seconds`                  | gauge     |                             | the same for the package statistics                                         |
-| `maintainer_mode_recompute_metrics_duration_seconds`                   | gauge     |                             | the same for the numbers of nixpkgs                                         |
-| `maintainer_mode_recompute_total`, `_packages_total`, `_metrics_total` | counter   |                             | finished runs of each                                                       |
-| `maintainer_mode_github_rate_remaining`                                | gauge     | `token`                     | GraphQL points left, from the last answer                                   |
-| `maintainer_mode_github_rate_reset_timestamp_seconds`                  | gauge     | `token`                     | the time when that budget is full again                                     |
-| `maintainer_mode_github_requests_total`                                | counter   | `kind`, `status`            | requests to the GitHub GraphQL API; `status` is `error` when no answer came |
-| `maintainer_mode_sync_*`                                               | gauge     | see below                   | the data of `/api/v1/sync`                                                  |
+| Metric                                                                 | Type      | Labels                      | Meaning                                                                         |
+| ---------------------------------------------------------------------- | --------- | --------------------------- | ------------------------------------------------------------------------------- |
+| `maintainer_mode_build_info`                                           | gauge     | `version`, `commit`         | always 1; `commit` is `unknown` when the build does not know it                 |
+| `maintainer_mode_http_requests_total`                                  | counter   | `route`, `method`, `status` | requests to the main port; `route` is the route template or `unmatched`         |
+| `maintainer_mode_http_request_duration_seconds`                        | histogram | `route`                     | time until the response head                                                    |
+| `maintainer_mode_http_signed_in_requests_total`                        | counter   |                             | requests whose handler found a valid session; no login                          |
+| `maintainer_mode_process_resident_memory_bytes`                        | gauge     |                             | resident memory                                                                 |
+| `maintainer_mode_process_open_fds`                                     | gauge     |                             | open file descriptors                                                           |
+| `maintainer_mode_process_start_time_seconds`                           | gauge     |                             | unix time of the start                                                          |
+| `maintainer_mode_events_inserted_total`                                | counter   |                             | events added to the event log                                                   |
+| `maintainer_mode_events_last_insert_timestamp_seconds`                 | gauge     |                             | time of the last insert that added an event; the start time until the first one |
+| `maintainer_mode_recompute_duration_seconds`                           | gauge     |                             | wall time of the last finished recompute of the snapshot                        |
+| `maintainer_mode_recompute_packages_duration_seconds`                  | gauge     |                             | the same for the package statistics                                             |
+| `maintainer_mode_recompute_metrics_duration_seconds`                   | gauge     |                             | the same for the numbers of nixpkgs                                             |
+| `maintainer_mode_recompute_total`, `_packages_total`, `_metrics_total` | counter   |                             | finished runs of each                                                           |
+| `maintainer_mode_github_rate_remaining`                                | gauge     | `token`                     | GraphQL points left, from the last answer                                       |
+| `maintainer_mode_github_rate_reset_timestamp_seconds`                  | gauge     | `token`                     | the time when that budget is full again                                         |
+| `maintainer_mode_github_requests_total`                                | counter   | `kind`, `status`            | requests to the GitHub GraphQL API; `status` is `error` when no answer came     |
+| `maintainer_mode_sync_*`                                               | gauge     | see below                   | the data of `/api/v1/sync`                                                      |
 
 `maintainer_mode_events_last_insert_timestamp_seconds` is the time of the insert, not the time of the event. A GH Archive backfill adds old events, so the `events.newest` of `/api/v1/sync` can be a day old while the log grows.
 
