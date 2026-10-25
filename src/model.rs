@@ -19,6 +19,10 @@ pub struct Pr {
     pub merged_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub merged_by: Option<String>,
+    /// The commit that the merge put on the base branch: the merge commit,
+    /// or the last commit of a squash or a rebase.
+    #[serde(default)]
+    pub merge_commit: Option<String>,
     /// MERGEABLE, CONFLICTING or UNKNOWN.
     pub mergeable: String,
     pub head_oid: String,

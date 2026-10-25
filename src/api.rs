@@ -149,7 +149,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         path: "/api/v1/prs/:number",
-        about: "One pull request: its state, its reviews, its place in the queues, the packages and modules it touches, its files, its discussion and the merge decision.",
+        about: "One pull request: its state, its reviews, its place in the queues, the packages and modules it touches, its files, its discussion, the merge decision, and the branches and channels that hold its merge commit.",
         params: &[need("number", Type::Int, "the number of the pull request")],
         private: false,
         mcp: By(("pr", "A pull request")),

@@ -266,6 +266,7 @@ pub(crate) mod tests {
             updated_at: t(created),
             merged_at: None,
             merged_by: None,
+            merge_commit: None,
             mergeable: "MERGEABLE".into(),
             head_oid: "abc".into(),
             files: vec![],

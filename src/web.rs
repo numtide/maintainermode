@@ -81,6 +81,8 @@ pub struct App {
     pub hydra: crate::health::Hydra,
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,
+    /// The git copy of the archived repositories, when this server keeps one.
+    pub git_dir: Option<std::path::PathBuf>,
     pub index_sets: Vec<String>,
     pub metrics: RwLock<Arc<Report>>,
     pub(crate) packages: RwLock<Arc<crate::catalog::PackageStats>>,

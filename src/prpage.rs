@@ -1114,7 +1114,35 @@ fn people(logins: &[String]) -> Html {
     crate::web::people(logins)
 }
 
-fn about(pr: &Pr) -> Html {
+fn reach_html(r: &crate::reach::Reach) -> Html {
+    if !r.in_copy {
+        return "<span class=\"color-fg-muted\">the git copy of this server does not have the merge commit yet</span>".into();
+    }
+    let names = |contains: bool| -> Vec<Html> {
+        r.steps
+            .iter()
+            .filter(|s| s.contains == contains)
+            .map(|s| html!("<span class=\"branch-name\">{}</span>", s.branch))
+            .collect()
+    };
+    let mut parts = Vec::new();
+    let (yes, no) = (names(true), names(false));
+    if !yes.is_empty() {
+        parts.push(html!(
+            "<span class=\"color-fg-success\">in</span> {}",
+            crate::html::join(yes, " ")
+        ));
+    }
+    if !no.is_empty() {
+        parts.push(html!(
+            "<span class=\"color-fg-muted\">not yet in</span> {}",
+            crate::html::join(no, " ")
+        ));
+    }
+    crate::html::join(parts, " · ")
+}
+
+fn about(pr: &Pr, reach: Option<&crate::reach::Reach>) -> Html {
     let labels: Html = if pr.labels.is_empty() {
         "<span class=\"color-fg-muted\">none</span>".into()
     } else {
@@ -1165,6 +1193,9 @@ fn about(pr: &Pr) -> Html {
     ));
     out.push(&kv("Labels", labels));
     out.push(&kv("Age", when));
+    if let Some(r) = reach {
+        out.push(&kv("Reached", reach_html(r)));
+    }
     out.push(&kv(
         "Size",
         html!(
@@ -1641,11 +1672,12 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
             None => None,
         }
     };
-    let (files, talk, notes, run) = tokio::join!(
+    let (files, talk, notes, run, reach) = tokio::join!(
         files(&app, pr, live),
         talk(&app, pr, live),
         notes(&app, live, source, bump),
-        run
+        run,
+        crate::reach::of(&app, pr)
     );
     let place = place(&s, pr);
     let mine_why: Option<Vec<String>> = viewer.as_deref().and_then(|v| {
@@ -1753,7 +1785,7 @@ async fn pr_page(State(app): State<Shared>, headers: HeaderMap, Path(n): Path<u6
         s.committers.is(&pr.author),
     ));
     out.push(&description_html(pr, &talk));
-    out.push(&about(pr));
+    out.push(&about(pr, reach.as_ref()));
     out.push(&place_html(&place, &credits, for_you, &here, hide));
     out.push(&touched_html(&list));
     out.push(&checklist(pr));
@@ -1818,6 +1850,7 @@ pub(crate) async fn pr_value(app: &App, n: u64) -> Option<Value> {
         "ci": pr.ci,
         "mergeable": pr.mergeable,
         "head": pr.head_oid,
+        "reached": crate::reach::of(app, pr).await,
         "ai": pr.ai,
         "queue": place(&s, pr),
         "credits": credits,

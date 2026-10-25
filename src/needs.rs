@@ -1231,6 +1231,7 @@ mod tests {
             updated_at: ago_days(0),
             merged_at: None,
             merged_by: None,
+            merge_commit: None,
             mergeable: "MERGEABLE".into(),
             head_oid: format!("head{n}"),
             files: vec![],

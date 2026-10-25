@@ -322,6 +322,7 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         updated_at: time(&n["updatedAt"])?,
         merged_at: time(&n["mergedAt"]),
         merged_by: n["mergedBy"]["login"].as_str().map(String::from),
+        merge_commit: n["mergeCommit"]["oid"].as_str().map(String::from),
         mergeable: n["mergeable"].as_str().unwrap_or("UNKNOWN").to_string(),
         head_oid: n["headRefOid"].as_str().unwrap_or("").to_string(),
         files: nodes(&n["files"])
