@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::github::OTHER_FORM;
-use crate::model::Pr;
+use crate::model::{Pr, UPDATE_BOT, automation};
 
 /// One pull request reduced to what the metrics read. The history walk stores
 /// these for pull requests outside the ledger's window.
@@ -73,7 +73,7 @@ impl From<&Pr> for Facts {
             reviews: p
                 .reviews
                 .iter()
-                .filter(|r| !r.author_is_bot)
+                .filter(|r| !r.bot())
                 .map(|r| Seen {
                     by: r.author.clone(),
                     at: r.submitted_at,
@@ -136,23 +136,6 @@ pub fn merge(history: Vec<Facts>, prs: &[Pr]) -> Vec<Facts> {
         }
     }
     by.into_values().collect()
-}
-
-/// Logins of community automation that GitHub lists as users, or whose
-/// GraphQL login has no `[bot]` suffix. The archive keeps only the login of
-/// the person who merged, so this list is the only bot test for mergers.
-const AUTOMATION: [&str; 4] = [
-    "r-ryantm",
-    "nixpkgs-merge-bot",
-    "nixpkgs-ci",
-    "github-actions",
-];
-
-/// The nixpkgs-update bot, which opens most version bumps.
-pub const UPDATE_BOT: &str = "r-ryantm";
-
-pub fn automation(login: &str) -> bool {
-    login.ends_with("[bot]") || AUTOMATION.iter().any(|a| login.eq_ignore_ascii_case(a))
 }
 
 /// The first month with GitHub reviews for the whole month; GitHub added
@@ -230,7 +213,7 @@ impl Facts {
 pub struct Month {
     pub month: String,
     pub opened: usize,
-    /// Bots, with [`UPDATE_BOT`] and the rest of [`AUTOMATION`].
+    /// Bots, as [`automation`] and GitHub tell them.
     pub opened_by_bots: usize,
     pub opened_by_update_bot: usize,
     /// By people, with a title like `name: 1.0 -> 1.1`.

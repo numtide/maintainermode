@@ -72,7 +72,9 @@ other person. Thus one person cannot cause them alone.
 
 **What does not count.** A plain "LGTM". An approval with no comment. An
 approval on a pull request that does not merge. A comment on a line that did
-not change. A review by a bot. A review of your own pull request.
+not change. A review by a bot. A review of a pull request that a bot opened,
+such as a version update by `r-ryantm`. A review of your own pull request.
+[The state of nixpkgs](#the-state-of-nixpkgs) lists the bots.
 
 ### 2. Whose pull requests appear
 
@@ -239,7 +241,7 @@ chart has a table with its values. The JSON has every month.
   `github-actions`. The archive keeps only the login of the person who
   merged, so this list is also the bot test for merges. "By people" leaves
   bots out. A merge through the merge bot counts as a merge by a bot, not
-  by the maintainer who asked for it.
+  by the maintainer who asked for it. The ledger uses the same test.
 - **Does nixpkgs keep up?** The pull requests opened and closed each month,
   the change of the open backlog, the backlog at the end of each month by
   age (under 7 days, 7 to 30, 30 to 90, 90 to 365, a year or more), and the

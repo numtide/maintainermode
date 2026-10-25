@@ -92,7 +92,7 @@ impl Ledger {
 }
 
 fn eligible(pr: &Pr, r: &Review) -> bool {
-    !r.author_is_bot && r.author != pr.author && r.author != "ghost"
+    !r.bot() && r.author != pr.author && r.author != "ghost"
 }
 
 /// The facts that followed a review and show it moved the pull request.
@@ -121,7 +121,7 @@ pub fn triggers(pr: &Pr, r: &Review) -> Vec<Trigger> {
 /// recomputable by anyone.
 pub fn compute(prs: &[Pr], orphan: impl Fn(&Pr) -> bool, now: DateTime<Utc>) -> Ledger {
     let mut earned: Vec<Credit> = Vec::new();
-    for pr in prs.iter().filter(|p| !p.author_is_bot) {
+    for pr in prs.iter().filter(|p| !p.bot()) {
         let unowned = orphan(pr);
         let mut seen: HashSet<&str> = HashSet::new();
         let mut reviews: Vec<&Review> = pr.reviews.iter().filter(|r| eligible(pr, r)).collect();
@@ -312,6 +312,28 @@ pub(crate) mod tests {
         p.reviews.push(r);
         p.pushes.push(t(21));
         assert!(compute(&[p], |_| false, t(22)).credits.is_empty());
+    }
+
+    #[test]
+    fn reviews_of_community_bots_never_count() {
+        let prs: Vec<Pr> = ["r-ryantm", "dependabot[bot]", "alice"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, author)| {
+                let mut p = pr(i as u64, author, 0);
+                p.reviews.push(review(i as u64, "bob", 20));
+                p.pushes.push(t(21));
+                p
+            })
+            .collect();
+        let l = compute(&prs, |_| false, t(22));
+        assert_eq!(
+            l.credits
+                .iter()
+                .map(|c| c.pr_author.as_str())
+                .collect::<Vec<_>>(),
+            ["alice"]
+        );
     }
 
     #[test]

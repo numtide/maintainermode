@@ -967,7 +967,7 @@ fn place(s: &Snapshot, pr: &Pr) -> Place {
             if pr.is_draft {
                 why.push("it is a draft".into());
             }
-            if pr.author_is_bot {
+            if pr.bot() {
                 why.push("a bot opened it".into());
             } else if !s.ledger.is_listed(&pr.author) {
                 let p = s.ledger.people.get(&pr.author);
