@@ -851,8 +851,6 @@ pub(crate) fn data<'a>(
 pub(crate) struct Personal {
     /// Watch, then Next.
     pub(crate) actions: Html,
-    pub(crate) update: Option<Html>,
-    pub(crate) act: Act,
 }
 
 pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
@@ -946,9 +944,6 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         ),
     ));
     health.push(&kv("Packaging", packaging_html(attr, p)));
-    if let Some(u) = personal.update {
-        health.push(&kv("Update", u));
-    }
     out.push(&crate::ui::section("Health", None, None, health));
     out.push(&package_box(index, &index.rev, p));
     out.push(&crate::bumps::package_section(
@@ -957,9 +952,8 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         h,
         attr,
         &v.subject.prs,
-        personal.act,
     ));
-    out.push(&v.subject.sections(personal.act));
+    out.push(&v.subject.sections());
     page.body(out)
 }
 
@@ -980,23 +974,13 @@ pub(super) async fn page(
     let builds = channel_builds(&app, &attr).await;
     let cache = binary_cache(&app, &attr);
     let next = crate::needs::here(&app, &headers, &subject.key());
-    let act = Act::of(&app, viewer.as_deref());
     let watch = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let update = viewer.as_deref().map(|v| {
-        crate::actions::update_form(
-            &attr,
-            upstream(&s, &index, &h, &attr),
-            crate::actions::ready(&app, v, crate::workflows::Needed::Update),
-        )
-    });
     let personal = Personal {
         actions: html!("{watch}{next}"),
-        update,
-        act,
     };
     let i = Inputs {
         s: &s,

@@ -25,7 +25,6 @@ pub(crate) enum Section {
 pub(crate) enum Personal {
     Inbox,
     Progress,
-    Runs,
     Settings,
 }
 
@@ -238,7 +237,7 @@ fn menu(app: &App, viewer: Option<&str>, section_now: Section) -> Html {
     )
 }
 
-const MENU: [(Personal, &str, &str, &str); 4] = [
+const MENU: [(Personal, &str, &str, &str); 3] = [
     (Personal::Inbox, "/inbox", octicon!("inbox"), "Inbox"),
     (
         Personal::Progress,
@@ -246,7 +245,6 @@ const MENU: [(Personal, &str, &str, &str); 4] = [
         octicon!("pulse"),
         "Progress",
     ),
-    (Personal::Runs, "/me/runs", octicon!("play"), "Runs"),
     (
         Personal::Settings,
         "/me/settings",

@@ -17,7 +17,7 @@ const RULES: &str = include_str!("../docs/rules.md");
 
 const REPO: &str = "https://github.com/numtide/maintainermode/blob/main";
 
-const DOCS: [(&str, &str, &str); 11] = [
+const DOCS: [(&str, &str, &str); 10] = [
     (
         "health",
         "Package pages, the risk score, upstream versions and channels.",
@@ -27,11 +27,6 @@ const DOCS: [(&str, &str, &str); 11] = [
         "personal",
         "What you maintain and watch, and the packages of your machines.",
         include_str!("../docs/personal.md"),
-    ),
-    (
-        "actions",
-        "The workflow buttons, the LLM opt-in and the MCP server.",
-        include_str!("../docs/actions.md"),
     ),
     (
         "data",

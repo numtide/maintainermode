@@ -5,7 +5,6 @@ use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
-use crate::actions::Act;
 use crate::area::{Index, under};
 use crate::catalog::{Subject, pr_row, subscriptions, upstream};
 use crate::health::Health;
@@ -194,7 +193,7 @@ fn upstream_html(r: &Row) -> Html {
     html!("<span class=\"Label {class}\" title=\"{hint}\">upstream {u}</span>")
 }
 
-fn row_html(r: &Row, act: Act) -> Html {
+fn row_html(r: &Row) -> Html {
     let p = r.pr;
     let package = r
         .attr
@@ -228,7 +227,7 @@ fn row_html(r: &Row, act: Act) -> Html {
             checks = Html::from(checks(p)),
         ),
         &badges,
-        act.buttons(p.number),
+        Html::new(),
     )
 }
 
@@ -294,10 +293,9 @@ pub(crate) fn tab(
         return out;
     }
     let (page, next) = crate::review::paged(&rows, after, |r| r.pr.number);
-    let act = Act::of(app, viewer);
     out.push(&Html::from("<div class=\"Box\">"));
     for r in page {
-        out.push(&row_html(r, act));
+        out.push(&row_html(r));
     }
     out.push(&Html::from("</div>"));
     out.push(&pager(href, next.as_deref()));
@@ -332,11 +330,10 @@ pub(crate) fn package_section(
     h: &Health,
     attr: &str,
     prs: &[&Pr],
-    act: Act,
 ) -> Html {
     let pname = index.pkgs.get(attr).map_or("", |p| p.pname.as_str());
     let list = of_package(attr, pname, prs);
-    let mut body: Html = list.iter().map(|p| pr_row(p, act)).collect();
+    let mut body: Html = list.iter().map(|p| pr_row(p)).collect();
     if list.is_empty() {
         let hint = match upstream(s, index, h, attr) {
             Some(u) => html!(" Upstream has {u}: <a href=\"{GUIDE}\">how to update a package</a>."),

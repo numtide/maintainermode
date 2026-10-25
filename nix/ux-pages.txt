@@ -31,7 +31,6 @@ public /state?tab=rules
 public /state?tab=docs
 public /state?tab=docs&doc=health
 public /state?tab=docs&doc=personal
-public /state?tab=docs&doc=actions
 public /state?tab=docs&doc=data
 public /state?tab=docs&doc=operations
 public /state?tab=docs&doc=api
@@ -54,7 +53,6 @@ both /u/${login}?tab=flakes
 both /pr/${pr}
 signed-in /pr/100173
 signed-in /pr/100172
-both /actions
 signed-in /inbox
 signed-in /packages?filter=mine
 signed-in /packages?filter=machines
@@ -66,9 +64,7 @@ signed-in /packages?filter=watch
 signed-in /packages?filter=all
 signed-in /me/settings
 signed-in /login/cli?code=BCDF-GHJK
-signed-in /me/runs
 signed-in /me/progress
-signed-in /claude/pr/${pr}
 
 skip /merge
 skip /committer

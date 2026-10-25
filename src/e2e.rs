@@ -114,7 +114,6 @@ async fn every_signed_in_page_answers_and_stays_private() {
         "/packages?filter=watch",
         "/packages?filter=all",
         "/me/settings",
-        "/me/runs",
         "/me/progress",
         "/review",
         "/review?tab=ready",
@@ -132,8 +131,6 @@ async fn every_signed_in_page_answers_and_stays_private() {
         private(&a, path);
         assert!(a.body.contains("menu-login\">alice<"), "{path}: menu");
     }
-    let a = site.get("/actions", Some(SID)).await;
-    assert_eq!(a.location.as_deref(), Some("/me/runs"));
 }
 
 #[tokio::test]
@@ -228,9 +225,7 @@ async fn me_pages_show_their_parts() {
         "notifications",
         "feed",
         "upload",
-        "llm",
-        "mcp",
-        "workflows",
+        "api",
         "tags",
         "goal",
         "start",
@@ -273,8 +268,6 @@ async fn me_pages_show_their_parts() {
         .await;
     assert_eq!(a.location.as_deref(), Some("/review"));
     assert!(app.store.hidden_prs("alice").unwrap().is_empty());
-    let a = site.get("/me/runs", Some(SID)).await;
-    assert!(a.body.contains("Runs"), "{}", a.body);
     let a = site.get("/me/progress", Some(SID)).await;
     assert!(a.body.contains("Your weekly goal"));
 }
@@ -324,10 +317,6 @@ async fn forms_change_what_the_pages_show() {
     assert!(a.body.contains("of your goal of 3 this week"), "{}", a.body);
     let a = site.post("/me/progress", SID, &[("goal", "many")]).await;
     assert_eq!(a.status, StatusCode::BAD_REQUEST);
-
-    let a = site.post("/me/settings/llm", SID, &[("llm_ok", "1")]).await;
-    assert_eq!(a.status, StatusCode::SEE_OTHER);
-    assert!(crate::llm::opted_in(&app, "alice"));
 
     let a = site.post("/me/feed", SID, &[]).await;
     assert_eq!(a.status, StatusCode::SEE_OTHER);
@@ -395,21 +384,6 @@ async fn settings_tokens_and_sign_out() {
     let app = signed_in_app();
     let site = serve(app.clone()).await;
     let a = site
-        .post(
-            "/me/settings/workflows",
-            SID,
-            &[
-                ("review_repo", "alice/review"),
-                ("update_repo", "alice/update"),
-                ("nixpkgs_fork", "alice/nixpkgs"),
-            ],
-        )
-        .await;
-    assert_eq!(a.location.as_deref(), Some("/me/settings#workflows"));
-    let a = site.get("/me/settings", Some(SID)).await;
-    assert!(a.body.contains("value=\"alice/review\""));
-
-    let a = site
         .post("/me/watch", SID, &[("key", "area:pkgs/development")])
         .await;
     assert_eq!(a.location.as_deref(), Some("/a/pkgs/development"));
@@ -435,18 +409,23 @@ async fn settings_tokens_and_sign_out() {
     assert!(!a.body.contains("<script>x"));
     assert!(a.body.contains("&lt;script&gt;x&lt;"));
 
-    let a = site.post("/me/mcp-token", SID, &[]).await;
-    assert_eq!(a.location.as_deref(), Some("/me/settings#llm"));
-    site.post("/me/settings/llm", SID, &[("llm_ok", "1")]).await;
-    let a = site.post("/me/mcp-token", SID, &[]).await;
+    let a = site.post("/me/api-token", SID, &[]).await;
     assert_eq!(a.status, StatusCode::OK);
-    private(&a, "mcp-token");
-    let a = site.get("/claude/pr/1", Some(SID)).await;
-    assert_eq!(a.status, StatusCode::NOT_FOUND);
-    private(&a, "claude/pr/1");
-    let a = site.post("/me/settings/llm", SID, &[]).await;
-    assert_eq!(a.status, StatusCode::SEE_OTHER);
-    assert!(!crate::llm::opted_in(&app, "alice"));
+    private(&a, "api-token");
+    let token = a
+        .body
+        .split("readonly value=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        crate::apitoken::login_of(&app, &token).as_deref(),
+        Some("alice")
+    );
+    let a = site.post("/me/api-token/delete", SID, &[]).await;
+    assert_eq!(a.location.as_deref(), Some("/me/settings#api"));
+    assert!(crate::apitoken::login_of(&app, &token).is_none());
     let a = site.post("/me/upload-token/delete", SID, &[]).await;
     assert_eq!(a.location.as_deref(), Some("/me/settings#upload"));
     let a = site.post("/me/start", SID, &[("done", "1")]).await;

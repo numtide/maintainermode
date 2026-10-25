@@ -120,7 +120,7 @@ Other text opens `/search?q=<text>`. It lists, in this order:
   (`GHSA-…`), with the packages that they affect. Words never match an
   advisory.
 
-`/api/v1/search` and the MCP tool `search` give the same lists.
+`/api/v1/search` gives the same lists.
 
 ## Keyboard shortcuts
 

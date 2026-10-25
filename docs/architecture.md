@@ -136,7 +136,7 @@ association, checked_at)` keeps them. `project::pr_live` and
   (`ui.rs:182`) holds a set name that `sets::check_name` restricts.
 - Some data types hold HTML: `committer::Row.why_html`, `mine::Why`
   labels, `profile::ReviewState::badge`.
-- MCP sends every tool to `api::answer`, so MCP and API cannot drift.
+- The API sends every endpoint that `api.rs` answers to `api::answer`.
   The drift is between each page and its `*_value` function. Examples:
   - `catalog::package_page` and `package_value` compute the builds,
     channels, backports and advisories twice.
@@ -152,8 +152,7 @@ association, checked_at)` keeps them. `project::pr_live` and
   - `fn data(app, viewer, query) -> FooView`, with `#[derive(Serialize)]`.
     It holds text, never HTML.
   - `fn view(v: &FooView) -> Html`. It reads no store.
-  - `api::answer` returns `serde_json::to_value(foo::data(..))`. MCP gets
-    it with no work.
+  - `api::answer` returns `serde_json::to_value(foo::data(..))`.
 
 Named types replace the tuples and `json!` values that are built in
 several places today:

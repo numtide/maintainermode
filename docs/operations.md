@@ -17,7 +17,6 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `GITHUB_APP_ID`                        | GitHub App whose installation token reads GitHub first      |
 | `GITHUB_APP_KEY_FILE`                  | file holding the PEM private key of the GitHub App          |
 | `GITHUB_APP_INSTALLATION_ID`           | installation to use; else the one on the account of the App |
-| `MAINTAINER_MODE_GITHUB_APP_SLUG`      | the App people install on their workflow repository         |
 | `MAINTAINER_MODE_UPLOAD_TOKEN`         | the client's upload token for `submit`                      |
 | `MAINTAINER_MODE_CHANNELS`             | channels next to master, default `nixos-unstable,stable`    |
 | `MAINTAINER_MODE_S3_ENDPOINT`          | S3-compatible endpoint for the copy of the event log        |
@@ -72,7 +71,7 @@ The tool writes to `./ux-audit`. Use `--out` to change the folder. Open `index.h
 | `--link-cap <n>`   | check at most n same-origin links, default 300                            |
 | `--bin <path>`     | the binary for `--local`; in the dev shell, the default is `target/debug` |
 
-The checks are: the HTTP status, the HTML size, the load time, console errors, failed requests, horizontal overflow, images without `alt`, form controls without a label, controls without a name, the order of the headings, duplicate ids, low text contrast, small tap targets on a phone, and same-origin links that answer 404. The link check does not open `/pr/`, `/claude/`, `/auth/` and `/feed/` links.
+The checks are: the HTTP status, the HTML size, the load time, console errors, failed requests, horizontal overflow, images without `alt`, form controls without a label, controls without a name, the order of the headings, duplicate ids, low text contrast, small tap targets on a phone, and same-origin links that answer 404. The link check does not open `/pr/`, `/auth/` and `/feed/` links.
 
 ## New secrets without a restart
 

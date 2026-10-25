@@ -13,7 +13,6 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
-use crate::actions::Act;
 use crate::affected::Verdict;
 use crate::area::{Index, under};
 use crate::attrs::{License, Meta};
@@ -652,7 +651,7 @@ impl SubjectRow {
     }
 }
 
-pub(crate) fn pr_row(p: &Pr, act: Act) -> Html {
+pub(crate) fn pr_row(p: &Pr) -> Html {
     use crate::ui::Kind;
     let kind = Kind::of_pr(&p.state);
     let ci = match p.ci.as_deref() {
@@ -680,11 +679,7 @@ pub(crate) fn pr_row(p: &Pr, act: Act) -> Html {
             a = p.author
         ),
         &badges,
-        if p.is_open() {
-            act.buttons(p.number)
-        } else {
-            Html::new()
-        },
+        Html::new(),
     )
 }
 
@@ -1525,13 +1520,8 @@ impl<'a> SubjectView<'a> {
     }
 
     /// The pull requests and issues sections of the page.
-    pub(crate) fn sections(&self, act: Act) -> Html {
-        let mut out = section(
-            "Pull requests",
-            &self.prs,
-            |p| p.is_open(),
-            |p| pr_row(p, act),
-        );
+    pub(crate) fn sections(&self) -> Html {
+        let mut out = section("Pull requests", &self.prs, |p| p.is_open(), pr_row);
         out.push(&section("Issues", &self.issues, |i| i.is_open(), issue_row));
         out
     }

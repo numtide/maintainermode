@@ -114,13 +114,6 @@ in
       description = "Installation of the GitHub App to use. Without it, the service uses the installation on the account that owns the App.";
     };
 
-    githubAppSlug = lib.mkOption {
-      type = lib.types.nullOr lib.types.str;
-      default = null;
-      example = "maintainer-mode-app";
-      description = "Slug of the public GitHub App that people install on their workflow repository, to start workflows with the Actions buttons. /me/settings#workflows links to its installation page.";
-    };
-
     indexSets = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
@@ -278,9 +271,6 @@ in
       }
       // lib.optionalAttrs (cfg.githubAppInstallationId != null) {
         GITHUB_APP_INSTALLATION_ID = toString cfg.githubAppInstallationId;
-      }
-      // lib.optionalAttrs (cfg.githubAppSlug != null) {
-        MAINTAINER_MODE_GITHUB_APP_SLUG = cfg.githubAppSlug;
       }
       // lib.optionalAttrs cfg.eventCopy.enable {
         MAINTAINER_MODE_S3_ENDPOINT = cfg.eventCopy.endpoint;

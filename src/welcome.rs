@@ -87,8 +87,7 @@ pub fn intro(app: &App, headers: &HeaderMap) -> Html {
          <li><strong>Navigate nixpkgs.</strong> <a href=\"/packages\">Packages and NixOS modules</a> with their issues, pull requests, version bumps and advisories, \
          and <a href=\"/state\">the state of nixpkgs</a> in numbers.</li>\
          <li><strong>Make it yours.</strong> {yours} what you maintain and watch, a private feed, and the packages of your own system.</li>\
-         <li><strong>Act on it.</strong> <a href=\"/review\">Review the pull requests that need it</a>, \
-         and start nixpkgs-review or nix-update in your own GitHub Actions.</li></ul>\
+         <li><strong>Act on it.</strong> <a href=\"/review\">Review the pull requests that need it</a>.</li></ul>\
          <p class=\"mb-0\">New to nixpkgs? Read the <a href=\"{CONTRIBUTING}\">nixpkgs contributor guide</a> first. \
          Maintainer Mode helps you find work; nixpkgs decides how the work is done.</p></div></div>"
     )
@@ -140,9 +139,6 @@ struct Facts {
     queue: usize,
     reviewed: usize,
     feed: bool,
-    system: bool,
-    actions: bool,
-    llm: bool,
 }
 
 impl Facts {
@@ -165,13 +161,6 @@ impl Facts {
             (!index.rev.is_empty(), keys)
         };
         let s = app.snap();
-        let setting = |k: &str| {
-            app.store
-                .setting(login, k)
-                .ok()
-                .flatten()
-                .is_some_and(|v| !v.is_empty())
-        };
         Facts {
             index_ready,
             maintained: keys.len(),
@@ -180,12 +169,11 @@ impl Facts {
             queue: crate::mine::for_you(app, &s, login).len(),
             reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
             feed: app.store.feed_token(login).ok().flatten().is_some(),
-            system: !app.store.sets(login).unwrap_or_default().is_empty(),
-            actions: ["review_repo", "update_repo", "nixpkgs_fork"]
-                .iter()
-                .any(|k| setting(k)),
-            llm: crate::llm::opted_in(app, login),
         }
+    }
+
+    fn maintainer(&self) -> bool {
+        self.maintained > 0
     }
 }
 
@@ -193,90 +181,39 @@ fn mark(done: bool) -> Mark {
     if done { Mark::Done } else { Mark::Todo }
 }
 
+/// A person who maintains nothing yet learns how to start; a maintainer
+/// gets help to keep up with what they maintain.
 fn checklist(f: &Facts) -> Html {
-    let mut out = Html::new();
     if !f.index_ready {
-        out.push(&step(
+        return step(
             Mark::Todo,
             "What you maintain",
             "The first nixpkgs index is still being built. Come back in a few minutes.",
-        ));
-    } else if f.maintained == 0 {
-        out.push(&step(
-            mark(f.reviewed > 0),
-            "Start as a reviewer",
-            html!(
-                "No package or module names you in <code>meta.maintainers</code> yet. \
-                 Start with <a href=\"/review?tab=unowned\">the pull requests with no maintainer</a>. Nobody watches them, \
-                 and a first review needs no domain knowledge. Is <code>meta</code> complete? Are the hashes pinned? \
-                 Are <code>platforms</code> right? Leave each finding as an inline comment on the changed line. \
-                 To maintain a package, pick <a href=\"/#first\">a first package to work on</a>: a small one with no maintainer and recent work. \
-                 Read <a href=\"{MAINTAINERS_README}\">maintainers/README.md</a>."
-            ),
-        ));
-    } else {
-        let button = Html::from(if f.maintained_watched < f.maintained {
-            "<form method=\"post\" action=\"/me/watch/maintained\" class=\"mt-2\">\
-             <button class=\"btn btn-sm btn-primary\" type=\"submit\">Watch all of it</button></form>"
-        } else {
-            ""
-        });
-        out.push(&step(
-            mark(f.maintained_watched == f.maintained),
-            "What you maintain",
-            html!(
-                "nixpkgs names you on <a href=\"/packages?filter=maintain\">{} packages and modules</a>. \
-                 You watch {} of them.{button}",
-                f.maintained, f.maintained_watched
-            ),
-        ));
+        );
     }
+    if f.maintainer() {
+        maintainer_steps(f)
+    } else {
+        newcomer_steps(f)
+    }
+}
+
+fn newcomer_steps(f: &Facts) -> Html {
+    let mut out = step(
+        mark(f.reviewed > 0),
+        "Make a first review",
+        html!(
+            "<a href=\"/review?tab=unowned\">Pull requests with no maintainer</a> wait the longest, and a first review needs no domain knowledge. \
+             Is <code>meta</code> complete? Are the hashes pinned? Are <code>platforms</code> right? \
+             Leave each finding as an inline comment on the changed line. \
+             <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Your reviews also put your own pull requests in the queues.</a>"
+        ),
+    );
     out.push(&step(
         mark(f.watched > 0),
-        "What you watch",
-        html!(
-            "You watch {}. Watch any package, module or nixpkgs directory.\
-             <form method=\"post\" action=\"/me/watch\" class=\"inline-form mt-2\">\
-             <input class=\"form-control flex-auto input-sm\" name=\"name\" placeholder=\"hello, nixos/nginx or pkgs/development/python-modules\" aria-label=\"what to watch\">\
-             <button class=\"btn btn-sm\" type=\"submit\">Watch</button></form>",
-            f.watched
-        ),
-    ));
-    out.push(&step(
-        mark(f.reviewed > 0),
-        "The review queue for you",
-        html!(
-            "<a href=\"/review\">{} pull requests</a> touch your machines, or what you maintain, own, changed this year, tagged or watch. \
-             You reviewed {} pull requests. <a href=\"/state?tab=rules#2-whose-pull-requests-appear\">Your reviews also put your own pull requests in the queues.</a>",
-            f.queue, f.reviewed
-        ),
-    ));
-    out.push(&step(
-        mark(f.feed),
-        "Notifications",
-        "Make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>. It tells you about new pull requests, merges, \
-         issues, advisories and releases of what you watch. Your inbox on this site shows the same news.",
-    ));
-    out.push(&step(
-        mark(f.system),
-        "Your system",
-        "<a href=\"/me/settings#upload\">Upload the packages of your machines</a>, and see them first in <a href=\"/packages?filter=mine\">your packages</a>. \
-         Your feed then tells you about advisories and releases of the packages you really run. It stays private.",
-    ));
-    out.push(&step(
-        mark(f.actions),
-        "Actions",
-        "Fork <a href=\"https://github.com/Defelo/nixpkgs-review-gha\">nixpkgs-review-gha</a>, install the GitHub App on it, \
-         and save your repositories in <a href=\"/me/settings#workflows\">your settings</a>. \
-         Then \"Review in CI\" and \"Update with nix-update\" run in your own GitHub Actions.",
-    ));
-    out.push(&step(
-        if f.llm { Mark::Done } else { Mark::Optional },
-        "LLMs",
-        html!(
-            "Off by default. Turn them on in <a href=\"/me/settings#llm\">your settings</a> to get a Claude Code button on \
-             pull requests and an MCP server. Follow the <a href=\"{CONTRIBUTING}#automationai-policy\">nixpkgs policy on AI</a>."
-        ),
+        "Pick a first package",
+        "<a href=\"/#first\">These packages</a> are small, have no maintainer, and had work recently. \
+         Watch one, fix or update it, then add yourself to its <code>meta.maintainers</code>.",
     ));
     let guides: Html = GUIDES
         .iter()
@@ -284,10 +221,45 @@ fn checklist(f: &Facts) -> Html {
         .collect();
     out.push(&step(
         Mark::Optional,
-        "Read the nixpkgs guides",
+        "Learn how nixpkgs works",
         html!(
             "Maintainer Mode helps you find work. nixpkgs decides how the work is done.<ul class=\"ml-3 mt-1\">{guides}</ul>"
         ),
+    ));
+    out
+}
+
+fn maintainer_steps(f: &Facts) -> Html {
+    let button = Html::from(if f.maintained_watched < f.maintained {
+        "<form method=\"post\" action=\"/me/watch/maintained\" class=\"mt-2\">\
+         <button class=\"btn btn-sm btn-primary\" type=\"submit\">Watch all of it</button></form>"
+    } else {
+        ""
+    });
+    let mut out = step(
+        mark(f.maintained_watched == f.maintained),
+        "Watch what you maintain",
+        html!(
+            "nixpkgs names you on <a href=\"/packages?filter=maintain\">{} packages and modules</a>. \
+             You watch {} of them. Watching puts their pull requests, issues, advisories and releases in front of you.{button}",
+            f.maintained,
+            f.maintained_watched
+        ),
+    );
+    out.push(&step(
+        mark(f.reviewed > 0),
+        "Review the pull requests on them",
+        html!(
+            "<a href=\"/review?tab=foryou\">{} open pull requests</a> touch what you maintain or watch. \
+             You reviewed {} pull requests.",
+            f.queue, f.reviewed
+        ),
+    ));
+    out.push(&step(
+        mark(f.feed),
+        "Get the news",
+        "<a href=\"/inbox\">Your inbox</a> shows new pull requests, merges, issues, advisories and releases of what you watch. \
+         For a feed reader, make a private Atom feed in <a href=\"/me/settings#feed\">your settings</a>.",
     ));
     out
 }
@@ -305,12 +277,21 @@ pub fn card(app: &App, login: &str) -> Html {
     if !pending(app, login) {
         return Html::new();
     }
+    let f = Facts::of(app, login);
+    let (title, lead) = if f.maintainer() {
+        ("Keep up with your packages", "")
+    } else {
+        (
+            "Start contributing",
+            "You do not need to maintain a package to help. ",
+        )
+    };
     html!(
         "<section class=\"Box mb-4\" id=\"start\"><div class=\"Box-header d-flex flex-items-center\">\
-         <h2 class=\"Box-title flex-auto\">Get started</h2>{}</div>\
-         <div class=\"Box-row f6 color-fg-muted\">Your first steps, from your real state. Only you see this card.</div>{}</section>",
+         <h2 class=\"Box-title flex-auto\">{title}</h2>{}</div>\
+         <div class=\"Box-row f6 color-fg-muted\">{lead}Three steps, from your real state. Only you see this card.</div>{}</section>",
         done_form(true, "Hide"),
-        checklist(&Facts::of(app, login))
+        checklist(&f)
     )
 }
 
@@ -318,12 +299,12 @@ pub fn card(app: &App, login: &str) -> Html {
 pub fn settings_box(app: &App, login: &str) -> Html {
     let (text, form) = if pending(app, login) {
         (
-            "The home page shows the Get started card.",
+            "The home page shows the card with your first steps.",
             done_form(true, "Hide the card"),
         )
     } else {
         (
-            "You hid the Get started card.",
+            "You hid the card with your first steps.",
             done_form(false, "Show the card again"),
         )
     };
@@ -374,17 +355,20 @@ mod tests {
             queue: 0,
             reviewed: 0,
             feed: false,
-            system: false,
-            actions: false,
-            llm: false,
         }
     }
 
+    fn steps(h: &Html) -> usize {
+        h.matches("class=\"Box-row d-flex flex-items-start\"")
+            .count()
+    }
+
     #[test]
-    fn a_newcomer_gets_the_no_maintainer_queue_and_the_maintainer_guide() {
+    fn a_newcomer_learns_to_review_and_to_pick_a_first_package() {
         let html = checklist(&facts());
+        assert_eq!(steps(&html), 3);
         assert!(html.contains("/review?tab=unowned"));
-        assert!(html.contains(MAINTAINERS_README));
+        assert!(html.contains("/#first"));
         assert!(!html.contains("/me/watch/maintained"));
         for (name, url, _) in GUIDES {
             assert!(html.contains(url), "{name} is missing");
@@ -392,15 +376,17 @@ mod tests {
     }
 
     #[test]
-    fn a_maintainer_can_watch_the_rest() {
+    fn a_maintainer_gets_help_with_what_they_maintain() {
         let f = Facts {
             maintained: 3,
             maintained_watched: 1,
             ..facts()
         };
         let html = checklist(&f);
+        assert_eq!(steps(&html), 3);
         assert!(html.contains("/packages?filter=maintain"));
         assert!(html.contains("/me/watch/maintained"));
+        assert!(!html.contains("/review?tab=unowned"));
         let all = Facts {
             maintained_watched: 3,
             ..f
@@ -412,14 +398,11 @@ mod tests {
     fn the_checklist_reads_the_state_of_the_login() {
         let app = crate::sets::tests::app(&["hello"]);
         let f = Facts::of(&app, "alice");
-        assert!(f.index_ready && !f.feed && !f.llm && !f.actions);
+        assert!(f.index_ready && !f.feed && f.watched == 0);
         app.store.set_feed_token("alice", "t").unwrap();
         app.store.watch("alice", "pkg:hello").unwrap();
-        app.store
-            .set_setting("alice", "review_repo", "alice/r")
-            .unwrap();
         let f = Facts::of(&app, "alice");
-        assert!(f.feed && f.actions);
+        assert!(f.feed);
         assert_eq!(f.watched, 1);
         assert!(!Facts::of(&app, "bob").feed);
     }

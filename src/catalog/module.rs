@@ -57,7 +57,7 @@ pub(crate) fn data<'a>(
     }
 }
 
-pub(crate) fn view(index: &Index, v: &ModuleView, actions: Html, act: Act) -> Page {
+pub(crate) fn view(index: &Index, v: &ModuleView, actions: Html) -> Page {
     let (file, m) = (v.file, v.module);
     let page = Page::new(Section::Packages, module_name(file))
         .icon(octicon!("gear"))
@@ -78,7 +78,7 @@ pub(crate) fn view(index: &Index, v: &ModuleView, actions: Html, act: Act) -> Pa
         ),
     ));
     out.push(&crate::ui::section("Health", None, None, health));
-    out.push(&v.subject.sections(act));
+    out.push(&v.subject.sections());
     page.body(out)
 }
 
@@ -95,7 +95,6 @@ pub(super) async fn page(
     let subject = Subject::Module(file.clone());
     let last = app.hydra.last(&test_job(&file)).await;
     let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
-    let act = Act::of(&app, viewer.as_deref());
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
@@ -103,7 +102,7 @@ pub(super) async fn page(
         drop(index);
         return not_found(&app, viewer.as_deref(), &file);
     };
-    let page = view(&index, &data(&s, &h, &index, &file, m, last), actions, act);
+    let page = view(&index, &data(&s, &h, &index, &file, m, last), actions);
     drop(index);
     page.render(&app, viewer.as_deref())
 }

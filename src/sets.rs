@@ -974,7 +974,6 @@ pub(crate) mod tests {
             packages: Default::default(),
             public_url: String::new(),
             github_app: None,
-            github_app_slug: None,
             events: std::sync::Arc::new(crate::events::Log::open(&events).unwrap()),
             archive: Vec::new(),
             rescan: None,
@@ -1437,7 +1436,7 @@ pub(crate) mod tests {
             sets_value(&app, "bob", None, None).unwrap()["sets"],
             json!([])
         );
-        let e = crate::api::tool("my_sets").unwrap();
+        let e = crate::api::tests::endpoint("/api/v1/sets");
         let none = crate::api::Args::default();
         assert!(matches!(
             crate::api::answer(&app, e, &none, None).await,
@@ -1452,7 +1451,7 @@ pub(crate) mod tests {
             crate::api::answer(&app, e, &nope, Some("alice")).await,
             Err(crate::api::Fail::Missing(_))
         ));
-        let mine = crate::api::tool("my_packages").unwrap();
+        let mine = crate::api::tests::endpoint("/api/v1/mine");
         let web = crate::api::Args {
             filter: Some("machines".into()),
             set: Some("infra".into()),

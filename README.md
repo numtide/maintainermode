@@ -50,18 +50,13 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
   pull requests, merges, issues, advisories and releases.
 - **Your progress**: your reviews and your weekly goal. Only you see it.
 - **For committers**: what is ready to merge in your areas, on the Ready to merge tab of the review page.
-- **Onboarding**: a first visit walks you through all of this.
+- **Onboarding**: three first steps. A person who maintains nothing yet learns how to start; a maintainer gets help to keep up.
 
 ## 3. Act on it
 
-Buttons that start work for you, in your own repositories, with your token:
-
-- **Review in CI** runs [nixpkgs-review](https://github.com/Defelo/nixpkgs-review-gha)
-  on a pull request.
-- **Update with nix-update** bumps a package and pushes a branch to your fork,
-  also when the build fails, so you can continue from there.
-- **Claude Code**, if you opt in to LLMs: a session on a pull request with the
-  nixpkgs AI policy in its instructions, and an MCP server for your own tools.
+Each page links to the place on GitHub where you act: review the diff,
+approve, ask for changes, or merge. Maintainer Mode tells you where to act;
+you do the work on GitHub.
 
 ## New to nixpkgs?
 
@@ -82,9 +77,8 @@ Read its own guides first:
 
 ## Principles
 
-- **It never writes to nixpkgs.** No reviews, no merges, no comments, no
-  labels. The one write it makes is on your click: it starts a workflow in a
-  repository you own.
+- **It never writes to GitHub.** No reviews, no merges, no comments, no
+  labels, no workflows.
 - **It grants nothing.** Committers decide; Maintainer Mode shows evidence.
 - **No ranking of people.** Reviews that move pull requests decide which
   pull requests get on the list. No page shows a score. See
@@ -104,7 +98,6 @@ The site also shows these pages, in the Docs tab of
 | [docs/rules.md](docs/rules.md)           | the queues, routing, the state of nixpkgs (`/state?tab=rules`) |
 | [docs/health.md](docs/health.md)         | package pages, the risk score, upstream, channels              |
 | [docs/personal.md](docs/personal.md)     | what you maintain and watch, your package set                  |
-| [docs/actions.md](docs/actions.md)       | Actions, the LLM opt-in, the MCP server                        |
 | [docs/api.md](docs/api.md)               | the JSON API and the command line                              |
 | [docs/data.md](docs/data.md)             | how the data is read, the event log, the archive               |
 | [docs/operations.md](docs/operations.md) | run it, its variables, what we took                            |

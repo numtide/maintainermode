@@ -1,10 +1,9 @@
-//! The JSON API, and the one table of what the site, the API, the MCP
-//! server and the CLI can do. [`ENDPOINTS`] gives each endpoint with its
-//! parameters, its MCP tool and its CLI command: `GET /api/v1`, the routes
-//! of the JSON answers and the MCP `tools/list` are made from it, and
-//! [`answer`] builds the JSON for the API and the MCP server both.
-//! [`PAGES`] maps each view of the site to its endpoints. The tests at the
-//! bottom fail when a page, a tab, an endpoint or a tool is not in them.
+//! The JSON API, and the one table of what the site, the API and the CLI
+//! can do. [`ENDPOINTS`] gives each endpoint with its parameters and its
+//! CLI command: `GET /api/v1` and the routes of the JSON answers are made
+//! from it, and [`answer`] builds the JSON. [`PAGES`] maps each view of the
+//! site to its endpoints. The tests at the bottom fail when a page, a tab or
+//! an endpoint is not in them.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -39,8 +38,7 @@ pub(crate) enum Type {
     OneOf(&'static [&'static str]),
 }
 
-/// A query parameter, or a path parameter when the path names it. The MCP
-/// tool takes it as an argument of the same name.
+/// A query parameter, or a path parameter when the path names it.
 pub(crate) struct Param {
     pub name: &'static str,
     pub kind: Type,
@@ -85,11 +83,10 @@ pub(crate) struct Endpoint {
     pub path: &'static str,
     pub about: &'static str,
     pub params: &'static [Param],
-    /// It answers only for the caller: their session, or their MCP token.
+    /// It answers only for the caller: their session, or their API token.
     pub private: bool,
-    /// The name and the title of the MCP tool. An endpoint with a tool gets
-    /// its route and its JSON from this module.
-    pub mcp: Cover<(&'static str, &'static str)>,
+    /// This module makes its route, and [`answer`] its JSON.
+    pub answered: bool,
     /// The CLI command; `get` prints the JSON of any GET endpoint.
     pub cli: Cover<&'static str>,
 }
@@ -144,7 +141,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             CURSOR_P,
         ],
         private: false,
-        mcp: By(("prs", "Open pull requests")),
+        answered: true,
         cli: By("prs"),
     },
     Endpoint {
@@ -152,7 +149,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "One pull request: its state, its reviews, its place in the queues, the packages and modules it touches, its files, its discussion, the merge decision, and the branches and channels that hold its merge commit.",
         params: &[need("number", Type::Int, "the number of the pull request")],
         private: false,
-        mcp: By(("pr", "A pull request")),
+        answered: true,
         cli: By("pr"),
     },
     Endpoint {
@@ -160,7 +157,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "The public profile of a GitHub login: facts (committer, teams, first pull request), its open and recent pull requests, the areas it changes, its public flake sets, its review record, and the packages and NixOS modules whose meta.maintainers or meta.teams name it, with their flags. It never ranks people.",
         params: &[need("login", Type::Text, "a GitHub login")],
         private: false,
-        mcp: By(("person", "A person")),
+        answered: true,
         cli: By("record"),
     },
     Endpoint {
@@ -172,7 +169,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             "keep the items of one mood: all by default",
         )],
         private: true,
-        mcp: By(("needs", "What needs me")),
+        answered: true,
         cli: By("needs"),
     },
     Endpoint {
@@ -195,7 +192,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             CURSOR_P,
         ],
         private: true,
-        mcp: By(("my_packages", "My packages")),
+        answered: true,
         cli: By("mine"),
     },
     Endpoint {
@@ -214,7 +211,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             ),
         ],
         private: true,
-        mcp: By(("my_sets", "My package sets")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -231,7 +228,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             CURSOR_P,
         ],
         private: true,
-        mcp: By(("inbox", "My inbox")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -239,7 +236,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Your own progress: your reviews this week and this month, your weekly goal, the authors your reviews helped, and your badges. It compares you with nobody.",
         params: &[],
         private: true,
-        mcp: By(("progress", "My progress")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -258,10 +255,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             ),
         ],
         private: false,
-        mcp: By((
-            "search",
-            "Search packages, modules, areas, people, pull requests and advisories",
-        )),
+        answered: true,
         cli: By("search"),
     },
     Endpoint {
@@ -269,7 +263,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Packages for a first contribution: small packages under pkgs/by-name with no maintainer, and a pull request to review or an issue to fix from the last 60 days. The newest task comes first.",
         params: &[LIMIT_P, CURSOR_P],
         private: false,
-        mcp: By(("first_packages", "Packages for a first contribution")),
+        answered: true,
         cli: By("first"),
     },
     Endpoint {
@@ -277,7 +271,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Packages that need help: an open advisory in master, the highest risk first.",
         params: &[LIMIT_P, CURSOR_P],
         private: false,
-        mcp: By(("need_help", "Packages that need help")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -285,9 +279,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "The public package list of the current index: pname and version of each attribute, gzip.",
         params: &[],
         private: false,
-        mcp: Without(
-            "the full package list for maintainer-mode export: it is too large for one answer; search finds one package",
-        ),
+        answered: false,
         cli: By("export"),
     },
     Endpoint {
@@ -299,7 +291,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             "an attribute or a package name, like hello or python3Packages.requests",
         )],
         private: false,
-        mcp: By(("package", "A package")),
+        answered: true,
         cli: By("show"),
     },
     Endpoint {
@@ -311,7 +303,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             "the module file, like nixos/modules/services/web-servers/nginx/default.nix, or nixos/NAME",
         )],
         private: false,
-        mcp: By(("module", "A NixOS module")),
+        answered: true,
         cli: By("show"),
     },
     Endpoint {
@@ -323,7 +315,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             "a nixpkgs path, like pkgs/development/python-modules",
         )],
         private: false,
-        mcp: By(("area", "An area of nixpkgs")),
+        answered: true,
         cli: By("show"),
     },
     Endpoint {
@@ -331,7 +323,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Redirects a name to its package, module or area.",
         params: &[need("name", Type::Text, "a package, nixos/NAME or a path")],
         private: false,
-        mcp: Without("a redirect: the tools package, module and area take a name"),
+        answered: false,
         cli: By("show"),
     },
     Endpoint {
@@ -339,7 +331,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "The state of nixpkgs, month by month: pull request flow, review times and package health. Aggregates only: no figure names a person.",
         params: &[],
         private: false,
-        mcp: By(("metrics", "The state of nixpkgs")),
+        answered: true,
         cli: By("metrics"),
     },
     Endpoint {
@@ -347,7 +339,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "The counts and the rules of the queues.",
         params: &[],
         private: false,
-        mcp: By(("status", "The rules of the queues")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -355,7 +347,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "What the server has read from GitHub and the other sources, and how fresh it is.",
         params: &[],
         private: false,
-        mcp: By(("sync_status", "Sync status")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -368,7 +360,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt("after", Type::Int, "start after this event id"),
         ],
         private: false,
-        mcp: Without("a stream of Server-Sent Events: an MCP answer is one JSON message"),
+        answered: false,
         cli: Without("a stream: read it with curl -N"),
     },
     Endpoint {
@@ -388,7 +380,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             ),
         ],
         private: false,
-        mcp: By(("archive_item", "An archived issue or pull request")),
+        answered: true,
         cli: By("get"),
     },
     Endpoint {
@@ -396,7 +388,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Uploads a strict package report, with an upload token.",
         params: &[],
         private: false,
-        mcp: Without("it writes, and the MCP server only reads"),
+        answered: false,
         cli: By("submit"),
     },
     Endpoint {
@@ -404,7 +396,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "Starts a `maintainer-mode login`: a device code and a user code.",
         params: &[],
         private: false,
-        mcp: Without("it makes an upload token, and the MCP server only reads"),
+        answered: false,
         cli: By("login"),
     },
     Endpoint {
@@ -412,7 +404,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         about: "The upload token, once the person confirms the code on /login/cli.",
         params: &[],
         private: false,
-        mcp: Without("it gives an upload token, and the MCP server only reads"),
+        answered: false,
         cli: By("login"),
     },
 ];
@@ -551,14 +543,9 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
         Without("the secret address of your Atom feed; /api/v1/inbox gives its events"),
     ),
     ("/me/settings#upload", By(&["/api/v1/sets"])),
-    ("/me/settings#llm", Without("the LLM choice itself")),
     (
-        "/me/settings#mcp",
-        Without("the MCP token: the server shows it once and keeps only its hash"),
-    ),
-    (
-        "/me/settings#workflows",
-        Without("the repositories of your workflow buttons: settings that only the page changes"),
+        "/me/settings#api",
+        Without("the API token: the server shows it once and keeps only its hash"),
     ),
     (
         "/me/settings#tags",
@@ -569,20 +556,6 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     (
         "/me/settings#github",
         Without("fixed text: what the server does with the GitHub token of a session"),
-    ),
-    (
-        "/me/runs",
-        Without(
-            "the runs of your workflow repository: the page reads them from GitHub with the token of your session, which the API and the MCP server do not hold",
-        ),
-    ),
-    (
-        "/actions",
-        Without("the sign-in page of the workflow buttons; it has no data"),
-    ),
-    (
-        "/claude/pr/:number",
-        Without("a link to Claude Code on the web; its prompt names the MCP server"),
     ),
     (
         "/login/cli",
@@ -625,7 +598,6 @@ async fn index() -> Json<Value> {
                 "description": e.about,
                 "parameters": e.params.iter().map(param_json).collect::<Vec<_>>(),
                 "private": e.private,
-                "mcp_tool": match e.mcp { By((name, _)) => Some(name), Without(_) => None },
                 "cli": match e.cli { By(c) => Some(format!("maintainer-mode {c}")), Without(_) => None },
             })
         })
@@ -644,42 +616,10 @@ async fn index() -> Json<Value> {
         "paging": format!(
             "lists return at most limit items (default {LIMIT}, at most {MAX_LIMIT}); pass next_cursor as cursor for the next page"
         ),
-        "private": "a private endpoint answers only for you: send your session cookie, or Authorization: Bearer <your MCP token>",
+        "private": "a private endpoint answers only for you: send your session cookie, or Authorization: Bearer <your API token>",
         "endpoints": endpoints,
         "pages": pages,
     }))
-}
-
-/// The MCP `inputSchema` of an endpoint.
-pub(crate) fn schema(e: &Endpoint) -> Value {
-    let mut properties = serde_json::Map::new();
-    for p in e.params {
-        let mut v = param_json(p);
-        let o = v.as_object_mut().unwrap();
-        o.remove("name");
-        o.remove("required");
-        if let Some(values) = o.remove("values") {
-            o.insert("enum".into(), values);
-        }
-        if p.name == "limit" {
-            o.insert("minimum".into(), json!(1));
-            o.insert("maximum".into(), json!(MAX_LIMIT));
-        }
-        properties.insert(p.name.into(), v);
-    }
-    let required: Vec<&str> = e
-        .params
-        .iter()
-        .filter(|p| p.required)
-        .map(|p| p.name)
-        .collect();
-    json!({ "type": "object", "properties": properties, "required": required })
-}
-
-pub(crate) fn tool(name: &str) -> Option<&'static Endpoint> {
-    ENDPOINTS
-        .iter()
-        .find(|e| matches!(e.mcp, By((n, _)) if n == name))
 }
 
 /// Paths that answer only for the caller, for `Cache-Control`.
@@ -688,7 +628,7 @@ pub(crate) fn is_private(path: &str) -> bool {
 }
 
 /// The parameters of every endpoint, by name: the query and the path of a
-/// request, or the arguments of an MCP tool call.
+/// request.
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct Args {
     pub queue: Option<String>,
@@ -765,7 +705,7 @@ impl Fail {
         match self {
             Fail::Bad(m) | Fail::Missing(m) | Fail::Failed(m) => m,
             Fail::Unsynced(n) => crate::prpage::not_in_data(n),
-            Fail::SignIn => "sign in first, or send your MCP token".into(),
+            Fail::SignIn => "sign in first, or send your API token".into(),
         }
     }
 
@@ -794,9 +734,8 @@ pub(crate) struct Answer {
     pub private: bool,
 }
 
-/// The one builder of the JSON of each endpoint with an MCP tool: the API
-/// and the MCP server both call it, so their answers cannot differ.
-/// `caller` is the session or the MCP token.
+/// The one builder of the JSON of each endpoint that this module answers.
+/// `caller` is the session or the API token.
 pub(crate) async fn answer(
     app: &App,
     e: &Endpoint,
@@ -908,10 +847,10 @@ pub(crate) async fn answer(
     Ok(Answer { value, private })
 }
 
-/// The endpoints with an MCP tool: this module makes their routes. The
+/// The endpoints that this module makes the routes of. The
 /// others have their own handler next to the page they serve.
 pub(crate) fn served() -> impl Iterator<Item = &'static Endpoint> {
-    ENDPOINTS.iter().filter(|e| matches!(e.mcp, By(_)))
+    ENDPOINTS.iter().filter(|e| e.answered)
 }
 
 pub fn routes() -> Router<Shared> {
@@ -1015,7 +954,7 @@ struct Prs {
     pub private: bool,
 }
 
-/// `caller` is the session or the MCP token. Subscriptions, tags and
+/// `caller` is the session or the API token. Subscriptions, tags and
 /// machines are private, so they count only when `login` is the caller.
 fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
     let queue = Args::text(&q.queue).unwrap_or("all");
@@ -1084,7 +1023,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         }
         _ => {
             if queue == "foryou" && login.is_none() {
-                return Err("queue=foryou needs login, a session or an MCP token".into());
+                return Err("queue=foryou needs login, a session or an API token".into());
             }
             private = own;
             let src = crate::review::source(app, &s, login, own, queue);
@@ -1152,7 +1091,7 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1414,11 +1353,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn every_tool_has_a_builder_and_a_cli_command() {
+    async fn every_answered_endpoint_has_a_builder_and_a_cli_command() {
         use clap::CommandFactory;
         let app = crate::sets::tests::app(&[]);
         let cli = crate::Cli::command();
-        let mut names = Vec::new();
         for e in ENDPOINTS {
             if let By(c) = e.cli {
                 assert!(
@@ -1427,9 +1365,9 @@ mod tests {
                     e.path
                 );
             }
-            let By((name, _)) = e.mcp else { continue };
-            assert!(!names.contains(&name), "the tool {name} is twice");
-            names.push(name);
+            if !e.answered {
+                continue;
+            }
             let mut a = serde_json::to_value(Args::default()).unwrap();
             for p in e.params.iter().filter(|p| p.required) {
                 a[p.name] = match p.kind {
@@ -1452,20 +1390,18 @@ mod tests {
     }
 
     #[test]
-    fn a_tool_checks_its_arguments_from_the_table() {
-        let e = tool("prs").unwrap();
+    fn an_endpoint_checks_its_arguments_from_the_table() {
+        let e = endpoint("/api/v1/prs");
         let bad = Args {
             queue: Some("nope".into()),
             ..Default::default()
         };
         assert!(check(e, &bad).unwrap_err().contains("use one of"));
-        assert!(check(tool("person").unwrap(), &Args::default()).is_err());
-        let s = schema(tool("needs").unwrap());
-        assert_eq!(s["properties"]["mood"]["enum"], json!(MOODS));
-        assert_eq!(
-            schema(tool("package").unwrap())["required"],
-            json!(["name"])
-        );
+        assert!(check(endpoint("/api/v1/people/:login"), &Args::default()).is_err());
         assert!(is_private("/api/v1/sets") && !is_private("/api/v1/prs"));
+    }
+
+    pub(crate) fn endpoint(path: &str) -> &'static Endpoint {
+        ENDPOINTS.iter().find(|e| e.path == path).unwrap()
     }
 }
