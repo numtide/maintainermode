@@ -367,8 +367,10 @@ pkgs.testers.runNixOSTest {
     signed_in("/packages?filter=all", "/tmp/s-pk-all")
     machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all && ! grep -q 'aria-label=\"Views\"' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
-    for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start"]:
-        machine.succeed(f"grep -q '<div id=\"{anchor}\">' /tmp/s-settings && grep -q 'href=\"#{anchor}\"' /tmp/s-settings")
+    for group in ["news", "reviews", "machines", "account"]:
+        machine.succeed(f"grep -q '<div id=\"{group}\">' /tmp/s-settings && grep -q 'href=\"#{group}\"' /tmp/s-settings")
+    for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start", "github"]:
+        machine.succeed(f"grep -q 'class=\"Box-row setting\" id=\"{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
     machine.succeed("grep -q '<option value=\"foryou\" selected>For you</option>' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
     machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review\">Needs review' /tmp/s-ready")
