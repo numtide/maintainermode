@@ -46,6 +46,7 @@ mod project;
 mod prpage;
 mod prpanel;
 mod queue;
+mod reach;
 mod report;
 mod rescan;
 mod review;
@@ -986,6 +987,8 @@ async fn run(cli: Cli) -> Result<i32> {
                 hydra: Default::default(),
                 public_url: public_url.clone(),
                 data_dir: data_dir(&db),
+                git_dir: (archive_git && !archive_repos.is_empty())
+                    .then(|| git_dir.unwrap_or_else(|| data_dir(&db).join("git"))),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 packages: Default::default(),
@@ -1026,8 +1029,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::spawn(events::archive(app.clone()));
             if !app.archive.is_empty() {
                 tokio::spawn(archive::walk(app.clone()));
-                if archive_git {
-                    let dir = git_dir.unwrap_or_else(|| data_dir(&db).join("git"));
+                if let Some(dir) = app.git_dir.clone() {
                     tokio::spawn(mirror::run(app.clone(), dir));
                 }
             }
@@ -1071,6 +1073,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 hydra: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
+                git_dir: None,
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 packages: Default::default(),
@@ -1125,6 +1128,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 hydra: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
+                git_dir: None,
                 index_sets: sets.clone(),
                 metrics: Default::default(),
                 packages: Default::default(),

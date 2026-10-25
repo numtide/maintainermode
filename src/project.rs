@@ -81,6 +81,7 @@ pub(crate) fn pr(item: &Value) -> Option<Pr> {
             "authorAssociation",
             "body",
             "mergedBy",
+            "mergeCommit",
             "author",
         ],
     );
@@ -279,10 +280,17 @@ pub(crate) mod tests {
                 let want = crate::github::normalize(&github[format!("p{number}")]).unwrap();
                 let live = Live::of(&want, chrono::Utc::now());
                 let mut d = differ(&pr(item).unwrap(), &want, &NOT_ARCHIVED);
-                d.retain(|k| k != "association");
+                d.retain(|k| k != "association" && k != "merge_commit");
                 assert_eq!(d, none, "#{number}");
                 let got = pr_live(item, Some(&live)).unwrap();
-                assert_eq!(differ(&got, &want, &[]), none, "#{number}");
+                // the sync queries never asked for the merge commit
+                assert_eq!(differ(&got, &want, &["merge_commit"]), none, "#{number}");
+                assert_eq!(
+                    got.merge_commit.as_deref(),
+                    item["mergeCommit"]["oid"].as_str(),
+                    "#{number}"
+                );
+                assert!(got.merge_commit.is_some(), "#{number}");
                 let want = Facts::from(&want);
                 let got = facts_live(item, Some(&live)).unwrap();
                 assert_eq!(differ(&got, &want, &[]), none, "#{number}");

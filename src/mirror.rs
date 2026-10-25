@@ -243,6 +243,33 @@ impl Mirror {
         Ok(c)
     }
 
+    /// Of the branches `names`, those that exist and those that contain
+    /// `commit`; None when the copy does not have the commit yet.
+    pub fn branches_with(
+        &self,
+        commit: &str,
+        names: &[String],
+    ) -> Result<Option<(Vec<String>, Vec<String>)>> {
+        if !commit.bytes().all(|b| b.is_ascii_hexdigit()) || commit.is_empty() {
+            bail!("not a commit id: {commit:?}");
+        }
+        let refs: Vec<String> = names.iter().map(|n| format!("refs/heads/{n}")).collect();
+        let list = |with: Option<&str>| -> Result<Vec<String>> {
+            let contains = with.map(|c| format!("--contains={c}"));
+            let mut args = vec!["for-each-ref", "--format=%(refname:strip=2)"];
+            args.extend(contains.as_deref());
+            args.extend(refs.iter().map(String::as_str));
+            Ok(self.run(&args)?.lines().map(String::from).collect())
+        };
+        if self
+            .run(&["cat-file", "-e", &format!("{commit}^{{commit}}")])
+            .is_err()
+        {
+            return Ok(None);
+        }
+        Ok(Some((list(None)?, list(Some(commit))?)))
+    }
+
     pub fn bytes(&self) -> Result<u64> {
         let out = self.run(&["count-objects", "-v"])?;
         Ok(out
