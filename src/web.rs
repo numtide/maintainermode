@@ -84,9 +84,6 @@ pub struct App {
     pub git_dir: Option<std::path::PathBuf>,
     pub index_sets: Vec<String>,
     pub metrics: RwLock<Arc<Report>>,
-    /// Each person's reviews over the whole archive. Private: only their own
-    /// progress reads it.
-    pub reviews: RwLock<Arc<crate::progress::Histories>>,
     pub(crate) packages: RwLock<Arc<crate::catalog::PackageStats>>,
     /// The URL people reach, for links that leave the site, like feeds.
     pub public_url: String,
@@ -211,7 +208,6 @@ impl App {
         let start = std::time::Instant::now();
         let facts = metrics::merge(self.store.facts()?, &self.snap().pr_data);
         *self.metrics.write().unwrap() = Arc::new(metrics::compute(&facts, Utc::now()));
-        *self.reviews.write().unwrap() = Arc::new(crate::progress::histories(&facts));
         crate::assets::touch();
         crate::telemetry::recomputed(Recompute::Metrics, start.elapsed());
         Ok(())

@@ -14,7 +14,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::dossier::{self, Outcome, Row};
 use crate::html::{Html, html};
 use crate::ledger::{Credit, MIN_COUNTERPARTIES, WINDOW_DAYS};
-use crate::metrics::Facts;
 use crate::ui::{Page, Section, Tone, badge, section};
 use crate::web::{App, Shared, octicon};
 
@@ -45,49 +44,31 @@ pub struct History {
     five_areas: Option<DateTime<Utc>>,
 }
 
-pub type Histories = HashMap<String, History>;
-
-/// When a person first reviewed a pull request, and the parts it touches.
-type Reviewed<'a> = (DateTime<Utc>, &'a [String]);
-
-/// From the facts of every pull request; it runs with the metrics.
-pub fn histories(facts: &[Facts]) -> Histories {
-    let mut by: HashMap<&str, Vec<Reviewed>> = HashMap::new();
-    for f in facts {
-        let mut first: HashMap<&str, DateTime<Utc>> = HashMap::new();
-        for r in &f.reviews {
-            let at = first.entry(r.by.as_str()).or_insert(r.at);
-            *at = (*at).min(r.at);
+/// The history of one person from the reviews the store keeps, oldest
+/// first.
+pub fn history(reviews: &[crate::store::Reviewed]) -> History {
+    let mut h = History {
+        reviewed: reviews.len(),
+        since: reviews.first().map(|r| r.at),
+        ..Default::default()
+    };
+    let mut areas: BTreeSet<&str> = BTreeSet::new();
+    for (i, r) in reviews.iter().enumerate() {
+        for (k, n) in COUNTS.iter().enumerate() {
+            if i + 1 == *n {
+                h.counts[k] = Some(r.at);
+            }
         }
-        for (login, at) in first {
-            by.entry(login).or_default().push((at, &f.areas));
+        *h.months
+            .entry(r.at.format("%Y-%m").to_string())
+            .or_default() += 1;
+        areas.extend(r.areas.iter().map(String::as_str).filter(|a| *a != "other"));
+        if h.five_areas.is_none() && areas.len() >= AREAS_FOR_BADGE {
+            h.five_areas = Some(r.at);
         }
     }
-    by.into_iter()
-        .map(|(login, mut reviews)| {
-            reviews.sort_by_key(|(at, _)| *at);
-            let mut h = History {
-                reviewed: reviews.len(),
-                since: reviews.first().map(|(at, _)| *at),
-                ..Default::default()
-            };
-            let mut areas: BTreeSet<&str> = BTreeSet::new();
-            for (i, (at, a)) in reviews.iter().enumerate() {
-                for (k, n) in COUNTS.iter().enumerate() {
-                    if i + 1 == *n {
-                        h.counts[k] = Some(*at);
-                    }
-                }
-                *h.months.entry(at.format("%Y-%m").to_string()).or_default() += 1;
-                areas.extend(a.iter().map(String::as_str).filter(|a| *a != "other"));
-                if h.five_areas.is_none() && areas.len() >= AREAS_FOR_BADGE {
-                    h.five_areas = Some(*at);
-                }
-            }
-            h.areas = areas.len();
-            (login.to_string(), h)
-        })
-        .collect()
+    h.areas = areas.len();
+    h
 }
 
 #[derive(Debug, Serialize)]
@@ -261,13 +242,7 @@ pub fn of(app: &App, login: &str) -> Progress {
     let rows = dossier::rows(mine, login);
     let credits: Vec<&Credit> = s.ledger.credits_of(login).collect();
     let counterparties = s.ledger.people.get(login).map_or(0, |p| p.counterparties);
-    let all_time = app
-        .reviews
-        .read()
-        .unwrap()
-        .get(login)
-        .cloned()
-        .unwrap_or_default();
+    let all_time = history(&app.store.reviews_of(login).unwrap_or_default());
     let mut p = build(
         &rows,
         &credits,
@@ -505,7 +480,7 @@ async fn save_goal(
 mod tests {
     use super::*;
     use crate::ledger::Trigger;
-    use crate::ledger::tests::{pr, review, t};
+    use crate::ledger::tests::t;
 
     fn row(pr: u64, day: i64, outcome: Outcome) -> Row {
         Row {
@@ -554,35 +529,31 @@ mod tests {
     }
 
     #[test]
-    fn the_history_counts_each_pull_request_once_over_the_whole_archive() {
-        let facts: Vec<Facts> = (1..=12)
-            .map(|n| {
-                let mut p = pr(n, "alice", 0);
-                p.files = vec![
+    fn the_history_reads_the_reviews_of_the_whole_archive() {
+        let reviews: Vec<crate::store::Reviewed> = (1..=12)
+            .map(|n| crate::store::Reviewed {
+                at: t(n * 40),
+                areas: vec![
                     match n {
-                        1 => "pkgs/development/python-modules/a/default.nix",
-                        2 => "nixos/modules/a.nix",
-                        3 => "lib/a.nix",
-                        4 => "doc/a.md",
-                        _ => "pkgs/top-level/perl-packages.nix",
+                        1 => "packages: python",
+                        2 => "nixos: modules",
+                        3 => "lib",
+                        4 => "doc",
+                        5 => "other",
+                        _ => "perl",
                     }
                     .into(),
-                ];
-                p.reviews = vec![
-                    review(n, "bob", n as i64 * 40),
-                    review(n + 100, "bob", n as i64 * 40 + 1),
-                ];
-                Facts::from(&p)
+                ],
             })
             .collect();
-        let h = &histories(&facts)["bob"];
-        assert_eq!(h.reviewed, 12, "two reviews on one pull request count once");
+        let h = history(&reviews);
+        assert_eq!(h.reviewed, 12);
         assert_eq!(h.since, Some(t(40)));
         assert_eq!(h.counts[0], Some(t(400)));
         assert_eq!(h.counts[1], None);
-        assert!(h.five_areas.is_some_and(|at| at <= t(200)));
+        assert_eq!(h.five_areas, Some(t(240)), "other is not a part");
         assert_eq!(h.months.values().sum::<usize>(), 12);
-        let b = badges(h, &[], &[], |_| None);
+        let b = badges(&h, &[], &[], |_| None);
         let get = |id: &str| b.iter().find(|b| b.id == id).unwrap();
         assert_eq!(get("first").earned, Some(t(40)));
         assert_eq!(get("10").earned, Some(t(400)));
