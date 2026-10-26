@@ -959,6 +959,7 @@ pub(crate) mod tests {
             git_dir: None,
             index_sets: vec![],
             metrics: Default::default(),
+            reviews: Default::default(),
             packages: Default::default(),
             public_url: String::new(),
             github_app: None,

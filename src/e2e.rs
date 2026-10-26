@@ -345,7 +345,9 @@ async fn me_pages_show_their_parts() {
     assert_eq!(a.location.as_deref(), Some("/review"));
     assert!(app.store.hidden_prs("alice").unwrap().is_empty());
     let a = site.get("/me/progress", Some(SID)).await;
-    assert!(a.body.contains("Your weekly goal"));
+    assert!(a.body.contains(">This week<") && a.body.contains("Set a weekly goal"));
+    assert!(a.body.contains("id=\"over-time\"") && a.body.contains("id=\"badges\""));
+    assert!(!a.body.contains("These are the rules of Maintainer Mode"));
 }
 
 #[tokio::test]
@@ -390,7 +392,11 @@ async fn forms_change_what_the_pages_show() {
     let a = site.post("/me/progress", SID, &[("goal", "3")]).await;
     assert_eq!(a.status, StatusCode::SEE_OTHER);
     let a = site.get("/me/progress", Some(SID)).await;
-    assert!(a.body.contains("of your goal of 3 this week"), "{}", a.body);
+    assert!(
+        a.body.contains("of your goal of 3 pull requests this week"),
+        "{}",
+        a.body
+    );
     let a = site.post("/me/progress", SID, &[("goal", "many")]).await;
     assert_eq!(a.status, StatusCode::BAD_REQUEST);
 

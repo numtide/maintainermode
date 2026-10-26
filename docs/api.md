@@ -71,7 +71,9 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_API_TOKEN" 'https://<host>/api/v
   such as `pkg:hello`. Each event has `unread`. The answer also has `unread`
   (the count in the header) and `subjects`. A read marks nothing read.
 - **`/api/v1/progress`**: the data of `/me/progress`: `reviews_week`,
-  `reviews_month`, `goal`, `counterparties`, `listed` and `badges`.
+  `reviews_month`, `goal`, `counterparties`, `listed`, `listed_until`,
+  `all_time` (`reviewed`, `since`, `months`, `areas`) and `badges` (`id`,
+  `name`, `how`, `earned`, `left`).
 
 ## Paging
 

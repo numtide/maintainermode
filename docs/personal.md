@@ -391,12 +391,12 @@ The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firs
 
 `/me/progress` shows your own review record. Only you see it. It never shows the numbers of another person.
 
-- **This week and this month**: the pull requests you reviewed. A week starts on Monday, in UTC.
-- **Weekly goal**: you set the number of pull requests to review each week, from 1 to 50. Set 0 to remove the goal.
-- **In the queues**: whether your own pull requests show in the queues. If they do not, it tells how many more authors you need. Your reviews must move the pull requests of 3 different authors in 60 days. See [rule 2](rules.md#2-whose-pull-requests-appear).
-- **Badges**: First review; First review with no maintainer; Merged unchanged; 10, 50 and 100 reviews; Five parts of nixpkgs.
+- **This week**: the pull requests you reviewed this week, against your weekly goal when you set one, from 1 to 50 in `/me/settings#goal`. A week starts on Monday, in UTC.
+- **Over time**: every pull request you reviewed, from the whole archive of nixpkgs, and a chart of the last 12 months. Each pull request counts once, in the month of your first review on it. The archive keeps the first 30 reviews of each pull request.
+- **In the queues**: whether your own pull requests show in the queues. Your reviews must move the pull requests of 3 different authors in 60 days. If they show, it gives the day they leave the queues if you review no other author before: the day your third most recent author is 60 days old. If they do not show, it tells how many more authors you need. See [rule 2](rules.md#2-whose-pull-requests-appear).
+- **Badges**: the badges you earned, with their date, then the next one with what is left, such as "38 to go". "All badges" lists them all: First review; 10, 50 and 100 reviews; Five parts of nixpkgs; First review with no maintainer; Merged unchanged. The first five read the whole archive. The last two read the last 60 days; once earned, they stay.
 
-The page counts the synced data only: the last 60 days and every open pull request. Your menu links to the page.
+Your menu links to the page.
 
 ## Notifications
 

@@ -371,7 +371,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q '<div id=\"{group}\">' /tmp/s-settings && grep -q 'href=\"#{group}\"' /tmp/s-settings")
     for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start", "github"]:
         machine.succeed(f"grep -q 'class=\"Box-row setting\" id=\"{anchor}\"' /tmp/s-settings")
-    machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
+    machine.succeed("grep -q 'Set a weekly goal' /tmp/s-progress && grep -q 'id=\"over-time\"' /tmp/s-progress")
     machine.succeed("grep -q 'href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
     machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review\">Needs review' /tmp/s-ready")
     machine.succeed("grep -q 'aria-current=\"page\">All <span' /tmp/s-packages")
