@@ -153,7 +153,7 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 ## Your packages
 
-Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The filters above the list keep one part of it. Each filter shows its count. The "filter by name" box filters the list of the current filter.
+Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The chips above the list keep one part of it. Each chip shows its count. The "Words in the name" box filters the list of the current chip, and a chip keeps those words. **Clear** removes them. `/review` has the same bar.
 
 | Filter         | Address                     | What it keeps                                                   |
 | -------------- | --------------------------- | --------------------------------------------------------------- |
@@ -162,7 +162,7 @@ Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in
 | I maintain     | `/packages?filter=maintain` | what nixpkgs names you as a maintainer of                       |
 | I watch        | `/packages?filter=watch`    | what you watch                                                  |
 
-"All of nixpkgs" at the top right opens the catalog, as a visitor sees it, at `/packages?filter=all`. Its "Your packages" button goes back. `/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
+The tabs **Your packages** and **All of nixpkgs** switch between your list and the catalog, as a visitor sees it, at `/packages?filter=all`. `/packages?q=<text>` with no filter, or with `filter=all`, goes to [the search](health.md#search).
 
 **The order.** The list puts the packages of your machines first. Then it puts what you maintain, then what you watch. In each group, the rows that need attention come first: an open advisory, a newer upstream release, a failed Hydra build or an open pull request that is not [treewide](rules.md#treewide-pull-requests). Then the highest [risk score](health.md#the-risk-score) comes first. Each row shows why it is in the list: "on your machines", "you maintain" or "you watch". A filter does not repeat its own reason on its rows. Each row also shows its health flags. The list shows 50 rows. "Next page" adds `?after=<number>`, the count of rows on the previous pages.
 
@@ -354,7 +354,7 @@ Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it i
 
 **Hide.** Signed in, each row of For you, No maintainer, First-time authors and All has a **Hide** button (key `e`). A hidden pull request leaves these lists and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the list, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Version bumps do not hide anything.
 
-**Sort and filter.** The bar above the list has the Show choice and a search for words in the title. **More filters** opens the other choices. It is open when one of them is set. Push **Apply** to show the list. Each choice is a parameter of the address, so you can keep a link to a view:
+**Sort and filter.** The chips above the list are the Show choice, each with the size of its list once the pull requests you hid are out. A chip keeps the other filters. Under the chips are a search for words in the title and **More filters**, which opens the other choices. `/packages` has the same bar. It is open when one of them is set. Push **Apply** to show the list. Each choice is a parameter of the address, so you can keep a link to a view:
 
 | Parameter   | Values                                           | What it does                                                           |
 | ----------- | ------------------------------------------------ | ---------------------------------------------------------------------- |

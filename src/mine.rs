@@ -524,28 +524,12 @@ fn href(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> String {
 
 /// The choice above the list: one chip for each part of what is yours,
 /// with its count. A part with no row stays, so its empty list can say how
-/// to fill it.
-pub(crate) fn bar(i: &Interests, current: Filter) -> Vec<Tab> {
+/// to fill it. The search stays when the choice changes.
+pub(crate) fn bar(i: &Interests, current: Filter, q: &str) -> Vec<Tab> {
     Filter::BAR
         .into_iter()
-        .map(|f| Tab::new(href(f, "", None, None), f.label(), f == current).count(i.count(f)))
+        .map(|f| Tab::new(href(f, q, None, None), f.label(), f == current).count(i.count(f)))
         .collect()
-}
-
-fn search_form(f: Filter, q: &str, set: Option<&str>, output: Option<&str>) -> Html {
-    let hidden = |name: &str, v: Option<&str>| {
-        v.map(|v| html!("<input type=\"hidden\" name=\"{name}\" value=\"{v}\">"))
-            .unwrap_or_default()
-    };
-    let set = html!("{}{}", hidden("set", set), hidden("output", output));
-    html!(
-        "<form method=\"get\" action=\"/packages\" class=\"inline-form mb-3\">\
-         <input type=\"hidden\" name=\"filter\" value=\"{}\">{set}\
-         <input class=\"form-control flex-auto\" type=\"search\" name=\"q\" value=\"{q}\" placeholder=\"filter by name\" aria-label=\"filter by name\">\
-         <button class=\"btn\" type=\"submit\">{} Filter</button></form>",
-        f.key(),
-        icon(octicon!("search"))
-    )
 }
 
 /// The last row of the list of what you watch, and of an empty list.
@@ -566,52 +550,29 @@ pub(crate) struct View {
     pub(crate) body: Html,
 }
 
-/// A row of chips that narrow the list: (href, label, count, current).
-fn chips(name: &str, lead: Html, links: Vec<(String, String, Option<usize>, bool)>) -> Html {
-    let chips: Html = links
-        .into_iter()
-        .map(|(href, label, n, on)| {
-            let accent = if on { " Label--accent" } else { "" };
-            let cur = if on { " aria-current=\"page\"" } else { "" };
-            let count = n
-                .map(|n| html!(" <span class=\"Counter\">{n}</span>"))
-                .unwrap_or_default();
-            html!(
-                "<a class=\"Label tap-label{accent}\" href=\"{href}\"{}>{label}{count}</a>",
-                Html::from(cur)
-            )
-        })
-        .collect();
-    html!(
-        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-3\" aria-label=\"{name}\">\
-         <span class=\"f6 color-fg-muted\">{lead}</span>{chips}</nav>"
-    )
-}
-
 /// The sets of the person, each with its count of packages, as links to
 /// the filter of each one.
 fn sets_nav(i: &Interests, current: Option<&str>) -> Html {
     if i.sets.is_empty() {
         return Html::new();
     }
-    let mut links = vec![(
+    let mut links = vec![Tab::new(
         href(Filter::Machines, "", None, None),
-        "All sets".to_string(),
-        None,
+        "All sets",
         current.is_none(),
     )];
     links.extend(i.sets.iter().map(|(name, keys)| {
-        (
+        Tab::new(
             href(Filter::Machines, "", Some(name), None),
-            name.clone(),
-            Some(keys.len()),
+            Html::text(name),
             current == Some(name.as_str()),
         )
+        .count(keys.len())
     }));
-    chips(
+    crate::ui::chips(
         "Sets",
         html!("{} Set:", icon(octicon!("device-desktop"))),
-        links,
+        &links,
     )
 }
 
@@ -627,21 +588,24 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> Html {
     if counts.is_empty() {
         return Html::new();
     }
-    let mut links = vec![(
+    let mut links = vec![Tab::new(
         href(Filter::Machines, "", Some(set), None),
-        "All outputs".to_string(),
-        None,
+        "All outputs",
         current.is_none(),
     )];
     links.extend(counts.into_iter().map(|(l, n)| {
-        (
+        Tab::new(
             href(Filter::Machines, "", Some(set), Some(l)),
-            l.to_string(),
-            Some(n),
+            Html::text(l),
             current == Some(l),
         )
+        .count(n)
     }));
-    chips(&format!("Outputs of {set}"), "Where it runs:".into(), links)
+    crate::ui::chips(
+        &format!("Outputs of {set}"),
+        "Where it runs:".into(),
+        &links,
+    )
 }
 
 /// One set of the machines filter, and one output label of that set.
@@ -684,11 +648,12 @@ pub(crate) fn view(
     let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
     let mut out = Html::new();
     let mut actions = Html::new();
+    let mut extra = Html::new();
     match f {
         Filter::Machines => {
-            out.push(&sets_nav(i, set));
+            extra.push(&sets_nav(i, set));
             if let Some(name) = set {
-                out.push(&outputs_nav(i, name, output));
+                extra.push(&outputs_nav(i, name, output));
             }
         }
         Filter::Maintain => {
@@ -707,9 +672,22 @@ pub(crate) fn view(
         }
         Filter::Watch | Filter::Mine | Filter::All => {}
     }
-    if !(rows.is_empty() && q.is_empty()) {
-        out.push(&search_form(f, q, set, output));
-    }
+    let mut keep = vec![("filter", f.key().to_string())];
+    keep.extend(set.map(|s| ("set", s.to_string())));
+    keep.extend(output.map(|o| ("output", o.to_string())));
+    out.push(
+        &crate::ui::FilterBar {
+            choices: bar(i, f, q),
+            rows: extra,
+            action: "/packages",
+            keep,
+            placeholder: "Words in the name",
+            q: q.to_string(),
+            clear: (!q.is_empty() || set.is_some()).then(|| href(f, "", None, None)),
+            ..Default::default()
+        }
+        .render(),
+    );
     let (page, next) = crate::review::paged_by_offset(&rows, after);
     let mut list: Html = page
         .iter()
@@ -773,11 +751,6 @@ pub(crate) fn view(
     if f == Filter::Machines {
         out.push(&crate::sets::manage(app, login));
     }
-    actions.push(&html!(
-        " <a class=\"btn btn-sm\" href=\"{}\">{} All of nixpkgs</a>",
-        href(Filter::All, "", None, None),
-        icon(octicon!("package"))
-    ));
     View {
         sub: SUB.into(),
         actions,
@@ -991,7 +964,7 @@ mod tests {
     fn the_bar_keeps_every_part_of_the_list_and_not_the_catalog() {
         let index = index();
         let none = Interests::build(&index, "alice", &[], &[], false);
-        let tabs = bar(&none, Filter::Mine);
+        let tabs = bar(&none, Filter::Mine, "");
         let hrefs: Vec<&str> = tabs.iter().map(|t| t.href.as_str()).collect();
         assert_eq!(
             hrefs,
@@ -1005,7 +978,7 @@ mod tests {
         assert_eq!(tabs[1].count, Some(0));
         assert!(tabs[0].current && !tabs[1].current);
         let some = Interests::build(&index, "alice", &["vim".into()], &[], true);
-        let tabs = bar(&some, Filter::Machines);
+        let tabs = bar(&some, Filter::Machines, "");
         assert_eq!(tabs[1].count, Some(1));
         assert!(tabs[1].current);
     }

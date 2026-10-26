@@ -224,6 +224,10 @@ fn needs_review(
         "Nothing here."
     };
     let label = TABS.iter().find(|t| t.0 == tab).map_or("All", |t| t.1);
+    let hidden = v
+        .map(|l| app.store.hidden_prs(l).unwrap_or_default())
+        .unwrap_or_default();
+    let choices = choices(app, s, v, tab, &opts, &hidden);
     if bumps {
         let index = app.index.read().unwrap();
         let h = app.health.read().unwrap();
@@ -250,7 +254,16 @@ fn needs_review(
         };
         return html!(
             "{}{}{}",
-            bar(&opts, tab, v.is_some(), false, only_mine, &bases, &labels),
+            bar(
+                &opts,
+                tab,
+                v.is_some(),
+                false,
+                only_mine,
+                &bases,
+                &labels,
+                choices
+            ),
             section(
                 label,
                 Some(rows.len()),
@@ -264,9 +277,6 @@ fn needs_review(
         );
     }
     let src = source(app, s, v, true, tab);
-    let hidden = v
-        .map(|l| app.store.hidden_prs(l).unwrap_or_default())
-        .unwrap_or_default();
     let list = ReviewList::new(&src, &hidden, show_hidden, &opts);
     let entries = list.entries();
     let (page, next) = if tab == "foryou" || opts.sorted() {
@@ -322,7 +332,8 @@ fn needs_review(
             show_hidden,
             false,
             &list.bases,
-            &list.labels
+            &list.labels,
+            choices
         ),
         section(
             title,
@@ -517,9 +528,39 @@ impl Opts {
     }
 }
 
-/// The bar above a list: Show and the title search, then the other filters,
-/// folded until one is set. `bases` and `labels` are those of the list, so
-/// each choice has rows. `only_mine` is the `filter=mine` of Version bumps.
+/// The Show choices as chips, each with the size of its list once the
+/// pull requests you hid are out. Changing the choice keeps the filters.
+fn choices(
+    app: &crate::web::App,
+    s: &crate::web::Snapshot,
+    v: Option<&str>,
+    tab: &str,
+    o: &Opts,
+    hidden: &std::collections::HashSet<u64>,
+) -> Vec<Tab> {
+    TABS.iter()
+        .filter(|(id, _)| *id != "ready" && (v.is_some() || *id != "foryou"))
+        .map(|&(id, label)| {
+            let n = if id == "bumps" {
+                let index = app.index.read().unwrap();
+                let h = app.health.read().unwrap();
+                crate::bumps::open(s, &index, &h).len()
+            } else {
+                source(app, s, v, true, id)
+                    .iter()
+                    .filter(|(e, _)| !hidden.contains(&e.number))
+                    .count()
+            };
+            Tab::new(format!("/review?tab={id}{}", o.query()), label, id == tab).count(n)
+        })
+        .collect()
+}
+
+/// The bar above a list: the Show chips and the title search, then the
+/// other filters, folded until one is set. `bases` and `labels` are those
+/// of the list, so each choice has rows. `only_mine` is the `filter=mine` of
+/// Version bumps.
+#[allow(clippy::too_many_arguments)]
 fn bar(
     o: &Opts,
     tab: &str,
@@ -528,6 +569,7 @@ fn bar(
     only_mine: bool,
     bases: &[String],
     labels: &[(String, usize)],
+    choices: Vec<Tab>,
 ) -> Html {
     let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
         let mut s = html!(
@@ -544,11 +586,6 @@ fn bar(
         s.push(&Html::from("</select>"));
         s
     };
-    let show: Vec<(&str, &str)> = TABS
-        .iter()
-        .copied()
-        .filter(|(id, _)| *id != "ready" && (signed_in || *id != "foryou"))
-        .collect();
     let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
     base_choices.extend(bases.iter().map(|b| (b.as_str(), b.as_str())));
     let whose = if tab == "bumps" && signed_in {
@@ -570,28 +607,8 @@ fn bar(
          <datalist id=\"review-labels\">{options}</datalist>",
         Opts::get(&o.label, &[]).unwrap_or("")
     );
-    let clear = if o.active() || only_mine {
-        html!(
-            " <a class=\"btn btn-sm btn-invisible\" href=\"/review?tab={tab}{}\">Clear</a>",
-            if hidden { "&hidden=1" } else { "" }
-        )
-    } else {
-        Html::new()
-    };
-    html!(
-        "<form class=\"review-bar mb-3\" method=\"get\" action=\"/review\" role=\"search\" aria-label=\"Show and filter\">{}\
-         <label class=\"review-show\">Show {}</label>\
-         <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Words in the title\" aria-label=\"Words in the title\">\
-         <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}\
-         <details class=\"review-more\"{}><summary class=\"f6\">More filters</summary><div class=\"review-bar mt-2\">{}{}{}{}{}{label}{whose}</div></details></form>",
-        Html::from(if hidden {
-            "<input type=\"hidden\" name=\"hidden\" value=\"1\">"
-        } else {
-            ""
-        }),
-        select("tab", "Show", Some(tab), &show),
-        o.q.as_deref().unwrap_or(""),
-        Html::from(if o.more() || only_mine { " open" } else { "" }),
+    let more = html!(
+        "{}{}{}{}{}{label}{whose}",
         select(
             "sort",
             "Sort",
@@ -636,7 +653,24 @@ fn bar(
             Opts::get(&o.base, &[]),
             &base_choices
         ),
-    )
+    );
+    let mut keep = vec![("tab", tab.to_string())];
+    if hidden {
+        keep.push(("hidden", "1".to_string()));
+    }
+    crate::ui::FilterBar {
+        choices,
+        action: "/review",
+        keep,
+        placeholder: "Words in the title",
+        q: o.q.clone().unwrap_or_default(),
+        more,
+        more_open: o.more() || only_mine,
+        clear: (o.active() || only_mine)
+            .then(|| format!("/review?tab={tab}{}", if hidden { "&hidden=1" } else { "" })),
+        ..Default::default()
+    }
+    .render()
 }
 
 /// The base branches of `list`, the most common first.
@@ -999,32 +1033,64 @@ mod tests {
 
     #[test]
     fn the_bar_folds_the_filters_that_are_not_set() {
-        let none = bar(&Opts::default(), "unowned", false, false, false, &[], &[]);
-        assert!(none.contains("<option value=\"unowned\" selected>No maintainer</option>"));
-        assert!(!none.contains("value=\"foryou\"") && !none.contains("value=\"ready\""));
-        assert!(none.contains("<details class=\"review-more\">"));
+        let show = || {
+            vec![
+                Tab::new("/review?tab=unowned", "No maintainer", true).count(3),
+                Tab::new("/review?tab=all", "All", false).count(9),
+            ]
+        };
+        let none = bar(
+            &Opts::default(),
+            "unowned",
+            false,
+            false,
+            false,
+            &[],
+            &[],
+            show(),
+        );
+        assert!(none.contains(
+            "href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">3</span>"
+        ));
+        assert!(none.contains("<input type=\"hidden\" name=\"tab\" value=\"unowned\">"));
+        assert!(none.contains("<details class=\"filter-more\">"));
         assert!(!none.contains("name=\"filter\"") && !none.contains("Clear"));
         let sorted = Opts {
             sort: Some("newest".into()),
             ..Default::default()
         };
-        let set = bar(&sorted, "foryou", true, false, false, &[], &[]);
-        assert!(set.contains("<option value=\"foryou\" selected>For you</option>"));
-        assert!(set.contains("<details class=\"review-more\" open>") && set.contains("Clear"));
+        let set = bar(&sorted, "foryou", true, false, false, &[], &[], show());
+        assert!(set.contains("<details class=\"filter-more\" open>") && set.contains("Clear"));
         let words = Opts {
             q: Some("curl".into()),
             ..Default::default()
         };
-        assert!(
-            bar(&words, "all", true, false, false, &[], &[])
-                .contains("<details class=\"review-more\">")
+        let searched = bar(&words, "all", true, false, false, &[], &[], show());
+        assert!(searched.contains("<details class=\"filter-more\">") && searched.contains("Clear"));
+        let mine = bar(
+            &Opts::default(),
+            "bumps",
+            true,
+            false,
+            true,
+            &[],
+            &[],
+            show(),
         );
-        let mine = bar(&Opts::default(), "bumps", true, false, true, &[], &[]);
         assert!(mine.contains("<option value=\"mine\" selected>"));
-        assert!(mine.contains("<details class=\"review-more\" open>"));
+        assert!(mine.contains("<details class=\"filter-more\" open>"));
         assert!(
-            !bar(&Opts::default(), "bumps", false, false, false, &[], &[])
-                .contains("name=\"filter\"")
+            !bar(
+                &Opts::default(),
+                "bumps",
+                false,
+                false,
+                false,
+                &[],
+                &[],
+                show()
+            )
+            .contains("name=\"filter\"")
         );
     }
 
@@ -1067,8 +1133,8 @@ mod tests {
         assert!(o.query().contains("&label="));
         let counts = labels(&list);
         assert_eq!(counts, [("6.topic: python".to_string(), 1)]);
-        let html = bar(&o, "all", true, false, false, &[], &counts).to_string();
-        assert!(html.contains("<details class=\"review-more\" open>"));
+        let html = bar(&o, "all", true, false, false, &[], &counts, Vec::new()).to_string();
+        assert!(html.contains("<details class=\"filter-more\" open>"));
         assert!(html.contains("<option value=\"6.topic: python\" label=\"6.topic: python (1)\">"));
         assert!(html.contains("name=\"label\" list=\"review-labels\" value=\"6.Topic: Python\""));
     }

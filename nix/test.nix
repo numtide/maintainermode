@@ -145,8 +145,8 @@ pkgs.testers.runNixOSTest {
     machine.succeed("curl -sf 'http://127.0.0.1:8790/state?tab=docs&doc=personal' -o /tmp/doc && grep -q 'Your own view</h1>' /tmp/doc && grep -q 'href=\"/state?tab=docs&amp;doc=health#the-risk-score\"' /tmp/doc")
     machine.succeed("curl -s -D /tmp/sync.h -o /dev/null http://127.0.0.1:8790/sync && grep -qi '^location: /state?tab=status' /tmp/sync.h")
     machine.succeed("curl -sf http://127.0.0.1:8790/review -o /tmp/review")
-    machine.succeed("grep -q '<option value=\"unowned\" selected>No maintainer</option>' /tmp/review && grep -q 'No maintainer <span class=\"Counter\">0</span>' /tmp/review")
-    machine.succeed("grep -q '<option value=\"bumps\">Version bumps</option>' /tmp/review && ! grep -q -e 'href=\"/review?tab=ready\"' -e '<details class=\"review-more\" open>' /tmp/review")
+    machine.succeed("grep -q 'href=\"/review?tab=unowned\" aria-current=\"page\">No maintainer <span class=\"Counter\">0</span>' /tmp/review")
+    machine.succeed("grep -q 'href=\"/review?tab=bumps\">Version bumps' /tmp/review && ! grep -q -e 'href=\"/review?tab=ready\"' -e '<details class=\"filter-more\" open>' /tmp/review")
     machine.succeed("grep -q '<title>Review · Maintainer Mode</title>' /tmp/review")
     # style sheets carry a hash in their name and stay cached for a year
     machine.succeed("grep -o 'href=\"/static/primer\\.[0-9a-f]*\\.css\"' /tmp/review | cut -d'\"' -f2 > /tmp/css.path")
@@ -365,14 +365,14 @@ pkgs.testers.runNixOSTest {
         machine.succeed(f"grep -q 'href=\"/me/settings#upload\">Upload the packages of your machines' /tmp/s-pk-{f}")
     machine.succeed("grep -q 'No report yet.' /tmp/s-pk-machines && grep -q 'id=\"flakes\"' /tmp/s-pk-machines")
     signed_in("/packages?filter=all", "/tmp/s-pk-all")
-    machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all && ! grep -q 'aria-label=\"Views\"' /tmp/s-pk-all")
+    machine.succeed("grep -q 'Box-title\">Directories</h2>' /tmp/s-pk-all && grep -q 'action=\"/search\"' /tmp/s-pk-all && grep -q 'href=\"/packages?filter=all\" aria-current=\"page\">All of nixpkgs' /tmp/s-pk-all")
     machine.succeed("grep -q 'action=\"/me/watch\"' /tmp/s-pk-watch")
     for group in ["news", "reviews", "machines", "account"]:
         machine.succeed(f"grep -q '<div id=\"{group}\">' /tmp/s-settings && grep -q 'href=\"#{group}\"' /tmp/s-settings")
     for anchor in ["notifications", "followup", "feed", "upload", "api", "tags", "goal", "start", "github"]:
         machine.succeed(f"grep -q 'class=\"Box-row setting\" id=\"{anchor}\"' /tmp/s-settings")
     machine.succeed("grep -q 'Your weekly goal' /tmp/s-progress")
-    machine.succeed("grep -q '<option value=\"foryou\" selected>For you</option>' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
+    machine.succeed("grep -q 'href=\"/review?tab=foryou\" aria-current=\"page\">For you' /tmp/s-review && ! grep -q 'your-progress' /tmp/s-review")
     machine.succeed("grep -q 'href=\"/review?tab=ready\" aria-current=\"page\">Ready to merge' /tmp/s-ready && grep -q 'href=\"/review\">Needs review' /tmp/s-ready")
     machine.succeed("grep -q 'aria-current=\"page\">All <span' /tmp/s-packages")
     # the forms: the index is empty offline, so a package name is refused and
