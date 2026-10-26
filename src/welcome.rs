@@ -150,7 +150,7 @@ impl Facts {
             maintained_watched: keys.iter().filter(|k| watched.contains(*k)).count(),
             watched: watched.len(),
             queue: crate::mine::for_you(app, &s, login).len(),
-            reviewed: crate::dossier::build(&s.pr_data, login).reviewed,
+            reviewed: app.store.reviews_made(login).unwrap_or_default(),
             feed: app.store.feed_token(login).ok().flatten().is_some(),
         }
     }

@@ -43,7 +43,10 @@ pub struct Row {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Dossier {
     pub login: String,
+    /// Every pull request the login reviewed, from the whole history.
     pub reviewed: usize,
+    /// What came of a review is known for the window of the main database
+    /// only: these count the rows, which know the pushes and the merges.
     pub merged_unchanged: usize,
     pub problems_found: usize,
     pub recent: Vec<Row>,
@@ -134,7 +137,10 @@ pub fn by_reviewer(prs: &[Pr]) -> HashMap<String, Vec<usize>> {
     out
 }
 
-pub fn build(prs: &[Pr], login: &str) -> Dossier {
+/// `made` is the number of pull requests the login reviewed in the whole
+/// history, which [`crate::store::Store::reviews_made`] counts; `prs` holds
+/// the window, and the outcomes come from it.
+pub fn build(prs: &[Pr], login: &str, made: usize) -> Dossier {
     let mut rows = Vec::new();
     let mut co: HashMap<String, usize> = HashMap::new();
     let mut authors: HashMap<String, usize> = HashMap::new();
@@ -156,7 +162,7 @@ pub fn build(prs: &[Pr], login: &str) -> Dossier {
     rows.sort_by_key(|r| std::cmp::Reverse(r.at));
     Dossier {
         login: login.to_string(),
-        reviewed: rows.len(),
+        reviewed: made,
         merged_unchanged: rows
             .iter()
             .filter(|r| r.outcome == Outcome::MergedUnchanged)
@@ -180,7 +186,7 @@ mod tests {
         p.state = "MERGED".into();
         p.merged_at = Some(t(3));
         p.merged_by = Some("carol".into());
-        let d = build(&[p], "bob");
+        let d = build(&[p], "bob", 1);
         assert_eq!(d.merged_unchanged, 1);
     }
 
@@ -194,7 +200,7 @@ mod tests {
         p.state = "MERGED".into();
         p.merged_at = Some(t(4));
         p.merged_by = Some("carol".into());
-        let d = build(&[p], "bob");
+        let d = build(&[p], "bob", 1);
         assert_eq!(d.merged_unchanged, 0);
         assert_eq!(d.problems_found, 1);
         assert_eq!(d.recent[0].outcome, Outcome::MergedAfterChanges);
@@ -207,7 +213,7 @@ mod tests {
         p.state = "MERGED".into();
         p.merged_at = Some(t(3));
         p.merged_by = Some("bob".into());
-        assert_eq!(build(&[p], "bob").merged_unchanged, 0);
+        assert_eq!(build(&[p], "bob", 1).merged_unchanged, 0);
     }
 
     #[test]

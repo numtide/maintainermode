@@ -1086,7 +1086,11 @@ pub(crate) fn person_value(app: &App, login: &str) -> Value {
             ..Default::default()
         });
     let credits: Vec<_> = s.ledger.credits_of(login).cloned().collect();
-    let dossier = crate::dossier::build(&s.pr_data, login);
+    let dossier = crate::dossier::build(
+        &s.pr_data,
+        login,
+        app.store.reviews_made(login).unwrap_or_default(),
+    );
     let area = s.areas.get(login).map(crate::area::Area::public);
     drop(s);
     let mut maintains = crate::catalog::maintains::value(app, login);

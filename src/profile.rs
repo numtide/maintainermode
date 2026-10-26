@@ -704,15 +704,20 @@ fn overlap(title: &'static str, list: &[(String, usize)]) -> Html {
 }
 
 /// The review record: facts about reviews, not a judgement.
-fn reviews(s: &Snapshot, login: &str) -> Html {
-    let d = dossier::build(&s.pr_data, login);
+fn reviews(app: &App, s: &Snapshot, login: &str) -> Html {
+    let d = dossier::build(
+        &s.pr_data,
+        login,
+        app.store.reviews_made(login).unwrap_or_default(),
+    );
     let mut out = note(html!(
         "These are facts about reviews, not a judgement. Maintainer Mode gives no rights; nixpkgs committers do. \
-         It counts the reviews of the last {} days and on every open pull request.",
+         What came of a review is known for the last {} days and for every open pull request.",
         ledger::WINDOW_DAYS
     ));
     out.push(&html!(
-        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}</div>",
+        "<div class=\"d-flex flex-wrap gap-3 mb-4\">{}{}{}</div>",
+        stat(d.reviewed, "pull requests reviewed", "in the whole history"),
         stat(
             d.merged_unchanged,
             "merged unchanged after their review",
@@ -798,7 +803,7 @@ async fn page(
             let after = q.after.as_deref().and_then(|a| a.parse().ok()).unwrap_or(0);
             (login.clone(), overview(&s, &login, after, now))
         }
-        ProfileTab::Reviews => (format!("Reviews of {login}"), reviews(&s, &login)),
+        ProfileTab::Reviews => (format!("Reviews of {login}"), reviews(&app, &s, &login)),
         ProfileTab::Maintains => (
             format!("What {login} maintains"),
             crate::catalog::maintains::body(&app, &login),

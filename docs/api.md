@@ -164,7 +164,10 @@ It gives the public data of one login. It is the data of the profile page
   `package_outputs` (attribute → its labels). A private set is never in it;
 - `person`: the ledger summary, and whether its pull requests are in the
   queues (see [Ledger fields](#ledger-fields));
-- `dossier`: its review record;
+- `dossier`: its review record. `reviewed` counts every pull request the
+  login reviewed, from the whole history. `merged_unchanged`,
+  `problems_found` and `recent` say what came of a review, which the data
+  knows for the last 60 days and for every open pull request;
 - `credits`: its counted reviews (see [Ledger fields](#ledger-fields));
 - `area`: what it maintains, owns and changed;
 - `maintains`: its packages and NixOS modules, with their flags.
