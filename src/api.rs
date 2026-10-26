@@ -94,7 +94,7 @@ pub(crate) struct Endpoint {
 pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/prs",
-        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
+        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, treewide, base, label and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
         params: &[
             opt("queue", Type::OneOf(&QUEUES), "the queue: all by default"),
             opt(
@@ -136,6 +136,11 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 "label",
                 Type::Text,
                 "not with ready: keep the pull requests with a label that contains this text, in any case, like python; commas for several, all needed",
+            ),
+            opt(
+                "treewide",
+                Type::OneOf(&crate::review::TREEWIDES),
+                "not with ready: hide drops the treewide pull requests, only keeps them alone",
             ),
             opt(
                 "q",
@@ -650,6 +655,7 @@ pub(crate) struct Args {
     pub conflicts: Option<String>,
     pub base: Option<String>,
     pub label: Option<String>,
+    pub treewide: Option<String>,
     pub section: Option<String>,
     pub login: Option<String>,
     pub mood: Option<String>,
@@ -992,6 +998,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         conflicts: q.conflicts.clone(),
         base: q.base.clone(),
         label: q.label.clone(),
+        treewide: q.treewide.clone(),
         q: q.q.clone(),
     };
     let mut out;

@@ -93,6 +93,7 @@ struct ReviewQuery {
     checks: Option<String>,
     reviews: Option<String>,
     conflicts: Option<String>,
+    treewide: Option<String>,
     base: Option<String>,
     label: Option<String>,
     q: Option<String>,
@@ -204,6 +205,7 @@ fn needs_review(
         checks: q.checks.clone(),
         reviews: q.reviews.clone(),
         conflicts: q.conflicts.clone(),
+        treewide: q.treewide.clone(),
         base: q.base.clone(),
         label: q.label.clone(),
         q: q.q.clone(),
@@ -349,6 +351,7 @@ pub(crate) const SORTS: [&str; 3] = ["oldest", "newest", "updated"];
 pub(crate) const CHECKS: [&str; 3] = ["pass", "fail", "pending"];
 pub(crate) const REVIEWS: [&str; 2] = ["none", "some"];
 pub(crate) const CONFLICTS: [&str; 1] = ["hide"];
+pub(crate) const TREEWIDES: [&str; 2] = ["hide", "only"];
 
 /// What the filters and the sorts read of a row.
 pub(crate) struct Facts<'a> {
@@ -357,6 +360,7 @@ pub(crate) struct Facts<'a> {
     ci: Option<&'a str>,
     reviewed: bool,
     conflict: bool,
+    treewide: bool,
     base: &'a str,
     labels: &'a [String],
     created_at: DateTime<Utc>,
@@ -376,6 +380,7 @@ impl Filtered for Entry {
             ci: self.ci.as_deref(),
             reviewed: !self.reviewers.is_empty(),
             conflict: self.mergeable == "CONFLICTING",
+            treewide: self.treewide.is_some(),
             base: &self.base,
             labels: &self.labels,
             created_at: self.created_at,
@@ -396,6 +401,7 @@ impl Filtered for crate::bumps::Row<'_> {
                 .iter()
                 .any(|r| r.author != p.author && !r.author_is_bot),
             conflict: p.mergeable == "CONFLICTING",
+            treewide: p.treewide.is_some(),
             base: &p.base,
             labels: &p.labels,
             created_at: p.created_at,
@@ -419,6 +425,7 @@ pub(crate) struct Opts {
     pub checks: Option<String>,
     pub reviews: Option<String>,
     pub conflicts: Option<String>,
+    pub treewide: Option<String>,
     pub base: Option<String>,
     pub label: Option<String>,
     pub q: Option<String>,
@@ -452,6 +459,11 @@ impl Opts {
             Some(_) => f.reviewed,
         };
         let conflicts = Self::get(&self.conflicts, &CONFLICTS).is_none() || !f.conflict;
+        let treewide = match Self::get(&self.treewide, &TREEWIDES) {
+            None => true,
+            Some("hide") => !f.treewide,
+            Some(_) => f.treewide,
+        };
         let base = Self::get(&self.base, &[]).is_none_or(|b| f.base == b);
         let label = Self::get(&self.label, &[]).is_none_or(|want| {
             want.split(',')
@@ -462,7 +474,7 @@ impl Opts {
         let words = self
             .words()
             .is_none_or(|w| crate::search::at_word(&f.title.to_lowercase(), &w));
-        checks && reviews && conflicts && base && label && words
+        checks && reviews && conflicts && treewide && base && label && words
     }
 
     /// With no sort asked, the list keeps the order of its Show choice.
@@ -503,6 +515,7 @@ impl Opts {
             || Self::get(&self.checks, &CHECKS).is_some()
             || Self::get(&self.reviews, &REVIEWS).is_some()
             || Self::get(&self.conflicts, &CONFLICTS).is_some()
+            || Self::get(&self.treewide, &TREEWIDES).is_some()
             || Self::get(&self.base, &[]).is_some()
     }
 
@@ -519,6 +532,7 @@ impl Opts {
             ("checks", Self::get(&self.checks, &CHECKS)),
             ("reviews", Self::get(&self.reviews, &REVIEWS)),
             ("conflicts", Self::get(&self.conflicts, &CONFLICTS)),
+            ("treewide", Self::get(&self.treewide, &TREEWIDES)),
             ("base", Self::get(&self.base, &[])),
             ("label", Self::get(&self.label, &[])),
             ("q", Self::get(&self.q, &[])),
@@ -611,7 +625,7 @@ fn bar(
         Opts::get(&o.label, &[]).unwrap_or("")
     );
     let more = html!(
-        "{}{}{}{}{}{whose}",
+        "{}{}{}{}{}{}{whose}",
         select(
             "sort",
             "Sort",
@@ -649,6 +663,16 @@ fn bar(
             "Conflicts",
             Opts::get(&o.conflicts, &CONFLICTS),
             &[("", "Any conflicts"), ("hide", "No conflicts")]
+        ),
+        select(
+            "treewide",
+            "Treewide",
+            Opts::get(&o.treewide, &TREEWIDES),
+            &[
+                ("", "Any size"),
+                ("hide", "Not treewide"),
+                ("only", "Only treewide")
+            ]
         ),
         select(
             "base",
@@ -977,6 +1001,19 @@ mod tests {
         assert_eq!(numbers(o(|o| o.conflicts = Some("hide".into()))), [1, 2]);
         assert_eq!(numbers(o(|o| o.base = Some("staging".into()))), [2]);
         assert_eq!(numbers(o(|o| o.q = Some("hel".into()))), [1]);
+        let mut wide = all.to_vec();
+        wide[1].treewide = crate::links::Treewide::of(50, 0);
+        let wide: Vec<&Entry> = wide.iter().collect();
+        let t = |v: &str| -> Vec<u64> {
+            let o = Opts {
+                treewide: Some(v.into()),
+                ..Default::default()
+            };
+            o.apply(wide.clone()).iter().map(|e| e.number).collect()
+        };
+        assert_eq!(t("hide"), [1, 3]);
+        assert_eq!(t("only"), [2]);
+        assert_eq!(t("nonsense"), [1, 2, 3]);
         assert_eq!(numbers(o(|o| o.sort = Some("newest".into()))), [3, 2, 1]);
         assert_eq!(numbers(o(|o| o.sort = Some("updated".into()))), [1, 2, 3]);
         assert_eq!(

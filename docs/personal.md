@@ -356,17 +356,18 @@ Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it i
 
 **Sort and filter.** The chips above the list are the Show choice, each with the size of its list once the pull requests you hid are out. A chip keeps the other filters. Under the chips are a search for words in the title, a **Label** field, and **More filters**, which opens the other choices. The Label field suggests the labels of the list with their counts. On a pull request page, each label links to the list of that label. `/packages` has the same bar. It is open when one of them is set. Push **Apply** to show the list. Each choice is a parameter of the address, so you can keep a link to a view:
 
-| Parameter   | Values                                           | What it does                                                            |
-| ----------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
-| `tab`       | `foryou`, `unowned`, `firsttime`, `bumps`, `all` | the Show choice                                                         |
-| `q`         | text                                             | titles with a word that starts with the text                            |
-| `sort`      | `oldest`, `newest`, `updated`                    | the order; without it, the order of the Show choice                     |
-| `checks`    | `pass`, `fail`, `pending`                        | the state of the checks of the head commit                              |
-| `reviews`   | `none`, `some`                                   | no review by another person yet, or one or more                         |
-| `conflicts` | `hide`                                           | drops the pull requests with a conflict                                 |
-| `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                 |
-| `label`     | part of a label, such as `python`                | the labels that contain it, in any case; commas for several, all needed |
-| `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch  |
+| Parameter   | Values                                           | What it does                                                                            |
+| ----------- | ------------------------------------------------ | --------------------------------------------------------------------------------------- |
+| `tab`       | `foryou`, `unowned`, `firsttime`, `bumps`, `all` | the Show choice                                                                         |
+| `q`         | text                                             | titles with a word that starts with the text                                            |
+| `sort`      | `oldest`, `newest`, `updated`                    | the order; without it, the order of the Show choice                                     |
+| `checks`    | `pass`, `fail`, `pending`                        | the state of the checks of the head commit                                              |
+| `reviews`   | `none`, `some`                                   | no review by another person yet, or one or more                                         |
+| `conflicts` | `hide`                                           | drops the pull requests with a conflict                                                 |
+| `treewide`  | `hide`, `only`                                   | drops the [treewide](rules.md#treewide-pull-requests) pull requests, or keeps only them |
+| `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                                 |
+| `label`     | part of a label, such as `python`                | the labels that contain it, in any case; commas for several, all needed                 |
+| `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch                  |
 
 "Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue but `ready`. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
 

@@ -266,8 +266,10 @@ requests in For you, in Needs you, and in the pull requests of a package,
 module or directory. Among themselves, the treewide pull requests keep the
 order of the list. The other lists keep their order. These lists and the
 review lists mark its row, for example "treewide · 340 packages". The panel
-of the pull request page shows the same mark. In your packages, a treewide
-pull request alone does not make a package need attention.
+of the pull request page shows the same mark. The filter bar of the review
+lists can drop the treewide pull requests, or show only them. In your
+packages, a treewide pull request alone does not make a package need
+attention.
 
 ### Pull requests too large to link
 

@@ -117,7 +117,7 @@ The queues:
 
 For every queue but `ready`, the parameters `q`, `sort` (`oldest`, `newest`,
 `updated`), `checks` (`pass`, `fail`, `pending`), `reviews` (`none`, `some`),
-`conflicts` (`hide`), `base` and `label` narrow and order the list, as the filter bar
+`conflicts` (`hide`), `treewide` (`hide`, `only`), `base` and `label` narrow and order the list, as the filter bar
 of `/review` does (see [personal.md](personal.md#review-for-you)). For your
 own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
 requests you hid on the site, and `hidden` gives their count. Each row of
