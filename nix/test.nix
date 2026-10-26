@@ -277,7 +277,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"url\":\"https://github.com/NixOS/nixpkgs/pull/1\"' /tmp/pr1.json")
     machine.fail("curl -sf http://127.0.0.1:8790/pr/nope")
     # crawlers stay off the pull request pages
-    machine.succeed("curl -sf -o /tmp/robots http://127.0.0.1:8790/robots.txt && grep -q '^Disallow: /pr/' /tmp/robots && grep -q '^Disallow: /api/v1/prs/' /tmp/robots")
+    machine.succeed("curl -sf -o /tmp/robots http://127.0.0.1:8790/robots.txt && grep -q '^Disallow: /pr/' /tmp/robots && grep -q '^Disallow: /api/v1/prs/' /tmp/robots && grep -q '^Disallow: /u/' /tmp/robots")
     # notifications: the inbox and its settings need a session
     machine.succeed("curl -s -D /tmp/n1.h -o /dev/null http://127.0.0.1:8790/me/inbox && grep -qi '^location: /inbox' /tmp/n1.h && grep -qi '^cache-control: private, no-store' /tmp/n1.h")
     machine.succeed("curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8790/me/inbox/read > /tmp/n2 && grep -q 303 /tmp/n2")
@@ -529,5 +529,13 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '\"output\":\"other\"' /tmp/s-mine-other.json && grep -q '\"key\":\"pkg:hello\"' /tmp/s-mine-other.json && grep -q '{\"output\":\"other\",\"set\":\"infra\"}' /tmp/s-mine-other.json && ! grep -q 'requests' /tmp/s-mine-other.json")
     machine.succeed("curl -s -o /tmp/r20 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"packages\":[{\"attr\":\"hello\",\"pname\":\"hello\",\"version\":\"1.2.3-acme-fix\"}]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r20.code && grep -q 400 /tmp/r20.code && grep -q 'does not have version 1.2.3-acme-fix' /tmp/r20")
     machine.succeed("curl -s -o /tmp/r21 -w '%{http_code}' -X POST -H 'Authorization: Bearer vmtoken' -d '{\"schema\":1,\"source\":{\"name\":\"/home/me/tree\"},\"packages\":[]}' http://127.0.0.1:8790/api/v1/reports > /tmp/r21.code && grep -q 400 /tmp/r21.code && grep -q 'unknown field' /tmp/r21")
+
+    # the socket holds the address while the service is down; a request
+    # starts it again and waits for the answer
+    machine.succeed("systemctl stop maintainer-mode.service")
+    machine.succeed("systemctl is-active maintainer-mode.socket")
+    machine.succeed("curl -sf --max-time 120 http://127.0.0.1:8790/healthz")
+    machine.succeed("systemctl is-active maintainer-mode.service")
+    machine.succeed("journalctl -u maintainer-mode.service | grep -q 'listening on the socket from systemd'")
   '';
 }

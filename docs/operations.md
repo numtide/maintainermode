@@ -40,6 +40,21 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 
 CI is the flake's `checks`: `nix flake check`.
 
+## Restarts and the listener
+
+The server opens its listen address before it loads its data, so the
+kernel queues the requests of those seconds. In the NixOS module, a socket
+unit, `maintainer-mode.socket`, holds the address. It stays open while the
+service restarts, so a request waits for the new process and does not
+fail.
+
+A job that stops `maintainer-mode.service`, for example before a
+snapshot, must also stop `maintainer-mode.socket`. If it does not, the
+next request starts the service again.
+
+With a `domain`, nginx lets each address send 10 requests a second, after
+a burst of 50, and answers 429 over that.
+
 ## Metrics
 
 The server serves Prometheus metrics in the text format 0.0.4. Set `--metrics-listen <address>` or `MAINTAINER_MODE_METRICS_LISTEN`. The server then opens a second listener that serves only `GET /metrics`. The main port answers 404 for `/metrics`.

@@ -87,6 +87,12 @@ A list answer has these fields:
 The cursor is opaque. A list can change between two requests, so a row can
 show twice or not at all.
 
+## Rate limit
+
+The NixOS module lets each address send 10 requests a second, after a
+burst of 50. Over that, the server answers 429. Wait a second, then send
+the request again.
+
 ## `GET /api/v1/prs`
 
 | Parameter | Meaning                                                                                                         |

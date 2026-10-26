@@ -34,6 +34,17 @@ pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/u/:login", get(page))
         .route("/u/:login/maintains", get(old_maintains))
+        .layer(axum::middleware::map_response(noindex))
+}
+
+/// A person is not found by name in search engines. robots.txt keeps the
+/// polite crawlers off; this tells one that comes anyway not to list it.
+async fn noindex(mut res: Response) -> Response {
+    res.headers_mut().insert(
+        "x-robots-tag",
+        axum::http::HeaderValue::from_static("noindex"),
+    );
+    res
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

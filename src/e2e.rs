@@ -28,6 +28,7 @@ pub(crate) struct Answer {
     pub status: StatusCode,
     pub cache: Option<String>,
     pub location: Option<String>,
+    pub robots: Option<String>,
     pub body: String,
 }
 
@@ -42,10 +43,12 @@ impl Site {
         };
         let cache = h(CACHE_CONTROL);
         let location = h(LOCATION);
+        let robots = h(reqwest::header::HeaderName::from_static("x-robots-tag"));
         Answer {
             status: r.status(),
             cache,
             location,
+            robots,
             body: r.text().await.unwrap(),
         }
     }
@@ -458,7 +461,11 @@ async fn public_pages_keep_private_data_out() {
             assert!(!a.body.contains(secret), "{path} shows {secret}");
         }
         assert_ne!(a.cache.as_deref(), Some("private, no-store"), "{path}");
+        let person = path.starts_with("/u/");
+        assert_eq!(a.robots.is_some(), person, "{path}: X-Robots-Tag");
     }
+    let robots = site.get("/robots.txt", None).await.body;
+    assert!(robots.lines().any(|l| l == "Disallow: /u/"), "{robots}");
 }
 
 #[tokio::test]

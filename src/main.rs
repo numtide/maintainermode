@@ -667,6 +667,22 @@ struct S3 {
     s3_credentials_file: Option<PathBuf>,
 }
 
+/// The socket that a systemd socket unit passes, as `sd_listen_fds(3)`
+/// describes. It stays open while the service restarts.
+fn passed_listener() -> Result<Option<std::net::TcpListener>> {
+    let ours = std::env::var("LISTEN_PID")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        == Some(std::process::id());
+    if !ours || std::env::var("LISTEN_FDS").as_deref() != Ok("1") {
+        return Ok(None);
+    }
+    // SAFETY: systemd gave fd 3 to this process, and nothing else owns it
+    let l = unsafe { <std::net::TcpListener as std::os::fd::FromRawFd>::from_raw_fd(3) };
+    l.set_nonblocking(true)?;
+    Ok(Some(l))
+}
+
 fn read_secret(path: &Option<PathBuf>) -> Result<Option<String>> {
     path.as_ref()
         .map(|p| {
@@ -947,6 +963,19 @@ async fn run(cli: Cli) -> Result<i32> {
             rescan,
         } => {
             telemetry::started();
+            // before the seconds of loading: the kernel queues the requests
+            // of that time, and a restart refuses none
+            let listener = match passed_listener()? {
+                Some(l) => {
+                    tracing::info!("listening on the socket from systemd");
+                    tokio::net::TcpListener::from_std(l)?
+                }
+                None => {
+                    let l = tokio::net::TcpListener::bind(&listen).await?;
+                    tracing::info!("listening on {listen}");
+                    l
+                }
+            };
             let rescan = rescan.config()?;
             let S3 {
                 s3_endpoint,
@@ -1067,8 +1096,7 @@ async fn run(cli: Cli) -> Result<i32> {
                     }
                 });
             }
-            let listener = tokio::net::TcpListener::bind(&listen).await?;
-            tracing::info!("listening on {listen}");
+            tracing::info!("serving");
             let router = web::router(app)
                 .layer(tower_http::compression::CompressionLayer::new())
                 .layer(tower_http::trace::TraceLayer::new_for_http());

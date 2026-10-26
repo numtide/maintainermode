@@ -23,7 +23,7 @@ use crate::telemetry::Recompute;
 
 /// Pull request pages read GitHub on a miss of the cache; crawlers must
 /// not walk them.
-const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /part/\nDisallow: /api/v1/prs/\n";
+const ROBOTS: &str = "User-agent: *\nDisallow: /pr/\nDisallow: /part/\nDisallow: /u/\nDisallow: /api/v1/prs/\nDisallow: /api/v1/people/\n";
 
 /// The name of an Octicon that `nix/primer.nix` ships; a name it does not
 /// ship fails the build.

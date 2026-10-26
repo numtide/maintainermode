@@ -245,11 +245,24 @@ in
       }
     ];
 
+    # the socket stays open while the service restarts, so a request waits
+    # for the new process instead of failing. A job that stops the service
+    # must stop the socket too, or the next request starts it again.
+    systemd.sockets.maintainer-mode = {
+      description = "Maintainer Mode listener";
+      wantedBy = [ "sockets.target" ];
+      socketConfig.ListenStream = cfg.listen;
+    };
+
     systemd.services.maintainer-mode = {
       description = "Maintainer Mode";
       wantedBy = [ "multi-user.target" ];
+      requires = [ "maintainer-mode.socket" ];
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      after = [
+        "network-online.target"
+        "maintainer-mode.socket"
+      ];
       environment = {
         MAINTAINER_MODE_LISTEN = cfg.listen;
         MAINTAINER_MODE_DB = "${state}/maintainer-mode.sqlite";
@@ -379,10 +392,22 @@ in
       recommendedProxySettings = true;
       recommendedTlsSettings = true;
       recommendedGzipSettings = true;
+      # one address over the limit gets 429. A page view, with its style
+      # sheets, script and parts, is about 10 requests; scrapers that send
+      # one request per address are not slowed.
+      appendHttpConfig = ''
+        limit_req_zone $binary_remote_addr zone=maintainer_mode:10m rate=10r/s;
+      '';
       virtualHosts.${cfg.domain} = {
         enableACME = true;
         forceSSL = true;
-        locations."/".proxyPass = "http://${cfg.listen}";
+        locations."/" = {
+          proxyPass = "http://${cfg.listen}";
+          extraConfig = ''
+            limit_req zone=maintainer_mode burst=50 nodelay;
+            limit_req_status 429;
+          '';
+        };
       };
     };
   };
