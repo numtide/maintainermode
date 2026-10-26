@@ -1178,6 +1178,7 @@ mod tests {
             credited_by: vec![],
             files: vec![file.into()],
             unowned,
+            labels: vec![],
             treewide: None,
             too_large: None,
         }

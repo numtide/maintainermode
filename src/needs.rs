@@ -1289,6 +1289,7 @@ mod tests {
             credited_by: vec![],
             files: p.files.clone(),
             unowned: false,
+            labels: vec![],
             treewide: p.treewide,
             too_large: None,
         }
