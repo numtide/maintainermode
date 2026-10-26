@@ -20,6 +20,7 @@
     let
       systems = [
         "x86_64-linux"
+        "aarch64-linux"
         "aarch64-darwin"
       ];
       forAll = nixpkgs.lib.genAttrs systems;
@@ -81,7 +82,9 @@
         }
       );
 
-      checks = forAll (
+      # the host and the checks run on x86_64-linux; the other systems are
+      # for the dev shell
+      checks = nixpkgs.lib.genAttrs [ "x86_64-linux" ] (
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
