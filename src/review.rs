@@ -453,8 +453,12 @@ impl Opts {
         };
         let conflicts = Self::get(&self.conflicts, &CONFLICTS).is_none() || !f.conflict;
         let base = Self::get(&self.base, &[]).is_none_or(|b| f.base == b);
-        let label = Self::get(&self.label, &[])
-            .is_none_or(|l| f.labels.iter().any(|x| x.eq_ignore_ascii_case(l)));
+        let label = Self::get(&self.label, &[]).is_none_or(|want| {
+            want.split(',')
+                .map(|w| w.trim().to_lowercase())
+                .filter(|w| !w.is_empty())
+                .all(|w| f.labels.iter().any(|l| l.to_lowercase().contains(&w)))
+        });
         let words = self
             .words()
             .is_none_or(|w| crate::search::at_word(&f.title.to_lowercase(), &w));
@@ -500,11 +504,10 @@ impl Opts {
             || Self::get(&self.reviews, &REVIEWS).is_some()
             || Self::get(&self.conflicts, &CONFLICTS).is_some()
             || Self::get(&self.base, &[]).is_some()
-            || Self::get(&self.label, &[]).is_some()
     }
 
     pub(crate) fn active(&self) -> bool {
-        self.more() || self.words().is_some()
+        self.more() || self.words().is_some() || Self::get(&self.label, &[]).is_some()
     }
 
     /// `&name=value` for each field that is set, to keep in links. Not
@@ -603,12 +606,12 @@ fn bar(
         .map(|(l, n)| html!("<option value=\"{l}\" label=\"{l} ({n})\"></option>"))
         .collect();
     let label = html!(
-        "<input class=\"form-control input-sm\" type=\"search\" name=\"label\" list=\"review-labels\" value=\"{}\" placeholder=\"Label\" aria-label=\"Label\">\
+        "<input class=\"form-control input-sm\" type=\"search\" name=\"label\" list=\"review-labels\" value=\"{}\" placeholder=\"Label, such as python\" aria-label=\"Label\">\
          <datalist id=\"review-labels\">{options}</datalist>",
         Opts::get(&o.label, &[]).unwrap_or("")
     );
     let more = html!(
-        "{}{}{}{}{}{label}{whose}",
+        "{}{}{}{}{}{whose}",
         select(
             "sort",
             "Sort",
@@ -664,6 +667,7 @@ fn bar(
         keep,
         placeholder: "Words in the title",
         q: o.q.clone().unwrap_or_default(),
+        fields: label,
         more,
         more_open: o.more() || only_mine,
         clear: (o.active() || only_mine)
@@ -1119,23 +1123,42 @@ mod tests {
     }
 
     #[test]
-    fn a_label_keeps_the_pull_requests_that_carry_it_in_any_case() {
+    fn a_label_keeps_the_pull_requests_that_carry_part_of_it_in_any_case() {
         let mut a = entry(1, "SUCCESS", false, "master", "a");
         a.labels = vec!["6.topic: python".into()];
-        let b = entry(2, "SUCCESS", false, "master", "b");
-        let list: Vec<&Entry> = vec![&a, &b];
+        let mut b = entry(2, "SUCCESS", false, "master", "b");
+        b.labels = vec!["6.topic: python".into(), "1.severity: security".into()];
+        let c = entry(3, "SUCCESS", false, "master", "c");
+        let list: Vec<&Entry> = vec![&a, &b, &c];
+        let kept = |label: &str| -> Vec<u64> {
+            Opts {
+                label: Some(label.into()),
+                ..Default::default()
+            }
+            .apply(list.clone())
+            .iter()
+            .map(|e| e.number)
+            .collect()
+        };
+        assert_eq!(kept("6.Topic: Python"), [1, 2]);
+        assert_eq!(kept("python"), [1, 2]);
+        assert_eq!(kept("python, SECURITY"), [2]);
+        assert_eq!(kept(" , "), [1, 2, 3]);
         let o = Opts {
-            label: Some("6.Topic: Python".into()),
+            label: Some("python".into()),
             ..Default::default()
         };
-        let kept: Vec<u64> = o.apply(list.clone()).iter().map(|e| e.number).collect();
-        assert_eq!(kept, [1]);
-        assert!(o.query().contains("&label="));
+        assert!(o.query().contains("&label=python"));
         let counts = labels(&list);
-        assert_eq!(counts, [("6.topic: python".to_string(), 1)]);
+        assert_eq!(counts[0], ("6.topic: python".to_string(), 2));
         let html = bar(&o, "all", true, false, false, &[], &counts, Vec::new()).to_string();
-        assert!(html.contains("<details class=\"filter-more\" open>"));
-        assert!(html.contains("<option value=\"6.topic: python\" label=\"6.topic: python (1)\">"));
-        assert!(html.contains("name=\"label\" list=\"review-labels\" value=\"6.Topic: Python\""));
+        assert!(!html.contains("<details class=\"filter-more\" open>") && html.contains("Clear"));
+        let field = html.find("name=\"label\"").unwrap();
+        assert!(
+            field < html.find("Apply").unwrap(),
+            "the label field is beside the search"
+        );
+        assert!(html.contains("<option value=\"6.topic: python\" label=\"6.topic: python (2)\">"));
+        assert!(html.contains("name=\"label\" list=\"review-labels\" value=\"python\""));
     }
 }

@@ -889,7 +889,7 @@ fn change_lines(c: &Ctx, kind: Kind, b: Option<&Bump>) -> Html {
             crate::html::join(
                 pr.labels
                     .iter()
-                    .map(|l| html!("<span class=\"Label mr-1\">{l}</span>")),
+                    .map(|l| html!("<a class=\"Label mr-1\" href=\"/review?tab=all&amp;label={}\">{l}</a>", crate::github::urlencode(l))),
                 " "
             )
         ));

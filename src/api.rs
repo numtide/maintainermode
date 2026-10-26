@@ -135,7 +135,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt(
                 "label",
                 Type::Text,
-                "not with ready: keep the pull requests with this label, like 6.topic: python; any case",
+                "not with ready: keep the pull requests with a label that contains this text, in any case, like python; commas for several, all needed",
             ),
             opt(
                 "q",
