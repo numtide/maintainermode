@@ -203,6 +203,8 @@ pub(crate) struct FilterBar {
     pub keep: Vec<(&'static str, String)>,
     pub placeholder: &'static str,
     pub q: String,
+    /// More fields in the row of the search.
+    pub fields: Html,
     /// The controls of "More filters"; with none there is no fold.
     pub more: Html,
     pub more_open: bool,
@@ -239,12 +241,14 @@ impl FilterBar {
         html!(
             "{choices}{}<form class=\"filter-bar mb-3\" method=\"get\" action=\"{}\" role=\"search\" aria-label=\"Filter\">{keep}\
              <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{}\" aria-label=\"{}\">\
+             {}\
              <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}{more}</form>",
             self.rows,
             self.action,
             self.q,
             self.placeholder,
-            self.placeholder
+            self.placeholder,
+            self.fields
         )
     }
 }
