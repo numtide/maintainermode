@@ -30,6 +30,20 @@ pub fn routes() -> Router<Shared> {
 #[derive(Deserialize)]
 struct Params {
     q: Option<String>,
+    kind: Option<String>,
+}
+
+/// The kinds of hits, as the chips above the lists show them.
+const KINDS: [(&str, &str); 4] = [
+    ("packages", "Packages, modules and directories"),
+    ("people", "People"),
+    ("prs", "Pull requests"),
+    ("advisories", "Advisories"),
+];
+
+fn kind_of(raw: Option<&str>) -> Option<&'static str> {
+    let raw = raw.map(str::trim)?;
+    KINDS.iter().find(|(v, _)| *v == raw).map(|(v, _)| *v)
 }
 
 #[derive(Default)]
@@ -220,7 +234,7 @@ async fn page(State(app): State<Shared>, headers: HeaderMap, Query(p): Query<Par
         .heading("Search")
         .icon(octicon!("search"))
         .query(&q)
-        .body(body(&q, &hits, &rows))
+        .body(body(&q, &hits, &rows, kind_of(p.kind.as_deref())))
         .render(&app, viewer.as_deref())
 }
 
@@ -245,7 +259,7 @@ pub(crate) fn page_form(q: &str, class: &str) -> Html {
     )
 }
 
-fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
+fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)], kind: Option<&str>) -> Html {
     let help = Html::from(HELP);
     let mut out = page_form(q, "inline-form mb-4");
     if q.is_empty() {
@@ -260,7 +274,31 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
         ));
         return out;
     }
-    if !rows.is_empty() {
+    {
+        use crate::ui::Tab;
+        let counts = [
+            rows.len(),
+            hits.people.len(),
+            hits.prs.len(),
+            hits.advisories.len(),
+        ];
+        let qq = crate::github::urlencode(q);
+        let mut links = vec![
+            Tab::new(format!("/search?q={qq}"), "All", kind.is_none()).count(counts.iter().sum()),
+        ];
+        for ((id, label), n) in KINDS.into_iter().zip(counts) {
+            if n > 0 {
+                links.push(
+                    Tab::new(format!("/search?q={qq}&kind={id}"), label, kind == Some(id)).count(n),
+                );
+            }
+        }
+        out.push(&crate::ui::chips("Kinds", Html::new(), &links));
+    }
+    let show = |id: &str| kind.is_none() || kind == Some(id);
+    let mut any = false;
+    if show("packages") && !rows.is_empty() {
+        any = true;
         out.push(&section(
             "Packages, modules and directories",
             Some(rows.len()),
@@ -268,7 +306,8 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
             crate::catalog::subject_rows(rows),
         ));
     }
-    if !hits.people.is_empty() {
+    if show("people") && !hits.people.is_empty() {
+        any = true;
         let list: Html = hits
             .people
             .iter()
@@ -285,7 +324,8 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
             .collect();
         out.push(&section("People", Some(hits.people.len()), None, list));
     }
-    if !hits.prs.is_empty() {
+    if show("prs") && !hits.prs.is_empty() {
+        any = true;
         let list: Html = hits
             .prs
             .iter()
@@ -304,7 +344,8 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
             .collect();
         out.push(&section("Pull requests", Some(hits.prs.len()), None, list));
     }
-    if !hits.advisories.is_empty() {
+    if show("advisories") && !hits.advisories.is_empty() {
+        any = true;
         let list: Html = hits
             .advisories
             .iter()
@@ -340,6 +381,11 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
             Some(hits.advisories.len()),
             None,
             list,
+        ));
+    }
+    if !any {
+        out.push(&html!(
+            "<div class=\"blankslate\"><p>Nothing of this kind matches <strong>{q}</strong>.</p></div>"
         ));
     }
     out
@@ -434,6 +480,28 @@ mod tests {
         assert!(at_word("python3packages.hello: init", "hel"));
         assert!(!at_word("ripgrep: add shell completions", "hel"));
         assert!(at_word("ripgrep: add shell completions", "shell comp"));
+    }
+
+    #[test]
+    fn the_kind_chips_narrow_the_search() {
+        let hits = Hits {
+            people: vec!["alice".into()],
+            ..Default::default()
+        };
+        let all = body("ali", &hits, &[], None);
+        assert!(all.contains(
+            "href=\"/search?q=ali\" aria-current=\"page\">All <span class=\"Counter\">1</span>"
+        ));
+        assert!(all.contains("href=\"/search?q=ali&amp;kind=people\""));
+        assert!(all.contains("People"));
+        assert!(!all.contains("kind=prs"), "empty kinds get no chip");
+        let picked = body("ali", &hits, &[], Some("people"));
+        assert!(picked.contains("aria-current=\"page\">People"));
+        let none = body("ali", &hits, &[], Some("prs"));
+        assert!(none.contains("Nothing of this kind matches"));
+        assert_eq!(kind_of(Some("people")), Some("people"));
+        assert_eq!(kind_of(Some("nonsense")), None);
+        assert_eq!(kind_of(None), None);
     }
 
     #[test]

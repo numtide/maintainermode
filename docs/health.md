@@ -120,6 +120,10 @@ Other text opens `/search?q=<text>`. It lists, in this order:
   (`GHSA-…`), with the packages that they affect. Words never match an
   advisory.
 
+A row of chips above the lists shows the count of each kind. A chip keeps
+one kind (`/search?q=<text>&kind=packages|people|prs|advisories`); All
+brings the rest back.
+
 `/api/v1/search` gives the same lists.
 
 ## Keyboard shortcuts
