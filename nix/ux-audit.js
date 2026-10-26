@@ -23,6 +23,8 @@ Options:
   --seed               with --local: fill the database with a small index and
                        the packages, machines, watches and follow-up plans
                        of the signed-in person
+  --serve              with --local: no audit; keep the server running and
+                       print its address and a session cookie, until Ctrl-C
   --out <dir>          output folder (default ./ux-audit)
   --pages <regex>      audit only the pages whose path matches
   --only-public        skip the signed-in pages
@@ -78,6 +80,9 @@ function parseArgs(argv) {
       case "--seed":
         o.seed = true;
         break;
+      case "--serve":
+        o.serve = true;
+        break;
       case "--local":
         o.local = true;
         break;
@@ -117,6 +122,7 @@ function parseArgs(argv) {
   }
   if (o.local && o.url) die("use --url or --local, not both");
   if (o.seed && !o.local) die("--seed needs --local");
+  if (o.serve && !o.local) die("--serve needs --local");
   if (!o.local && !o.url) o.url = "http://127.0.0.1:8790";
   return o;
 }
@@ -1233,6 +1239,16 @@ async function main() {
     cleanup();
     process.exit(130);
   });
+  if (o.serve) {
+    log(`serving on ${base}`);
+    log(`sign in: open ${base} and set the cookie session=${session}`);
+    log(
+      `  document.cookie = "session=${session}" in the console of the browser`,
+    );
+    log("Ctrl-C stops the server and removes its database");
+    await new Promise(() => {});
+    return;
+  }
 
   const outDir = path.resolve(o.out);
   fs.rmSync(path.join(outDir, "shots"), { recursive: true, force: true });

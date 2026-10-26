@@ -349,4 +349,12 @@
     });
   }
   [].forEach.call(document.querySelectorAll("input[data-search]"), suggest);
+
+  // The filter bar (ui::FilterBar) works without any script: Apply
+  // submits. With script, a select submits on change.
+  document.addEventListener("change", function (e) {
+    var t = e.target;
+    if (t.tagName === "SELECT" && t.form && t.closest(".filter-bar"))
+      t.form.submit();
+  });
 })();

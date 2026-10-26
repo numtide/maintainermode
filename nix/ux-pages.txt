@@ -25,6 +25,10 @@ both /review?tab=ready
 signed-in /review?tab=foryou
 signed-in /review?tab=foryou&hidden=1
 both /review?tab=all&sort=newest&checks=fail
+public /review?tab=all&treewide=hide
+public /review?tab=all&label=rebuild
+both /review?tab=ready&section=security
+signed-in /review?tab=foryou&why=watch
 signed-in /review?tab=bumps&filter=mine
 public /state
 public /state?range=all
@@ -43,6 +47,7 @@ public /packages
 both /search
 both /search?q=zzzz-nothing-matches
 both /search?q=hel
+both /search?q=hel&kind=people
 both /p/${attr}
 public /p/unbound
 public /m/${module}
@@ -56,6 +61,8 @@ signed-in /pr/100173
 signed-in /pr/100172
 signed-in /inbox
 signed-in /packages?filter=mine
+signed-in /packages?filter=mine&health=attention
+signed-in /packages?filter=mine&sort=name
 signed-in /packages?filter=machines
 signed-in /packages?filter=machines&set=laptop
 signed-in /packages?filter=machines&set=infra
