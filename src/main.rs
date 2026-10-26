@@ -1213,10 +1213,10 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             let d = &v["dossier"];
             out!(
-                "{login}: {} merged unchanged after review, {} problems found, {} reviewed, listed {}",
+                "{login}, last 60 days and open pull requests: {} reviewed, {} merged unchanged after review, {} problems found; listed {}",
+                d["reviewed"],
                 d["merged_unchanged"],
                 d["problems_found"],
-                d["reviewed"],
                 v["person"]["listed"]
             );
             for r in d["recent"].as_array().into_iter().flatten() {
