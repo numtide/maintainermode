@@ -166,6 +166,89 @@ fn nav(section_now: Section) -> Html {
         .collect()
 }
 
+/// A row of chips, each a link that narrows a list, with its count.
+pub(crate) fn chips(name: &str, lead: Html, links: &[Tab]) -> Html {
+    let chips: Html = links
+        .iter()
+        .map(|t| {
+            let accent = if t.current { " Label--accent" } else { "" };
+            html!(
+                "<a class=\"Label tap-label{accent}\" href=\"{}\"{}>{}{}</a>",
+                t.href,
+                current(t.current),
+                t.label,
+                counter(t.count)
+            )
+        })
+        .collect();
+    let lead = if lead.is_empty() {
+        Html::new()
+    } else {
+        html!("<span class=\"f6 color-fg-muted\">{lead}</span>")
+    };
+    html!(
+        "<nav class=\"d-flex flex-wrap flex-items-center gap-2 mb-2\" aria-label=\"{name}\">{lead}{chips}</nav>"
+    )
+}
+
+/// The filter bar of a list, the same on `/review` and `/packages`: the
+/// main choice as chips with counts, more rows of chips, then a form with a
+/// search and, folded under "More filters", the other choices.
+#[derive(Default)]
+pub(crate) struct FilterBar {
+    pub choices: Vec<Tab>,
+    pub rows: Html,
+    pub action: &'static str,
+    /// Inputs the form keeps as they are, such as the main choice.
+    pub keep: Vec<(&'static str, String)>,
+    pub placeholder: &'static str,
+    pub q: String,
+    /// The controls of "More filters"; with none there is no fold.
+    pub more: Html,
+    pub more_open: bool,
+    /// Where "Clear" goes, when a filter is set.
+    pub clear: Option<String>,
+}
+
+impl FilterBar {
+    pub(crate) fn render(&self) -> Html {
+        let keep: Html = self
+            .keep
+            .iter()
+            .map(|(name, value)| html!("<input type=\"hidden\" name=\"{name}\" value=\"{value}\">"))
+            .collect();
+        let clear = self
+            .clear
+            .as_ref()
+            .map(|href| html!(" <a class=\"btn btn-sm btn-invisible\" href=\"{href}\">Clear</a>"))
+            .unwrap_or_default();
+        let more = if self.more.is_empty() {
+            Html::new()
+        } else {
+            html!(
+                "<details class=\"filter-more\"{}><summary class=\"f6\">More filters</summary><div class=\"filter-bar mt-2\">{}</div></details>",
+                Html::from(if self.more_open { " open" } else { "" }),
+                self.more
+            )
+        };
+        let choices = if self.choices.is_empty() {
+            Html::new()
+        } else {
+            chips("Show", Html::new(), &self.choices)
+        };
+        html!(
+            "{choices}{}<form class=\"filter-bar mb-3\" method=\"get\" action=\"{}\" role=\"search\" aria-label=\"Filter\">{keep}\
+             <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"{}\" aria-label=\"{}\">\
+             <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}{more}</form>",
+            self.rows,
+            self.action,
+            self.q,
+            self.placeholder,
+            self.placeholder
+        )
+    }
+}
+
 pub(crate) fn subnav(tabs: &[Tab]) -> Html {
     subnav_named(tabs, "Views")
 }

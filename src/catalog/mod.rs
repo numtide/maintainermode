@@ -24,7 +24,7 @@ use crate::links::{module_key, module_name, pkg_key};
 use crate::model::{Issue, Pr};
 use crate::score::{self, Score};
 use crate::severity::{self, Worst};
-use crate::ui::{Page, Section, Tone, badge, empty, item_row, kv};
+use crate::ui::{Page, Section, Tab, Tone, badge, empty, item_row, kv};
 use crate::web::{Shared, Snapshot, ago, icon, octicon, random_id};
 
 pub(crate) mod area;
@@ -951,12 +951,15 @@ async fn browse(
     let Some(login) = viewer else {
         return catalog.body(catalog_body(&app, false)).render(&app, None);
     };
+    let tabs = |all: bool| {
+        vec![
+            Tab::new("/packages", "Your packages", !all),
+            Tab::new("/packages?filter=all", "All of nixpkgs", all),
+        ]
+    };
     if filter == Filter::All {
         return catalog
-            .actions(html!(
-                "<a class=\"btn btn-sm\" href=\"/packages\">{} Your packages</a>",
-                icon(octicon!("package"))
-            ))
+            .subnav(tabs(true))
             .body(catalog_body(&app, true))
             .render(&app, Some(&login));
     }
@@ -968,7 +971,7 @@ async fn browse(
     let page = Page::new(Section::Packages, title)
         .heading("Packages")
         .icon(octicon!("package"))
-        .subnav(crate::mine::bar(&interests, filter));
+        .subnav(tabs(false));
     let v = crate::mine::view(
         &app,
         &login,

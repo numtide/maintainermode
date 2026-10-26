@@ -261,7 +261,10 @@ async fn me_pages_show_their_parts() {
         a.body
     );
     assert!(a.body.contains("href=\"/packages\">"));
-    assert!(!a.body.contains("aria-label=\"Views\""));
+    assert!(
+        a.body
+            .contains("href=\"/packages?filter=all\" aria-current=\"page\">All of nixpkgs")
+    );
     let a = site.get("/packages", Some(SID)).await;
     assert!(
         a.body
@@ -304,12 +307,13 @@ async fn me_pages_show_their_parts() {
     }
     let a = site.get("/review", Some(SID)).await;
     assert!(
-        a.body.contains("<option value=\"foryou\" selected>For you"),
+        a.body
+            .contains("href=\"/review?tab=foryou\" aria-current=\"page\">For you"),
         "{}",
         a.body
     );
     assert!(!a.body.contains("aria-label=\"Views\""));
-    assert!(!a.body.contains("<details class=\"review-more\" open>"));
+    assert!(!a.body.contains("<details class=\"filter-more\" open>"));
     let a = site.get("/review?tab=ready", Some(SID)).await;
     assert!(
         a.body
@@ -330,7 +334,7 @@ async fn me_pages_show_their_parts() {
         .await;
     assert!(a.body.contains("Hidden by you"), "{}", a.body);
     assert!(a.body.contains("<option value=\"fail\" selected>"));
-    assert!(a.body.contains("<details class=\"review-more\" open>"));
+    assert!(a.body.contains("<details class=\"filter-more\" open>"));
     let a = site
         .post(
             "/me/review/hide",
