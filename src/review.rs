@@ -97,6 +97,7 @@ struct ReviewQuery {
     base: Option<String>,
     label: Option<String>,
     q: Option<String>,
+    why: Option<String>,
 }
 
 fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
@@ -213,13 +214,17 @@ fn needs_review(
     let bumps = tab == "bumps";
     let only_mine = bumps && v.is_some() && q.filter.as_deref() == Some("mine");
     let show_hidden = !bumps && v.is_some() && q.hidden.as_deref() == Some("1");
+    let why = (tab == "foryou")
+        .then(|| Opts::get(&q.why, &WHYS))
+        .flatten();
     let here = format!(
-        "/review?tab={tab}{}{}{}",
+        "/review?tab={tab}{}{}{}{}",
         if only_mine { "&filter=mine" } else { "" },
         if show_hidden { "&hidden=1" } else { "" },
+        why.map(|k| format!("&why={k}")).unwrap_or_default(),
         opts.query()
     );
-    let filtered = opts.active() || only_mine;
+    let filtered = opts.active() || only_mine || why.is_some();
     let none = if filtered {
         "Nothing matches these filters."
     } else {
@@ -262,6 +267,7 @@ fn needs_review(
                 v.is_some(),
                 false,
                 only_mine,
+                None,
                 &bases,
                 &labels,
                 choices
@@ -278,7 +284,10 @@ fn needs_review(
             pager(&here, next.as_deref())
         );
     }
-    let src = source(app, s, v, true, tab);
+    let mut src = source(app, s, v, true, tab);
+    if let Some(k) = why {
+        keep_why(&mut src, k);
+    }
     let list = ReviewList::new(&src, &hidden, show_hidden, &opts);
     let entries = list.entries();
     let (page, next) = if tab == "foryou" || opts.sorted() {
@@ -333,6 +342,7 @@ fn needs_review(
             v.is_some(),
             show_hidden,
             false,
+            why,
             &list.bases,
             &list.labels,
             choices
@@ -352,6 +362,27 @@ pub(crate) const CHECKS: [&str; 3] = ["pass", "fail", "pending"];
 pub(crate) const REVIEWS: [&str; 2] = ["none", "some"];
 pub(crate) const CONFLICTS: [&str; 1] = ["hide"];
 pub(crate) const TREEWIDES: [&str; 2] = ["hide", "only"];
+pub(crate) const WHYS: [&str; 6] = ["machines", "maintain", "own", "changed", "tagged", "watch"];
+
+/// The start of the why line of each reason, as [`crate::web::Interest::why`]
+/// and the machines line of [`crate::mine::rank_prs_why`] write them.
+fn why_prefix(kind: &str) -> &'static str {
+    match kind {
+        "machines" => "on your machines",
+        "maintain" => "you maintain",
+        "own" => "you own in ci/OWNERS",
+        "changed" => "you changed this year",
+        "tagged" => "your tag",
+        _ => "you watch",
+    }
+}
+
+/// Keeps the For you rows that are yours for `kind`, by the start of
+/// their why lines.
+pub(crate) fn keep_why(src: &mut Vec<(&Entry, Vec<String>)>, kind: &str) {
+    let p = why_prefix(kind);
+    src.retain(|(_, lines)| lines.iter().any(|l| l.starts_with(p)));
+}
 
 /// What the filters and the sorts read of a row.
 pub(crate) struct Facts<'a> {
@@ -584,6 +615,7 @@ fn bar(
     signed_in: bool,
     hidden: bool,
     only_mine: bool,
+    why: Option<&str>,
     bases: &[String],
     labels: &[(String, usize)],
     choices: Vec<Tab>,
@@ -615,6 +647,24 @@ fn bar(
     } else {
         Html::new()
     };
+    let reason = if tab == "foryou" && signed_in {
+        select(
+            "why",
+            "Why yours",
+            why,
+            &[
+                ("", "Any reason"),
+                ("machines", "On your machines"),
+                ("maintain", "You maintain"),
+                ("own", "You own in ci/OWNERS"),
+                ("changed", "You changed this year"),
+                ("tagged", "Your tag"),
+                ("watch", "You watch"),
+            ],
+        )
+    } else {
+        Html::new()
+    };
     let options: Html = labels
         .iter()
         .map(|(l, n)| html!("<option value=\"{l}\" label=\"{l} ({n})\"></option>"))
@@ -625,7 +675,7 @@ fn bar(
         Opts::get(&o.label, &[]).unwrap_or("")
     );
     let more = html!(
-        "{}{}{}{}{}{}{whose}",
+        "{}{}{}{}{}{}{whose}{reason}",
         select(
             "sort",
             "Sort",
@@ -693,8 +743,8 @@ fn bar(
         q: o.q.clone().unwrap_or_default(),
         fields: label,
         more,
-        more_open: o.more() || only_mine,
-        clear: (o.active() || only_mine)
+        more_open: o.more() || only_mine || why.is_some(),
+        clear: (o.active() || only_mine || why.is_some())
             .then(|| format!("/review?tab={tab}{}", if hidden { "&hidden=1" } else { "" })),
         ..Default::default()
     }
@@ -950,6 +1000,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_reason_keeps_the_for_you_rows_that_carry_it() {
+        let a = entry(1, "SUCCESS", false, "master", "a");
+        let b = entry(2, "SUCCESS", false, "master", "b");
+        let c = entry(3, "SUCCESS", false, "master", "c");
+        let src = || -> Vec<(&Entry, Vec<String>)> {
+            vec![
+                (
+                    &a,
+                    vec![
+                        "on your machines: curl".to_string(),
+                        "you watch: curl".to_string(),
+                    ],
+                ),
+                (&b, vec!["you maintain: hello".to_string()]),
+                (&c, vec!["your tag: pkgs/by-name/jq".to_string()]),
+            ]
+        };
+        let kept = |kind: &str| -> Vec<u64> {
+            let mut s = src();
+            keep_why(&mut s, kind);
+            s.iter().map(|(e, _)| e.number).collect()
+        };
+        assert_eq!(kept("machines"), [1]);
+        assert_eq!(kept("watch"), [1]);
+        assert_eq!(kept("maintain"), [2]);
+        assert_eq!(kept("tagged"), [3]);
+        assert_eq!(kept("own"), [] as [u64; 0]);
+        assert_eq!(kept("changed"), [] as [u64; 0]);
+    }
+
     fn entry(number: u64, ci: &str, reviewed: bool, base: &str, title: &str) -> Entry {
         let t = chrono::DateTime::from_timestamp(number as i64 * 1000, 0).unwrap();
         Entry {
@@ -1086,6 +1167,7 @@ mod tests {
             false,
             false,
             false,
+            None,
             &[],
             &[],
             show(),
@@ -1100,13 +1182,23 @@ mod tests {
             sort: Some("newest".into()),
             ..Default::default()
         };
-        let set = bar(&sorted, "foryou", true, false, false, &[], &[], show());
+        let set = bar(
+            &sorted,
+            "foryou",
+            true,
+            false,
+            false,
+            None,
+            &[],
+            &[],
+            show(),
+        );
         assert!(set.contains("<details class=\"filter-more\" open>") && set.contains("Clear"));
         let words = Opts {
             q: Some("curl".into()),
             ..Default::default()
         };
-        let searched = bar(&words, "all", true, false, false, &[], &[], show());
+        let searched = bar(&words, "all", true, false, false, None, &[], &[], show());
         assert!(searched.contains("<details class=\"filter-more\">") && searched.contains("Clear"));
         let mine = bar(
             &Opts::default(),
@@ -1114,6 +1206,7 @@ mod tests {
             true,
             false,
             true,
+            None,
             &[],
             &[],
             show(),
@@ -1127,11 +1220,41 @@ mod tests {
                 false,
                 false,
                 false,
+                None,
                 &[],
                 &[],
                 show()
             )
             .contains("name=\"filter\"")
+        );
+        let foryou = bar(
+            &Opts::default(),
+            "foryou",
+            true,
+            false,
+            false,
+            Some("watch"),
+            &[],
+            &[],
+            show(),
+        );
+        assert!(foryou.contains("<option value=\"watch\" selected>You watch</option>"));
+        assert!(foryou.contains("<details class=\"filter-more\" open>"));
+        assert!(foryou.contains("Clear"));
+        assert!(
+            !bar(
+                &Opts::default(),
+                "all",
+                true,
+                false,
+                false,
+                None,
+                &[],
+                &[],
+                show()
+            )
+            .contains("name=\"why\""),
+            "only For you offers the reason"
         );
     }
 
@@ -1188,7 +1311,18 @@ mod tests {
         assert!(o.query().contains("&label=python"));
         let counts = labels(&list);
         assert_eq!(counts[0], ("6.topic: python".to_string(), 2));
-        let html = bar(&o, "all", true, false, false, &[], &counts, Vec::new()).to_string();
+        let html = bar(
+            &o,
+            "all",
+            true,
+            false,
+            false,
+            None,
+            &[],
+            &counts,
+            Vec::new(),
+        )
+        .to_string();
         assert!(!html.contains("<details class=\"filter-more\" open>") && html.contains("Clear"));
         let field = html.find("name=\"label\"").unwrap();
         assert!(

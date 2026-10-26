@@ -143,6 +143,11 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 "not with ready: hide drops the treewide pull requests, only keeps them alone",
             ),
             opt(
+                "why",
+                Type::OneOf(&crate::review::WHYS),
+                "with foryou and your own login: keep the pull requests that are yours for that reason",
+            ),
+            opt(
                 "q",
                 Type::Text,
                 "not with ready: keep the titles with a word that starts with this text",
@@ -656,6 +661,7 @@ pub(crate) struct Args {
     pub base: Option<String>,
     pub label: Option<String>,
     pub treewide: Option<String>,
+    pub why: Option<String>,
     pub section: Option<String>,
     pub login: Option<String>,
     pub mood: Option<String>,
@@ -1060,7 +1066,12 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                 return Err("queue=foryou needs login, a session or an API token".into());
             }
             private = own;
-            let src = crate::review::source(app, &s, login, own, queue);
+            let mut src = crate::review::source(app, &s, login, own, queue);
+            if queue == "foryou" {
+                if let Some(k) = Args::text(&q.why) {
+                    crate::review::keep_why(&mut src, k);
+                }
+            }
             let hidden = match login {
                 Some(l) if own => app.store.hidden_prs(l).unwrap_or_default(),
                 _ => Default::default(),

@@ -122,7 +122,9 @@ of `/review` does (see [personal.md](personal.md#review-for-you)). For your
 own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
 requests you hid on the site, and `hidden` gives their count. Each row of
 your own `foryou` has `why`: the reasons it is yours, such as
-`"you maintain: hello"`.
+`"you maintain: hello"`. The parameter `why` (`machines`, `maintain`, `own`,
+`changed`, `tagged`, `watch`) keeps the rows of your own `foryou` that are
+yours for that reason.
 
 Each row has `treewide`. It is `null`, or for a
 [treewide](rules.md#treewide-pull-requests) pull request the count of the
