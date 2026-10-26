@@ -34,6 +34,8 @@ const HYDRA_TTL: Duration = Duration::from_secs(3600);
 const HYDRA_RETRY: Duration = Duration::from_secs(300);
 const HYDRA_CONCURRENT: usize = 4;
 const HYDRA_PER_MINUTE: u32 = 30;
+/// How long a page waits for Hydra.
+pub(crate) const PAGE_WAIT: Duration = Duration::from_millis(700);
 const HYDRA_CACHE_MAX: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -630,6 +632,8 @@ pub enum Last {
     NoAnswer,
     /// The limit was reached, so no request was made.
     NotAsked,
+    /// A page stopped waiting; the answer goes to the cache for the next view.
+    Asking,
 }
 
 impl Last {
@@ -646,12 +650,13 @@ impl Last {
             Last::Missing => "no finished build",
             Last::NoAnswer => "no answer",
             Last::NotAsked => "not asked yet",
+            Last::Asking => "asking",
         }
     }
 
     fn ttl(&self) -> Duration {
         match self {
-            Last::NoAnswer => HYDRA_RETRY,
+            Last::NoAnswer | Last::Asking => HYDRA_RETRY,
             _ => HYDRA_TTL,
         }
     }
@@ -742,6 +747,21 @@ impl Hydra {
     }
 
     /// What a page view already learned about a job; it never asks Hydra.
+    /// [`Hydra::last`] for a page view: after [`PAGE_WAIT`] the page goes on
+    /// with [`Last::Asking`], and the request ends in the background.
+    pub async fn last_for_page(app: &crate::web::Shared, job: &str) -> Last {
+        if let Some(last) = app.hydra.known(job) {
+            return last;
+        }
+        let (app, job) = (app.clone(), job.to_string());
+        let ask = tokio::spawn(async move { app.hydra.last(&job).await });
+        match tokio::time::timeout(PAGE_WAIT, ask).await {
+            Ok(Ok(last)) => last,
+            Ok(Err(_)) => Last::NoAnswer,
+            Err(_) => Last::Asking,
+        }
+    }
+
     pub fn known(&self, job: &str) -> Option<Last> {
         let cache = self.cache.lock().unwrap();
         let (at, last) = cache.get(job)?;

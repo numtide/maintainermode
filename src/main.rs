@@ -724,6 +724,17 @@ fn retry_wait(failures: u32, every: u64) -> u64 {
     (5u64 << failures.min(6)).min(300).min(every)
 }
 
+/// A recompute takes seconds of CPU and reads every row, so it runs off
+/// the async workers that serve the pages.
+async fn recompute(app: &Arc<App>) {
+    let a = app.clone();
+    match tokio::task::spawn_blocking(move || a.recompute()).await {
+        Ok(Err(e)) => tracing::warn!("recompute: {e:#}"),
+        Err(e) => tracing::warn!("recompute: {e}"),
+        Ok(Ok(())) => {}
+    }
+}
+
 async fn background(app: Arc<App>, every: u64) {
     let mut failures = 0;
     loop {
@@ -743,9 +754,7 @@ async fn background(app: Arc<App>, every: u64) {
             match web::refresh_index(&app).await {
                 Ok(()) => {
                     tracing::info!("nixpkgs index refreshed");
-                    if let Err(e) = app.recompute() {
-                        tracing::warn!("recompute: {e:#}");
-                    }
+                    recompute(&app).await;
                 }
                 Err(e) => tracing::warn!("nixpkgs index: {e:#}"),
             }
@@ -819,9 +828,7 @@ async fn background(app: Arc<App>, every: u64) {
                 }
             }
         }
-        if let Err(e) = app.recompute() {
-            tracing::warn!("recompute: {e:#}");
-        }
+        recompute(&app).await;
         notify::recount(&app);
         let a = app.clone();
         match tokio::task::spawn_blocking(move || a.recompute_metrics()).await {

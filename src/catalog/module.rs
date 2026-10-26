@@ -93,7 +93,7 @@ pub(super) async fn page(
         return not_found(&app, viewer.as_deref(), &file);
     }
     let subject = Subject::Module(file.clone());
-    let last = app.hydra.last(&test_job(&file)).await;
+    let last = crate::health::Hydra::last_for_page(&app, &test_job(&file)).await;
     let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();

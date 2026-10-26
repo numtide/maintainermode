@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::panic::Location;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use crate::metrics::Facts;
 use crate::model::{Issue, Pr};
@@ -42,8 +44,61 @@ impl Live {
     }
 }
 
+/// Page requests take the store lock on the async runtime, so a long hold
+/// stalls every page. This many seconds of waiting or holding are logged.
+const SLOW_LOCK: Duration = Duration::from_secs(1);
+
+/// A held connection that names its caller in the log when it was slow.
+struct Held<'a> {
+    guard: MutexGuard<'a, Connection>,
+    since: Instant,
+    at: &'static Location<'static>,
+}
+
+impl std::ops::Deref for Held<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for Held<'_> {
+    fn deref_mut(&mut self) -> &mut Connection {
+        &mut self.guard
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let held = self.since.elapsed();
+        if held >= SLOW_LOCK {
+            tracing::warn!("store lock held {:.1} s at {}", held.as_secs_f64(), self.at);
+        }
+    }
+}
+
+#[track_caller]
+fn hold(m: &Mutex<Connection>) -> Held<'_> {
+    let at = Location::caller();
+    let asked = Instant::now();
+    let guard = m.lock().unwrap();
+    let waited = asked.elapsed();
+    if waited >= SLOW_LOCK {
+        tracing::warn!("store lock waited {:.1} s at {at}", waited.as_secs_f64());
+    }
+    Held {
+        guard,
+        since: Instant::now(),
+        at,
+    }
+}
+
 pub struct Store {
     conn: Mutex<Connection>,
+    /// Whole-table reads go here, so a recompute that reads every row does
+    /// not hold the connection that sessions and pages wait on. WAL lets it
+    /// read while the other writes.
+    bulk: Option<Mutex<Connection>>,
 }
 
 /// Someone who logged in. Their area is derived, plus the tags they added.
@@ -192,13 +247,22 @@ impl Store {
              );",
         )?;
         migrate_sets(&mut conn)?;
+        let bulk = (path != Path::new(":memory:"))
+            .then(|| -> Result<Connection> {
+                let c = Connection::open(path)?;
+                c.execute_batch("PRAGMA busy_timeout = 5000; PRAGMA query_only = 1;")?;
+                Ok(c)
+            })
+            .transpose()?
+            .map(Mutex::new);
         Ok(Self {
             conn: Mutex::new(conn),
+            bulk,
         })
     }
 
     pub fn put_prs(&self, prs: &[Pr]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         for pr in prs {
             tx.execute(
@@ -219,7 +283,7 @@ impl Store {
     }
 
     pub fn put_facts(&self, facts: &[Facts]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         for f in facts {
             tx.execute(
@@ -233,16 +297,26 @@ impl Store {
         Ok(())
     }
 
-    /// Each `data` column of `table`, read as JSON.
+    #[track_caller]
+    fn lock(&self) -> Held<'_> {
+        hold(&self.conn)
+    }
+
+    #[track_caller]
+    fn bulk(&self) -> Held<'_> {
+        hold(self.bulk.as_ref().unwrap_or(&self.conn))
+    }
+
+    /// Each `data` column of `table`, read as JSON. It parses after the
+    /// read, so the lock is held for the read only.
     fn json_rows<T: serde::de::DeserializeOwned>(&self, table: &str) -> Result<Vec<T>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(&format!("SELECT data FROM {table}"))?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(serde_json::from_str(&row?)?);
-        }
-        Ok(out)
+        let raw: Vec<String> = {
+            let conn = self.bulk();
+            let mut stmt = conn.prepare(&format!("SELECT data FROM {table}"))?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        raw.iter().map(|r| Ok(serde_json::from_str(r)?)).collect()
     }
 
     pub fn recent_prs(&self, limit: usize) -> Result<Vec<Pr>> {
@@ -262,7 +336,7 @@ impl Store {
         table: &str,
         limit: usize,
     ) -> Result<Vec<T>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT data FROM {table} ORDER BY updated_at DESC LIMIT ?1"
         ))?;
@@ -280,7 +354,7 @@ impl Store {
 
     /// Who merged each pull request in the history walk, and when.
     pub fn merges(&self) -> Result<Vec<(DateTime<Utc>, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.bulk();
         let mut stmt = conn.prepare(
             "SELECT json_extract(data, '$.merged_at'), json_extract(data, '$.merged_by') FROM history
              WHERE json_extract(data, '$.merged_by') IS NOT NULL AND json_extract(data, '$.merged_at') IS NOT NULL",
@@ -302,7 +376,7 @@ impl Store {
     /// head. An UNKNOWN `mergeable` keeps the known value of the same head:
     /// GitHub computes it lazily, and a bulk read mostly answers UNKNOWN.
     pub fn put_live(&self, rows: &[Live]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         for l in rows {
             tx.execute(
@@ -342,7 +416,7 @@ impl Store {
     }
 
     pub fn live(&self) -> Result<std::collections::HashMap<u64, Live>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT number, head_oid, mergeable, ci, association, checked_at FROM pr_live",
         )?;
@@ -379,7 +453,7 @@ impl Store {
     /// as checked long ago, so the projection keeps them until the live
     /// refresh reads them again.
     pub fn seed_live(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.execute(
             "INSERT OR IGNORE INTO pr_live (number, head_oid, mergeable, ci, association, checked_at)
              SELECT number, json_extract(data, '$.head_oid'),
@@ -395,7 +469,7 @@ impl Store {
     /// Open pull requests, the ones never checked first, then the oldest
     /// check.
     pub fn live_due(&self, limit: usize) -> Result<Vec<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT pr.number FROM pr LEFT JOIN pr_live l ON l.number = pr.number
              WHERE pr.state = 'OPEN'
@@ -412,7 +486,7 @@ impl Store {
     /// Open pull requests, how many have a live row, and the oldest check
     /// among them.
     pub fn live_progress(&self) -> Result<(i64, i64, Option<String>)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.query_row(
             "SELECT COUNT(*), COUNT(l.number), MIN(l.checked_at)
              FROM pr LEFT JOIN pr_live l ON l.number = pr.number WHERE pr.state = 'OPEN'",
@@ -423,7 +497,7 @@ impl Store {
 
     /// The numbers of the open pull requests and issues.
     pub fn open_numbers(&self) -> Result<Vec<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT number FROM pr WHERE state = 'OPEN'
              UNION SELECT number FROM issue WHERE state = 'OPEN' ORDER BY number DESC",
@@ -437,7 +511,7 @@ impl Store {
     /// Deletes the closed pull requests and issues last updated before
     /// `from`. The archive keeps them; the `history` table keeps the facts.
     pub fn prune(&self, from: DateTime<Utc>) -> Result<(usize, usize)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let from = from.to_rfc3339();
         let sql = |table: &str| {
             format!(
@@ -450,7 +524,7 @@ impl Store {
     }
 
     pub fn put_issues(&self, issues: &[Issue]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         for i in issues {
             tx.execute(
@@ -475,14 +549,14 @@ impl Store {
     }
 
     pub fn get(&self, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
             .optional()?)
     }
 
     pub fn set(&self, key: &str, value: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -492,13 +566,13 @@ impl Store {
     }
 
     pub fn delete_key(&self, key: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute("DELETE FROM meta WHERE key = ?1", [key])?;
         Ok(())
     }
 
     pub fn put_member(&self, login: &str, committed: &[String]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO member (login, committed, tags, refreshed_at) VALUES (?1, ?2, '[]', ?3)
              ON CONFLICT(login) DO UPDATE SET committed = excluded.committed, refreshed_at = excluded.refreshed_at",
@@ -510,7 +584,7 @@ impl Store {
     /// A person whose first area refresh failed has no member row yet. The
     /// new row is stale at once, so the next sync pass refreshes it.
     pub fn set_tags(&self, login: &str, tags: &[String]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO member (login, committed, tags, refreshed_at)
              VALUES (?1, '[]', ?2, '1970-01-01T00:00:00+00:00')
@@ -521,7 +595,7 @@ impl Store {
     }
 
     pub fn members(&self) -> Result<Vec<Member>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT login, committed, tags, refreshed_at FROM member")?;
         let rows = stmt.query_map([], |r| {
             Ok((
@@ -550,7 +624,7 @@ impl Store {
 
     pub fn create_session(&self, id: &str, login: &str, token: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO session (id, login, token, created_at, seen_at) VALUES (?1, ?2, ?3, ?4, ?4)",
             params![id, login, token, now],
@@ -559,7 +633,7 @@ impl Store {
     }
 
     pub fn session(&self, id: &str) -> Result<Option<Session>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE session SET seen_at = ?2 WHERE id = ?1",
             params![id, Utc::now().to_rfc3339()],
@@ -579,19 +653,19 @@ impl Store {
     }
 
     pub fn delete_session(&self, id: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute("DELETE FROM session WHERE id = ?1", [id])?;
         Ok(())
     }
 
     pub fn forget_token(&self, token: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute("DELETE FROM session WHERE token = ?1", [token])?;
         Ok(())
     }
 
     pub fn token_for(&self, login: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 "SELECT token FROM session WHERE login = ?1 AND created_at > ?2 ORDER BY seen_at DESC LIMIT 1",
@@ -604,7 +678,7 @@ impl Store {
     /// Deletes the sessions, and their GitHub tokens, that outlived their
     /// cookie.
     pub fn purge_sessions(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.execute(
             "DELETE FROM session WHERE created_at <= ?1",
             [session_cutoff()],
@@ -615,7 +689,7 @@ impl Store {
     /// spreads its reads across them; see docs/data.md on rate limits.
     pub fn lent_tokens(&self) -> Result<Vec<String>> {
         let since = (Utc::now() - chrono::Duration::days(30)).to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT token FROM session WHERE seen_at > ?1
              GROUP BY token ORDER BY MAX(seen_at) DESC",
@@ -627,7 +701,7 @@ impl Store {
 
 impl Store {
     pub fn watch(&self, login: &str, key: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT OR IGNORE INTO watch (login, package, created_at) VALUES (?1, ?2, ?3)",
             params![login, key, Utc::now().to_rfc3339()],
@@ -636,7 +710,7 @@ impl Store {
     }
 
     pub fn unwatch(&self, login: &str, key: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM watch WHERE login = ?1 AND package = ?2",
             params![login, key],
@@ -646,14 +720,14 @@ impl Store {
 
     /// Every key anyone watches, once.
     pub fn watched_by_anyone(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT DISTINCT package FROM watch ORDER BY package")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn watched(&self, login: &str) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt =
             conn.prepare("SELECT package FROM watch WHERE login = ?1 ORDER BY package")?;
         let rows = stmt.query_map([login], |r| r.get(0))?;
@@ -663,7 +737,7 @@ impl Store {
 
 impl Store {
     pub fn feed_token(&self, login: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row("SELECT token FROM feed WHERE login = ?1", [login], |r| {
                 r.get(0)
@@ -673,7 +747,7 @@ impl Store {
 
     /// A new token replaces the old one, so a leaked feed link can be cut.
     pub fn set_feed_token(&self, login: &str, token: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO feed (login, token, created_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(login) DO UPDATE SET token = excluded.token, created_at = excluded.created_at",
@@ -683,7 +757,7 @@ impl Store {
     }
 
     pub fn feed_login(&self, token: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row("SELECT login FROM feed WHERE token = ?1", [token], |r| {
                 r.get(0)
@@ -694,7 +768,7 @@ impl Store {
 
 impl Store {
     pub fn setting(&self, login: &str, key: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 "SELECT value FROM setting WHERE login = ?1 AND key = ?2",
@@ -710,7 +784,7 @@ impl Store {
     }
 
     pub fn set_setting(&self, login: &str, key: &str, value: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO setting (login, key, value) VALUES (?1, ?2, ?3)
              ON CONFLICT(login, key) DO UPDATE SET value = excluded.value",
@@ -722,7 +796,7 @@ impl Store {
 
 impl Store {
     pub fn put_channel(&self, c: &crate::channels::Channel) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO channel (key, data) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET data = excluded.data",
@@ -737,7 +811,7 @@ impl Store {
 
     /// Drops the channels no longer configured.
     pub fn keep_channels(&self, keys: &[String]) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT key FROM channel")?;
         let stored: Vec<String> = stmt
             .query_map([], |r| r.get(0))?
@@ -751,7 +825,7 @@ impl Store {
     /// The login whose setting `key` holds `value`, for a value that only
     /// one login can hold, like a token hash.
     pub fn setting_login(&self, key: &str, value: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 "SELECT login FROM setting WHERE key = ?1 AND value = ?2",
@@ -940,7 +1014,7 @@ fn set_row(r: &rusqlite::Row) -> rusqlite::Result<NamedSet> {
 impl Store {
     /// A new token replaces the old one. Only its hash is kept.
     pub fn set_upload_token(&self, login: &str, hash: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO upload_token (login, hash, created_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(login) DO UPDATE SET hash = excluded.hash, created_at = excluded.created_at",
@@ -950,7 +1024,7 @@ impl Store {
     }
 
     pub fn upload_token_at(&self, login: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 "SELECT created_at FROM upload_token WHERE login = ?1",
@@ -961,7 +1035,7 @@ impl Store {
     }
 
     pub fn upload_login(&self, hash: &str) -> Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 "SELECT login FROM upload_token WHERE hash = ?1",
@@ -972,7 +1046,7 @@ impl Store {
     }
 
     pub fn delete_upload_token(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute("DELETE FROM upload_token WHERE login = ?1", [login])?;
         Ok(())
     }
@@ -987,7 +1061,7 @@ impl Store {
         set: &PackageSet,
         flake: Option<(&str, &str)>,
     ) -> Result<Put> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         let rescan: Option<bool> = tx
             .query_row(
@@ -1039,7 +1113,7 @@ impl Store {
 
     /// The data of one set, if it has any.
     pub fn package_set(&self, login: &str, name: &str) -> Result<Option<PackageSet>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn
             .query_row(
                 &format!("SELECT {SET_COLUMNS} FROM package_set WHERE login = ?1 AND name = ?2"),
@@ -1052,7 +1126,7 @@ impl Store {
 
     /// All sets of a login, by name. Private: only for the owner.
     pub fn sets(&self, login: &str) -> Result<Vec<NamedSet>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {SET_COLUMNS} FROM package_set WHERE login = ?1 ORDER BY name"
         ))?;
@@ -1062,7 +1136,7 @@ impl Store {
 
     /// The sets that the owner shows on their profile: public flakes only.
     pub fn public_sets(&self, login: &str) -> Result<Vec<NamedSet>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {SET_COLUMNS} FROM package_set
              WHERE login = ?1 AND public = 1 AND reference IS NOT NULL AND output IS NOT NULL
@@ -1075,7 +1149,7 @@ impl Store {
     /// Only a set with a flake reference can be public. Returns whether a
     /// set changed.
     pub fn set_public(&self, login: &str, name: &str, public: bool) -> Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.execute(
             "UPDATE package_set SET public = ?3
              WHERE login = ?1 AND name = ?2 AND reference IS NOT NULL AND output IS NOT NULL",
@@ -1084,7 +1158,7 @@ impl Store {
     }
 
     pub fn delete_package_set(&self, login: &str, name: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM package_set WHERE login = ?1 AND name = ?2",
             [login, name],
@@ -1094,7 +1168,7 @@ impl Store {
 
     #[cfg(test)]
     pub fn delete_package_sets(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute("DELETE FROM package_set WHERE login = ?1", [login])?;
         Ok(())
     }
@@ -1103,7 +1177,7 @@ impl Store {
     /// how many. A set of a scanned flake follows
     /// [`Store::purge_flake_results`].
     pub fn purge_package_sets(&self, before: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.execute(
             "DELETE FROM package_set WHERE rescan = 0 AND uploaded_at < ?1",
             [before.to_rfc3339()],
@@ -1166,7 +1240,7 @@ impl Store {
         public: bool,
         max: usize,
     ) -> Result<AddFlake> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         let (all, flakes): (i64, i64) = tx.query_row(
             "SELECT COUNT(*), COALESCE(SUM(rescan), 0) FROM package_set WHERE login = ?1",
@@ -1194,7 +1268,7 @@ impl Store {
     }
 
     pub fn flake_refs(&self, login: &str) -> Result<Vec<FlakeRef>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {FLAKE_COLUMNS} FROM package_set WHERE login = ?1 AND rescan = 1 ORDER BY name"
         ))?;
@@ -1204,7 +1278,7 @@ impl Store {
 
     /// The owner looked at the flakes: they stay due for scans.
     pub fn touch_flake_refs(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "UPDATE package_set SET seen_at = ?2 WHERE login = ?1 AND rescan = 1",
             params![login, Utc::now().to_rfc3339()],
@@ -1219,7 +1293,7 @@ impl Store {
         since: DateTime<Utc>,
         seen_since: DateTime<Utc>,
     ) -> Result<Vec<FlakeRef>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(&format!(
             "SELECT {FLAKE_COLUMNS} FROM package_set
              WHERE rescan = 1 AND (last_at IS NULL OR last_at < ?1) AND seen_at >= ?2
@@ -1232,7 +1306,7 @@ impl Store {
     /// A failure keeps the attributes of the last good scan. A set that the
     /// owner deleted or gave another flake during the scan stays as it is.
     pub fn finish_flake_ref(&self, r: &FlakeRef, result: Result<&PackageSet, &str>) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let now = Utc::now().to_rfc3339();
         let key = "login = ?1 AND name = ?2 AND reference = ?3 AND output = ?4 AND rescan = 1";
         match result {
@@ -1265,7 +1339,7 @@ impl Store {
     /// good scan or the last visit of the owner. The reference stays.
     /// Returns how many.
     pub fn purge_flake_results(&self, before: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         Ok(conn.execute(
             "UPDATE package_set SET attrs = '[]', dropped = 0, uploaded_at = NULL, scanned_at = NULL,
                nixpkgs_rev = NULL, versions = '{}'
@@ -1275,7 +1349,7 @@ impl Store {
     }
 
     pub fn log_rescan_run(&self, login: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let now = Utc::now();
         conn.execute(
             "DELETE FROM rescan_run WHERE at < ?1",
@@ -1289,7 +1363,7 @@ impl Store {
     }
 
     pub fn rescan_runs_since(&self, login: &str, since: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM rescan_run WHERE login = ?1 AND at >= ?2",
             [login, &since.to_rfc3339()],
@@ -1299,7 +1373,7 @@ impl Store {
     }
 
     pub fn rescan_runs_total_since(&self, since: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let n: i64 = conn.query_row(
             "SELECT COUNT(*) FROM rescan_run WHERE at >= ?1",
             [since.to_rfc3339()],
@@ -1310,7 +1384,7 @@ impl Store {
 
     /// Counts only, for /sync: references, failing ones, the last scan.
     pub fn flake_ref_counts(&self) -> Result<(usize, usize, Option<DateTime<Utc>>)> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let (n, failing, last): (i64, i64, Option<String>) = conn.query_row(
             "SELECT COUNT(*), COUNT(error), MAX(last_at) FROM package_set WHERE rescan = 1",
             [],
@@ -1323,7 +1397,7 @@ impl Store {
 impl Store {
     /// Logins whose setting `key` is not empty, with its value.
     pub fn settings_with(&self, key: &str) -> Result<Vec<(String, String)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT login, value FROM setting WHERE key = ?1 AND value != '' ORDER BY login",
         )?;
@@ -1335,7 +1409,7 @@ impl Store {
 impl Store {
     /// item key → the fingerprint it had when the person snoozed it.
     pub fn needs_snoozed(&self, login: &str) -> Result<std::collections::HashMap<String, String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt =
             conn.prepare("SELECT key, fingerprint FROM needs_snooze WHERE login = ?1")?;
         let rows = stmt.query_map([login], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -1343,7 +1417,7 @@ impl Store {
     }
 
     pub fn needs_snooze(&self, login: &str, key: &str, fingerprint: &str) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO needs_snooze (login, key, fingerprint, at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(login, key) DO UPDATE SET fingerprint = excluded.fingerprint, at = excluded.at",
@@ -1354,7 +1428,7 @@ impl Store {
 
     /// Snoozes whose item is gone: a new item with the same key starts fresh.
     pub fn needs_forget(&self, login: &str, present: &[String]) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         let keys: Vec<String> = {
             let mut stmt = tx.prepare("SELECT key FROM needs_snooze WHERE login = ?1")?;
@@ -1374,7 +1448,7 @@ impl Store {
     /// Records the open items of one session, by the hash of its id, and
     /// gives the number of items it saw that are open no more.
     pub fn needs_session(&self, session: &str, present: &[String]) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         tx.execute(
             "DELETE FROM needs_seen WHERE at < ?1",
@@ -1418,7 +1492,7 @@ impl Store {
         action: &str,
         now: DateTime<Utc>,
     ) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "INSERT INTO followup (login, number, days, action, since) VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(login, number) DO UPDATE SET days = excluded.days, action = excluded.action",
@@ -1428,7 +1502,7 @@ impl Store {
     }
 
     pub fn delete_followup(&self, login: &str, number: u64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         conn.execute(
             "DELETE FROM followup WHERE login = ?1 AND number = ?2",
             params![login, number as i64],
@@ -1437,7 +1511,7 @@ impl Store {
     }
 
     pub fn followups(&self, login: &str) -> Result<Vec<FollowUp>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT number, days, action, since FROM followup WHERE login = ?1 ORDER BY number",
         )?;
@@ -1467,7 +1541,7 @@ impl Store {
 
     /// Plans of pull requests that are no longer in the synced data.
     pub fn purge_followups(&self, keep: &[u64]) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         let all: Vec<i64> = {
             let mut stmt = tx.prepare("SELECT DISTINCT number FROM followup")?;
@@ -1484,7 +1558,7 @@ impl Store {
 
     /// Everyone who signed in, chose a setting or watches something.
     pub fn logins(&self) -> Result<Vec<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT login FROM session UNION SELECT login FROM setting UNION SELECT login FROM watch",
         )?;
@@ -1501,7 +1575,7 @@ impl Store {
         now: DateTime<Utc>,
         change: Option<&crate::builds::Change>,
     ) -> Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         tx.execute(
             "INSERT INTO hydra_state (jobset, attr, build, state, checked_at) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -1520,7 +1594,7 @@ impl Store {
 
     /// The sweep asked, and Hydra had no build that tells the state.
     pub fn hydra_checked(&self, jobset: &str, attr: &str, now: DateTime<Utc>) -> Result<()> {
-        self.conn.lock().unwrap().execute(
+        self.lock().execute(
             "INSERT INTO hydra_state (jobset, attr, checked_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(jobset, attr) DO UPDATE SET checked_at = ?3",
             params![jobset, attr, now.to_rfc3339()],
@@ -1529,7 +1603,7 @@ impl Store {
     }
 
     pub fn forget_hydra_state(&self, jobset: &str, attr: &str, now: DateTime<Utc>) -> Result<()> {
-        self.conn.lock().unwrap().execute(
+        self.lock().execute(
             "INSERT INTO hydra_state (jobset, attr, checked_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(jobset, attr) DO UPDATE SET build = NULL, state = NULL, checked_at = ?3",
             params![jobset, attr, now.to_rfc3339()],
@@ -1538,7 +1612,7 @@ impl Store {
     }
 
     pub fn hydra_states(&self) -> Result<Vec<(String, String, u64, crate::builds::State)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT jobset, attr, build, state FROM hydra_state WHERE build IS NOT NULL AND state IS NOT NULL",
         )?;
@@ -1563,7 +1637,7 @@ impl Store {
     pub fn hydra_checked_at(
         &self,
     ) -> Result<std::collections::HashMap<(String, String), DateTime<Utc>>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT jobset, attr, checked_at FROM hydra_state")?;
         let rows = stmt.query_map([], |r| {
             Ok((
@@ -1584,7 +1658,7 @@ impl Store {
 
     /// Newest first.
     pub fn hydra_changes(&self, since: DateTime<Utc>) -> Result<Vec<crate::builds::Change>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT jobset, attr, build, state, at FROM hydra_change WHERE at >= ?1 ORDER BY at DESC, build DESC",
         )?;
@@ -1618,7 +1692,7 @@ impl Store {
     }
 
     pub fn purge_hydra(&self, before: DateTime<Utc>) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let b = before.to_rfc3339();
         Ok(
             conn.execute("DELETE FROM hydra_change WHERE at < ?1", [&b])?
@@ -1629,14 +1703,14 @@ impl Store {
 
 impl Store {
     pub fn hidden_prs(&self, login: &str) -> Result<std::collections::HashSet<u64>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         let mut stmt = conn.prepare("SELECT number FROM pr_hidden WHERE login = ?1")?;
         let rows = stmt.query_map([login], |r| r.get::<_, i64>(0).map(|n| n as u64))?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
     pub fn hide_pr(&self, login: &str, number: u64, hidden: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.lock();
         if hidden {
             conn.execute(
                 "INSERT OR IGNORE INTO pr_hidden (login, number, at) VALUES (?1, ?2, ?3)",
@@ -1653,7 +1727,7 @@ impl Store {
 
     /// Forgets the hidden pull requests that are not in `open`.
     pub fn purge_hidden_prs(&self, open: &std::collections::HashSet<u64>) -> Result<usize> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.lock();
         let tx = conn.transaction()?;
         let all: Vec<i64> = {
             let mut stmt = tx.prepare("SELECT DISTINCT number FROM pr_hidden")?;
@@ -1671,6 +1745,26 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_whole_table_read_does_not_wait_for_the_main_connection() {
+        let dir = std::env::temp_dir().join(format!("mm-store-bulk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let s = Store::open(&dir.join("db.sqlite")).unwrap();
+        s.put_prs(&[crate::ledger::tests::pr(1, "alice", 0)])
+            .unwrap();
+        let held = s.conn.lock().unwrap();
+        assert_eq!(s.prs().unwrap().len(), 1);
+        drop(held);
+        assert!(
+            Store::open(std::path::Path::new(":memory:"))
+                .unwrap()
+                .bulk
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn prune_keeps_open_and_recent_rows() {
