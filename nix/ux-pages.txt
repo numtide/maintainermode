@@ -83,6 +83,8 @@ skip /u/:login/maintains
 skip /auth/login
 skip /auth/callback
 skip /feed/:token
+skip /part/p/:attr
+skip /part/m/*file
 skip /static/:file
 skip /robots.txt
 skip /favicon.ico

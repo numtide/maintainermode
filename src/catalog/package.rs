@@ -28,20 +28,44 @@ impl Serialize for HydraBuild {
     }
 }
 
-/// The last build of a package on master and on each channel's jobset.
-/// A page view passes `page`, so a slow Hydra does not hold the page.
+/// How long a request waits for Hydra.
+#[derive(Clone, Copy)]
+pub(super) enum Wait<'a> {
+    /// A page: the cache only, so a crawler that runs no script never
+    /// reaches Hydra through us.
+    Never,
+    Part(&'a Shared),
+    /// The API.
+    Answer,
+}
+
+pub(super) async fn hydra_last(app: &crate::web::App, job: &str, wait: Wait<'_>) -> Last {
+    match wait {
+        Wait::Never => app.hydra.known(job).unwrap_or(Last::Later),
+        Wait::Part(shared) => Hydra::last_for_part(shared, job).await,
+        Wait::Answer => app.hydra.last(job).await,
+    }
+}
+
+/// The last build of a package on master and on each channel's jobset,
+/// or on the jobset `only`.
 async fn channel_builds(
     app: &crate::web::App,
     attr: &str,
-    page: Option<&Shared>,
+    only: Option<&str>,
+    wait: Wait<'_>,
 ) -> Vec<HydraBuild> {
-    let jobsets = app.hydra.builds.jobsets();
+    let jobsets: Vec<Jobset> = app
+        .hydra
+        .builds
+        .jobsets()
+        .iter()
+        .filter(|j| only.is_none_or(|k| j.key() == k))
+        .cloned()
+        .collect();
     let got = futures_util::future::join_all(jobsets.iter().map(|j| async {
         let job = j.path(attr);
-        let last = match page {
-            Some(shared) => crate::health::Hydra::last_for_page(shared, &job).await,
-            None => app.hydra.last(&job).await,
-        };
+        let last = hydra_last(app, &job, wait).await;
         (j.clone(), job, last)
     }))
     .await;
@@ -131,19 +155,30 @@ fn cache_html(rows: &[CacheRow]) -> Html {
     )
 }
 
-fn dead_row(label: &str, job: &str, last: &Last) -> Html {
-    let since = last
+fn hydra_body(b: &HydraBuild) -> Html {
+    if !b.dead {
+        return build_body(&b.job, &b.last);
+    }
+    let since = b
+        .last
         .build()
         .and_then(|b| b.history.iter().filter_map(|p| p.at).max())
         .map(|t| t.format("%B %Y").to_string())
         .unwrap_or_default();
-    kv(
-        Html::text(label),
-        html!(
-            "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{job}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
-            Hydra::job_url(job)
-        ),
+    html!(
+        "<span class=\"color-fg-muted\">Hydra stopped building the job <a href=\"{}\">{}</a>: its last build is from {since}. nixpkgs builds this package under another job name.</span>",
+        Hydra::job_url(&b.job),
+        b.job
     )
+}
+
+/// The value of a Hydra row. A [`Last::Later`] value carries the URL of
+/// its part, which the page script fetches in its place.
+pub(super) fn hydra_value(part: &str, body: Html, last: &Last) -> Html {
+    match last {
+        Last::Later => html!("<span data-part=\"{part}\">{body}</span>"),
+        _ => body,
+    }
 }
 
 /// The last builds as a strip of cells, the oldest first, and how many
@@ -178,9 +213,9 @@ fn history_strip(job: &str, h: &[crate::builds::Past]) -> Html {
     )
 }
 
-pub(super) fn build_row(label: &str, job: &str, last: &Last) -> Html {
+pub(super) fn build_body(job: &str, last: &Last) -> Html {
     let link = html!("<a href=\"{}\">{job}</a>", Hydra::job_url(job));
-    let body = match last {
+    match last {
         Last::Build(b) => html!(
             "<a href=\"{}\" class=\"{}\">{}</a> <span class=\"color-fg-muted\">{}</span>{}",
             b.url(),
@@ -206,8 +241,8 @@ pub(super) fn build_row(label: &str, job: &str, last: &Last) -> Html {
         Last::NotAsked => html!(
             "<span class=\"color-fg-muted\">not asked yet: this server asks Hydra a few times a minute; see {link}</span>"
         ),
-    };
-    kv(Html::text(label), body)
+        Last::Later => html!("<span class=\"color-fg-muted\">see {link}</span>"),
+    }
 }
 
 fn severity_html(w: &Worst) -> Html {
@@ -933,11 +968,15 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         } else {
             format!("Hydra, {}", b.jobset.label())
         };
-        health.push(&if b.dead {
-            dead_row(&label, &b.job, &b.last)
-        } else {
-            build_row(&label, &b.job, &b.last)
-        });
+        let part = format!(
+            "/part/p/{}?jobset={}",
+            crate::github::urlencode(v.attr),
+            crate::github::urlencode(&b.jobset.key())
+        );
+        health.push(&kv(
+            Html::text(&label),
+            hydra_value(&part, hydra_body(b), &b.last),
+        ));
     }
     if !v.binary_cache.is_empty() {
         health.push(&kv("Binary cache", cache_html(&v.binary_cache)));
@@ -982,7 +1021,7 @@ pub(super) async fn page(
         return Redirect::to(&format!("/p/{attr}")).into_response();
     }
     let subject = Subject::Pkg(attr.clone());
-    let builds = channel_builds(&app, &attr, Some(&app)).await;
+    let builds = channel_builds(&app, &attr, None, Wait::Never).await;
     let cache = binary_cache(&app, &attr);
     let next = crate::needs::here(&app, &headers, &subject.key());
     let watch = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
@@ -1004,9 +1043,31 @@ pub(super) async fn page(
     page.render(&app, viewer.as_deref())
 }
 
+#[derive(serde::Deserialize)]
+pub(super) struct PartQuery {
+    jobset: String,
+}
+
+/// The value of one Hydra row of `/p/<attr>`, for the page script.
+pub(super) async fn hydra_part(
+    State(app): State<Shared>,
+    Path(attr): Path<String>,
+    axum::extract::Query(q): axum::extract::Query<PartQuery>,
+) -> Response {
+    let known = app.index.read().unwrap().resolve(&attr) == Some(attr.as_str());
+    if !known {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let builds = channel_builds(&app, &attr, Some(&q.jobset), Wait::Part(&app)).await;
+    match builds.first() {
+        Some(b) => hydra_body(b).into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
     let attr = app.index.read().unwrap().resolve(name)?.to_string();
-    let builds = channel_builds(app, &attr, None).await;
+    let builds = channel_builds(app, &attr, None, Wait::Answer).await;
     let cache = binary_cache(app, &attr);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();

@@ -2,7 +2,7 @@
 //! repology and from the sources themselves, advisories from the nixpkgs
 //! security tracker and OSV, CVE scores from the CVE records, NVD and EPSS,
 //! and the last build on Hydra. The bulk sweeps keep a day; Hydra is asked
-//! per page view, within a limit, and cached.
+//! by the script of a page, within a limit, and cached.
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
@@ -34,8 +34,9 @@ const HYDRA_TTL: Duration = Duration::from_secs(3600);
 const HYDRA_RETRY: Duration = Duration::from_secs(300);
 const HYDRA_CONCURRENT: usize = 4;
 const HYDRA_PER_MINUTE: u32 = 30;
-/// How long a page waits for Hydra.
-pub(crate) const PAGE_WAIT: Duration = Duration::from_millis(700);
+/// How long a part of a page waits for Hydra: less than the timeout of
+/// the client, so the part always answers.
+const PART_WAIT: Duration = Duration::from_secs(4);
 const HYDRA_CACHE_MAX: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -632,8 +633,11 @@ pub enum Last {
     NoAnswer,
     /// The limit was reached, so no request was made.
     NotAsked,
-    /// A page stopped waiting; the answer goes to the cache for the next view.
+    /// A part stopped waiting; the answer goes to the cache for the next view.
     Asking,
+    /// Not in the cache. A page never waits for Hydra: its script asks
+    /// for the part.
+    Later,
 }
 
 impl Last {
@@ -651,12 +655,13 @@ impl Last {
             Last::NoAnswer => "no answer",
             Last::NotAsked => "not asked yet",
             Last::Asking => "asking",
+            Last::Later => "later",
         }
     }
 
     fn ttl(&self) -> Duration {
         match self {
-            Last::NoAnswer | Last::Asking => HYDRA_RETRY,
+            Last::NoAnswer | Last::Asking | Last::Later => HYDRA_RETRY,
             _ => HYDRA_TTL,
         }
     }
@@ -682,9 +687,9 @@ impl Window {
     }
 }
 
-/// The last finished Hydra build of a job, cached an hour. Page views ask
-/// for it, so a crawler would reach Hydra through us: a few requests at a
-/// time and a cap a minute keep that small.
+/// The last finished Hydra build of a job, cached an hour. The script of a
+/// page asks for it, so a crawler that runs scripts would reach Hydra
+/// through us: a few requests at a time and a cap a minute keep that small.
 pub struct Hydra {
     http: reqwest::Client,
     base: String,
@@ -750,10 +755,9 @@ impl Hydra {
         })
     }
 
-    /// What a page view already learned about a job; it never asks Hydra.
-    /// [`Hydra::last`] for a page view: after [`PAGE_WAIT`] the page goes on
-    /// with [`Last::Asking`], and the request ends in the background.
-    pub async fn last_for_page(app: &crate::web::Shared, job: &str) -> Last {
+    /// [`Hydra::last`] for a part of a page: after [`PART_WAIT`] the part
+    /// goes on with [`Last::Asking`], and the request ends in the background.
+    pub async fn last_for_part(app: &crate::web::Shared, job: &str) -> Last {
         if let Some(last) = app.hydra.known(job) {
             return last;
         }
@@ -766,13 +770,14 @@ impl Hydra {
             app.hydra.asking.lock().unwrap().remove(&job);
             last
         });
-        match tokio::time::timeout(PAGE_WAIT, ask).await {
+        match tokio::time::timeout(PART_WAIT, ask).await {
             Ok(Ok(last)) => last,
             Ok(Err(_)) => Last::NoAnswer,
             Err(_) => Last::Asking,
         }
     }
 
+    /// What the cache holds about a job; it never asks Hydra.
     pub fn known(&self, job: &str) -> Option<Last> {
         let cache = self.cache.lock().unwrap();
         let (at, last) = cache.get(job)?;

@@ -349,4 +349,17 @@
     });
   }
   [].forEach.call(document.querySelectorAll("input[data-search]"), suggest);
+
+  // A page sends what it knows at once; a slow source, such as Hydra,
+  // comes after, in place of each `data-part` element.
+  [].forEach.call(document.querySelectorAll("[data-part]"), function (el) {
+    fetch(el.getAttribute("data-part"))
+      .then(function (r) {
+        return r.ok ? r.text() : null;
+      })
+      .then(function (t) {
+        if (t !== null) el.outerHTML = t;
+      })
+      .catch(function () {});
+  });
 })();

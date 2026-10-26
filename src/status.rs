@@ -492,8 +492,8 @@ pub(crate) fn body(app: &App) -> Html {
     out.push(&kv(
         "Hydra builds",
         html!(
-            "asked when a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
-             {} jobs kept · {} page views not asked since the start",
+            "asked after a package or module page is shown, at most {} at a time and {} a minute, kept one hour · \
+             {} jobs kept · {} rows not asked since the start",
             hy["concurrent"],
             hy["per_minute"],
             hy["cached"],

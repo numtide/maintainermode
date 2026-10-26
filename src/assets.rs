@@ -178,7 +178,8 @@ fn untagged(path: &str, query: Option<&str>) -> bool {
         || path == "/me"
         || path == "/inbox"
         || [
-            "/me/", "/sync", "/pr/", "/p/", "/m/", "/claude/", "/auth/", "/api/", "/static/",
+            "/me/", "/sync", "/pr/", "/p/", "/m/", "/part/", "/claude/", "/auth/", "/api/",
+            "/static/",
         ]
         .iter()
         .any(|p| path.starts_with(p))

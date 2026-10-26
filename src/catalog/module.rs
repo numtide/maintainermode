@@ -65,7 +65,14 @@ pub(crate) fn view(index: &Index, v: &ModuleView, actions: Html) -> Page {
         .actions(actions);
     let mut out = Html::new();
     let mut health = Html::new();
-    health.push(&build_row("NixOS test", &v.test.job, &v.test.last));
+    health.push(&kv(
+        "NixOS test",
+        hydra_value(
+            &format!("/part/m/{file}"),
+            build_body(&v.test.job, &v.test.last),
+            &v.test.last,
+        ),
+    ));
     health.push(&kv("Maintainers", people_links(&m.maintainers)));
     if !m.teams.is_empty() {
         health.push(&kv("Teams", teams_html(index, &m.teams)));
@@ -93,7 +100,7 @@ pub(super) async fn page(
         return not_found(&app, viewer.as_deref(), &file);
     }
     let subject = Subject::Module(file.clone());
-    let last = crate::health::Hydra::last_for_page(&app, &test_job(&file)).await;
+    let last = hydra_last(&app, &test_job(&file), Wait::Never).await;
     let actions = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
@@ -105,6 +112,16 @@ pub(super) async fn page(
     let page = view(&index, &data(&s, &h, &index, &file, m, last), actions);
     drop(index);
     page.render(&app, viewer.as_deref())
+}
+
+/// The value of the NixOS test row of `/m/<file>`, for the page script.
+pub(super) async fn hydra_part(State(app): State<Shared>, Path(file): Path<String>) -> Response {
+    let known = app.index.read().unwrap().modules.contains_key(&file);
+    if !known {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let job = test_job(&file);
+    build_body(&job, &hydra_last(&app, &job, Wait::Part(&app)).await).into_response()
 }
 
 /// `name` is a module file or `nixos/NAME`.

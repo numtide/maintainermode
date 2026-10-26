@@ -32,7 +32,7 @@ pub(crate) mod maintains;
 pub(crate) mod module;
 pub(crate) mod package;
 
-use package::{build_row, channel_names, hover, osv_worst, rated};
+use package::{Wait, build_body, channel_names, hover, hydra_last, hydra_value, osv_worst, rated};
 
 const LIST: usize = 100;
 const META_GUIDE: &str =
@@ -64,6 +64,8 @@ pub fn routes() -> Router<Shared> {
         .route("/packages", get(browse))
         .route("/p/:attr", get(package::page))
         .route("/m/*file", get(module::page))
+        .route("/part/p/:attr", get(package::hydra_part))
+        .route("/part/m/*file", get(module::hydra_part))
         .route("/a/*path", get(area::page))
         .route("/me/watch", post(add_watch))
         .route("/me/watch/remove", post(remove_watch))
@@ -2248,7 +2250,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn build_row_tells_each_answer_apart() {
+    fn build_body_tells_each_answer_apart() {
         let job = "nixpkgs/trunk/a<b>.x86_64-linux";
         let link = "<a href=\"https://hydra.nixos.org/job/nixpkgs/trunk/a&lt;b&gt;.x86_64-linux\">nixpkgs/trunk/a&lt;b&gt;.x86_64-linux</a>";
         for (last, text) in [
@@ -2256,11 +2258,22 @@ pub(crate) mod tests {
             (Last::Missing, "no finished build of"),
             (Last::NoAnswer, "Hydra did not answer"),
         ] {
-            let row = build_row("Hydra", job, &last);
+            let row = build_body(job, &last);
             assert!(row.contains(text), "{row}");
             assert!(row.contains(link), "{row}");
             assert!(!row.contains("a<b>"), "{row}");
+            assert!(!hydra_value("/part", row, &last).contains("data-part"));
         }
+        let later = hydra_value(
+            "/part/p/a?jobset=nixpkgs%2Ftrunk",
+            build_body(job, &Last::Later),
+            &Last::Later,
+        );
+        assert!(
+            later.contains("data-part=\"/part/p/a?jobset=nixpkgs%2Ftrunk\""),
+            "{later}"
+        );
+        assert!(later.contains(link), "{later}");
     }
 
     #[test]
@@ -2279,8 +2292,7 @@ pub(crate) mod tests {
             at: None,
             history: vec![past(4, 1), past(3, 4), past(2, 0), past(1, 0)],
         };
-        let row = build_row(
-            "Hydra, nixos-26.05",
+        let row = build_body(
             "nixos/release-26.05/nixpkgs.a.x86_64-linux",
             &Last::Build(b.clone()),
         );
@@ -2294,6 +2306,6 @@ pub(crate) mod tests {
             history: vec![past(4, 1)],
             ..b
         };
-        assert!(!build_row("Hydra", "j", &Last::Build(one)).contains("build-strip"));
+        assert!(!build_body("j", &Last::Build(one)).contains("build-strip"));
     }
 }
