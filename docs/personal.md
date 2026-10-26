@@ -396,7 +396,7 @@ The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firs
 - **In the queues**: whether your own pull requests show in the queues. If they do not, it tells how many more authors you need. Your reviews must move the pull requests of 3 different authors in 60 days. See [rule 2](rules.md#2-whose-pull-requests-appear).
 - **Badges**: First review; First review with no maintainer; Merged unchanged; 10, 50 and 100 reviews; Five parts of nixpkgs.
 
-The page counts the synced data only: the last 60 days and every open pull request. Your menu links to the page.
+The counted badges read every review you made, back to the first one. This week, this month, the queues and the badges that say what came of a review read the synced data only: the last 60 days and every open pull request. Your menu links to the page.
 
 ## Notifications
 

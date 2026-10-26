@@ -14,6 +14,7 @@ use std::collections::BTreeSet;
 use crate::dossier::{self, Outcome, Row};
 use crate::html::{Html, html};
 use crate::ledger::{Credit, MIN_COUNTERPARTIES, WINDOW_DAYS};
+use crate::store::Reviewed;
 use crate::ui::{Page, Section, Tone, badge, section};
 use crate::web::{App, Shared, octicon};
 
@@ -77,22 +78,22 @@ pub fn build(
     }
 }
 
-/// `areas` gives the areas a pull request touches; it runs only until the
-/// fifth area shows up.
-pub fn badges(rows: &[Row], credits: &[&Credit], areas: impl Fn(u64) -> Vec<String>) -> Vec<Badge> {
+/// `history` is every review the person made, oldest first, with the parts
+/// of nixpkgs each one touches; it is read only until the fifth part shows
+/// up. The counted badges come from it: the rows hold the window of the main
+/// database only, and a record of a few months would never reach 50. The
+/// badges that judge an outcome still come from the rows, which know the
+/// pushes and the merges.
+pub fn badges(rows: &[Row], credits: &[&Credit], history: &[Reviewed]) -> Vec<Badge> {
     let live = live(credits);
     let mut oldest_first: Vec<&Row> = rows.iter().collect();
     oldest_first.sort_by_key(|r| r.at);
-    let nth = |n: usize| oldest_first.get(n - 1).map(|r| r.at);
-    let mut seen: BTreeSet<String> = BTreeSet::new();
-    let mut five_areas = None;
-    for r in &oldest_first {
-        seen.extend(areas(r.pr).into_iter().filter(|a| a != "other"));
-        if seen.len() >= AREAS_FOR_BADGE {
-            five_areas = Some(r.at);
-            break;
-        }
-    }
+    let nth = |n: usize| history.get(n - 1).map(|r| r.at);
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    let five_areas = history.iter().find_map(|r| {
+        seen.extend(r.areas.iter().map(String::as_str).filter(|a| *a != "other"));
+        (seen.len() >= AREAS_FOR_BADGE).then_some(r.at)
+    });
     vec![
         Badge {
             name: "First review",
@@ -155,13 +156,9 @@ pub fn of(app: &App, login: &str) -> Progress {
     let rows = dossier::rows(mine, login);
     let credits: Vec<&Credit> = s.ledger.credits_of(login).collect();
     let counterparties = s.ledger.people.get(login).map_or(0, |p| p.counterparties);
+    let history = app.store.reviews_of(login).unwrap_or_default();
     let mut p = build(&rows, counterparties, goal_of(app, login), Utc::now());
-    p.badges = badges(&rows, &credits, |n| {
-        s.pr_at
-            .get(&n)
-            .map(|&i| crate::metrics::areas(&s.pr_data[i].files))
-            .unwrap_or_default()
-    });
+    p.badges = badges(&rows, &credits, &history);
     p
 }
 
@@ -252,7 +249,8 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
     .icon(octicon!("pulse"))
     .sub(html!(
         "Only you see this page. \
-             It counts the reviews of the last {WINDOW_DAYS} days and on every open pull request. \
+             This week, this month and the queues count the last {WINDOW_DAYS} days and every open pull request; \
+             the badges count every review you made. \
              Your public record is on <a href=\"/u/{l}\">/u/{l}</a>.",
         l = login
     ))
@@ -362,29 +360,49 @@ mod tests {
         rows.push(row(20, 11, Outcome::MergedUnchanged));
         rows.push(row(21, 12, Outcome::Open));
         rows.push(row(22, 13, Outcome::Open));
+        let history: Vec<Reviewed> = (0..10)
+            .map(|i| reviewed(i as i64, &["packages: python"]))
+            .chain([
+                reviewed(11, &["lib", "doc", "ci"]),
+                reviewed(12, &["nixos: modules", "other"]),
+                reviewed(13, &["perl"]),
+            ])
+            .collect();
         let credits = [credit(1, 3, true)];
         let refs: Vec<&Credit> = credits.iter().collect();
-        let asked = std::cell::RefCell::new(Vec::new());
-        let b = badges(&rows, &refs, |n| {
-            asked.borrow_mut().push(n);
-            let a: &[&str] = match n {
-                20 => &["lib", "doc", "ci"],
-                21 => &["nixos: modules", "other"],
-                22 => &["perl"],
-                _ => &["packages: python"],
-            };
-            a.iter().map(|s| s.to_string()).collect()
-        });
+        let b = badges(&rows, &refs, &history);
         let earned = |name: &str| b.iter().find(|b| b.name == name).unwrap().earned;
         assert_eq!(earned("First review"), Some(t(0)));
         assert_eq!(earned("10 reviews"), Some(t(9)));
         assert_eq!(earned("50 reviews"), None);
         assert_eq!(earned("First review with no maintainer"), Some(t(3)));
         assert_eq!(earned("Merged unchanged"), Some(t(11)));
+        // python, lib, doc, ci, then nixos: modules; other is not a part
         assert_eq!(earned("Five parts of nixpkgs"), Some(t(12)));
-        assert!(!asked.borrow().contains(&22));
         let p = build(&rows, 1, Some(3), t(12));
         assert!(p.badges.is_empty());
         assert!(!p.listed);
+    }
+
+    fn reviewed(day: i64, areas: &[&str]) -> Reviewed {
+        Reviewed {
+            at: t(day),
+            areas: areas.iter().map(|a| (*a).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_counted_badges_reach_past_the_window_of_the_rows() {
+        // the window holds three reviews; the history holds a hundred
+        let rows: Vec<Row> = (0..3).map(|i| row(i, i as i64, Outcome::Open)).collect();
+        let history: Vec<Reviewed> = (0..100).map(|i| reviewed(i, &[])).collect();
+        let b = badges(&rows, &[], &history);
+        let earned = |name: &str| b.iter().find(|b| b.name == name).unwrap().earned;
+        assert_eq!(earned("First review"), Some(t(0)));
+        assert_eq!(earned("10 reviews"), Some(t(9)));
+        assert_eq!(earned("50 reviews"), Some(t(49)));
+        assert_eq!(earned("100 reviews"), Some(t(99)));
+        // an outcome still comes from the rows, which know the pushes
+        assert_eq!(earned("Merged unchanged"), None);
     }
 }
