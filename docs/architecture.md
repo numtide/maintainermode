@@ -196,6 +196,29 @@ several places today:
 - An API answer that changes shape updates `docs/api.md` in the same
   commit.
 
+## The list pages: three tiers of narrowing
+
+Every list page (`/review`, its Ready to merge tab, `/packages`,
+`/search`) uses the same three tiers, all plain GET links and forms:
+
+1. **Subnav** (`ui::subnav`): the view of the page — Needs review or
+   Ready to merge; Your packages or All of nixpkgs.
+2. **Chips** (`ui::chips`): the scope within the view, with counts —
+   the Show choices of the review queues, the lists of the Ready to
+   merge board, the sets and outputs of your machines, the kinds of a
+   search.
+3. **The filter bar** (`ui::FilterBar`): narrowing and order — the
+   search input, the Label field with the labels of the list as
+   suggestions, and the folded "More filters" selects (`ui::select`). A
+   set filter opens the fold and offers Clear; chips and pager links
+   carry the set filters.
+
+Each page keeps its own typed query struct and its own predicates
+(`review::Opts`, `mine::health_keeps`), and the API validates with the
+same constants (`review::SORTS`, `review::TREEWIDES`, `mine::HEALTHS`,
+…), so the page and `/api/v1` cannot drift. `keys.js` adds comfort
+only: a select submits on change.
+
 ## Order
 
 1. B1, the `Html` type. Small, and every later step uses it.
