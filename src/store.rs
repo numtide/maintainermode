@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
+use std::collections::BTreeMap;
 use std::panic::Location;
 use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -147,6 +148,12 @@ impl Store {
                updated_at TEXT NOT NULL,
                data TEXT NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS review_by (
+               login TEXT NOT NULL,
+               number INTEGER NOT NULL,
+               at INTEGER NOT NULL,
+               PRIMARY KEY (login, number)
+             ) WITHOUT ROWID;
              CREATE TABLE IF NOT EXISTS issue (
                number INTEGER PRIMARY KEY,
                updated_at TEXT NOT NULL,
@@ -254,6 +261,7 @@ impl Store {
              );",
         )?;
         migrate_sets(&mut conn)?;
+        backfill_reviews(&mut conn)?;
         let bulk = (path != Path::new(":memory:"))
             .then(|| -> Result<Connection> {
                 let c = Connection::open(path)?;
@@ -294,15 +302,50 @@ impl Store {
         let mut conn = self.lock();
         let tx = conn.transaction()?;
         for f in facts {
-            tx.execute(
+            let written = tx.execute(
                 "INSERT INTO history (number, updated_at, data) VALUES (?1, ?2, ?3)
                  ON CONFLICT(number) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
                  WHERE julianday(excluded.updated_at) >= julianday(updated_at)",
                 params![f.number, f.updated_at.to_rfc3339(), serde_json::to_string(f)?],
             )?;
+            // an older row does not replace the stored one, and its reviews
+            // do not replace the stored reviews either
+            if written > 0 {
+                put_reviews(&tx, f)?;
+            }
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// How many pull requests a login reviewed, in the whole history.
+    pub fn reviews_made(&self, login: &str) -> Result<usize> {
+        let conn = self.lock();
+        let n: i64 = conn.query_row(
+            "SELECT count(*) FROM review_by WHERE login = ?1",
+            [login],
+            |r| r.get(0),
+        )?;
+        Ok(n.max(0) as usize)
+    }
+
+    /// Every review a login made, oldest first, with the parts of nixpkgs
+    /// that the reviewed pull request touches. It reads the whole history,
+    /// not the window of the main database.
+    pub fn reviews_of(&self, login: &str) -> Result<Vec<Reviewed>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT r.at, h.data ->> '$.areas' FROM review_by r
+               JOIN history h ON h.number = r.number
+              WHERE r.login = ?1 ORDER BY r.at, r.number",
+        )?;
+        let rows = stmt.query_map([login], |r| {
+            Ok(Reviewed {
+                at: DateTime::from_timestamp(r.get(0)?, 0).unwrap_or_default(),
+                areas: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or_default(),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     #[track_caller]
@@ -945,6 +988,53 @@ const SET_TABLE: &str = "CREATE TABLE IF NOT EXISTS package_set (
   outputs TEXT NOT NULL DEFAULT '{}',
   PRIMARY KEY (login, name)
 );";
+
+/// One review of one pull request, as [`Store::reviews_of`] reads it.
+pub struct Reviewed {
+    /// The first review that the login made on that pull request.
+    pub at: DateTime<Utc>,
+    /// The parts of nixpkgs the pull request touches.
+    pub areas: Vec<String>,
+}
+
+/// The reviews of one pull request, as (login, first review). A review by
+/// the author of the pull request is not a review of it.
+fn put_reviews(tx: &rusqlite::Transaction, f: &Facts) -> Result<()> {
+    tx.execute("DELETE FROM review_by WHERE number = ?1", [f.number])?;
+    let mut first: BTreeMap<&str, DateTime<Utc>> = BTreeMap::new();
+    for r in f.reviews.iter().filter(|r| r.by != f.author) {
+        first
+            .entry(r.by.as_str())
+            .and_modify(|at| *at = (*at).min(r.at))
+            .or_insert(r.at);
+    }
+    for (login, at) in first {
+        tx.execute(
+            "INSERT INTO review_by (login, number, at) VALUES (?1, ?2, ?3)",
+            params![login, f.number, at.timestamp()],
+        )?;
+    }
+    Ok(())
+}
+
+/// The table fills as [`Store::put_facts`] writes, so a database from before
+/// it reads the history it already has, once. It reads the reviews in SQL:
+/// the whole history as [`Facts`] would be hundreds of megabytes.
+pub(crate) fn backfill_reviews(conn: &mut Connection) -> Result<()> {
+    let filled: bool =
+        conn.query_row("SELECT EXISTS (SELECT 1 FROM review_by)", [], |r| r.get(0))?;
+    if filled {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "INSERT INTO review_by (login, number, at)
+         SELECT r.value ->> 'by', h.number, unixepoch(min(r.value ->> 'at'))
+           FROM history h, json_each(json_extract(h.data, '$.reviews')) r
+          WHERE r.value ->> 'by' <> (h.data ->> 'author')
+          GROUP BY 1, 2",
+    )?;
+    Ok(())
+}
 
 fn has_table(conn: &Connection, table: &str) -> Result<bool> {
     let n: i64 = conn.query_row(
@@ -1764,6 +1854,109 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(d: &str) -> DateTime<Utc> {
+        d.parse::<DateTime<Utc>>().unwrap()
+    }
+
+    /// A row of the history walk with only the fields the reviews read.
+    fn facts(number: u64, author: &str, reviews: &[(&str, &str)]) -> Facts {
+        Facts {
+            number,
+            title: String::new(),
+            author: author.into(),
+            author_is_bot: false,
+            association: "CONTRIBUTOR".into(),
+            state: "MERGED".into(),
+            is_draft: false,
+            base: "master".into(),
+            created_at: at("2019-01-01T00:00:00Z"),
+            updated_at: at("2019-01-01T00:00:00Z"),
+            closed_at: None,
+            merged_at: None,
+            merged_by: None,
+            additions: 0,
+            deletions: 0,
+            changed_files: 0,
+            labels: Vec::new(),
+            areas: Vec::new(),
+            ai: None,
+            reviews: reviews
+                .iter()
+                .map(|(by, when)| crate::metrics::Seen {
+                    by: (*by).into(),
+                    at: at(when),
+                    state: "APPROVED".into(),
+                })
+                .collect(),
+        }
+    }
+
+    /// The reviews of a login as (first review, parts).
+    fn seen(s: &Store, login: &str) -> Vec<(DateTime<Utc>, Vec<String>)> {
+        s.reviews_of(login)
+            .unwrap()
+            .into_iter()
+            .map(|r| (r.at, r.areas))
+            .collect()
+    }
+
+    #[test]
+    fn reviews_come_from_the_whole_history_and_not_from_the_window() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let mut old = facts(
+            100,
+            "author",
+            &[
+                ("alice", "2019-01-03T00:00:00Z"),
+                // a second review of the same pull request is one row
+                ("alice", "2019-01-02T00:00:00Z"),
+                // the author reviewing their own is not a review
+                ("author", "2019-01-04T00:00:00Z"),
+            ],
+        );
+        old.areas = vec!["lib".into()];
+        let new = facts(200, "other", &[("alice", "2026-01-01T00:00:00Z")]);
+        s.put_facts(&[old.clone(), new]).unwrap();
+        assert_eq!(
+            seen(&s, "alice"),
+            vec![
+                (at("2019-01-02T00:00:00Z"), vec!["lib".to_string()]),
+                (at("2026-01-01T00:00:00Z"), Vec::new())
+            ]
+        );
+        assert!(seen(&s, "author").is_empty());
+        // a review taken back leaves no row behind
+        old.reviews.clear();
+        s.put_facts(&[old]).unwrap();
+        assert_eq!(seen(&s, "alice").len(), 1);
+        // an older row of the walk keeps the reviews that are stored
+        let mut stale = facts(200, "other", &[]);
+        stale.updated_at = at("2018-01-01T00:00:00Z");
+        s.put_facts(&[stale]).unwrap();
+        assert_eq!(seen(&s, "alice").len(), 1);
+    }
+
+    #[test]
+    fn the_backfill_reads_the_history_of_a_database_from_before_the_table() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let f = facts(
+            7,
+            "author",
+            &[
+                ("bob", "2020-05-06T10:00:00Z"),
+                ("author", "2020-05-07T00:00:00Z"),
+            ],
+        );
+        s.put_facts(&[f]).unwrap();
+        let mut conn = s.conn.lock().unwrap();
+        // a database that only has the history, as before the table
+        conn.execute_batch("DELETE FROM review_by").unwrap();
+        backfill_reviews(&mut conn).unwrap();
+        drop(conn);
+        assert_eq!(seen(&s, "bob"), vec![(at("2020-05-06T10:00:00Z"), vec![])]);
+        assert!(seen(&s, "author").is_empty());
+    }
 
     #[test]
     fn a_whole_table_read_does_not_wait_for_the_main_connection() {

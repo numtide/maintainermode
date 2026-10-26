@@ -12,10 +12,10 @@ its own.
 
 Two paths read issues and pull requests from GitHub:
 
-| Path                                  | Writes                                                    | Cadence                                    |
-| ------------------------------------- | --------------------------------------------------------- | ------------------------------------------ |
-| archive walk (`archive::walk`)        | `archive/<owner>/<name>.sqlite`, `pr`, `issue`, `history` | 300 s; a due pass 10 s after each due mark |
-| live refresh (`github::refresh_live`) | `pr_live`, `pr.data`                                      | each pass, 500 open PRs                    |
+| Path                                  | Writes                                                                 | Cadence                                    |
+| ------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| archive walk (`archive::walk`)        | `archive/<owner>/<name>.sqlite`, `pr`, `issue`, `history`, `review_by` | 300 s; a due pass 10 s after each due mark |
+| live refresh (`github::refresh_live`) | `pr_live`, `pr.data`                                                   | each pass, 500 open PRs                    |
 
 The notifications poller and the event log only mark numbers due.
 
@@ -74,7 +74,9 @@ association, checked_at)` keeps them. `project::pr_live` and
 5. **Switch.** Each archive write of a nixpkgs item writes its `pr`,
    `issue` and `history` rows, with `pr_live` joined. A row with a newer
    `updated_at` stays. `pr` and `issue` get the open items and the items
-   updated in the last 60 days; `history` gets every pull request. On the
+   updated in the last 60 days; `history` gets every pull request, and
+   `review_by` gets a row for each person who reviewed it, so a review
+   record reaches past the 60 days. On the
    first start, and after a change of `ROWS_VERSION`, `archive::backfill` writes
    the rows of every stored item, seeds `pr_live` from the open `pr` rows,
    deletes the keys of the old walks and sets `archive_projected` and
