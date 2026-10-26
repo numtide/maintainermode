@@ -9,7 +9,8 @@ its known limits.
   requests (see [the archive](#the-archive-of-issues-and-pull-requests)).
   Each item that it stores in the NixOS/nixpkgs archive writes its rows of
   the main database: `pr` and `issue` for the open items and the items
-  updated in the last 60 days, and `history` for every pull request. The
+  updated in the last 60 days, and `history` for every pull request, with
+  `review_by` naming who reviewed each one. The
   rows have the caps of the projection (30 reviews, 5
   inline comments per review, 30 comments, 30 pushes, 50 files). A row with
   a newer `updatedAt` stays. After each full pass, the server deletes the
