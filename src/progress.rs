@@ -241,7 +241,6 @@ async fn progress_page(State(app): State<Shared>, headers: HeaderMap) -> Respons
         "<div id=\"badges\">{}</div>",
         section("Badges", None, None, badges)
     ));
-    out.push(&crate::web::nixpkgs_guides());
     Page::new(
         Section::Personal(crate::ui::Personal::Progress),
         "Your progress",
