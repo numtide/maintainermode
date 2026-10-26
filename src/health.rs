@@ -690,6 +690,9 @@ pub struct Hydra {
     base: String,
     cache: Mutex<HashMap<String, (Instant, Last)>>,
     running: tokio::sync::Semaphore,
+    /// Jobs a page is asking for now, so a second view asks again neither
+    /// Hydra nor its patience.
+    asking: Mutex<std::collections::HashSet<String>>,
     window: Mutex<Window>,
     per_minute: u32,
     not_asked: AtomicU64,
@@ -713,6 +716,7 @@ impl Hydra {
             base: base.to_string(),
             cache: Mutex::new(HashMap::new()),
             running: tokio::sync::Semaphore::new(concurrent),
+            asking: Mutex::new(Default::default()),
             window: Mutex::new(Window {
                 start: Instant::now(),
                 used: 0,
@@ -753,8 +757,15 @@ impl Hydra {
         if let Some(last) = app.hydra.known(job) {
             return last;
         }
+        if !app.hydra.asking.lock().unwrap().insert(job.to_string()) {
+            return Last::Asking;
+        }
         let (app, job) = (app.clone(), job.to_string());
-        let ask = tokio::spawn(async move { app.hydra.last(&job).await });
+        let ask = tokio::spawn(async move {
+            let last = app.hydra.last(&job).await;
+            app.hydra.asking.lock().unwrap().remove(&job);
+            last
+        });
         match tokio::time::timeout(PAGE_WAIT, ask).await {
             Ok(Ok(last)) => last,
             Ok(Err(_)) => Last::NoAnswer,
