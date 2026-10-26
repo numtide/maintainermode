@@ -3,7 +3,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::panic::Location;
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use crate::metrics::Facts;
@@ -47,6 +47,10 @@ impl Live {
 /// Page requests take the store lock on the async runtime, so a long hold
 /// stalls every page. This many seconds of waiting or holding are logged.
 const SLOW_LOCK: Duration = Duration::from_secs(1);
+const MERGES_KEPT: Duration = Duration::from_secs(3600);
+
+/// When each pull request merged, and who merged it.
+pub type Merges = Arc<Vec<(DateTime<Utc>, String)>>;
 
 /// A held connection that names its caller in the log when it was slow.
 struct Held<'a> {
@@ -99,6 +103,9 @@ pub struct Store {
     /// not hold the connection that sessions and pages wait on. WAL lets it
     /// read while the other writes.
     bulk: Option<Mutex<Connection>>,
+    /// [`Store::merges`] scans every history row, and a recompute asks every
+    /// 30 s; the committers it feeds change over months.
+    merges: Mutex<Option<(Instant, Merges)>>,
 }
 
 /// Someone who logged in. Their area is derived, plus the tags they added.
@@ -258,6 +265,7 @@ impl Store {
         Ok(Self {
             conn: Mutex::new(conn),
             bulk,
+            merges: Mutex::new(None),
         })
     }
 
@@ -352,8 +360,19 @@ impl Store {
         self.json_rows("history")
     }
 
-    /// Who merged each pull request in the history walk, and when.
-    pub fn merges(&self) -> Result<Vec<(DateTime<Utc>, String)>> {
+    /// Who merged each pull request in the history walk, and when. Read
+    /// again at most once an hour.
+    pub fn merges(&self) -> Result<Merges> {
+        let mut cache = self.merges.lock().unwrap();
+        if let Some((_, m)) = cache.as_ref().filter(|(at, _)| at.elapsed() < MERGES_KEPT) {
+            return Ok(m.clone());
+        }
+        let m = Arc::new(self.read_merges()?);
+        *cache = Some((Instant::now(), m.clone()));
+        Ok(m)
+    }
+
+    fn read_merges(&self) -> Result<Vec<(DateTime<Utc>, String)>> {
         let conn = self.bulk();
         let mut stmt = conn.prepare(
             "SELECT json_extract(data, '$.merged_at'), json_extract(data, '$.merged_by') FROM history
