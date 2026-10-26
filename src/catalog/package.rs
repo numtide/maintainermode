@@ -29,11 +29,19 @@ impl Serialize for HydraBuild {
 }
 
 /// The last build of a package on master and on each channel's jobset.
-async fn channel_builds(app: &crate::web::App, attr: &str) -> Vec<HydraBuild> {
+/// A page view passes `page`, so a slow Hydra does not hold the page.
+async fn channel_builds(
+    app: &crate::web::App,
+    attr: &str,
+    page: Option<&Shared>,
+) -> Vec<HydraBuild> {
     let jobsets = app.hydra.builds.jobsets();
     let got = futures_util::future::join_all(jobsets.iter().map(|j| async {
         let job = j.path(attr);
-        let last = app.hydra.last(&job).await;
+        let last = match page {
+            Some(shared) => crate::health::Hydra::last_for_page(shared, &job).await,
+            None => app.hydra.last(&job).await,
+        };
         (j.clone(), job, last)
     }))
     .await;
@@ -192,6 +200,9 @@ pub(super) fn build_row(label: &str, job: &str, last: &Last) -> Html {
         Last::NoAnswer => {
             html!("<span class=\"color-fg-muted\">Hydra did not answer; see {link}</span>")
         }
+        Last::Asking => html!(
+            "<span class=\"color-fg-muted\">Hydra has not answered yet: reload in a few seconds, or see {link}</span>"
+        ),
         Last::NotAsked => html!(
             "<span class=\"color-fg-muted\">not asked yet: this server asks Hydra a few times a minute; see {link}</span>"
         ),
@@ -971,7 +982,7 @@ pub(super) async fn page(
         return Redirect::to(&format!("/p/{attr}")).into_response();
     }
     let subject = Subject::Pkg(attr.clone());
-    let builds = channel_builds(&app, &attr).await;
+    let builds = channel_builds(&app, &attr, Some(&app)).await;
     let cache = binary_cache(&app, &attr);
     let next = crate::needs::here(&app, &headers, &subject.key());
     let watch = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
@@ -995,7 +1006,7 @@ pub(super) async fn page(
 
 pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
     let attr = app.index.read().unwrap().resolve(name)?.to_string();
-    let builds = channel_builds(app, &attr).await;
+    let builds = channel_builds(app, &attr, None).await;
     let cache = binary_cache(app, &attr);
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
