@@ -296,19 +296,48 @@ pub fn router(app: Shared) -> Router {
 }
 
 pub(crate) fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    cookie_values(headers, name).next()
+}
+
+/// A browser can send two cookies of one name, with another path or
+/// domain, the most specific first.
+fn cookie_values<'a>(headers: &'a HeaderMap, name: &'a str) -> impl Iterator<Item = String> + 'a {
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == name)
+        .filter(move |(k, _)| *k == name)
         .map(|(_, v)| v.to_string())
+}
+
+/// What a person sees when a sign-in does not finish: why, and a way to
+/// start again.
+fn sign_in_again(app: &App, why: &str) -> Response {
+    let mut res = crate::ui::Page::new(crate::ui::Section::Home, "Sign in again")
+        .body(html!(
+            "<div class=\"Box p-3\"><p>{why}</p>\
+             <a class=\"btn btn-primary\" href=\"/auth/login\">Sign in with GitHub</a></div>"
+        ))
+        .render(app, None);
+    *res.status_mut() = StatusCode::BAD_REQUEST;
+    res
 }
 
 pub(crate) fn set_cookie(app: &App, name: &str, value: &str, max_age: i64) -> String {
     let secure = if app.secure_cookies { "; Secure" } else { "" };
     format!("{name}={value}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}")
+}
+
+/// The cookies of a sign-in come back on GitHub's redirect, a request that
+/// another site starts, and Firefox 158 does not send a `SameSite=Lax`
+/// cookie there. They hold a nonce and a path for ten minutes, never a
+/// session. A browser refuses `SameSite=None` without `Secure`, so plain
+/// HTTP keeps `Lax`.
+fn sign_in_cookie(secure: bool, name: &str, value: &str, max_age: i64) -> String {
+    let site = if secure { "None; Secure" } else { "Lax" };
+    format!("{name}={value}; Path=/; HttpOnly; SameSite={site}; Max-Age={max_age}")
 }
 
 pub(crate) fn random_id() -> String {
@@ -684,14 +713,16 @@ async fn login(State(app): State<Shared>, Query(q): Query<LoginQuery>) -> Respon
     let mut h = HeaderMap::new();
     h.append(
         header::SET_COOKIE,
-        set_cookie(&app, "oauth_state", &state, 600)
+        sign_in_cookie(app.secure_cookies, "oauth_state", &state, 600)
             .parse()
             .unwrap(),
     );
     if let Some(next) = q.next.as_deref().filter(|n| local_path(n)) {
         h.append(
             header::SET_COOKIE,
-            set_cookie(&app, "next", next, 600).parse().unwrap(),
+            sign_in_cookie(app.secure_cookies, "next", next, 600)
+                .parse()
+                .unwrap(),
         );
     }
     (h, Redirect::to(&oauth.authorize_url(&state))).into_response()
@@ -699,9 +730,10 @@ async fn login(State(app): State<Shared>, Query(q): Query<LoginQuery>) -> Respon
 
 #[derive(Deserialize)]
 struct Callback {
-    /// Missing when the person cancels on GitHub.
     code: Option<String>,
-    state: String,
+    state: Option<String>,
+    /// Set when the person cancels on GitHub.
+    error: Option<String>,
 }
 
 async fn callback(
@@ -712,12 +744,31 @@ async fn callback(
     let Some(oauth) = &app.oauth else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
-    if cookie(&headers, "oauth_state").as_deref() != Some(cb.state.as_str()) {
-        return (StatusCode::BAD_REQUEST, "state mismatch, try again").into_response();
-    }
-    let Some(code) = cb.code.as_deref() else {
+    if cb.error.is_some() {
         return Redirect::to("/").into_response();
+    }
+    let sent: Vec<String> = cookie_values(&headers, "oauth_state").collect();
+    let (Some(code), Some(state)) = (cb.code.as_deref(), cb.state.as_deref()) else {
+        return sign_in_again(&app, "GitHub did not send a code back.");
     };
+    if !sent.iter().any(|s| s == state) {
+        let agent = headers
+            .get(header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        tracing::info!(
+            "sign-in: the state cookie is {}, {agent}",
+            if sent.is_empty() {
+                "missing"
+            } else {
+                "different"
+            }
+        );
+        return sign_in_again(
+            &app,
+            "The sign-in did not finish: this browser did not send back its sign-in cookie, or the sign-in took more than 10 minutes.",
+        );
+    }
     let (login, token) = match oauth.exchange(code).await {
         Ok(v) => v,
         Err(e) => return (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
@@ -747,11 +798,15 @@ async fn callback(
     );
     h.append(
         header::SET_COOKIE,
-        set_cookie(&app, "oauth_state", "", 0).parse().unwrap(),
+        sign_in_cookie(app.secure_cookies, "oauth_state", "", 0)
+            .parse()
+            .unwrap(),
     );
     h.append(
         header::SET_COOKIE,
-        set_cookie(&app, "next", "", 0).parse().unwrap(),
+        sign_in_cookie(app.secure_cookies, "next", "", 0)
+            .parse()
+            .unwrap(),
     );
     (h, Redirect::to(&next)).into_response()
 }
@@ -1150,6 +1205,23 @@ impl EventsQuery {
 mod tests {
     use super::*;
     use axum::http::Method;
+
+    #[test]
+    fn sign_in_cookies_come_back_on_a_redirect_from_another_site() {
+        let https = sign_in_cookie(true, "oauth_state", "abc", 600);
+        assert!(https.contains("SameSite=None; Secure"), "{https}");
+        let http = sign_in_cookie(false, "oauth_state", "abc", 600);
+        assert!(
+            http.contains("SameSite=Lax") && !http.contains("Secure"),
+            "{http}"
+        );
+        let mut h = HeaderMap::new();
+        h.append(header::COOKIE, "oauth_state=old; mood=all".parse().unwrap());
+        h.append(header::COOKIE, "oauth_state=new".parse().unwrap());
+        let sent: Vec<String> = cookie_values(&h, "oauth_state").collect();
+        assert_eq!(sent, ["old", "new"]);
+        assert_eq!(cookie(&h, "mood").as_deref(), Some("all"));
+    }
 
     #[test]
     fn ages_lose_precision_as_they_grow() {
