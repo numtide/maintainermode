@@ -1010,7 +1010,6 @@ async fn run(cli: Cli) -> Result<i32> {
                     .then(|| git_dir.unwrap_or_else(|| data_dir(&db).join("git"))),
                 index_sets: sets.clone(),
                 metrics: Default::default(),
-                reviews: Default::default(),
                 packages: Default::default(),
                 events,
                 archive: archive::open_all(
@@ -1105,7 +1104,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 git_dir: None,
                 index_sets: sets.clone(),
                 metrics: Default::default(),
-                reviews: Default::default(),
                 packages: Default::default(),
                 events,
                 archive: Vec::new(),
@@ -1160,7 +1158,6 @@ async fn run(cli: Cli) -> Result<i32> {
                 git_dir: None,
                 index_sets: sets.clone(),
                 metrics: Default::default(),
-                reviews: Default::default(),
                 packages: Default::default(),
                 events,
                 archive: Vec::new(),
