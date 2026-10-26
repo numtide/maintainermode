@@ -94,7 +94,7 @@ pub(crate) struct Endpoint {
 pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/prs",
-        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, treewide, base, label and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
+        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue takes sort, checks, reviews, conflicts, treewide, base, label and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
         params: &[
             opt("queue", Type::OneOf(&QUEUES), "the queue: all by default"),
             opt(
@@ -110,37 +110,37 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt(
                 "sort",
                 Type::OneOf(&crate::review::SORTS),
-                "not with ready: the order of the queue by default",
+                "the order of the queue by default",
             ),
             opt(
                 "checks",
                 Type::OneOf(&crate::review::CHECKS),
-                "not with ready: keep the pull requests whose checks pass, fail or are pending",
+                "keep the pull requests whose checks pass, fail or are pending",
             ),
             opt(
                 "reviews",
                 Type::OneOf(&crate::review::REVIEWS),
-                "not with ready: none keeps those with no review by another person yet",
+                "none keeps those with no review by another person yet",
             ),
             opt(
                 "conflicts",
                 Type::OneOf(&crate::review::CONFLICTS),
-                "not with ready: hide drops those with a conflict",
+                "hide drops those with a conflict",
             ),
             opt(
                 "base",
                 Type::Text,
-                "not with ready: keep one base branch, like master or staging",
+                "keep one base branch, like master or staging",
             ),
             opt(
                 "label",
                 Type::Text,
-                "not with ready: keep the pull requests with a label that contains this text, in any case, like python; commas for several, all needed",
+                "keep the pull requests with a label that contains this text, in any case, like python; commas for several, all needed",
             ),
             opt(
                 "treewide",
                 Type::OneOf(&crate::review::TREEWIDES),
-                "not with ready: hide drops the treewide pull requests, only keeps them alone",
+                "hide drops the treewide pull requests, only keeps them alone",
             ),
             opt(
                 "why",
@@ -150,7 +150,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt(
                 "q",
                 Type::Text,
-                "not with ready: keep the titles with a word that starts with this text",
+                "keep the titles with a word that starts with this text",
             ),
             LIMIT_P,
             CURSOR_P,
@@ -1014,7 +1014,10 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
             let section = Args::text(&q.section).unwrap_or("ready");
             let b = &s.board;
             out = match section {
-                "ready" => page(&s.queues.merge, q.limit, q.cursor.as_deref()),
+                "ready" => {
+                    let rows = opts.apply(s.queues.merge.iter().collect::<Vec<_>>());
+                    page(&rows, q.limit, q.cursor.as_deref())
+                }
                 "yours" => {
                     let Some(l) = login.filter(|_| own) else {
                         return Err("section=yours needs your own login".into());
@@ -1023,7 +1026,8 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                         return Err(format!("{l} is not a committer"));
                     }
                     private = true;
-                    let rows: Vec<Value> = crate::committer::yours_list(app, &s, l)
+                    let rows: Vec<Value> = opts
+                        .apply(crate::committer::yours_list(app, &s, l))
                         .into_iter()
                         .map(|(e, why)| {
                             let mut v = json!(e);
@@ -1033,10 +1037,22 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
                         .collect();
                     page(&rows, q.limit, q.cursor.as_deref())
                 }
-                "maintainer_approved" => page(&b.maintainer_approved, q.limit, q.cursor.as_deref()),
-                "security" => page(&b.security, q.limit, q.cursor.as_deref()),
-                "backports" => page(&b.backports, q.limit, q.cursor.as_deref()),
-                "waiting" => page(&b.waiting, q.limit, q.cursor.as_deref()),
+                "maintainer_approved" => {
+                    let rows = opts.apply(b.maintainer_approved.iter().collect::<Vec<_>>());
+                    page(&rows, q.limit, q.cursor.as_deref())
+                }
+                "security" => {
+                    let rows = opts.apply(b.security.iter().collect::<Vec<_>>());
+                    page(&rows, q.limit, q.cursor.as_deref())
+                }
+                "backports" => {
+                    let rows = opts.apply(b.backports.iter().collect::<Vec<_>>());
+                    page(&rows, q.limit, q.cursor.as_deref())
+                }
+                "waiting" => {
+                    let rows = opts.apply(b.waiting.iter().collect::<Vec<_>>());
+                    page(&rows, q.limit, q.cursor.as_deref())
+                }
                 _ => {
                     return Err(format!(
                         "no section {section}; use one of {}",

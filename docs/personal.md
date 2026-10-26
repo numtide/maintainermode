@@ -370,7 +370,7 @@ Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it i
 | `label`     | part of a label, such as `python`                           | the labels that contain it, in any case; commas for several, all needed                 |
 | `filter`    | `mine`                                                      | Version bumps only, signed in: the bumps of what you maintain or watch                  |
 
-"Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue but `ready`. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
+"Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue, Ready to merge included. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
 
 The JSON API takes `GET /api/v1/prs?queue=foryou&login=<login>`. The CLI (`maintainer-mode prs --queue foryou --login <login>`) takes the same names. Your machines, subscriptions and tags are private. They count only when your own session or your own API token asks for your login. Then the answer has the rows and the order of For you. In all other cases only your public area counts, in number order. See [api.md](api.md).
 
@@ -810,7 +810,7 @@ limits, and why the feature is off by default.
 
 `/api/v1/status` shows the counts. No page or API lists the logins.
 
-**The lists.** The tab shows one list. For a committer who signed in, it is **In your areas** when that list has rows. Else it is **Ready to merge**. The list shows 20 rows. "Next page" shows the next 50. Below the list, a row of buttons opens the other lists that have rows, each with its count. Each list has its own page, with 50 rows on each page: `/review?tab=ready&section=<id>`.
+**The lists.** The tab shows one list. For a committer who signed in, it is **In your areas** when that list has rows. Else it is **Ready to merge**. The list shows 20 rows. "Next page" shows the next 50. A row of chips above the list opens the other lists that have rows, each with its count, and keeps the set filters. Each list has its own page, with 50 rows on each page: `/review?tab=ready&section=<id>`. Every list takes the filter bar of the review queues, less `reviews`, which every ready pull request has.
 
 | List                     | Id                    | What it shows                                                                                                                             |
 | ------------------------ | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |

@@ -115,7 +115,7 @@ The queues:
   lists of the tab Ready to merge. `yours` is the section "In your areas": it
   needs your own login, and you must be a committer. Each row has `why`.
 
-For every queue but `ready`, the parameters `q`, `sort` (`oldest`, `newest`,
+For every queue, the parameters `q`, `sort` (`oldest`, `newest`,
 `updated`), `checks` (`pass`, `fail`, `pending`), `reviews` (`none`, `some`),
 `conflicts` (`hide`), `treewide` (`hide`, `only`), `base` and `label` narrow and order the list, as the filter bar
 of `/review` does (see [personal.md](personal.md#review-for-you)). For your

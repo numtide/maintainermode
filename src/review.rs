@@ -100,6 +100,21 @@ struct ReviewQuery {
     why: Option<String>,
 }
 
+impl ReviewQuery {
+    fn opts(&self) -> Opts {
+        Opts {
+            sort: self.sort.clone(),
+            checks: self.checks.clone(),
+            reviews: self.reviews.clone(),
+            conflicts: self.conflicts.clone(),
+            treewide: self.treewide.clone(),
+            base: self.base.clone(),
+            label: self.label.clone(),
+            q: self.q.clone(),
+        }
+    }
+}
+
 fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
     match asked {
         Some("foryou") if signed_in => "foryou",
@@ -165,8 +180,8 @@ async fn review_page(
             ),
             q.section
                 .as_deref()
-                .and_then(|id| crate::committer::board_page(&app, &s, v, id, q.after))
-                .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, q.after)),
+                .and_then(|id| crate::committer::board_page(&app, &s, v, id, &q.opts(), q.after))
+                .unwrap_or_else(|| crate::committer::ready_tab(&app, &s, v, &q.opts(), q.after)),
         )
     } else {
         (
@@ -201,16 +216,7 @@ fn needs_review(
     tab: &str,
     q: &ReviewQuery,
 ) -> Html {
-    let opts = Opts {
-        sort: q.sort.clone(),
-        checks: q.checks.clone(),
-        reviews: q.reviews.clone(),
-        conflicts: q.conflicts.clone(),
-        treewide: q.treewide.clone(),
-        base: q.base.clone(),
-        label: q.label.clone(),
-        q: q.q.clone(),
-    };
+    let opts = q.opts();
     let bumps = tab == "bumps";
     let only_mine = bumps && v.is_some() && q.filter.as_deref() == Some("mine");
     let show_hidden = !bumps && v.is_some() && q.hidden.as_deref() == Some("1");
@@ -243,7 +249,7 @@ fn needs_review(
             rows = crate::bumps::mine(app, &index, l, true, rows);
         }
         let bases = bases(&rows);
-        let labels = labels(&rows);
+        let labels = label_counts(&rows);
         let rows = opts.apply(rows);
         let (page, next) = if opts.sorted() {
             paged_by_offset(&rows, q.after)
@@ -447,6 +453,13 @@ impl<T: Filtered + ?Sized> Filtered for &T {
     }
 }
 
+/// A row with why it is in the list, as the section In your areas holds.
+impl Filtered for (&Entry, String) {
+    fn facts(&self) -> Facts<'_> {
+        self.0.facts()
+    }
+}
+
 /// How a person narrows and orders a review list. Each field is `None` for
 /// "any", and an unknown value counts as `None`: the API checks the values
 /// before.
@@ -608,6 +621,129 @@ fn choices(
 /// other filters, folded until one is set. `bases` and `labels` are those
 /// of the list, so each choice has rows. `only_mine` is the `filter=mine` of
 /// Version bumps.
+fn select(name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]) -> Html {
+    let mut s =
+        html!("<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">");
+    for (value, text) in choices {
+        let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
+            " selected"
+        } else {
+            ""
+        };
+        s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
+    }
+    s.push(&Html::from("</select>"));
+    s
+}
+
+/// The Label field in the row of the search, with the labels of the list
+/// as suggestions.
+fn label_field(o: &Opts, labels: &[(String, usize)], list_id: &str) -> Html {
+    let options: Html = labels
+        .iter()
+        .map(|(l, n)| html!("<option value=\"{l}\" label=\"{l} ({n})\"></option>"))
+        .collect();
+    html!(
+        "<input class=\"form-control input-sm\" type=\"search\" name=\"label\" list=\"{list_id}\" value=\"{}\" placeholder=\"Label, such as python\" aria-label=\"Label\">\
+         <datalist id=\"{list_id}\">{options}</datalist>",
+        Opts::get(&o.label, &[]).unwrap_or("")
+    )
+}
+
+/// The selects of "More filters" that every queue shares. The Ready to
+/// merge lists leave out Reviews: every ready pull request has one.
+fn common_more(o: &Opts, base_choices: &[(&str, &str)], with_reviews: bool) -> Html {
+    let reviews = if with_reviews {
+        select(
+            "reviews",
+            "Reviews",
+            Opts::get(&o.reviews, &REVIEWS),
+            &[
+                ("", "Any reviews"),
+                ("none", "No review yet"),
+                ("some", "Reviewed"),
+            ],
+        )
+    } else {
+        Html::new()
+    };
+    html!(
+        "{}{}{reviews}{}{}{}",
+        select(
+            "sort",
+            "Sort",
+            o.sort(),
+            &[
+                ("", "Default order"),
+                ("oldest", "Oldest first"),
+                ("newest", "Newest first"),
+                ("updated", "Recently updated")
+            ]
+        ),
+        select(
+            "checks",
+            "Checks",
+            Opts::get(&o.checks, &CHECKS),
+            &[
+                ("", "Any checks"),
+                ("pass", "Checks pass"),
+                ("fail", "Checks fail"),
+                ("pending", "Checks pending")
+            ]
+        ),
+        select(
+            "conflicts",
+            "Conflicts",
+            Opts::get(&o.conflicts, &CONFLICTS),
+            &[("", "Any conflicts"), ("hide", "No conflicts")]
+        ),
+        select(
+            "treewide",
+            "Treewide",
+            Opts::get(&o.treewide, &TREEWIDES),
+            &[
+                ("", "Any size"),
+                ("hide", "Not treewide"),
+                ("only", "Only treewide")
+            ]
+        ),
+        select("base", "Base branch", Opts::get(&o.base, &[]), base_choices),
+    )
+}
+
+/// The bar of the Ready to merge lists: the same filters as the review
+/// queues, less Reviews, which every ready pull request has. `section`
+/// is the shown list, kept on submit; the landing list keeps none.
+pub(crate) fn ready_bar(
+    o: &Opts,
+    section: Option<&str>,
+    bases: &[String],
+    labels: &[(String, usize)],
+) -> Html {
+    let here = format!(
+        "/review?tab=ready{}",
+        section.map(|s| format!("&section={s}")).unwrap_or_default()
+    );
+    let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
+    base_choices.extend(bases.iter().map(|b| (b.as_str(), b.as_str())));
+    let mut keep = vec![("tab", "ready".to_string())];
+    if let Some(s) = section {
+        keep.push(("section", s.to_string()));
+    }
+    crate::ui::FilterBar {
+        action: "/review",
+        keep,
+        placeholder: "Words in the title",
+        q: o.q.clone().unwrap_or_default(),
+        fields: label_field(o, labels, "ready-labels"),
+        more: common_more(o, &base_choices, false),
+        more_open: o.more(),
+        clear: o.active().then_some(here),
+        ..Default::default()
+    }
+    .render()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn bar(
     o: &Opts,
@@ -620,21 +756,6 @@ fn bar(
     labels: &[(String, usize)],
     choices: Vec<Tab>,
 ) -> Html {
-    let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
-        let mut s = html!(
-            "<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">"
-        );
-        for (value, text) in choices {
-            let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
-                " selected"
-            } else {
-                ""
-            };
-            s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
-        }
-        s.push(&Html::from("</select>"));
-        s
-    };
     let mut base_choices: Vec<(&str, &str)> = vec![("", "Any base branch")];
     base_choices.extend(bases.iter().map(|b| (b.as_str(), b.as_str())));
     let whose = if tab == "bumps" && signed_in {
@@ -665,72 +786,7 @@ fn bar(
     } else {
         Html::new()
     };
-    let options: Html = labels
-        .iter()
-        .map(|(l, n)| html!("<option value=\"{l}\" label=\"{l} ({n})\"></option>"))
-        .collect();
-    let label = html!(
-        "<input class=\"form-control input-sm\" type=\"search\" name=\"label\" list=\"review-labels\" value=\"{}\" placeholder=\"Label, such as python\" aria-label=\"Label\">\
-         <datalist id=\"review-labels\">{options}</datalist>",
-        Opts::get(&o.label, &[]).unwrap_or("")
-    );
-    let more = html!(
-        "{}{}{}{}{}{}{whose}{reason}",
-        select(
-            "sort",
-            "Sort",
-            o.sort(),
-            &[
-                ("", "Default order"),
-                ("oldest", "Oldest first"),
-                ("newest", "Newest first"),
-                ("updated", "Recently updated")
-            ]
-        ),
-        select(
-            "checks",
-            "Checks",
-            Opts::get(&o.checks, &CHECKS),
-            &[
-                ("", "Any checks"),
-                ("pass", "Checks pass"),
-                ("fail", "Checks fail"),
-                ("pending", "Checks pending")
-            ]
-        ),
-        select(
-            "reviews",
-            "Reviews",
-            Opts::get(&o.reviews, &REVIEWS),
-            &[
-                ("", "Any reviews"),
-                ("none", "No review yet"),
-                ("some", "Reviewed")
-            ]
-        ),
-        select(
-            "conflicts",
-            "Conflicts",
-            Opts::get(&o.conflicts, &CONFLICTS),
-            &[("", "Any conflicts"), ("hide", "No conflicts")]
-        ),
-        select(
-            "treewide",
-            "Treewide",
-            Opts::get(&o.treewide, &TREEWIDES),
-            &[
-                ("", "Any size"),
-                ("hide", "Not treewide"),
-                ("only", "Only treewide")
-            ]
-        ),
-        select(
-            "base",
-            "Base branch",
-            Opts::get(&o.base, &[]),
-            &base_choices
-        ),
-    );
+    let more = html!("{}{whose}{reason}", common_more(o, &base_choices, true));
     let mut keep = vec![("tab", tab.to_string())];
     if hidden {
         keep.push(("hidden", "1".to_string()));
@@ -741,7 +797,7 @@ fn bar(
         keep,
         placeholder: "Words in the title",
         q: o.q.clone().unwrap_or_default(),
-        fields: label,
+        fields: label_field(o, labels, "review-labels"),
         more,
         more_open: o.more() || only_mine || why.is_some(),
         clear: (o.active() || only_mine || why.is_some())
@@ -752,7 +808,7 @@ fn bar(
 }
 
 /// The base branches of `list`, the most common first.
-fn bases<T: Filtered>(list: &[T]) -> Vec<String> {
+pub(crate) fn bases<T: Filtered>(list: &[T]) -> Vec<String> {
     let mut n: std::collections::HashMap<&str, usize> = Default::default();
     for e in list {
         *n.entry(e.facts().base).or_default() += 1;
@@ -763,7 +819,7 @@ fn bases<T: Filtered>(list: &[T]) -> Vec<String> {
 }
 
 /// The labels of `list` with their counts, the most common first.
-fn labels<T: Filtered>(list: &[T]) -> Vec<(String, usize)> {
+pub(crate) fn label_counts<T: Filtered>(list: &[T]) -> Vec<(String, usize)> {
     let mut n: std::collections::HashMap<&str, usize> = Default::default();
     for e in list {
         for l in e.facts().labels {
@@ -905,7 +961,7 @@ impl<'a> ReviewList<'a> {
             .collect();
         let entries: Vec<&Entry> = kept.iter().map(|(e, _)| *e).collect();
         let bases = bases(&entries);
-        let labels = labels(&entries);
+        let labels = label_counts(&entries);
         let why: std::collections::HashMap<u64, &[String]> =
             kept.iter().map(|(e, w)| (e.number, w.as_slice())).collect();
         let rows = opts
@@ -1309,7 +1365,7 @@ mod tests {
             ..Default::default()
         };
         assert!(o.query().contains("&label=python"));
-        let counts = labels(&list);
+        let counts = label_counts(&list);
         assert_eq!(counts[0], ("6.topic: python".to_string(), 2));
         let html = bar(
             &o,
