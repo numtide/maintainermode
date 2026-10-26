@@ -43,6 +43,9 @@ pub struct Row {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Dossier {
     pub login: String,
+    /// Pull requests reviewed in the window of the main database: the last
+    /// 60 days and the open ones. The whole history is private, in
+    /// [`crate::progress`].
     pub reviewed: usize,
     pub merged_unchanged: usize,
     pub problems_found: usize,

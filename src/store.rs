@@ -318,22 +318,12 @@ impl Store {
         Ok(())
     }
 
-    /// How many pull requests a login reviewed, in the whole history.
-    pub fn reviews_made(&self, login: &str) -> Result<usize> {
-        let conn = self.lock();
-        let n: i64 = conn.query_row(
-            "SELECT count(*) FROM review_by WHERE login = ?1",
-            [login],
-            |r| r.get(0),
-        )?;
-        Ok(n.max(0) as usize)
-    }
-
     /// Every review a login made, oldest first, with the parts of nixpkgs
     /// that the reviewed pull request touches. It reads the whole history,
-    /// not the window of the main database.
+    /// not the window of the main database. It reads a row of the history
+    /// for each review, so it uses the connection that pages do not wait on.
     pub fn reviews_of(&self, login: &str) -> Result<Vec<Reviewed>> {
-        let conn = self.lock();
+        let conn = self.bulk();
         let mut stmt = conn.prepare(
             "SELECT r.at, h.data ->> '$.areas' FROM review_by r
                JOIN history h ON h.number = r.number
