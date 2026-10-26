@@ -133,6 +133,11 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 "not with ready: keep one base branch, like master or staging",
             ),
             opt(
+                "label",
+                Type::Text,
+                "not with ready: keep the pull requests with this label, like 6.topic: python; any case",
+            ),
+            opt(
                 "q",
                 Type::Text,
                 "not with ready: keep the titles with a word that starts with this text",
@@ -644,6 +649,7 @@ pub(crate) struct Args {
     pub reviews: Option<String>,
     pub conflicts: Option<String>,
     pub base: Option<String>,
+    pub label: Option<String>,
     pub section: Option<String>,
     pub login: Option<String>,
     pub mood: Option<String>,
@@ -985,6 +991,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         reviews: q.reviews.clone(),
         conflicts: q.conflicts.clone(),
         base: q.base.clone(),
+        label: q.label.clone(),
         q: q.q.clone(),
     };
     let mut out;

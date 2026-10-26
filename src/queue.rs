@@ -28,6 +28,7 @@ pub struct Entry {
     /// No member's area covers it: the newcomer bucket.
     pub unowned: bool,
     pub treewide: Option<crate::links::Treewide>,
+    pub labels: Vec<String>,
     pub too_large: Option<crate::links::TooLarge>,
 }
 
@@ -106,6 +107,7 @@ pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -
         },
         unowned: false,
         treewide: pr.treewide,
+        labels: pr.labels.clone(),
         too_large,
     }
 }

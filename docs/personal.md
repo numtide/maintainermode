@@ -365,6 +365,7 @@ Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it i
 | `reviews`   | `none`, `some`                                   | no review by another person yet, or one or more                        |
 | `conflicts` | `hide`                                           | drops the pull requests with a conflict                                |
 | `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                |
+| `label`     | a label, such as `6.topic: python`               | one label, in any case; the field suggests the labels of the list      |
 | `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch |
 
 "Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue but `ready`. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.

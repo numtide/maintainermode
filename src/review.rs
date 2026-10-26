@@ -94,6 +94,7 @@ struct ReviewQuery {
     reviews: Option<String>,
     conflicts: Option<String>,
     base: Option<String>,
+    label: Option<String>,
     q: Option<String>,
 }
 
@@ -204,6 +205,7 @@ fn needs_review(
         reviews: q.reviews.clone(),
         conflicts: q.conflicts.clone(),
         base: q.base.clone(),
+        label: q.label.clone(),
         q: q.q.clone(),
     };
     let bumps = tab == "bumps";
@@ -230,6 +232,7 @@ fn needs_review(
             rows = crate::bumps::mine(app, &index, l, true, rows);
         }
         let bases = bases(&rows);
+        let labels = labels(&rows);
         let rows = opts.apply(rows);
         let (page, next) = if opts.sorted() {
             paged_by_offset(&rows, q.after)
@@ -247,7 +250,7 @@ fn needs_review(
         };
         return html!(
             "{}{}{}",
-            bar(&opts, tab, v.is_some(), false, only_mine, &bases),
+            bar(&opts, tab, v.is_some(), false, only_mine, &bases, &labels),
             section(
                 label,
                 Some(rows.len()),
@@ -312,7 +315,15 @@ fn needs_review(
     };
     html!(
         "{}{}{}",
-        bar(&opts, tab, v.is_some(), show_hidden, false, &list.bases),
+        bar(
+            &opts,
+            tab,
+            v.is_some(),
+            show_hidden,
+            false,
+            &list.bases,
+            &list.labels
+        ),
         section(
             title,
             Some(entries.len()),
@@ -336,6 +347,7 @@ pub(crate) struct Facts<'a> {
     reviewed: bool,
     conflict: bool,
     base: &'a str,
+    labels: &'a [String],
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -354,6 +366,7 @@ impl Filtered for Entry {
             reviewed: !self.reviewers.is_empty(),
             conflict: self.mergeable == "CONFLICTING",
             base: &self.base,
+            labels: &self.labels,
             created_at: self.created_at,
             updated_at: self.updated_at,
         }
@@ -373,6 +386,7 @@ impl Filtered for crate::bumps::Row<'_> {
                 .any(|r| r.author != p.author && !r.author_is_bot),
             conflict: p.mergeable == "CONFLICTING",
             base: &p.base,
+            labels: &p.labels,
             created_at: p.created_at,
             updated_at: p.updated_at,
         }
@@ -395,6 +409,7 @@ pub(crate) struct Opts {
     pub reviews: Option<String>,
     pub conflicts: Option<String>,
     pub base: Option<String>,
+    pub label: Option<String>,
     pub q: Option<String>,
 }
 
@@ -427,10 +442,12 @@ impl Opts {
         };
         let conflicts = Self::get(&self.conflicts, &CONFLICTS).is_none() || !f.conflict;
         let base = Self::get(&self.base, &[]).is_none_or(|b| f.base == b);
+        let label = Self::get(&self.label, &[])
+            .is_none_or(|l| f.labels.iter().any(|x| x.eq_ignore_ascii_case(l)));
         let words = self
             .words()
             .is_none_or(|w| crate::search::at_word(&f.title.to_lowercase(), &w));
-        checks && reviews && conflicts && base && words
+        checks && reviews && conflicts && base && label && words
     }
 
     /// With no sort asked, the list keeps the order of its Show choice.
@@ -472,6 +489,7 @@ impl Opts {
             || Self::get(&self.reviews, &REVIEWS).is_some()
             || Self::get(&self.conflicts, &CONFLICTS).is_some()
             || Self::get(&self.base, &[]).is_some()
+            || Self::get(&self.label, &[]).is_some()
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -488,6 +506,7 @@ impl Opts {
             ("reviews", Self::get(&self.reviews, &REVIEWS)),
             ("conflicts", Self::get(&self.conflicts, &CONFLICTS)),
             ("base", Self::get(&self.base, &[])),
+            ("label", Self::get(&self.label, &[])),
             ("q", Self::get(&self.q, &[])),
         ] {
             if let Some(v) = v {
@@ -499,7 +518,7 @@ impl Opts {
 }
 
 /// The bar above a list: Show and the title search, then the other filters,
-/// folded until one is set. `bases` are the base branches of the list, so
+/// folded until one is set. `bases` and `labels` are those of the list, so
 /// each choice has rows. `only_mine` is the `filter=mine` of Version bumps.
 fn bar(
     o: &Opts,
@@ -508,6 +527,7 @@ fn bar(
     hidden: bool,
     only_mine: bool,
     bases: &[String],
+    labels: &[(String, usize)],
 ) -> Html {
     let select = |name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]| {
         let mut s = html!(
@@ -541,6 +561,15 @@ fn bar(
     } else {
         Html::new()
     };
+    let options: Html = labels
+        .iter()
+        .map(|(l, n)| html!("<option value=\"{l}\" label=\"{l} ({n})\"></option>"))
+        .collect();
+    let label = html!(
+        "<input class=\"form-control input-sm\" type=\"search\" name=\"label\" list=\"review-labels\" value=\"{}\" placeholder=\"Label\" aria-label=\"Label\">\
+         <datalist id=\"review-labels\">{options}</datalist>",
+        Opts::get(&o.label, &[]).unwrap_or("")
+    );
     let clear = if o.active() || only_mine {
         html!(
             " <a class=\"btn btn-sm btn-invisible\" href=\"/review?tab={tab}{}\">Clear</a>",
@@ -554,7 +583,7 @@ fn bar(
          <label class=\"review-show\">Show {}</label>\
          <input class=\"form-control input-sm\" type=\"search\" name=\"q\" value=\"{}\" placeholder=\"Words in the title\" aria-label=\"Words in the title\">\
          <button class=\"btn btn-sm\" type=\"submit\">Apply</button>{clear}\
-         <details class=\"review-more\"{}><summary class=\"f6\">More filters</summary><div class=\"review-bar mt-2\">{}{}{}{}{}{whose}</div></details></form>",
+         <details class=\"review-more\"{}><summary class=\"f6\">More filters</summary><div class=\"review-bar mt-2\">{}{}{}{}{}{label}{whose}</div></details></form>",
         Html::from(if hidden {
             "<input type=\"hidden\" name=\"hidden\" value=\"1\">"
         } else {
@@ -619,6 +648,19 @@ fn bases<T: Filtered>(list: &[T]) -> Vec<String> {
     let mut out: Vec<(&str, usize)> = n.into_iter().collect();
     out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
     out.into_iter().map(|(b, _)| b.to_string()).collect()
+}
+
+/// The labels of `list` with their counts, the most common first.
+fn labels<T: Filtered>(list: &[T]) -> Vec<(String, usize)> {
+    let mut n: std::collections::HashMap<&str, usize> = Default::default();
+    for e in list {
+        for l in e.facts().labels {
+            *n.entry(l).or_default() += 1;
+        }
+    }
+    let mut out: Vec<(String, usize)> = n.into_iter().map(|(l, c)| (l.to_string(), c)).collect();
+    out.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    out
 }
 
 /// A safe place to go back to after a form: a path of this site.
@@ -730,6 +772,8 @@ pub(crate) struct ReviewList<'a> {
     pub hidden: usize,
     /// The base branches after the hidden filter, before `Opts`.
     pub bases: Vec<String>,
+    /// The labels after the hidden filter, before `Opts`.
+    pub labels: Vec<(String, usize)>,
 }
 
 impl<'a> ReviewList<'a> {
@@ -747,7 +791,9 @@ impl<'a> ReviewList<'a> {
             .iter()
             .filter(|(e, _)| hidden.contains(&e.number) == show_hidden)
             .collect();
-        let bases = bases(&kept.iter().map(|(e, _)| *e).collect::<Vec<_>>());
+        let entries: Vec<&Entry> = kept.iter().map(|(e, _)| *e).collect();
+        let bases = bases(&entries);
+        let labels = labels(&entries);
         let why: std::collections::HashMap<u64, &[String]> =
             kept.iter().map(|(e, w)| (e.number, w.as_slice())).collect();
         let rows = opts
@@ -762,6 +808,7 @@ impl<'a> ReviewList<'a> {
             rows,
             hidden: n_hidden,
             bases,
+            labels,
         }
     }
 
@@ -864,6 +911,7 @@ mod tests {
             credited_by: vec![],
             files: vec![],
             unowned: false,
+            labels: vec![],
             treewide: None,
             too_large: None,
         }
@@ -951,7 +999,7 @@ mod tests {
 
     #[test]
     fn the_bar_folds_the_filters_that_are_not_set() {
-        let none = bar(&Opts::default(), "unowned", false, false, false, &[]);
+        let none = bar(&Opts::default(), "unowned", false, false, false, &[], &[]);
         assert!(none.contains("<option value=\"unowned\" selected>No maintainer</option>"));
         assert!(!none.contains("value=\"foryou\"") && !none.contains("value=\"ready\""));
         assert!(none.contains("<details class=\"review-more\">"));
@@ -960,7 +1008,7 @@ mod tests {
             sort: Some("newest".into()),
             ..Default::default()
         };
-        let set = bar(&sorted, "foryou", true, false, false, &[]);
+        let set = bar(&sorted, "foryou", true, false, false, &[], &[]);
         assert!(set.contains("<option value=\"foryou\" selected>For you</option>"));
         assert!(set.contains("<details class=\"review-more\" open>") && set.contains("Clear"));
         let words = Opts {
@@ -968,13 +1016,15 @@ mod tests {
             ..Default::default()
         };
         assert!(
-            bar(&words, "all", true, false, false, &[]).contains("<details class=\"review-more\">")
+            bar(&words, "all", true, false, false, &[], &[])
+                .contains("<details class=\"review-more\">")
         );
-        let mine = bar(&Opts::default(), "bumps", true, false, true, &[]);
+        let mine = bar(&Opts::default(), "bumps", true, false, true, &[], &[]);
         assert!(mine.contains("<option value=\"mine\" selected>"));
         assert!(mine.contains("<details class=\"review-more\" open>"));
         assert!(
-            !bar(&Opts::default(), "bumps", false, false, false, &[]).contains("name=\"filter\"")
+            !bar(&Opts::default(), "bumps", false, false, false, &[], &[])
+                .contains("name=\"filter\"")
         );
     }
 
@@ -1000,5 +1050,26 @@ mod tests {
         assert_eq!(tab_id(Some("ready"), false), "ready");
         assert_eq!(tab_id(Some("firsttime"), false), "firsttime");
         assert_eq!(tab_id(Some("nonsense"), false), "unowned");
+    }
+
+    #[test]
+    fn a_label_keeps_the_pull_requests_that_carry_it_in_any_case() {
+        let mut a = entry(1, "SUCCESS", false, "master", "a");
+        a.labels = vec!["6.topic: python".into()];
+        let b = entry(2, "SUCCESS", false, "master", "b");
+        let list: Vec<&Entry> = vec![&a, &b];
+        let o = Opts {
+            label: Some("6.Topic: Python".into()),
+            ..Default::default()
+        };
+        let kept: Vec<u64> = o.apply(list.clone()).iter().map(|e| e.number).collect();
+        assert_eq!(kept, [1]);
+        assert!(o.query().contains("&label="));
+        let counts = labels(&list);
+        assert_eq!(counts, [("6.topic: python".to_string(), 1)]);
+        let html = bar(&o, "all", true, false, false, &[], &counts).to_string();
+        assert!(html.contains("<details class=\"review-more\" open>"));
+        assert!(html.contains("<option value=\"6.topic: python\" label=\"6.topic: python (1)\">"));
+        assert!(html.contains("name=\"label\" list=\"review-labels\" value=\"6.Topic: Python\""));
     }
 }
