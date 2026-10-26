@@ -17,6 +17,26 @@ use crate::web::{App, Snapshot, icon, octicon};
 pub(crate) const MACHINES: &str = "/packages?filter=machines";
 const UPLOAD: &str = "/me/settings#upload";
 
+pub(crate) const SORTS: [&str; 1] = ["name"];
+pub(crate) const HEALTHS: [&str; 5] = [
+    "attention",
+    "advisories",
+    "outdated",
+    "failing",
+    "unmaintained",
+];
+
+/// Whether one health choice keeps a row.
+fn health_keeps(f: &Flags, h: &str) -> bool {
+    match h {
+        "attention" => attention(f),
+        "advisories" => f.advisories > 0,
+        "outdated" => f.upstream.is_some(),
+        "failing" => f.build_failed,
+        _ => f.unmaintained,
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Filter {
     Mine,
@@ -613,6 +633,8 @@ fn outputs_nav(i: &Interests, set: &str, current: Option<&str>) -> Html {
 pub(crate) struct Pick<'a> {
     pub(crate) set: Option<&'a str>,
     pub(crate) output: Option<&'a str>,
+    pub(crate) sort: Option<&'a str>,
+    pub(crate) health: Option<&'a str>,
 }
 
 const SUB: &str = "The packages of your machines come first, then what you maintain, then what you watch. \
@@ -641,11 +663,19 @@ pub(crate) fn view(
                 .any(|(hs, hl)| hs == s && hl == o)
         })
     });
+    let sort = pick.sort.filter(|v| SORTS.contains(v));
+    let health = pick.health.filter(|v| HEALTHS.contains(v));
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    let mut rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    if let Some(h) = health {
+        rows.retain(|r| health_keeps(&r.flags, h));
+    }
+    if sort == Some("name") {
+        rows.sort_by_cached_key(|r| r.sub.label());
+    }
     let mut out = Html::new();
     let mut actions = Html::new();
     let mut extra = Html::new();
@@ -675,6 +705,7 @@ pub(crate) fn view(
     let mut keep = vec![("filter", f.key().to_string())];
     keep.extend(set.map(|s| ("set", s.to_string())));
     keep.extend(output.map(|o| ("output", o.to_string())));
+    let filtered = !q.is_empty() || health.is_some();
     out.push(
         &crate::ui::FilterBar {
             choices: bar(i, f, q),
@@ -683,7 +714,30 @@ pub(crate) fn view(
             keep,
             placeholder: "Words in the name",
             q: q.to_string(),
-            clear: (!q.is_empty() || set.is_some()).then(|| href(f, "", None, None)),
+            more: html!(
+                "{}{}",
+                crate::ui::select(
+                    "sort",
+                    "Sort",
+                    sort,
+                    &[("", "Default order"), ("name", "By name")]
+                ),
+                crate::ui::select(
+                    "health",
+                    "Health",
+                    health,
+                    &[
+                        ("", "Any health"),
+                        ("attention", "Needs attention"),
+                        ("advisories", "Open advisories"),
+                        ("outdated", "Outdated"),
+                        ("failing", "Build failing"),
+                        ("unmaintained", "No maintainer"),
+                    ]
+                )
+            ),
+            more_open: sort.is_some() || health.is_some(),
+            clear: (filtered || sort.is_some() || set.is_some()).then(|| href(f, "", None, None)),
             ..Default::default()
         }
         .render(),
@@ -706,8 +760,8 @@ pub(crate) fn view(
         .collect();
     let upload = html!("<a href=\"{UPLOAD}\">Upload the packages of your machines</a>");
     if list.is_empty() {
-        list = empty(if !q.is_empty() {
-            "Nothing matches.".into()
+        list = empty(if filtered {
+            "Nothing matches these filters.".into()
         } else {
             match f {
                 Filter::Mine => {
@@ -745,9 +799,17 @@ pub(crate) fn view(
         (Some(n), None) => html!("Packages of {n}"),
         (None, _) => f.title().into(),
     };
-    let narrowed = !q.is_empty() || set.is_some();
+    let narrowed = filtered || set.is_some();
     out.push(&section(title, narrowed.then_some(rows.len()), None, list));
-    out.push(&pager(&href(f, q, set, output), next.as_deref()));
+    out.push(&pager(
+        &format!(
+            "{}{}{}",
+            href(f, q, set, output),
+            sort.map(|v| format!("&sort={v}")).unwrap_or_default(),
+            health.map(|v| format!("&health={v}")).unwrap_or_default()
+        ),
+        next.as_deref(),
+    ));
     if f == Filter::Machines {
         out.push(&crate::sets::manage(app, login));
     }
@@ -798,10 +860,18 @@ pub(crate) fn value(
             Some(o)
         }
     };
+    let sort = pick.sort.filter(|v| SORTS.contains(v));
+    let health = pick.health.filter(|v| HEALTHS.contains(v));
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    let mut rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    if let Some(h) = health {
+        rows.retain(|r| health_keeps(&r.flags, h));
+    }
+    if sort == Some("name") {
+        rows.sort_by_cached_key(|r| r.sub.label());
+    }
     let items: Vec<MineItem> = rows
         .iter()
         .map(|r| {
@@ -887,6 +957,26 @@ mod tests {
     }
 
     #[test]
+    fn each_health_choice_reads_one_flag() {
+        let f = |n: usize, up: Option<&str>, failed: bool, un: bool| Flags {
+            upstream: up.map(String::from),
+            advisories: n,
+            unmaintained: un,
+            open_prs: 0,
+            open_treewide: 0,
+            open_issues: 0,
+            score: None,
+            build_failed: failed,
+        };
+        let sick = f(2, Some("2.0"), true, true);
+        let well = f(0, None, false, false);
+        for h in HEALTHS {
+            assert!(health_keeps(&sick, h), "{h}");
+            assert!(!health_keeps(&well, h), "{h}");
+        }
+    }
+
+    #[test]
     fn machines_come_first_then_maintained_then_watched() {
         let index = index();
         let i = Interests::build(
@@ -900,6 +990,9 @@ mod tests {
         let h = crate::health::Health::default();
         let rows = i.rows(&s, &index, &h, None, Filter::Mine, "");
         assert_eq!(keys(&rows), ["hello", "zlib", "curl", "jq"]);
+        let mut named = i.rows(&s, &index, &h, None, Filter::Mine, "");
+        named.sort_by_cached_key(|r| r.sub.label());
+        assert_eq!(keys(&named), ["curl", "hello", "jq", "zlib"]);
         assert_eq!(
             rows[0].why,
             Why {

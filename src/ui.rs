@@ -167,6 +167,22 @@ fn nav(section_now: Section) -> Html {
 }
 
 /// A row of chips, each a link that narrows a list, with its count.
+/// A `<select>` of a filter bar; the empty value means "any".
+pub(crate) fn select(name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]) -> Html {
+    let mut s =
+        html!("<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">");
+    for (value, text) in choices {
+        let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
+            " selected"
+        } else {
+            ""
+        };
+        s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
+    }
+    s.push(&Html::from("</select>"));
+    s
+}
+
 pub(crate) fn chips(name: &str, lead: Html, links: &[Tab]) -> Html {
     let chips: Html = links
         .iter()

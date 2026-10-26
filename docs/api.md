@@ -57,7 +57,9 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_API_TOKEN" 'https://<host>/api/v
   your sets, with `filter=machines`. `output`, with `set`, keeps the
   packages of one output label of that set, as `&output=<label>` does on the
   page. An unknown set or output is an error. `q` keeps the names that hold
-  the text. Each row has `key`, `name`, `version`, `machine_version` (the
+  the text. `health` keeps one health flag: `attention`, `advisories`,
+  `outdated`, `failing` or `unmaintained`. `sort=name` orders by name in
+  place of the one order of what is yours. Each row has `key`, `name`, `version`, `machine_version` (the
   version that your report gave), `why` (`machine`, `maintain` and `watch`),
   `via_team`, `flags` and `outputs` (the `set` and the `output` label of
   each output that holds it). The answer also has `sets` (the names of your

@@ -203,6 +203,16 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 "with set: an output label of that set, like web-1; keep the packages of that output",
             ),
             opt("q", Type::Text, "keep the rows whose name holds this text"),
+            opt(
+                "sort",
+                Type::OneOf(&crate::mine::SORTS),
+                "the one order of what is yours by default; name orders by name",
+            ),
+            opt(
+                "health",
+                Type::OneOf(&crate::mine::HEALTHS),
+                "keep the rows with that health flag",
+            ),
             LIMIT_P,
             CURSOR_P,
         ],
@@ -666,6 +676,7 @@ pub(crate) struct Args {
     pub login: Option<String>,
     pub mood: Option<String>,
     pub filter: Option<String>,
+    pub health: Option<String>,
     pub set: Option<String>,
     pub output: Option<String>,
     pub q: Option<String>,
@@ -803,6 +814,8 @@ pub(crate) async fn answer(
                 crate::mine::Pick {
                     set: Args::text(&a.set),
                     output: Args::text(&a.output),
+                    sort: Args::text(&a.sort),
+                    health: Args::text(&a.health),
                 },
                 a.limit,
                 a.cursor.as_deref(),

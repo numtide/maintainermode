@@ -12,7 +12,7 @@ use std::fmt::Write;
 
 use crate::html::{Html, html};
 use crate::queue::Entry;
-use crate::ui::{Page, Section, Tab, empty, pager, section};
+use crate::ui::{Page, Section, Tab, empty, pager, section, select};
 use crate::web::{CONTRIBUTING, Shared, octicon, review_bucket, review_rows};
 
 pub(crate) const PAGE: usize = 50;
@@ -621,21 +621,6 @@ fn choices(
 /// other filters, folded until one is set. `bases` and `labels` are those
 /// of the list, so each choice has rows. `only_mine` is the `filter=mine` of
 /// Version bumps.
-fn select(name: &str, label: &str, now: Option<&str>, choices: &[(&str, &str)]) -> Html {
-    let mut s =
-        html!("<select class=\"form-select select-sm\" name=\"{name}\" aria-label=\"{label}\">");
-    for (value, text) in choices {
-        let sel = if Some(*value) == now || (value.is_empty() && now.is_none()) {
-            " selected"
-        } else {
-            ""
-        };
-        s.push(&html!("<option value=\"{value}\"{sel}>{text}</option>"));
-    }
-    s.push(&Html::from("</select>"));
-    s
-}
-
 /// The Label field in the row of the search, with the labels of the list
 /// as suggestions.
 fn label_field(o: &Opts, labels: &[(String, usize)], list_id: &str) -> Html {

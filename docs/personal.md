@@ -153,7 +153,7 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 ## Your packages
 
-Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The chips above the list keep one part of it. Each chip shows its count. The "Words in the name" box filters the list of the current chip, and a chip keeps those words. **Clear** removes them. `/review` has the same bar.
+Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The chips above the list keep one part of it. Each chip shows its count. The "Words in the name" box filters the list of the current chip, and a chip keeps those words. "More filters" folds a sort (by name) and a health choice (needs attention, open advisories, outdated, build failing, no maintainer). **Clear** removes them. `/review` has the same bar.
 
 | Filter         | Address                     | What it keeps                                                   |
 | -------------- | --------------------------- | --------------------------------------------------------------- |

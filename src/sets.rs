@@ -1371,7 +1371,11 @@ pub(crate) mod tests {
             crate::mine::Filter::Machines,
             "",
             None,
-            crate::mine::Pick { set, output },
+            crate::mine::Pick {
+                set,
+                output,
+                ..Default::default()
+            },
         );
         v.body.into_string()
     }

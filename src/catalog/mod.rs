@@ -531,7 +531,7 @@ pub(crate) struct Flags {
     pub(crate) upstream: Option<String>,
     /// Open advisories that can affect master, OSV matches included.
     pub(crate) advisories: usize,
-    unmaintained: bool,
+    pub(crate) unmaintained: bool,
     pub(crate) open_prs: usize,
     /// The treewide pull requests among `open_prs`.
     pub(crate) open_treewide: usize,
@@ -927,6 +927,8 @@ struct Search {
     set: Option<String>,
     /// One output label of that set.
     output: Option<String>,
+    sort: Option<String>,
+    health: Option<String>,
 }
 
 /// Signed out, the catalog of nixpkgs. Signed in, the one list of what is
@@ -982,6 +984,8 @@ async fn browse(
         crate::mine::Pick {
             set: search.set.as_deref(),
             output: search.output.as_deref(),
+            sort: search.sort.as_deref(),
+            health: search.health.as_deref(),
         },
     );
     page.sub(v.sub)
