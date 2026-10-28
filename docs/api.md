@@ -143,6 +143,16 @@ the files that it changes, such as `{"files": 19485}`. Then its `files` is
 empty, and its `treewide` is `null`. `GET /api/v1/prs/<number>` has the same
 field.
 
+Each row has `built`: `null`, or the nixpkgs-review runs on the pull
+request summed up (see [Who built it](rules.md#who-built-it)): `ok` and
+`failed`, the systems that built and the systems with a failure; `by`, who
+ran them; `pushes_since`, how far the oldest run used is behind the head;
+and `weight`, from 1 on the head to 1/32. `GET /api/v1/prs/<number>` gives
+each run instead, as `built`: `run` (`by`, `url`, `at`, `commit`, `logs`
+and `systems`, each with `name`, `built`, `failed`, `failed_count` and
+`skipped`), `pushes_since` and `weight`. Runs that no longer count are
+not in it.
+
 Your machines, subscriptions and tags are private. They count only when
 `login` is the caller. Then the answer has `Cache-Control: private, no-store`.
 

@@ -36,6 +36,9 @@ pub struct Pr {
     /// When new commits reached the head, by commit date or force push.
     pub pushes: Vec<DateTime<Utc>>,
     pub voids: Vec<Void>,
+    /// The nixpkgs-review results posted on it, oldest first.
+    #[serde(default)]
+    pub runs: Vec<Run>,
     #[serde(default)]
     pub closed_at: Option<DateTime<Utc>>,
     #[serde(default)]
@@ -79,6 +82,34 @@ pub struct Void {
     pub by: String,
     pub url: String,
     pub at: DateTime<Utc>,
+}
+
+/// A nixpkgs-review result that a person posted on the pull request: their
+/// own compute, lent to build what it changes. By hand, or from a run of
+/// nixpkgs-review-gha.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Run {
+    /// Who ran it: the person a nixpkgs-review-gha comment names, else the
+    /// author of the comment.
+    pub by: String,
+    pub url: String,
+    pub at: DateTime<Utc>,
+    /// The head it built, when the comment says.
+    pub commit: Option<String>,
+    pub logs: Option<String>,
+    pub systems: Vec<System>,
+}
+
+/// What one run built on one system.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct System {
+    pub name: String,
+    pub built: u32,
+    /// The attributes that failed, the first [`crate::built::FAILED_CAP`].
+    pub failed: Vec<String>,
+    pub failed_count: u32,
+    /// Marked broken, blacklisted, or otherwise not built.
+    pub skipped: u32,
 }
 
 /// Logins of community automation that GitHub lists as users, or whose

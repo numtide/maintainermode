@@ -26,7 +26,7 @@ Information about all of nixpkgs, for everyone, with no login:
   - the last Hydra build, or the NixOS test of a module;
   - the version in each channel, and when a fix needs a backport;
   - packaging gaps, and one risk score that sums it all up.
-- **A page for each pull request**: its place in the queues, the packages it touches and their health, the diff, the reviews and a review checklist. You leave the review on GitHub.
+- **A page for each pull request**: its place in the queues, the packages it touches and their health, the diff, the reviews, who built it with nixpkgs-review and on which systems, and a review checklist. You leave the review on GitHub.
 - **Search** across packages, modules and directories. An exact name opens its page, and `@login` opens the page of a person.
 - **Statistics:** the state of nixpkgs month by month (pull requests, reviews,
   merge times), and of its packages (outdated, vulnerable, unmaintained).

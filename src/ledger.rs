@@ -275,6 +275,7 @@ pub(crate) mod tests {
             author_activity: vec![],
             pushes: vec![],
             voids: vec![],
+            runs: vec![],
             closed_at: None,
             additions: 0,
             deletions: 0,

@@ -12,7 +12,9 @@ its known limits.
   updated in the last 60 days, and `history` for every pull request, with
   `review_by` naming who reviewed each one. The
   rows have the caps of the projection (30 reviews, 5
-  inline comments per review, 30 comments, 30 pushes, 50 files). A row with
+  inline comments per review, 30 comments, 30 pushes, 50 files). The
+  nixpkgs-review results in the 30 comments become the runs of the pull
+  request (see [Who built it](rules.md#who-built-it)). A row with
   a newer `updatedAt` stays. After each full pass, the server deletes the
   closed rows of `pr` and `issue` last updated more than 60 days ago. When
   rows change, the pages are computed again,

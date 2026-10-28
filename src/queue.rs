@@ -22,6 +22,8 @@ pub struct Entry {
     pub approved_by: Vec<String>,
     /// Logins whose review on this pull request earned credit.
     pub credited_by: Vec<String>,
+    /// The nixpkgs-review runs that still count, summed up; `None` without.
+    pub built: Option<crate::built::Mark>,
     /// The paths that match it to the areas of people: none when it is
     /// [`too_large`](Entry::too_large), so that it reaches nobody.
     pub files: Vec<String>,
@@ -100,6 +102,7 @@ pub(crate) fn entry(pr: &Pr, ledger: &Ledger, credited: &HashSet<(u64, &str)>) -
         reviewers,
         approved_by,
         credited_by,
+        built: crate::built::mark(pr),
         files: if too_large.is_some() {
             Vec::new()
         } else {

@@ -191,9 +191,9 @@ the checklist of the nixpkgs template ("Things done") folds.
   changes. For a person who signed in, the server reads the release list of
   the GitHub source once each 30 minutes. It then links the release and the
   compare view, and flags notes that say "breaking".
-- **Builds.** The checks of the head commit, your latest nixpkgs-review run
-  for this pull request (only for you), and the last Hydra build that a page
-  read in the last hour.
+- **Builds.** The checks of the head commit, who built it with
+  nixpkgs-review (see [Who built it](#who-built-it)), and the last Hydra
+  build that a page read in the last hour.
 - **People.** The author, the maintainers, and the approvals on the current
   head. A label shows when an approval is by a maintainer or a committer.
 - **Security.** The CVE ids in the title and the description, with their
@@ -252,6 +252,45 @@ pull requests have their own list on `/review`: Show **No maintainer**. A new
 reviewer can start there: a check of the packaging (complete `meta`, pinned
 hashes, `platforms`, a missing `versionCheckHook`) needs no expert knowledge.
 Most first reviews find these problems.
+
+### Who built it
+
+nixpkgs CI evaluates and lints a pull request. It does not build the
+packages that the pull request changes. Thus "checks pass" means "it
+evaluates". The only build evidence a pull request gets is a person who ran
+[nixpkgs-review](https://github.com/Mic92/nixpkgs-review) on their own
+machine, or in their own GitHub Actions with
+[nixpkgs-review-gha](https://github.com/Defelo/nixpkgs-review-gha), and
+posted the result as a comment. That person lent their compute to vouch for
+the change. Maintainer Mode reads these comments like approvals: evidence
+with a name on it.
+
+- **A run** is a comment in the format of `nixpkgs-review --post-result`
+  ("Result of `nixpkgs-review pr N` run on x86_64-linux", then the
+  packages built and failed), or of nixpkgs-review-gha (one section per
+  system, the commit it built, and who triggered it). The run is by the
+  person the comment names, else by the author of the comment. It keeps,
+  per system, the count of the packages built, the names of the first 50
+  that failed, and the count of the packages skipped as broken.
+- **Decay by pushes.** A run on the current head counts in full. A run on
+  an older head still counts, at half for each push since: a run before
+  the last push counts 1/2, a run two pushes ago 1/4. A run more than 5
+  pushes behind no longer counts. A run that names its commit is at least
+  one push behind when that commit is not the head. A run that does not
+  name a commit is placed by its time against the pushes.
+- **The pull request page** lists the runs that still count, the newest
+  first: who, each system with the packages that failed, "on this head" or
+  how many pushes ago, and a link to the comment and the logs. The runner
+  gets the label maintainer or committer like an approver.
+- **The queues** mark each row: "built on 2 systems" in green, "fails on
+  aarch64-darwin" in red, and grey with the pushes since when the freshest
+  run per system is behind the head. The mark names the runners.
+- **It does not sort.** A run does not change the place of a pull request
+  in a queue, and it is not a counted review in the ledger. A committer
+  reads it as one more fact before a merge.
+
+The pushes are the last 30 that the archive keeps. `GET /api/v1/prs/<n>`
+gives the runs as `built`, each with `pushes_since` and `weight`.
 
 ### Treewide pull requests
 

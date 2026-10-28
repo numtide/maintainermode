@@ -25,6 +25,10 @@ const MASS_REBUILD: u64 = 1000;
 const SHOWN_SUBJECTS: usize = 6;
 const SHOWN_MAINTAINERS: usize = 8;
 const SHOWN_HYDRA: usize = 3;
+/// Runs of nixpkgs-review named on the page, the newest first.
+const SHOWN_RUNS: usize = 5;
+/// Failed attributes named per system.
+const SHOWN_FAILED: usize = 5;
 const CVE_CAP: usize = 20;
 const REASON_CHARS: usize = 80;
 
@@ -1072,9 +1076,102 @@ pub(crate) fn github_repo(src_url: &str) -> Option<String> {
     }
 }
 
+/// The nixpkgs-review runs that still count, one row each: who, each
+/// system with its failures, the head it built, and when.
+fn built_line(c: &Ctx) -> Html {
+    let aged = crate::built::aged(c.pr);
+    if aged.is_empty() {
+        return line(
+            "Built by",
+            "<span class=\"color-fg-muted\">nobody yet: nixpkgs CI does not build the packages, a reviewer runs nixpkgs-review</span>",
+        );
+    }
+    let mut rows: Vec<Html> = Vec::new();
+    for a in aged.iter().take(SHOWN_RUNS) {
+        let r = a.run;
+        let systems = crate::html::join(
+            r.systems.iter().map(|s| {
+                if s.failed_count == 0 {
+                    html!(
+                        "<span class=\"color-fg-success\">{} <code>{}</code></span>",
+                        icon(octicon!("check-circle-fill")),
+                        s.name
+                    )
+                } else {
+                    let mut names = crate::html::join(
+                        s.failed
+                            .iter()
+                            .take(SHOWN_FAILED)
+                            .map(|f| html!("<code>{f}</code>")),
+                        ", ",
+                    );
+                    let more = s.failed_count as usize - s.failed.len().min(SHOWN_FAILED);
+                    if more > 0 {
+                        names.push(&html!(" and {more} more"));
+                    }
+                    html!(
+                        "<span class=\"color-fg-danger\">{} <code>{}</code></span> fails: {names}",
+                        icon(octicon!("x-circle-fill")),
+                        s.name
+                    )
+                }
+            }),
+            ", ",
+        );
+        let age = crate::built::age_words(a.pushes_since);
+        let head = if age.is_empty() {
+            "on this head".to_string()
+        } else {
+            age.trim().to_string()
+        };
+        let logs = r
+            .logs
+            .as_ref()
+            .map(|l| html!(" · <a href=\"{l}\">logs</a>"))
+            .unwrap_or_default();
+        let v = html!(
+            "{} {systems} · <a href=\"{}\">{head}</a>{logs} <span class=\"color-fg-muted f6\">{} ago</span>",
+            person_tags(c, &r.by),
+            r.url,
+            ago(r.at)
+        );
+        rows.push(v);
+    }
+    if aged.len() > SHOWN_RUNS {
+        rows.push(html!(
+            "<span class=\"color-fg-muted\">and {} earlier run{}</span>",
+            aged.len() - SHOWN_RUNS,
+            if aged.len() - SHOWN_RUNS == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+    line("Built by", crate::html::join(rows, "<br>"))
+}
+
+/// A login with its maintainer and committer labels.
+fn person_tags(c: &Ctx, login: &str) -> Html {
+    let mut tags = Html::new();
+    if c.touched
+        .iter()
+        .any(|t| t.maintainers.iter().any(|m| m.eq_ignore_ascii_case(login)))
+    {
+        tags.push(&Html::from(
+            " <span class=\"Label Label--success\">maintainer</span>",
+        ));
+    }
+    if c.committers.is(login) {
+        tags.push(&Html::from(" <span class=\"Label\">committer</span>"));
+    }
+    html!("<a href=\"/u/{0}\">{0}</a>{tags}", login)
+}
+
 fn builds_block(c: &Ctx) -> Html {
     let mut lines = Html::new();
     lines.push(&line("Checks", ci_text(c.pr.ci.as_deref())));
+    lines.push(&built_line(c));
     for (attr, last) in c.hydra.iter().take(SHOWN_HYDRA) {
         let job = Hydra::package_job(attr);
         let v = match last {
@@ -1961,6 +2058,82 @@ mod tests {
         assert!(html.contains("on your machines: curl"));
         let row = &html[html.find("id=\"decide-actions\"").unwrap()..];
         assert!(row.contains("id=\"next\""));
+    }
+
+    #[test]
+    fn the_builds_block_names_who_built_it_and_how_far_behind_the_head() {
+        let (mut p, index, h, touched) = sample_ctx_parts();
+        let committers = Committers::default();
+        let author = crate::profile::Facts::default();
+        let ctx = |p: &Pr| -> Html {
+            render(&Ctx {
+                pr: p,
+                body: None,
+                files: Ok(&[]),
+                touched: &touched,
+                index: &index,
+                health: &h,
+                committers: &committers,
+                author: &author,
+                hydra: &[],
+                notes: None,
+                mine: None,
+                extra_actions: Html::new(),
+                reached: None,
+                queue: Html::new(),
+            })
+        };
+        let html = ctx(&p);
+        assert!(html.contains("nobody yet: nixpkgs CI does not build the packages"));
+
+        let t = |s: &str| {
+            chrono::DateTime::parse_from_rfc3339(s)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        p.head_oid = "head".into();
+        p.pushes = vec![t("2026-10-05T00:00:00Z")];
+        let system = |name: &str, failed: &[&str]| crate::model::System {
+            name: name.into(),
+            built: 3,
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            failed_count: failed.len() as u32,
+            skipped: 0,
+        };
+        p.runs = vec![
+            crate::model::Run {
+                by: "carol".into(),
+                url: "https://github.com/NixOS/nixpkgs/pull/7#issuecomment-1".into(),
+                at: t("2026-10-01T00:00:00Z"),
+                commit: None,
+                logs: None,
+                systems: vec![system("aarch64-darwin", &["curl"])],
+            },
+            crate::model::Run {
+                by: "bob".into(),
+                url: "https://github.com/NixOS/nixpkgs/pull/7#issuecomment-2".into(),
+                at: t("2026-10-06T00:00:00Z"),
+                commit: Some("head".into()),
+                logs: Some("https://github.com/bob/nixpkgs-review-gha/actions/runs/1".into()),
+                systems: vec![system("x86_64-linux", &[])],
+            },
+        ];
+        let html = ctx(&p);
+        let builds = &html[html.find("id=\"decide-builds\"").unwrap()..];
+        let builds = &builds[..builds.find("id=\"decide-people\"").unwrap()];
+        let bob = builds.find("<a href=\"/u/bob\">bob</a>").unwrap();
+        let carol = builds.find("<a href=\"/u/carol\">carol</a>").unwrap();
+        assert!(bob < carol, "the newest run first");
+        assert!(builds.contains("<code>x86_64-linux</code></span> · <a href=\"https://github.com/NixOS/nixpkgs/pull/7#issuecomment-2\">on this head</a> · <a href=\"https://github.com/bob/nixpkgs-review-gha/actions/runs/1\">logs</a>"));
+        assert!(builds.contains("<code>aarch64-darwin</code></span> fails: <code>curl</code>"));
+        assert!(builds.contains(">before the last push</a>"));
+        assert!(
+            builds[bob..carol].contains("maintainer</span>"),
+            "bob maintains curl"
+        );
+
+        let m = crate::built::mark(&p).unwrap();
+        assert_eq!(m.words(), "fails on aarch64-darwin before the last push");
     }
 
     #[test]

@@ -1937,6 +1937,7 @@ async fn value(
         "treewide": pr.treewide,
         "too_large": crate::links::TooLarge::of(pr),
         "reviews": pr.reviews,
+        "built": crate::built::aged(pr),
         "files": files,
         "files_error": files_error,
         "discussion": talk,

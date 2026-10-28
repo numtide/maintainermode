@@ -1,0 +1,38 @@
+[
+  {
+    "author": "toothbrush",
+    "url": "https://github.com/NixOS/nixpkgs/pull/577185#issuecomment-6332986849",
+    "created_at": "2026-10-22T04:49:58Z",
+    "body": "Result of `nixpkgs-review pr 577185` run on aarch64-darwin\n\n1 package built:\n- entire\n\nBoth `entire` and `git-remote-entire` land in `result/bin`; the helper was exercised against a live `entire://` remote (capabilities + ref listing).\n"
+  },
+  {
+    "author": "nixpkgs-review-gha",
+    "url": "https://github.com/NixOS/nixpkgs/pull/577185#issuecomment-6424806157",
+    "created_at": "2026-10-26T19:01:24Z",
+    "body": "## :x: `nixpkgs-review` result\n\nGenerated using [`nixpkgs-review-gha`](https://github.com/Defelo/nixpkgs-review-gha) ([`af6a071`](https://github.com/Defelo/nixpkgs-review-gha/commit/af6a071a7258d67caa963aefd0b41aa6d9a38f9c))\n\nCommand: `nixpkgs-review pr 577185`\nCommit: [`3e336e619f02175f6141a1494da70af356d68080`](https://github.com/NixOS/nixpkgs/commit/3e336e619f02175f6141a1494da70af356d68080) ([subsequent changes](https://github.com/NixOS/nixpkgs/compare/3e336e619f02175f6141a1494da70af356d68080..pull/577185/head))\nMerge: [`19289ee910bcef158d3dd3ed369a9795a83c92b7`](https://github.com/NixOS/nixpkgs/commit/19289ee910bcef158d3dd3ed369a9795a83c92b7)\n\nTriggered by @iamanaws (78835633)\nLogs: https://github.com/iamanaws/nixpkgs-review-gha/actions/runs/40382153678/attempts/1\n\n\n\n---\n### `x86_64-linux`\n<details><summary>:white_check_mark: 1 package built:</summary><ul>\n<li>entire</li>\n</ul></details>\n\n---\n### `aarch64-linux`\n<details><summary>:white_check_mark: 1 package built:</summary><ul>\n<li>entire</li>\n</ul></details>\n\n---\n### `aarch64-darwin` (sandbox = relaxed)\n<details><summary>:x: 1 package failed to build:</summary><ul>\n<li>entire</li>\n</ul></details>"
+  },
+  {
+    "author": "nixpkgs-review-gha",
+    "url": "https://github.com/NixOS/nixpkgs/pull/577185#issuecomment-6428352195",
+    "created_at": "2026-10-26T22:00:26Z",
+    "body": "## :white_check_mark: `nixpkgs-review` result\n\nGenerated using [`nixpkgs-review-gha`](https://github.com/Defelo/nixpkgs-review-gha) ([`af6a071`](https://github.com/Defelo/nixpkgs-review-gha/commit/af6a071a7258d67caa963aefd0b41aa6d9a38f9c))\n\nCommand: `nixpkgs-review pr 577185`\nCommit: [`9e649a75838710689f0f079f8084530d30f4d0c6`](https://github.com/NixOS/nixpkgs/commit/9e649a75838710689f0f079f8084530d30f4d0c6) ([subsequent changes](https://github.com/NixOS/nixpkgs/compare/9e649a75838710689f0f079f8084530d30f4d0c6..pull/577185/head))\nMerge: [`555523d0321208ffa09586094c0666a6877d6217`](https://github.com/NixOS/nixpkgs/commit/555523d0321208ffa09586094c0666a6877d6217)\n\nTriggered by @iamanaws (78835633)\nLogs: https://github.com/iamanaws/nixpkgs-review-gha/actions/runs/40408356034/attempts/1\n\n\n\n---\n### `x86_64-linux`\n<details><summary>:white_check_mark: 1 package built:</summary><ul>\n<li>entire</li>\n</ul></details>\n\n---\n### `aarch64-linux`\n<details><summary>:white_check_mark: 1 package built:</summary><ul>\n<li>entire</li>\n</ul></details>\n\n---\n### `aarch64-darwin` (sandbox = relaxed)\n<details><summary>:white_check_mark: 1 package built:</summary><ul>\n<li>entire</li>\n</ul></details>"
+  },
+  {
+    "author": "yzhou216",
+    "url": "https://github.com/NixOS/nixpkgs/pull/431108#issuecomment-3154191881",
+    "created_at": "2025-08-05T08:59:44Z",
+    "body": "## `nixpkgs-review` result\n\nGenerated using [`nixpkgs-review-gha`](https://github.com/Defelo/nixpkgs-review-gha)\n\nCommand: `nixpkgs-review pr 431108`\n\nLogs: https://github.com/yzhou216/nixpkgs-review-gha/actions/runs/16745317095\n\n\n---\n### `x86_64-linux`\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n\n---\n### `aarch64-linux`\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n\n---\n### `x86_64-darwin` (sandbox = true)\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n\n---\n### `aarch64-darwin` (sandbox = true)\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n"
+  },
+  {
+    "author": "yzhou216",
+    "url": "https://github.com/NixOS/nixpkgs/pull/431108#issuecomment-6375477752",
+    "created_at": "2026-10-23T21:52:08Z",
+    "body": "## :white_check_mark: `nixpkgs-review` result\n\nGenerated using [`nixpkgs-review-gha`](https://github.com/Defelo/nixpkgs-review-gha) ([`c11ea10`](https://github.com/Defelo/nixpkgs-review-gha/commit/c11ea10d993c0aab8a71f12b97c35a0c50b771d7))\n\nCommand: `nixpkgs-review pr 431108`\nCommit: [`be04848410248acd9829ef9d6648a5095c121462`](https://github.com/NixOS/nixpkgs/commit/be04848410248acd9829ef9d6648a5095c121462) ([subsequent changes](https://github.com/NixOS/nixpkgs/compare/be04848410248acd9829ef9d6648a5095c121462..pull/431108/head))\nMerge: [`4231e09bf32dc9b200bbd5408333f39a87e74009`](https://github.com/NixOS/nixpkgs/commit/4231e09bf32dc9b200bbd5408333f39a87e74009)\n\nLogs: https://github.com/yzhou216/nixpkgs-review-gha/actions/runs/40028910099/attempts/1\n\n<details><summary>Download packages from cache:</summary><ul>\n<li><details><summary><code>x86_64-linux</code></summary>\n\n```shell\n(cut)\n```\n</details></li>\n<li><details><summary><code>aarch64-linux</code></summary>\n\n```shell\n(cut)\n```\n</details></li>\n<li><details><summary><code>aarch64-darwin</code></summary>\n\n```shell\n(cut)\n```\n</details></li>\n</ul></details>\n\n\n---\n### `x86_64-linux`\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n---\n### `aarch64-linux`\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n\n---\n### `aarch64-darwin` (sandbox = true)\n<details>\n  <summary>:white_check_mark: 1 package built:</summary>\n  <ul>\n    <li>cargo-doc2readme</li>\n  </ul>\n</details>\n"
+  },
+  {
+    "author": "bachp",
+    "url": "https://github.com/NixOS/nixpkgs/pull/174272#issuecomment-1136397031",
+    "created_at": "2022-05-24T20:24:49Z",
+    "body": "Result of `nixpkgs-review pr 174272` run on x86_64-linux [1](https://github.com/Mic92/nixpkgs-review)\n<details>\n  <summary>1 package failed to build:</summary>\n  <ul>\n    <li>oraclejdk17</li>\n  </ul>\n</details>\n"
+  }
+]

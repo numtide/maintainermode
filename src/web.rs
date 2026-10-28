@@ -420,6 +420,24 @@ pub(crate) fn age_words(t: DateTime<Utc>) -> String {
     format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
 }
 
+/// The mark of the nixpkgs-review runs on a pull request in a list: who
+/// built it, in the title.
+pub(crate) fn built_badge(m: &crate::built::Mark) -> Html {
+    use crate::ui::Tone;
+    let tone = if m.pushes_since > 0 {
+        Tone::Neutral
+    } else if m.failed.is_empty() {
+        Tone::Success
+    } else {
+        Tone::Danger
+    };
+    let title = format!("nixpkgs-review by {}", m.by.join(", "));
+    html!(
+        "<span title=\"{title}\">{}</span>",
+        crate::ui::badge(tone, Html::text(&m.words()))
+    )
+}
+
 /// The mark of a treewide pull request in a list.
 pub(crate) fn treewide_badge(t: &crate::links::Treewide) -> Html {
     crate::ui::badge(crate::ui::Tone::Neutral, Html::text(&t.mark()))
@@ -443,6 +461,7 @@ pub(crate) fn review_rows(
             badges.push(badge(Tone::Attention, "no maintainer"));
         }
         badges.extend(e.treewide.as_ref().map(treewide_badge));
+        badges.extend(e.built.as_ref().map(built_badge));
         if let Some(t) = &e.too_large {
             badges.push(badge(Tone::Attention, Html::text(&t.mark())));
         }
@@ -1248,12 +1267,41 @@ mod tests {
             reviewers: vec![],
             approved_by: vec![],
             credited_by: vec![],
+            built: None,
             files: vec![file.into()],
             unowned,
             labels: vec![],
             treewide: None,
             too_large: None,
         }
+    }
+
+    #[test]
+    fn a_row_marks_who_built_it_and_greys_a_run_behind_the_head() {
+        let mark = |failed: &[&str], pushes_since: usize| crate::built::Mark {
+            ok: vec!["x86_64-linux".into(), "aarch64-linux".into()],
+            failed: failed.iter().map(|s| s.to_string()).collect(),
+            by: vec!["alice".into(), "bob".into()],
+            pushes_since,
+            weight: crate::built::weight(pushes_since),
+        };
+        let mut e = entry(1, "x", "lib/strings.nix", false);
+        assert!(!entry_rows(&[&e]).contains("nixpkgs-review"));
+        e.built = Some(mark(&[], 0));
+        let html = entry_rows(&[&e]);
+        assert!(html.contains(
+            "<span title=\"nixpkgs-review by alice, bob\"><span class=\"Label Label--success\">built on 2 systems</span></span>"
+        ), "{html}");
+        e.built = Some(mark(&["aarch64-darwin"], 0));
+        assert!(
+            entry_rows(&[&e])
+                .contains("<span class=\"Label Label--danger\">fails on aarch64-darwin</span>")
+        );
+        e.built = Some(mark(&["aarch64-darwin"], 2));
+        assert!(
+            entry_rows(&[&e])
+                .contains("<span class=\"Label\">fails on aarch64-darwin 2 pushes ago</span>")
+        );
     }
 
     #[test]

@@ -1206,7 +1206,7 @@ const ROWS: &str = "archive_rows";
 
 /// A change to the rows that `project::write` keeps needs a new value, so
 /// that the next start writes the rows of every stored item again.
-const ROWS_VERSION: &str = "4";
+const ROWS_VERSION: &str = "5";
 
 pub(crate) fn projected(store: &Store) -> Result<bool> {
     Ok(store.get(PROJECTED)?.is_some() && store.get(ROWS)?.as_deref() == Some(ROWS_VERSION))

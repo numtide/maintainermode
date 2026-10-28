@@ -947,6 +947,7 @@ mod tests {
             reviewers: if reviewed { vec!["r".into()] } else { vec![] },
             approved_by: vec![],
             credited_by: vec![],
+            built: None,
             files: vec![],
             unowned: false,
             labels: vec![],

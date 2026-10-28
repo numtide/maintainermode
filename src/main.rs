@@ -6,6 +6,7 @@ mod area;
 mod assets;
 mod attrs;
 mod builds;
+mod built;
 mod bumps;
 mod catalog;
 mod changed;

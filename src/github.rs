@@ -287,6 +287,7 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         });
     }
     let mut voids = Vec::new();
+    let mut runs = Vec::new();
     for c in nodes(&n["comments"]) {
         let Some(at) = time(&c["createdAt"]) else {
             continue;
@@ -294,6 +295,13 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         let (who, _) = login(&c["author"]);
         if who == author {
             author_activity.push(at);
+        }
+        let url = c["url"].as_str().unwrap_or("");
+        if let Some(run) = c["body"]
+            .as_str()
+            .and_then(|b| crate::built::parse(b, &who, url, at))
+        {
+            runs.push(run);
         }
         let committer = matches!(
             c["authorAssociation"].as_str(),
@@ -337,6 +345,7 @@ pub fn normalize(n: &Value) -> Option<Pr> {
         author_activity,
         pushes,
         voids,
+        runs,
         closed_at: time(&n["closedAt"]),
         additions: n["additions"].as_u64().unwrap_or(0),
         deletions: n["deletions"].as_u64().unwrap_or(0),
