@@ -235,6 +235,7 @@ impl Store {
              );
              CREATE INDEX IF NOT EXISTS needs_seen_at ON needs_seen (at);
              CREATE INDEX IF NOT EXISTS pr_state ON pr (state);
+             CREATE INDEX IF NOT EXISTS review_by_number ON review_by (number);
              CREATE TABLE IF NOT EXISTS followup (
                login TEXT NOT NULL,
                number INTEGER NOT NULL,
@@ -988,7 +989,9 @@ pub struct Reviewed {
 }
 
 /// The reviews of one pull request, as (login, first review). A review by
-/// the author of the pull request is not a review of it.
+/// the author of the pull request is not a review of it. The delete needs
+/// the index on `number`: without it, a backfill of the history scans the
+/// whole table once per pull request, 15 s for each 1000.
 fn put_reviews(tx: &rusqlite::Transaction, f: &Facts) -> Result<()> {
     tx.execute("DELETE FROM review_by WHERE number = ?1", [f.number])?;
     let mut first: BTreeMap<&str, DateTime<Utc>> = BTreeMap::new();
