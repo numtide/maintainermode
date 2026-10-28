@@ -41,98 +41,116 @@ pub const FAILED_CAP: usize = 50;
 /// A run this many pushes behind the head no longer counts.
 pub const MAX_PUSHES: usize = 5;
 
+/// The name of a run with no system named: the format before 2020-10.
+pub const NO_SYSTEM: &str = "unknown system";
+
 /// The nixpkgs-review result in a comment, or `None` when the comment is
-/// not one.
+/// not one. Loose on purpose: the format changed four times since 2019
+/// and the fork adds lines of its own. A comment is a result when a line
+/// names nixpkgs-review and a result; the systems come from "run on" or
+/// from headings; the counts from "N packages built:" lines in any
+/// wording that says built, failed or skipped; the names from `<li>` or
+/// `-` items.
 pub fn parse(body: &str, author: &str, url: &str, at: DateTime<Utc>) -> Option<Run> {
     let mut lines = body.lines();
-    let (mut run, first_system) = loop {
+    let header = loop {
         let l = lines.next()?;
-        if let Some(system) = native_header(l) {
-            break (
-                Run {
-                    by: author.to_string(),
-                    url: url.to_string(),
-                    at,
-                    commit: None,
-                    logs: None,
-                    systems: Vec::new(),
-                },
-                Some(system),
-            );
-        }
-        if l.contains("`nixpkgs-review` result") {
-            break (
-                Run {
-                    by: author.to_string(),
-                    url: url.to_string(),
-                    at,
-                    commit: None,
-                    logs: None,
-                    systems: Vec::new(),
-                },
-                None,
-            );
+        if is_header(l) {
+            break l;
         }
     };
-    let mut system: Option<System> = first_system.map(System::new);
+    let mut run = Run {
+        by: author.to_string(),
+        url: url.to_string(),
+        at,
+        commit: None,
+        logs: None,
+        systems: Vec::new(),
+    };
+    // "run on SYSTEM" names the one system of the comment; without it, a
+    // heading names each one, or the whole comment is one unnamed system.
+    let mut system = System::new(
+        header
+            .split(" run on ")
+            .nth(1)
+            .and_then(system_name)
+            .unwrap_or_else(|| NO_SYSTEM.to_string()),
+    );
     let mut kind: Option<Kind> = None;
+    // the log tails of 2025 on: a build log can say "1 test failed:"
+    let mut in_pre = false;
     for l in lines {
         let t = l.trim();
-        if let Some(sha) = t.strip_prefix("Commit:") {
-            run.commit = between(sha, '`', '`').map(String::from);
+        if in_pre {
+            in_pre = !t.contains("</pre>");
             continue;
         }
-        if let Some(url) = t.strip_prefix("Logs:") {
-            run.logs = Some(url.trim().to_string()).filter(|u| u.starts_with("https://"));
+        if t.starts_with("<pre") {
+            in_pre = !t.contains("</pre>");
+            kind = None;
             continue;
         }
-        if let Some(rest) = t.strip_prefix("Triggered by @") {
-            let login: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
-                .collect();
-            if !login.is_empty() {
+        if let Some(rest) = t.strip_prefix("Commit:") {
+            run.commit = between(rest, '`', '`')
+                .map(str::trim)
+                .filter(|c| c.len() >= 7 && c.chars().all(|c| c.is_ascii_hexdigit()))
+                .map(String::from);
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("Logs:") {
+            run.logs = rest
+                .split_whitespace()
+                .find(|w| w.starts_with("https://"))
+                .map(|w| {
+                    w.trim_matches(|c| c == '(' || c == ')' || c == '<' || c == '>')
+                        .to_string()
+                });
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("Triggered by") {
+            if let Some(login) = rest.split('@').nth(1).and_then(login_name) {
                 run.by = login;
             }
             continue;
         }
-        if let Some(name) = t.strip_prefix("###").and_then(|h| between(h, '`', '`')) {
-            if let Some(s) = system.take() {
-                run.systems.push(s);
+        if let Some(name) = t
+            .strip_prefix('#')
+            .and_then(|h| system_name(h.trim_start_matches('#')))
+        {
+            if !system.is_empty() {
+                run.systems.push(system);
             }
-            system = Some(System::new(name.to_string()));
+            system = System::new(name);
             kind = None;
             continue;
         }
-        let Some(s) = system.as_mut() else {
+        if t == "---" || t.starts_with("</details>") || t.starts_with("</ul>") {
+            kind = None;
             continue;
-        };
+        }
         let plain = strip(t);
         if let Some((n, k)) = summary(&plain) {
             kind = Some(k);
             match k {
-                Kind::Built => s.built += n,
-                Kind::Failed => s.failed_count += n,
-                Kind::Skipped => s.skipped += n,
+                Kind::Built => system.built += n,
+                Kind::Failed => system.failed_count += n,
+                Kind::Skipped => system.skipped += n,
             }
             if k == Kind::Failed {
                 for item in items_after_summary(t) {
-                    s.push_failed(item);
+                    system.push_failed(item);
                 }
             }
             continue;
         }
         if kind == Some(Kind::Failed) {
             for item in items(t) {
-                s.push_failed(item);
+                system.push_failed(item);
             }
         }
     }
-    if let Some(s) = system {
-        run.systems.push(s);
-    }
-    run.systems
-        .retain(|s| s.built + s.failed_count + s.skipped > 0);
+    run.systems.push(system);
+    run.systems.retain(|s| !s.is_empty());
     (!run.systems.is_empty()).then_some(run)
 }
 
@@ -145,6 +163,10 @@ impl System {
             failed_count: 0,
             skipped: 0,
         }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.built + self.failed_count + self.skipped == 0
     }
 
     fn push_failed(&mut self, item: String) {
@@ -161,16 +183,36 @@ enum Kind {
     Skipped,
 }
 
-/// The system of a `Result of \`nixpkgs-review pr N\` run on SYSTEM` line.
-fn native_header(l: &str) -> Option<String> {
-    let rest = l.split("Result of `nixpkgs-review").nth(1)?;
-    let rest = rest.split("` run on ").nth(1)?;
-    let system: String = rest
-        .trim_start()
+/// `Result of \`nixpkgs-review pr N\`…` (2019 on), or `## \`nixpkgs-review\`
+/// result` (2024 on, and the fork), in any markup.
+fn is_header(l: &str) -> bool {
+    let plain = strip(l).to_lowercase();
+    plain.contains("nixpkgs-review") && plain.contains("result")
+}
+
+/// A Nix system, `x86_64-linux` or `aarch64-darwin`, at the start of the
+/// text, with its markup and a tail such as `(sandbox = relaxed)` removed.
+/// Every architecture has a digit in its name; `nixpkgs-review` has none.
+fn system_name(s: &str) -> Option<String> {
+    let s = strip(s);
+    let word = s.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+    let name: String = word
         .chars()
         .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
         .collect();
-    (system.contains('-')).then_some(system)
+    let (arch, os) = name.split_once('-')?;
+    (arch.chars().any(|c| c.is_ascii_digit())
+        && !os.is_empty()
+        && os.chars().all(|c| c.is_ascii_lowercase()))
+    .then(|| name.clone())
+}
+
+fn login_name(s: &str) -> Option<String> {
+    let login: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect();
+    (!login.is_empty()).then_some(login)
 }
 
 fn between(s: &str, open: char, close: char) -> Option<&str> {
@@ -197,25 +239,46 @@ fn strip(s: &str) -> String {
         .join(" ")
 }
 
-/// `N package(s) built:`, `… failed to build:`, `… marked as broken and
-/// skipped:`, `… blacklisted:`, from a stripped line.
+/// `N packages built:`, `N tests were built:`, `N package failed to
+/// build:`, `N packages marked as broken and skipped:`, `N packages were
+/// blacklisted:`, from a stripped line: the first number, then a word
+/// that says what was counted, then what happened to them. An emoji
+/// before the number is fine.
 fn summary(plain: &str) -> Option<(u32, Kind)> {
-    let (n, rest) = plain.split_once(' ')?;
-    let n: u32 = n.parse().ok()?;
-    let rest = rest
-        .strip_prefix("packages")
-        .or_else(|| rest.strip_prefix("package"))?;
-    if !rest.starts_with(' ') {
+    let mut words = plain.split_whitespace();
+    let n: u32 = loop {
+        let w = words.next()?;
+        if let Ok(n) = w.parse() {
+            break n;
+        }
+        if w.chars().any(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+    };
+    let what = words.next()?;
+    if !["package", "test", "derivation", "attribute", "build"]
+        .iter()
+        .any(|w| what.starts_with(w))
+    {
         return None;
     }
-    let kind = if rest.contains("failed") {
+    let rest: Vec<&str> = words.collect();
+    let rest = rest.join(" ");
+    let kind = if rest.contains("fail") {
         Kind::Failed
-    } else if rest.contains("built") {
+    } else if rest.contains("built") || rest.contains("succeeded") || rest.contains("passed") {
         Kind::Built
-    } else if rest.contains("skipped")
-        || rest.contains("broken")
-        || rest.contains("blacklisted")
-        || rest.contains("not built")
+    } else if [
+        "skip",
+        "broken",
+        "blacklist",
+        "not found",
+        "present in",
+        "excluded",
+        "ignored",
+    ]
+    .iter()
+    .any(|w| rest.contains(w))
     {
         Kind::Skipped
     } else {
@@ -249,7 +312,8 @@ fn items(l: &str) -> Vec<String> {
     out
 }
 
-/// The attribute at the start of a list item, with its markup removed.
+/// The attribute at the start of a list item, with its markup removed:
+/// `hello`, `hello (hello-unstable)`, `[hello](url)`, `` `hello` ``.
 fn attr(item: &str) -> Option<String> {
     let s = strip(item);
     let s = s.trim().trim_start_matches('[').trim_matches('`');
@@ -582,6 +646,135 @@ Logs: https://github.com/yzhou216/nixpkgs-review-gha/actions/runs/16745317095
                 .unwrap()
                 .contains("/actions/runs/40382153678")
         );
+    }
+
+    /// The format of 2019-12 to 2020-10: no system, `-` items, "were".
+    const V2019: &str =
+        "Result of `nixpkgs-review pr 75000` [1](https://github.com/Mic92/nixpkgs-review)
+<details>
+  <summary>1 packages are marked as broken and were skipped:</summary>
+
+  - old-thing
+</details>
+<details>
+  <summary>2 packages failed to build:</summary>
+
+  - hello (hello-unstable)
+  - jq
+</details>
+<details>
+  <summary>1 tests were built:</summary>
+
+  - nixosTests.hello
+</details>
+<details>
+  <summary>3 packages were built:</summary>
+
+  - a
+  - b
+  - c
+</details>
+";
+
+    /// The format of 2024-09 on, by nixpkgs-review itself: unicode emoji,
+    /// a plain commit, aliases, tests, and the log tails of 2025-05 on.
+    const V2024: &str = "## `nixpkgs-review` result
+
+Generated using [`nixpkgs-review`](https://github.com/Mic92/nixpkgs-review).
+
+Command: `nixpkgs-review pr 600000 --checkout commit`
+Commit: `abcdef0123456789abcdef0123456789abcdef01`
+
+---
+### `x86_64-linux`
+<details>
+  <summary>⏩ 1 package present in ofBorg's evaluation, but not found in the checkout:</summary>
+  <ul>
+    <li>gone</li>
+  </ul>
+</details>
+<details>
+  <summary>❌ 1 package failed to build:</summary>
+  <ul>
+    <li>hello (hello-unstable, hello_2)</li>
+  </ul>
+</details>
+<details>
+  <summary>✅ 2 tests built:</summary>
+  <ul>
+    <li>nixosTests.hello</li>
+    <li>hello.passthru.tests.version</li>
+  </ul>
+</details>
+<details>
+  <summary>✅ 1 package built:</summary>
+  <ul>
+    <li>jq</li>
+  </ul>
+</details>
+
+---
+<details>
+<summary>hello</summary>
+<pre>make: *** [Makefile:12: all] Error 1
+1 test failed:
+- the one that matters
+</pre>
+</details>
+
+---
+### `aarch64-linux`
+<details>
+  <summary>✅ 1 package built:</summary>
+  <ul>
+    <li>hello</li>
+  </ul>
+</details>
+";
+
+    #[test]
+    fn the_older_formats_parse_too() {
+        let r = parse(V2019, "mic92", "u", t0()).unwrap();
+        assert_eq!(r.systems.len(), 1);
+        let s = &r.systems[0];
+        assert_eq!(s.name, NO_SYSTEM);
+        assert_eq!(
+            (s.built, s.failed_count, s.skipped),
+            (4, 2, 1),
+            "tests count as built"
+        );
+        assert_eq!(s.failed, vec!["hello", "jq"], "the alias is not the name");
+
+        let r = parse(V2024, "mic92", "u", t0()).unwrap();
+        assert_eq!(
+            r.commit.as_deref(),
+            Some("abcdef0123456789abcdef0123456789abcdef01")
+        );
+        assert_eq!(r.systems.len(), 2, "the log tail is not a system");
+        let s = &r.systems[0];
+        assert_eq!(s.name, "x86_64-linux");
+        assert_eq!((s.built, s.failed_count, s.skipped), (3, 1, 1));
+        assert_eq!(s.failed, vec!["hello"], "nothing from the log tail");
+        assert_eq!(r.systems[1].name, "aarch64-linux");
+        assert_eq!(r.systems[1].built, 1);
+    }
+
+    #[test]
+    fn a_system_needs_a_digit_in_its_architecture() {
+        assert_eq!(
+            system_name("`x86_64-linux` (sandbox = relaxed)").as_deref(),
+            Some("x86_64-linux")
+        );
+        assert_eq!(
+            system_name(" aarch64-darwin").as_deref(),
+            Some("aarch64-darwin")
+        );
+        assert_eq!(
+            system_name("riscv64-linux [1](x)").as_deref(),
+            Some("riscv64-linux")
+        );
+        assert_eq!(system_name("`nixpkgs-review` result"), None);
+        assert_eq!(system_name("Summary"), None);
     }
 
     #[test]

@@ -265,10 +265,13 @@ posted the result as a comment. That person lent their compute to vouch for
 the change. Maintainer Mode reads these comments like approvals: evidence
 with a name on it.
 
-- **A run** is a comment in the format of `nixpkgs-review --post-result`
-  ("Result of `nixpkgs-review pr N` run on x86_64-linux", then the
-  packages built and failed), or of nixpkgs-review-gha (one section per
-  system, the commit it built, and who triggered it). The run is by the
+- **A run** is a comment in a format of `nixpkgs-review --post-result`
+  since 2019 ("Result of `nixpkgs-review pr N` run on x86_64-linux", or
+  "`nixpkgs-review` result" with one section per system and the commit it
+  built), or of nixpkgs-review-gha (the same, plus who triggered it and
+  the logs). The reader is loose on purpose: a heading names a system, a
+  line "N packages built:" in any wording gives a count, and `<li>` or `-`
+  items give the names. The run is by the
   person the comment names, else by the author of the comment. It keeps,
   per system, the count of the packages built, the names of the first 50
   that failed, and the count of the packages skipped as broken.
