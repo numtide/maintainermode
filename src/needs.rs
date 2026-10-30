@@ -28,6 +28,9 @@ use crate::web::{App, Shared, Snapshot, ago, icon, octicon};
 const SHOWN: usize = 20;
 const MOOD_COOKIE: &str = "mood";
 const APPROVED_WAIT: i64 = 3;
+/// A pull request of the person's own with no push or comment from them
+/// for this long goes to the bottom, so it does not bury current work.
+const STALE_DAYS: i64 = 365;
 const EPSS_HIGH: f64 = 0.1;
 const PINGS: usize = 5;
 
@@ -157,6 +160,9 @@ pub(crate) struct Item {
     /// The (set, output label) pairs that run the package of an advisory.
     #[serde(rename = "outputs", serialize_with = "outputs")]
     pub(crate) hosts: Vec<(String, String)>,
+    /// The person's own pull request, untouched by them for [`STALE_DAYS`]:
+    /// listed last, whatever its cause.
+    pub(crate) stale: bool,
     #[serde(skip)]
     rank: (u8, i64, String),
 }
@@ -258,7 +264,7 @@ pub(crate) fn collect(i: &Inputs) -> Vec<Item> {
         out.extend(own(i, pr));
     }
     out.extend(review(i));
-    out.sort_by(|a, b| (a.cause, &a.rank).cmp(&(b.cause, &b.rank)));
+    out.sort_by(|a, b| (a.stale, a.cause, &a.rank).cmp(&(b.stale, b.cause, &b.rank)));
     out
 }
 
@@ -413,6 +419,7 @@ fn advisory(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         at: None,
         more,
         hosts,
+        stale: false,
         rank: (
             top.band.map_or(9, |b| 9 - b as u8),
             -((top.epss.unwrap_or(0.0) * 10_000.0) as i64),
@@ -517,6 +524,7 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         at: None,
         more: vec![],
         hosts: Vec::new(),
+        stale: false,
         rank: (
             crate::mine::order(why, true).0,
             i64::from(!failed),
@@ -616,11 +624,29 @@ fn due(i: &Inputs, pr: &Pr) -> Option<Item> {
         at: Some(at),
         more,
         hosts: Vec::new(),
+        stale: false,
         rank: (0, at.timestamp(), format!("{n:012}")),
     })
 }
 
+/// The item of the person's own pull request, if it needs them. One they
+/// have not pushed to or commented on for [`STALE_DAYS`] is marked stale
+/// and goes last, unless someone just reviewed it.
 fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
+    let mut it = own_item(i, pr)?;
+    let acted = last_act(pr);
+    if it.cause != Cause::Reviewed && i.now - acted >= Duration::days(STALE_DAYS) {
+        it.stale = true;
+        it.labels.push((
+            Tone::Neutral,
+            format!("no push or comment in {}", ago(acted)),
+        ));
+        it.detail.push_str(" It is stale: rebase it, or close it.");
+    }
+    Some(it)
+}
+
+fn own_item(i: &Inputs, pr: &Pr) -> Option<Item> {
     let n = pr.number;
     let mk = |cause: Cause, labels: Vec<(Tone, String)>, detail: String, fp: &[&str], at| Item {
         key: format!("pr:{n}"),
@@ -635,6 +661,7 @@ fn own(i: &Inputs, pr: &Pr) -> Option<Item> {
         at: Some(at),
         more: vec![],
         hosts: Vec::new(),
+        stale: false,
         rank: (0, at.timestamp(), format!("{n:012}")),
     };
     let acted = last_act(pr);
@@ -851,6 +878,7 @@ fn review(i: &Inputs) -> Vec<Item> {
                 at: Some(e.created_at),
                 more: vec![],
                 hosts: Vec::new(),
+                stale: false,
                 rank: (0, pos as i64, String::new()),
             })
         })
@@ -1554,6 +1582,39 @@ mod tests {
         assert_eq!(a.cause, Cause::Blocked);
         assert!(a.detail.contains("Approved by bob"));
         assert_eq!(find(&items, "pr:4").cause, Cause::Reviewed);
+    }
+
+    #[test]
+    fn a_pull_request_untouched_for_a_year_goes_last_and_says_so() {
+        let mut w = World::new();
+        let mut old = pr(1, "alice", 5 * 365);
+        old.mergeable = "CONFLICTING".into();
+        let mut recent = pr(2, "alice", 2);
+        recent.ci = Some("FAILURE".into());
+        w.add(old, &[]);
+        w.add(recent, &[]);
+        w.add(pr(3, "alice", 8), &["hello"]);
+        let items = w.items();
+        // Blocked would come before Waiting, but the stale one goes last.
+        assert_eq!(keys(&items), ["pr:2", "pr:3", "pr:1"]);
+        let it = find(&items, "pr:1");
+        assert!(it.stale);
+        assert_eq!(it.cause, Cause::Blocked);
+        // `ago` counts from the wall clock, so only the shape is checked.
+        assert!(it.labels[1].1.starts_with("no push or comment in "));
+        assert!(it.labels[1].1.ends_with('y'));
+        assert!(it.detail.ends_with("It is stale: rebase it, or close it."));
+        assert!(!find(&items, "pr:2").stale);
+
+        // A fresh review on an old pull request is not stale: it is news.
+        let mut w = World::new();
+        let mut old = pr(4, "alice", 5 * 365);
+        let r = rev(&old, "bob", "COMMENTED", ago_days(1));
+        old.reviews.push(r);
+        w.add(old, &[]);
+        let items = w.items();
+        assert_eq!(find(&items, "pr:4").cause, Cause::Reviewed);
+        assert!(!find(&items, "pr:4").stale);
     }
 
     #[test]
