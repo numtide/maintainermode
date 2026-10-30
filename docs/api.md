@@ -306,8 +306,9 @@ does not change `plans` and `events`.
 
 - `cause`: `advisory`, `follow_up`, `reviewed`, `blocked`, `waiting`,
   `review` or `package`. This is also the order of urgency.
-- `stale`: `true` for your own pull request with no push or comment from
-  you for a year. Stale items come last, after every cause.
+- `stale`: `true` for a pull request with no push for a year (one of your
+  own: no push or comment from you). Stale items come last, after every
+  cause.
 - `href`: the page of the primary action, on this site.
 - `fingerprint`: it changes when the state behind the item changes.
 - `at`: the time of the event behind the item, or `null`. For `follow_up`,

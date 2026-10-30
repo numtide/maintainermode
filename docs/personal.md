@@ -37,7 +37,7 @@ The list does not show what happened. The [inbox](#the-menu) does that. The list
 
 In cause 1, the worst severity comes first, then the highest EPSS chance. In cause 3, the newest review comes first. In causes 2, 4 and 5, the oldest comes first. In causes 6 and 7, the order of [your packages](#your-packages) applies: the packages of your machines come first, then what you maintain. In cause 6, a [treewide](rules.md#treewide-pull-requests) pull request comes after the others, with its mark, such as "treewide · 340 packages". A draft pull request gets cause 3, and cause 4 for failing checks or a merge conflict.
 
-**Stale pull requests.** One of your pull requests that you did not push to or comment on for a year is stale. It goes to the bottom of the list, after every cause, so it does not bury your current work. It keeps its cause and gets the label "no push or comment in 5y", and its text ends with "It is stale: rebase it, or close it." A new review (cause 3) on an old pull request is news, not stale.
+**Stale pull requests.** A pull request with no push for a year is stale. It goes to the bottom of the list, after every cause, so it does not bury current work. It keeps its cause. One to review (cause 6) gets the label "no push in 4y". One of yours (causes 2, 4 and 5) counts your comments too: it gets the label "no push or comment in 5y", and its text ends with "It is stale: rebase it, or close it." A new review (cause 3) on an old pull request of yours is news, not stale.
 
 The server uses only data that it already has. These signals are not in the list:
 

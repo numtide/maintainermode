@@ -160,8 +160,8 @@ pub(crate) struct Item {
     /// The (set, output label) pairs that run the package of an advisory.
     #[serde(rename = "outputs", serialize_with = "outputs")]
     pub(crate) hosts: Vec<(String, String)>,
-    /// The person's own pull request, untouched by them for [`STALE_DAYS`]:
-    /// listed last, whatever its cause.
+    /// A pull request with no push for [`STALE_DAYS`] (the person's own:
+    /// no push or comment from them): listed last, whatever its cause.
     pub(crate) stale: bool,
     #[serde(skip)]
     rank: (u8, i64, String),
@@ -852,6 +852,11 @@ fn review(i: &Inputs) -> Vec<Item> {
             if let Some(t) = &e.treewide {
                 labels.push((Tone::Neutral, t.mark()));
             }
+            let last_push = pr.pushes.iter().copied().max().unwrap_or(pr.created_at);
+            let stale = i.now - last_push >= Duration::days(STALE_DAYS);
+            if stale {
+                labels.push((Tone::Neutral, format!("no push in {}", ago(last_push))));
+            }
             let detail = format!(
                 "#{} by {}, {} old.{}",
                 e.number,
@@ -878,7 +883,7 @@ fn review(i: &Inputs) -> Vec<Item> {
                 at: Some(e.created_at),
                 more: vec![],
                 hosts: Vec::new(),
-                stale: false,
+                stale,
                 rank: (0, pos as i64, String::new()),
             })
         })
@@ -1743,6 +1748,23 @@ mod tests {
         w.s.pr_data[i].pushes.push(now());
         assert_eq!(keys(&w.items()), ["pr:10", "pr:11"]);
         assert!(find(&w.items(), "pr:11").detail.contains("New commits"));
+    }
+
+    #[test]
+    fn a_pull_request_to_review_with_no_push_for_a_year_goes_last() {
+        let mut w = World::new();
+        w.add(pr(10, "dave", 5 * 365), &["curl"]);
+        w.add(pr(11, "erin", 1), &["jq"]);
+        let mut pushed = pr(12, "frank", 5 * 365);
+        pushed.pushes.push(ago_days(3));
+        w.add(pushed, &["curl"]);
+        let items = w.items();
+        // #10 is on a machine, and would come first: it is stale instead.
+        assert_eq!(keys(&items), ["pr:12", "pr:11", "pr:10"]);
+        let it = find(&items, "pr:10");
+        assert!(it.stale);
+        assert!(it.labels[1].1.starts_with("no push in "), "{:?}", it.labels);
+        assert!(!find(&items, "pr:12").stale);
     }
 
     #[test]
