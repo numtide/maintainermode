@@ -259,6 +259,15 @@ impl Store {
                state TEXT NOT NULL,
                at TEXT NOT NULL,
                PRIMARY KEY (jobset, attr, build)
+             );
+             CREATE TABLE IF NOT EXISTS zhf_eval (
+               jobset TEXT NOT NULL,
+               eval INTEGER NOT NULL,
+               at TEXT NOT NULL,
+               fetched_at TEXT NOT NULL,
+               counts TEXT NOT NULL,
+               rows TEXT,
+               PRIMARY KEY (jobset, eval)
              );",
         )?;
         migrate_sets(&mut conn)?;
@@ -1800,6 +1809,123 @@ impl Store {
             conn.execute("DELETE FROM hydra_change WHERE at < ?1", [&b])?
                 + conn.execute("DELETE FROM hydra_state WHERE checked_at < ?1", [&b])?,
         )
+    }
+
+    /// Stores an evaluation with its rows; the rows of the older
+    /// evaluations of the jobset go, their counts stay.
+    pub fn put_zhf_eval(&self, e: &crate::zhf::Eval) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO zhf_eval (jobset, eval, at, fetched_at, counts, rows) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(jobset, eval) DO UPDATE SET at = ?3, fetched_at = ?4, counts = ?5, rows = ?6",
+            params![
+                e.jobset,
+                e.id as i64,
+                e.at.to_rfc3339(),
+                e.fetched_at.to_rfc3339(),
+                serde_json::to_string(&e.counts)?,
+                serde_json::to_string(&e.rows)?
+            ],
+        )?;
+        tx.execute(
+            "UPDATE zhf_eval SET rows = NULL WHERE jobset = ?1 AND eval < ?2 AND rows IS NOT NULL",
+            params![e.jobset, e.id as i64],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn zhf_has_eval(&self, jobset: &str, id: u64) -> Result<bool> {
+        let conn = self.lock();
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM zhf_eval WHERE jobset = ?1 AND eval = ?2",
+                params![jobset, id as i64],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The server read some evaluation of the jobset.
+    pub fn zhf_has_any(&self, jobset: &str) -> Result<bool> {
+        let conn = self.lock();
+        Ok(conn
+            .query_row(
+                "SELECT 1 FROM zhf_eval WHERE jobset = ?1 LIMIT 1",
+                [jobset],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// The newest evaluation of a jobset that still has its rows.
+    pub fn zhf_latest(&self, jobset: &str) -> Result<Option<crate::zhf::Eval>> {
+        let conn = self.lock();
+        let row = conn
+            .query_row(
+                "SELECT eval, at, fetched_at, counts, rows FROM zhf_eval
+                 WHERE jobset = ?1 AND rows IS NOT NULL ORDER BY eval DESC LIMIT 1",
+                [jobset],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((id, at, fetched_at, counts, rows)) = row else {
+            return Ok(None);
+        };
+        Ok(Some(crate::zhf::Eval {
+            jobset: jobset.to_string(),
+            id: id as u64,
+            at: DateTime::parse_from_rfc3339(&at)?.with_timezone(&Utc),
+            fetched_at: DateTime::parse_from_rfc3339(&fetched_at)?.with_timezone(&Utc),
+            counts: serde_json::from_str(&counts)?,
+            rows: serde_json::from_str(&rows)?,
+        }))
+    }
+
+    /// Every evaluation of a jobset, the oldest first.
+    pub fn zhf_history(&self, jobset: &str) -> Result<Vec<crate::zhf::Point>> {
+        let conn = self.lock();
+        let mut stmt = conn
+            .prepare("SELECT eval, at, counts FROM zhf_eval WHERE jobset = ?1 ORDER BY at, eval")?;
+        let rows = stmt.query_map([jobset], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (eval, at, counts) = row?;
+            let counts: crate::zhf::Counts = serde_json::from_str(&counts)?;
+            out.push(crate::zhf::Point {
+                jobset: jobset.to_string(),
+                eval: eval as u64,
+                at: DateTime::parse_from_rfc3339(&at)?.with_timezone(&Utc),
+                failing: counts.failing(),
+                failed: counts.failed,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn purge_zhf(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.lock();
+        Ok(conn.execute(
+            "DELETE FROM zhf_eval WHERE at < ?1 AND rows IS NULL",
+            [before.to_rfc3339()],
+        )?)
     }
 }
 

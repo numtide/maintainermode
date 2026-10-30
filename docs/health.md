@@ -91,6 +91,30 @@ The state of a package is one of these:
 
 The first build that the server sees only sets the state. A newer build with another state is a change. A change becomes an event of the kind "Hydra builds" in the inbox and the Atom feed of each person who maintains or watches the package: "Hydra build fails", "Hydra build fails: a dependency fails" or "Hydra build fixed". For a channel, the title ends with its name, such as "Hydra build fails on nixos-26.05". The event links to the build on Hydra. The server keeps the changes for 45 days. [Needs you](personal.md#needs-you) and the flags of [your packages](personal.md#your-packages) read the stored state. `/state?tab=status` and `hydra_builds` in `/api/v1/sync` show the counts. Requests to Hydra name Maintainer Mode in the `User-Agent`.
 
+### Zero Hydra Failures
+
+Before each NixOS release, the community fixes what fails on Hydra: the Zero Hydra Failures campaign, with a tracking issue in nixpkgs. `/zhf` is its page. It lists every failing job of the jobsets the campaign watches, so a person sees the failures of what they maintain, picks one that nobody owns, and everyone sees how far the campaign is.
+
+**The campaign.** The campaign is the newest open nixpkgs issue whose title has "Zero Hydra Failures" and a release, like "NixOS 26.11 – Zero Hydra Failures". The campaign starts on master, and moves to the release branch when the jobset `nixos/release-NN.MM` exists on Hydra. With no open issue, the page follows master: the next campaign starts there. The jobsets:
+
+| Where               | Linux packages and NixOS tests | Darwin packages                |
+| ------------------- | ------------------------------ | ------------------------------ |
+| master              | `nixos/unstable`               | `nixpkgs/unstable`             |
+| the release `NN.MM` | `nixos/release-NN.MM`          | `nixpkgs/nixpkgs-NN.MM-darwin` |
+
+The nixpkgs jobsets build Linux too; only their Darwin builds count, so a build is counted once.
+
+**The read.** Hydra has no JSON for the failing jobs of an evaluation: `/eval/<id>` gives 150,000 build ids and nothing else. The HTML page `/eval/<id>?full=1` lists every build in tabs, the failing ones first, so the server reads it up to the "Still Succeeding" tab, about 2 MB of 100 MB. Hydra renders the whole page before its first byte, so one read costs it about 30 seconds. Every 15 minutes, the server asks `/jobset/<jobset>/latest-eval`, one redirect, and reads the page only for an evaluation it has not read. The release jobsets evaluate about once a day. The rows of the newest evaluation of each jobset stay; the counts of the older ones stay 120 days, for the burndown.
+
+**The page.** The count at the top is the failing builds over the jobsets: the ones that fail themselves (failed, timed out, or over a limit) and the ones that wait on a dependency; aborted and cancelled builds do not count. The bar is the share fixed since the start: the first evaluation after the issue opened, once every jobset has a count. The chart is the same number at each evaluation. The tabs:
+
+- **Yours** (signed in): the packages you maintain, through a team, or watch, that fail.
+- **No maintainer**: packages with no maintainer that fail themselves. Fix one, and add yourself to `meta.maintainers` if you like it.
+- **All**: every failing job, with a filter by name or maintainer. A job is a package (`nixpkgs.hello.x86_64-linux` is `hello`), a NixOS test (`nixos.tests.acl`) or something else of the release, like an installer image.
+- **Pick one**: one direct failure at random, a package with no maintainer when there is one. "Another one" picks again.
+
+Each row merges the systems of a job: a badge per system, red when the build itself failed, grey when a dependency did; the badge links to the build. The row links to the log, the build and the package page. The ones that fail themselves come first, then the packages the index knows, then the ones on the most systems. The home page links to the page; during a campaign, the link names the release and counts your failures, or the ones with no maintainer. The JSON API gives the same at `/api/v1/zhf`: the campaign, the jobsets with their newest evaluation and counts, `failing`, `start`, `burndown`, and the rows of one tab, paged. `/state?tab=status` and `zhf` in `/api/v1/sync` show the reads.
+
 ## Search
 
 Each page has a search box in its header. Press `/` or `s` on any page to

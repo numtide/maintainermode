@@ -33,10 +33,11 @@ fn visitor(app: &App) -> Html {
     let mut out = crate::welcome::intro(app);
     out.push(&crate::first::section(app));
     out.push(&html!(
-        "<nav class=\"d-flex flex-wrap gap-2 mb-4\" aria-label=\"More in nixpkgs\">\
+        "<nav class=\"d-flex flex-wrap gap-2 mb-4\" aria-label=\"More in nixpkgs\">{}\
          <a class=\"btn btn-sm\" href=\"/review?tab=unowned\">{} Pull requests with no maintainer{}</a>\
          <a class=\"btn btn-sm\" href=\"/packages\">{} Packages and directories</a>\
          <a class=\"btn btn-sm\" href=\"/state\">{} The state of nixpkgs</a></nav>",
+        crate::zhf::home_link(app, None),
         icon(octicon!("git-pull-request")),
         counter(unowned),
         icon(octicon!("package")),
@@ -95,6 +96,10 @@ fn more_links(app: &App, s: &crate::web::Snapshot, login: &str) -> Html {
             icon(octicon!("git-merge")),
             counter(s.queues.merge.len())
         ));
+    }
+    let zhf = crate::zhf::home_link(app, Some(login));
+    if !zhf.is_empty() {
+        links.push(zhf);
     }
     html!(
         "<nav class=\"d-flex flex-wrap gap-2 mb-4\" aria-label=\"More for you\">{}</nav>",

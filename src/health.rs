@@ -702,6 +702,8 @@ pub struct Hydra {
     per_minute: u32,
     not_asked: AtomicU64,
     pub builds: crate::builds::Builds,
+    /// The failing jobs of the release, for `/zhf`.
+    pub zhf: crate::zhf::Zhf,
 }
 
 impl Default for Hydra {
@@ -729,6 +731,7 @@ impl Hydra {
             per_minute,
             not_asked: AtomicU64::new(0),
             builds: Default::default(),
+            zhf: Default::default(),
         }
     }
 

@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+
+<html lang="en">
+
+  <head>
+    <title>Hydra - Evaluation 1830830 of jobset nixos:release-26.05</title>
+
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=Edge" /><script type="text/javascript" src="https://hydra.nixos.org/static/js/jquery/jquery-3.4.1.min.js"></script>
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/jquery/jquery-ui-1.10.4.min.js"></script>
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/moment/moment-2.24.0.min.js"></script>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+<link href="https://hydra.nixos.org/static/fontawesome/css/all.css" rel="stylesheet" />
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/popper.min.js"></script>
+<script type="text/javascript" src="https://hydra.nixos.org/static/bootstrap/js/bootstrap.min.js"></script>
+<link href="https://hydra.nixos.org/static/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
+
+<!-- hydra.css may need to be moved to before boostrap to make the @media rule work. -->
+<link rel="stylesheet" href="https://hydra.nixos.org/static/css/hydra.css" type="text/css" />
+<link rel="stylesheet" href="https://hydra.nixos.org/static/css/rotated-th.css" type="text/css" />
+
+<style>
+  .popover { max-width: 40%; }
+</style>
+
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/bootbox.min.js"></script>
+
+<link rel="stylesheet" href="https://hydra.nixos.org/static/css/tree.css" type="text/css" />
+
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/common.js"></script>
+
+<script type="text/javascript" src="https://hydra.nixos.org/static/js/ansi_up.js"></script>
+
+  </head>
+
+  <body>
+
+    <nav class="navbar navbar-expand-md navbar-light bg-light">
+      <div class="container">
+        <a class="navbar-brand" href="https://hydra.nixos.org/">            <img src="https://hydra.nixos.org/logo" alt="Hydra Logo" class="logo" />        </a>
+        <button type="button" class="navbar-toggler" data-toggle="collapse" data-target="#navbarSupportedContent">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="navbarSupportedContent"><ul class="navbar-nav mr-auto">
+  <li class="nav-item dropdown"  >
+    <a class="nav-link dropdown-toggle" href="#" data-toggle="dropdown">Status<b class="caret"></b></a>
+    <div class="dropdown-menu">  <a class="dropdown-item"href="https://hydra.nixos.org/queue_summary" >Queue (80/33832)  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/status" >Running builds  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/machines" >Machine status  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/evals" >Latest evaluations  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/all" >Latest builds  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/steps" >Latest steps  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/queue_runner_status" >Queue Runner Status  </a>    </div>
+  </li>  <li class="nav-item dropdown"  >
+    <a class="nav-link dropdown-toggle" href="#" data-toggle="dropdown">Project<b class="caret"></b></a>
+    <div class="dropdown-menu">      <h6 class="dropdown-header">nixos</h6>
+      <div class="dropdown-divider"></div>  <a class="dropdown-item"href="https://hydra.nixos.org/project/nixos" >Overview  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/project/nixos/all" >Latest builds  </a>    </div>
+  </li>  <li class="nav-item dropdown"  >
+    <a class="nav-link dropdown-toggle" href="#" data-toggle="dropdown">Jobset<b class="caret"></b></a>
+    <div class="dropdown-menu">      <h6 class="dropdown-header">release-26.05</h6>
+      <div class="dropdown-divider"></div>  <a class="dropdown-item"href="https://hydra.nixos.org/jobset/nixos/release-26.05" >Overview  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/jobset/nixos/release-26.05/evals" >Evaluations  </a>  <a class="dropdown-item"href="https://hydra.nixos.org/jobset/nixos/release-26.05/all" >Latest builds  </a>    </div>
+  </li>
+</ul>    <form class="form-inline" action="https://hydra.nixos.org/search">
+      <input name="query" type="text" class="form-control" placeholder="Search" value=""/>
+    </form>
+<ul class="navbar-nav">
+  <li class="nav-item dropdown" id="sign-in-menu" >
+    <a class="nav-link dropdown-toggle" href="#" data-toggle="dropdown">Sign in<b class="caret"></b></a>
+    <div class="dropdown-menu dropdown-menu-right">        <a class="dropdown-item" href="/github-redirect?after=eval%2F1830830">Sign in with GitHub</a><div class="dropdown-divider"></div>        <a class="dropdown-item" href="#hydra-signin" data-toggle="modal">Sign in with a Hydra account</a>    </div>
+  </li>
+</ul>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container">
+      <div class="skip-topbar"></div>
+        <div class="page-header">Evaluation 1830830 of jobset <a href="https://hydra.nixos.org/project/nixos">nixos</a>:<a href="https://hydra.nixos.org/jobset/nixos/release-26.05">release-26.05</a>        </div>
+<div class="dropdown">
+  <button class="btn btn-primary dropdown-toggle float-right" data-toggle="dropdown"><i class="fas fa-eye"></i> Compare to...</button>
+  <div class="dropdown-menu dropdown-menu-right">
+    <a class="dropdown-item" href="?">Preceding evaluation in this jobset</a>
+    <div class="dropdown-divider"></div>
+    <a class="dropdown-item" href="?compare=-86400&full=1">This jobset <strong>one day</strong> earlier</a>
+    <a class="dropdown-item" href="?compare=-604800&full=1">This jobset <strong>one week</strong> earlier</a>
+    <a class="dropdown-item" href="?compare=-2678400&full=1">This jobset <strong>one month</strong> earlier</a>      <div class="dropdown-divider"></div>        <a class="dropdown-item" href="?compare=pr-560887-qemu-vm-ESP-only&full=1">Jobset <tt>nixos:pr-560887-qemu-vm-ESP-only</tt></a>        <a class="dropdown-item" href="?compare=release-26.05-small&full=1">Jobset <tt>nixos:release-26.05-small</tt></a>        <a class="dropdown-item" href="?compare=staging&full=1">Jobset <tt>nixos:staging</tt></a>        <a class="dropdown-item" href="?compare=staging-next&full=1">Jobset <tt>nixos:staging-next</tt></a>        <a class="dropdown-item" href="?compare=staging-next-26.05&full=1">Jobset <tt>nixos:staging-next-26.05</tt></a>        <a class="dropdown-item" href="?compare=staging-next-26.05-small&full=1">Jobset <tt>nixos:staging-next-26.05-small</tt></a>        <a class="dropdown-item" href="?compare=staging-next-small&full=1">Jobset <tt>nixos:staging-next-small</tt></a>        <a class="dropdown-item" href="?compare=staging-nixos-small&full=1">Jobset <tt>nixos:staging-nixos-small</tt></a>        <a class="dropdown-item" href="?compare=staging-small&full=1">Jobset <tt>nixos:staging-small</tt></a>        <a class="dropdown-item" href="?compare=unstable&full=1">Jobset <tt>nixos:unstable</tt></a>        <a class="dropdown-item" href="?compare=unstable-small&full=1">Jobset <tt>nixos:unstable-small</tt></a>  </div>
+</div>
+
+<p>This evaluation was performed  on <time datetime="2026-10-29T18:44:19Z" data-timestamp="1793299459" title="2026-10-29 18:44:19 (UTC)" class="date is-absolute">2026-10-29 18:44:19</time>. Fetching the dependencies took 30s and evaluation took 2049s.</p>
+<p>Comparisons are relative to <tt><a href="https://hydra.nixos.org/project/nixos"><tt>nixos</tt></a>:<a href="https://hydra.nixos.org/jobset/nixos/release-26.05"><tt>release-26.05</tt></a></tt> evaluation <a href="https://hydra.nixos.org/eval/1830780">1830780</a>.</p>
+<form>
+  <div class="form-group">
+    <input name="filter" type="text" class="form-control" type="search" placeholder="Search jobs by name..." value=""/>
+    <input name="compare" type="hidden" value="1830780"/>
+    <input name="full" type="hidden" value="1"/>
+  </div>
+</form>
+
+<ul class="nav nav-tabs">    <li class="nav-item"><a class="nav-link" href="#tabs-aborted" data-toggle="tab"><span class="text-warning">Aborted / Timed out Jobs (27)</span></a></li>    <li class="nav-item"><a class="nav-link" href="#tabs-now-fail" data-toggle="tab"><span class="text-warning">Newly Failing Jobs (6)</span></a></li>    <li class="nav-item"><a class="nav-link" href="#tabs-now-succeed" data-toggle="tab"><span class="text-success">Newly Succeeding Jobs (6)</span></a></li>    <li class="nav-item"><a class="nav-link" href="#tabs-new" data-toggle="tab">New Jobs (4)</a></li>    <li class="nav-item"><a class="nav-link" href="#tabs-still-fail" data-toggle="tab">Still Failing Jobs (2695)</a></li>    <li class="nav-item"><a class="nav-link" href="#tabs-still-succeed" data-toggle="tab">Still Succeeding Jobs (147234)</a></li>  <li class="nav-item"><a class="nav-link" href="#tabs-inputs" data-toggle="tab">Inputs</a></li>
+    <li class="nav-item"><a class="nav-link" href="#tabs-errors" data-toggle="tab"><span class="text-warning">Evaluation Errors</span></a></li></ul>
+
+<div class="tab-content">
+
+  <div id="tabs-aborted" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094161">351094161</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094161">nixos.tests.boot.uefiNetboot.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:36:00Z" data-timestamp="1793190960" title="2026-10-28 12:36:00 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>-test-run-boot-netboot-uefi</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527885">351527885</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527885">nixos.tests.grafana.basic.x86_64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793328755" title="2026-10-30 02:52:35 (UTC)" datetime="2026-10-30T02:52:35Z" class="date is-relative">11h ago</time></td>
+      <td>container-test-run-grafana-basic</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094810">351094810</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094810">nixos.tests.grow-partition.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 12:38:10 (UTC)" data-timestamp="1793191090" datetime="2026-10-28T12:38:10Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-grow-partition</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094801">351094801</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094801">nixos.tests.grub.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:38:08Z" data-timestamp="1793191088" title="2026-10-28 12:38:08 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-grub</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351095133">351095133</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351095133">nixos.tests.iscsi-root.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 12:41:00 (UTC)" data-timestamp="1793191260" datetime="2026-10-28T12:41:00Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-iscsi</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527984">351527984</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527984">nixos.tests.jellyfin.x86_64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793329535" title="2026-10-30 03:05:35 (UTC)" datetime="2026-10-30T03:05:35Z" class="date is-relative">10h ago</time></td>
+      <td>vm-test-run-jellyfin</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528163">351528163</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528163">nixos.tests.openstack-image-metadata.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-30T03:14:36Z" data-timestamp="1793330076" title="2026-10-30 03:14:36 (UTC)" class="date is-relative">10h ago</time></td>
+      <td>-test-run-ec2-openstack-ec2-metadata</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351096695">351096695</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351096695">nixos.tests.qemu-vm-store.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 12:48:20 (UTC)" data-timestamp="1793191700" datetime="2026-10-28T12:48:20Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-qemu-vm-store</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097154">351097154</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097154">nixos.tests.systemd-initrd-luks-password.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793191897" title="2026-10-28 12:51:37 (UTC)" datetime="2026-10-28T12:51:37Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-systemd-initrd-luks-password</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097156">351097156</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097156">nixos.tests.systemd-initrd-luks-password.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:58:37Z" data-timestamp="1793192317" title="2026-10-28 12:58:37 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-systemd-initrd-luks-password</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097172">351097172</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097172">nixos.tests.systemd-initrd-vconsole.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:51:39Z" data-timestamp="1793191899" title="2026-10-28 12:51:39 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-systemd-initrd-vconsole</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097185">351097185</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097185">nixos.tests.systemd-initrd-vconsole.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:58:42Z" data-timestamp="1793192322" title="2026-10-28 12:58:42 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-systemd-initrd-vconsole</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097318">351097318</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097318">nixos.tests.terminal-emulators.ghostty.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:52:46Z" title="2026-10-28 12:52:46 (UTC)" data-timestamp="1793191966" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-terminal-emulator-ghostty</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351097311">351097311</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351097311">nixos.tests.terminal-emulators.ghostty.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:59:03Z" data-timestamp="1793192343" title="2026-10-28 12:59:03 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-terminal-emulator-ghostty</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Log limit exceeded" alt="Log limit exceeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351106907">351106907</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351106907">nixpkgs.converged-security-suite.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:56:29Z" title="2026-10-28 11:56:29 (UTC)" data-timestamp="1793188589" class="date is-relative">2d ago</time></td>
+      <td>converged-security-suite-2.8.2</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Log limit exceeded" alt="Log limit exceeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351106911">351106911</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351106911">nixpkgs.converged-security-suite.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:01:07Z" data-timestamp="1793188867" title="2026-10-28 12:01:07 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>converged-security-suite-2.8.2</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351136726">351136726</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351136726">nixpkgs.iaito.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T15:09:12Z" title="2026-10-28 15:09:12 (UTC)" data-timestamp="1793200152" class="date is-relative">1d ago</time></td>
+      <td>iaito-6.1.4</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351136731">351136731</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351136731">nixpkgs.iaito.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 12:20:11 (UTC)" data-timestamp="1793190011" datetime="2026-10-28T12:20:11Z" class="date is-relative">2d ago</time></td>
+      <td>iaito-6.1.4</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351152888">351152888</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351152888">nixpkgs.mathemagix.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 15:24:03 (UTC)" data-timestamp="1793201043" datetime="2026-10-28T15:24:03Z" class="date is-relative">1d ago</time></td>
+      <td>mathemagix-11229</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351164884">351164884</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351164884">nixpkgs.pdf-oxide.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793187439" title="2026-10-28 11:37:19 (UTC)" datetime="2026-10-28T11:37:19Z" class="date is-relative">2d ago</time></td>
+      <td>pdf-oxide-0.3.47</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351184596">351184596</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351184596">nixpkgs.python313Packages.inequality.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 14:22:59 (UTC)" data-timestamp="1793197379" datetime="2026-10-28T14:22:59Z" class="date is-relative">1d ago</time></td>
+      <td>python3.13-inequality-1.1.2</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351186275">351186275</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351186275">nixpkgs.python313Packages.mapclassify.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 14:22:59 (UTC)" data-timestamp="1793197379" datetime="2026-10-28T14:22:59Z" class="date is-relative">1d ago</time></td>
+      <td>python3.13-mapclassify-2.10.0-unstable-2026-07-20</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351186850">351186850</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351186850">nixpkgs.python313Packages.momepy.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T14:22:59Z" title="2026-10-28 14:22:59 (UTC)" data-timestamp="1793197379" class="date is-relative">1d ago</time></td>
+      <td>python3.13-momepy-0.11.0</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351209444">351209444</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351209444">nixpkgs.python314Packages.ospd.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T15:16:23Z" title="2026-10-28 15:16:23 (UTC)" data-timestamp="1793200583" class="date is-relative">1d ago</time></td>
+      <td>python3.14-ospd-21.4.4</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351209445">351209445</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351209445">nixpkgs.python314Packages.ospd.x86_64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793190461" title="2026-10-28 12:27:41 (UTC)" datetime="2026-10-28T12:27:41Z" class="date is-relative">2d ago</time></td>
+      <td>python3.14-ospd-21.4.4</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351219548">351219548</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351219548">nixpkgs.rbspy.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:30:30Z" title="2026-10-28 11:30:30 (UTC)" data-timestamp="1793187030" class="date is-relative">2d ago</time></td>
+      <td>rbspy-0.46.0</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-stopsign-1f6d1.svg" height="16" width="16" title="Timed out" alt="Timed out" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351219550">351219550</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351219550">nixpkgs.rbspy.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T12:35:40Z" data-timestamp="1793190940" title="2026-10-28 12:35:40 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>rbspy-0.46.0</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    </tbody>
+  </table>  </div>
+
+  <div id="tabs-now-fail" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527848">351527848</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527848">nixos.tests.ersatztv.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-29T21:17:17Z" title="2026-10-29 21:17:17 (UTC)" data-timestamp="1793308637" class="date is-relative">16h ago</time></td>
+      <td>vm-test-run-ersatztv</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527852">351527852</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527852">nixos.tests.ersatztv.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-30 02:07:25 (UTC)" data-timestamp="1793326045" datetime="2026-10-30T02:07:25Z" class="date is-relative">11h ago</time></td>
+      <td>vm-test-run-ersatztv</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527950">351527950</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527950">nixos.tests.installer-systemd-stage-1.clevisLuksAskpassFallback.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-30T02:22:01Z" title="2026-10-30 02:22:01 (UTC)" data-timestamp="1793326921" class="date is-relative">11h ago</time></td>
+      <td>vm-test-run-installer-clevis-luks-askpass-fallback</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-gray-x-2716.svg" height="16" width="16" title="Dependency failed" alt="Dependency failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527982">351527982</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527982">nixos.tests.inventree.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-29 19:01:58 (UTC)" data-timestamp="1793300518" datetime="2026-10-29T19:01:58Z" class="date is-relative">18h ago</time></td>
+      <td>vm-test-run-inventree</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528200">351528200</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528200">nixos.tests.prometheus-exporters.lnd.x86_64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793327500" title="2026-10-30 02:31:40 (UTC)" datetime="2026-10-30T02:31:40Z" class="date is-relative">11h ago</time></td>
+      <td>vm-test-run-prometheus-lnd-exporter</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528922">351528922</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528922">nixpkgs.inventree.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-29 19:01:58 (UTC)" data-timestamp="1793300518" datetime="2026-10-29T19:01:58Z" class="date is-relative">18h ago</time></td>
+      <td>inventree-1.3.3</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    </tbody>
+  </table>  </div>
+
+  <div id="tabs-now-succeed" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527761">351527761</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527761">nixos.tests.anki-sync-server.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-29 18:59:23 (UTC)" data-timestamp="1793300363" datetime="2026-10-29T18:59:23Z" class="date is-relative">18h ago</time></td>
+      <td>vm-test-run-anki-sync-server</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527762">351527762</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527762">nixos.tests.anki-sync-server.x86_64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793299832" title="2026-10-29 18:50:32 (UTC)" datetime="2026-10-29T18:50:32Z" class="date is-relative">19h ago</time></td>
+      <td>vm-test-run-anki-sync-server</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528287">351528287</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528287">nixpkgs.anki.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-29T18:49:49Z" title="2026-10-29 18:49:49 (UTC)" data-timestamp="1793299789" class="date is-relative">19h ago</time></td>
+      <td>anki-25.09.4</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528289">351528289</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528289">nixpkgs.anki.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-29T18:50:08Z" title="2026-10-29 18:50:08 (UTC)" data-timestamp="1793299808" class="date is-relative">19h ago</time></td>
+      <td>anki-25.09.4</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351529033">351529033</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351529033">nixpkgs.mnemosyne.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793299809" title="2026-10-29 18:50:09 (UTC)" datetime="2026-10-29T18:50:09Z" class="date is-relative">19h ago</time></td>
+      <td>mnemosyne-2.10.1</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351529032">351529032</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351529032">nixpkgs.mnemosyne.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-29T18:50:09Z" data-timestamp="1793299809" title="2026-10-29 18:50:09 (UTC)" class="date is-relative">19h ago</time></td>
+      <td>mnemosyne-2.10.1</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    </tbody>
+  </table>  </div>
+
+  <div id="tabs-new" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528409">351528409</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528409">nixpkgs.craft-fonts.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793300586" title="2026-10-29 19:03:06 (UTC)" datetime="2026-10-29T19:03:06Z" class="date is-relative">18h ago</time></td>
+      <td>craft-fonts-0-unstable-2026-10-11</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351528411">351528411</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351528411">nixpkgs.craft-fonts.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-30T02:16:41Z" title="2026-10-30 02:16:41 (UTC)" data-timestamp="1793326601" class="date is-relative">11h ago</time></td>
+      <td>craft-fonts-0-unstable-2026-10-11</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351529063">351529063</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351529063">nixpkgs.mullvad-browser.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-29 18:50:30 (UTC)" data-timestamp="1793299830" datetime="2026-10-29T18:50:30Z" class="date is-relative">19h ago</time></td>
+      <td>mullvad-browser-16.0</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351529591">351529591</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351529591">nixpkgs.tor-browser.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-29 19:08:50 (UTC)" data-timestamp="1793300930" datetime="2026-10-29T19:08:50Z" class="date is-relative">18h ago</time></td>
+      <td>tor-browser-16.0</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    </tbody>
+  </table>  </div>
+
+  <div id="tabs-removed" class="tab-pane">
+    <table class="table table-striped table-condensed clickable-rows">
+      <thead>
+        <tr><th>Job</th><th>System</th></tr>
+      </thead>
+      <tbody>      </tbody>
+    </table>
+  </div>
+
+  <div id="tabs-still-fail" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093960">351093960</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093960">nixos.tests.acl</a>        </td>      <td class="nowrap"><time data-timestamp="1793187360" title="2026-10-28 11:36:00 (UTC)" datetime="2026-10-28T11:36:00Z" class="date is-relative">2d ago</time></td>
+      <td>acl-2.4.0</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-gray-x-2716.svg" height="16" width="16" title="Dependency failed" alt="Dependency failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093985">351093985</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093985">nixos.tests.activation-bashless-closure.initrd</a>        </td>      <td class="nowrap"><time title="2026-10-28 11:34:07 (UTC)" data-timestamp="1793187247" datetime="2026-10-28T11:34:07Z" class="date is-relative">2d ago</time></td>
+      <td>bashless-closure-initrd</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-gray-x-2716.svg" height="16" width="16" title="Dependency failed" alt="Dependency failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093987">351093987</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093987">nixos.tests.activation-bashless-closure.machine</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:34:07Z" data-timestamp="1793187247" title="2026-10-28 11:34:07 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>bashless-closure-machine</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093981">351093981</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093981">nixos.tests.activation-bashless-closure.toplevel</a>        </td>      <td class="nowrap"><time data-timestamp="1793187247" title="2026-10-28 11:34:07 (UTC)" datetime="2026-10-28T11:34:07Z" class="date is-relative">2d ago</time></td>
+      <td>nixos-system-nixos-26.05pre-git</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-gray-x-2716.svg" height="16" width="16" title="Dependency failed" alt="Dependency failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093984">351093984</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093984">nixos.tests.activation-bashless-image.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793186561" title="2026-10-28 11:22:41 (UTC)" datetime="2026-10-28T11:22:41Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-activation-bashless-image</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-gray-x-2716.svg" height="16" width="16" title="Dependency failed" alt="Dependency failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093986">351093986</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093986">nixos.tests.activation-bashless-image.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:33:28Z" data-timestamp="1793187208" title="2026-10-28 11:33:28 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-activation-bashless-image</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093992">351093992</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093992">nixos.tests.activation-etc-overlay-immutable.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793186534" title="2026-10-28 11:22:14 (UTC)" datetime="2026-10-28T11:22:14Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-activation-etc-overlay-immutable</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351093988">351093988</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351093988">nixos.tests.activation-etc-overlay-immutable.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:41:01Z" data-timestamp="1793187661" title="2026-10-28 11:41:01 (UTC)" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-activation-etc-overlay-immutable</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094067">351094067</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094067">nixos.tests.appliance-repart-image-verity-store.aarch64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 11:41:10 (UTC)" data-timestamp="1793187670" datetime="2026-10-28T11:41:10Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-appliance-repart-image-verity-store</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094062">351094062</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094062">nixos.tests.appliance-repart-image-verity-store.x86_64-linux</a>        </td>      <td class="nowrap"><time title="2026-10-28 11:45:53 (UTC)" data-timestamp="1793187953" datetime="2026-10-28T11:45:53Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-appliance-repart-image-verity-store</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094087">351094087</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094087">nixos.tests.atuin-programs.aarch64-linux</a>        </td>      <td class="nowrap"><time data-timestamp="1793187384" title="2026-10-28 11:36:24 (UTC)" datetime="2026-10-28T11:36:24Z" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-atuin</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094093">351094093</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094093">nixos.tests.atuin-programs.x86_64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:22:25Z" title="2026-10-28 11:22:25 (UTC)" data-timestamp="1793186545" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-atuin</td>
+      <td class="nowrap"><tt>x86_64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-red-x-274c.svg" height="16" width="16" title="Failed" alt="Failed" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351094157">351094157</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351094157">nixos.tests.bittorrent.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-28T11:41:23Z" title="2026-10-28 11:41:23 (UTC)" data-timestamp="1793187683" class="date is-relative">2d ago</time></td>
+      <td>vm-test-run-bittorrent</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>
+  </tbody></table></div>
+
+  <div id="tabs-still-succeed" class="tab-pane">  <table class="table table-striped table-condensed clickable-rows">
+    <thead>
+      <tr>          <th></th>        <th>#</th>        <th>Job</th>        <th>Finished at</th>
+        <th>Package/release name</th>
+        <th>System</th>      </tr>
+    </thead>
+    <tbody>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527739">351527739</a></td>        <td>
+          <a href="https://hydra.nixos.org/build/351527739">nixos.amazonImage.aarch64-linux</a>        </td>      <td class="nowrap"><time datetime="2026-10-29T19:01:37Z" title="2026-10-29 19:01:37 (UTC)" data-timestamp="1793300497" class="date is-relative">18h ago</time></td>
+      <td>nixos-image-amazon-26.05.13164.6f06d204d8f2-aarch64-linux</td>
+      <td class="nowrap"><tt>aarch64-linux</tt></td>    </tr>    <tr>        <td>      <img src="https://hydra.nixos.org/static/images/emojione-check-2714.svg" height="16" width="16" title="Succeeded" alt="Succeeded" class="build-status" />        </td>      <td><a class="row-link" href="https://hydra.nixos.org/build/351527738">351527738</a></td>        <td>
+  </tbody></table></div>

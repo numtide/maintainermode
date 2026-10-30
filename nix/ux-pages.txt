@@ -39,6 +39,12 @@ public /state?tab=docs&doc=events
 public /state?tab=docs&doc=ingest
 public /state?tab=docs&doc=rescan
 public /state?tab=status
+both /zhf
+signed-in /zhf?tab=yours
+public /zhf?tab=unowned
+both /zhf?tab=all
+public /zhf?tab=pick
+public /zhf?tab=all&q=hello
 public /packages
 both /search
 both /search?q=zzzz-nothing-matches
@@ -111,6 +117,7 @@ skip /api/v1/progress
 skip /api/v1/search
 skip /api/v1/first
 skip /api/v1/need-help
+skip /api/v1/zhf
 skip /api/v1/modules/*file
 skip /api/v1/areas/*path
 skip /api/v1/find/*name

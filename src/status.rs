@@ -128,6 +128,7 @@ pub(crate) fn state(app: &App) -> Value {
         "notifications": app.notifications.json(Utc::now()),
         "hydra": app.hydra.stats(),
         "hydra_builds": app.hydra.builds.stats(),
+        "zhf": app.hydra.zhf.stats(),
         "rescans": rescans(app),
         "tokens": {
             "server": app.bot_token.is_some() || app.github_app.is_some(),
@@ -517,6 +518,33 @@ pub(crate) fn body(app: &App) -> Html {
             b["changes"],
             b["cache_requests"],
             b["cache_known"]
+        ),
+    ));
+    let z = &v["zhf"];
+    out.push(&kv(
+        "Zero Hydra Failures",
+        html!(
+            "{} · the newest evaluation of {} asked every {} ({} probes) · {} evaluation pages read, {} MB, last {} · {} failed passes{}",
+            match (z["campaign"].as_u64(), z["release"].as_str()) {
+                (Some(n), Some(r)) => html!("campaign for {r} (#{n}), {}", if z["branched"].as_bool() == Some(true) { "branched off" } else { "on master" }),
+                _ => Html::from("no campaign open: master"),
+            },
+            Html::text(
+                &z["jobsets"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|j| j.as_str()).collect::<Vec<_>>().join(" and "))
+                    .unwrap_or_default()
+            ),
+            minutes(z["every_seconds"].as_i64().unwrap_or(900)),
+            z["probes"],
+            z["pages"],
+            z["bytes"].as_u64().unwrap_or(0) >> 20,
+            when(&z["page_at"]),
+            z["failed_passes"],
+            z["last_error"]
+                .as_str()
+                .map(|e| html!(" (last: {e})"))
+                .unwrap_or_default()
         ),
     ));
     let r = &v["rescans"];

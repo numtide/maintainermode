@@ -30,6 +30,7 @@ pub(crate) const SECTIONS: [&str; 6] = [
 pub(crate) const MOODS: [&str; 5] = ["all", "mine", "machines", "review", "maintain"];
 pub(crate) const FILTERS: [&str; 4] = ["mine", "machines", "maintain", "watch"];
 const KINDS: [&str; 6] = ["mine", "pr", "issue", "advisory", "release", "build"];
+const ZHF_TABS: [&str; 4] = ["yours", "unowned", "all", "pick"];
 
 #[derive(Clone, Copy)]
 pub(crate) enum Type {
@@ -280,6 +281,23 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         cli: By("get"),
     },
     Endpoint {
+        path: "/api/v1/zhf",
+        about: "Zero Hydra Failures: the campaign, its Hydra jobsets, the failing builds now and at the start, the burndown, and the failing jobs of one tab, paged. yours: the packages the caller maintains or watches. unowned: packages with no maintainer that fail themselves. all: every failing job. pick: one direct failure at random, a package with no maintainer when there is one.",
+        params: &[
+            opt("tab", Type::OneOf(&ZHF_TABS), "the tab: all by default"),
+            opt(
+                "q",
+                Type::Text,
+                "keep the jobs whose name or maintainer has this",
+            ),
+            LIMIT_P,
+            CURSOR_P,
+        ],
+        private: false,
+        answered: true,
+        cli: By("get"),
+    },
+    Endpoint {
         path: "/api/v1/packages/index",
         about: "The public package list of the current index: pname and version of each attribute, gzip.",
         params: &[],
@@ -495,6 +513,11 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
         Without("the docs are the Markdown files in docs/ of the repository"),
     ),
     ("/state?tab=status", By(&["/api/v1/sync"])),
+    ("/zhf", By(&["/api/v1/zhf"])),
+    ("/zhf?tab=yours", By(&["/api/v1/zhf?tab=yours"])),
+    ("/zhf?tab=unowned", By(&["/api/v1/zhf?tab=unowned"])),
+    ("/zhf?tab=all", By(&["/api/v1/zhf?tab=all"])),
+    ("/zhf?tab=pick", By(&["/api/v1/zhf?tab=pick"])),
     ("/packages", By(&["/api/v1/search", "/api/v1/mine"])),
     ("/packages?q=", By(&["/api/v1/search?q=<name>"])),
     ("/search", By(&["/api/v1/search"])),
@@ -669,6 +692,7 @@ pub(crate) struct Args {
     pub number: Option<u64>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
+    pub tab: Option<String>,
 }
 
 impl Args {
@@ -818,6 +842,15 @@ pub(crate) async fn answer(
         "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit),
         "/api/v1/first" => paged(&crate::first::rows(app))?,
         "/api/v1/need-help" => paged(&need_help(app))?,
+        "/api/v1/zhf" => {
+            let tab = Args::text(&a.tab).unwrap_or("all");
+            if tab == "yours" && caller.is_none() {
+                return Err(Fail::SignIn);
+            }
+            private = tab == "yours";
+            crate::zhf::value(app, tab, caller, &text(&a.q), a.limit, a.cursor.as_deref())
+                .map_err(Fail::Bad)?
+        }
         "/api/v1/packages/:name" => {
             let n = text(&a.name);
             crate::catalog::package::value(app, &n)
@@ -1239,6 +1272,11 @@ pub(crate) mod tests {
                 .map(|s| format!("/review?tab=ready&section={s}")),
         );
         v.extend(crate::nixpkgs::views().iter().map(|s| s.to_string()));
+        v.extend(
+            crate::zhf::TABS
+                .iter()
+                .map(|(id, _)| format!("/zhf?tab={id}")),
+        );
         v.extend(crate::profile::views());
         v.extend(
             crate::mine::Filter::ALL
@@ -1269,6 +1307,8 @@ pub(crate) mod tests {
     fn the_inbox_kinds_of_the_api_are_those_of_the_site() {
         let site: Vec<&str> = crate::notify::Kind::ALL.iter().map(|k| k.key()).collect();
         assert_eq!(KINDS.to_vec(), site);
+        let zhf: Vec<&str> = crate::zhf::TABS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ZHF_TABS.to_vec(), zhf);
     }
 
     #[test]

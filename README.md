@@ -31,6 +31,9 @@ Information about all of nixpkgs, for everyone, with no login:
 - **Statistics:** the state of nixpkgs month by month (pull requests, reviews,
   merge times), and of its packages (outdated, vulnerable, unmaintained).
 - **Queues:** pull requests that need review, and pull requests ready to merge.
+- **Zero Hydra Failures:** every failing job of the next release on Hydra,
+  the ones with no maintainer, one picked at random for you, and how far
+  the campaign is.
 - **A first package**: the home page lists small packages with no maintainer, each with one task to do.
 
 ## 2. Make it yours
@@ -41,6 +44,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
   `meta.teams` names you, worst first.
 - **What you watch**: subscribe to any package, module or directory.
 - **Your packages**: one list on the packages page. The packages of your machines come first, then what you maintain, then what you watch.
+- **Your Hydra failures**: the Yours tab of Zero Hydra Failures lists what you maintain or watch that fails on the next release.
 - **Needs you**: the top of the home page. It lists what waits for you, the most urgent first: a serious advisory on your machines, a new review on your pull request, a blocked pull request, a pull request to review. Snooze an item, or push Next to go through them.
 - **Your pull requests**: set a follow-up plan on each one. If nobody
   reviews in some days, you get a reminder to ask the maintainers, or to
