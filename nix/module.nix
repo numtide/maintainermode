@@ -49,8 +49,12 @@ in
     enable = lib.mkEnableOption "Maintainer Mode, the nixpkgs review and merge queues";
 
     package = lib.mkOption {
-      type = lib.types.package;
-      description = "The maintainer-mode package. Its wrapper already names the evaluator.";
+      type = lib.types.either lib.types.package lib.types.str;
+      description = ''
+        The maintainer-mode package. Its wrapper already names the evaluator.
+        A string is a path outside the store, such as a Nix profile that a
+        deploy updates without a switch of the host.
+      '';
     };
 
     listen = lib.mkOption {
@@ -316,7 +320,7 @@ in
       # of a scanned flake inside the sandbox
       path = lib.optional (cfg.rescan.enable || gitCopy) pkgs.git;
       serviceConfig = {
-        ExecStart = "${lib.getExe cfg.package} serve";
+        ExecStart = "${cfg.package}/bin/maintainer-mode serve";
         DynamicUser = true;
         # the git copy has its own state directory, so that a host can keep
         # its gigabytes out of the snapshots and backups of the database
