@@ -18,6 +18,13 @@ use crate::ui::{Kind, empty, item_row, pager, section};
 use crate::web::{Snapshot, ago, ci_label, entry_rows, person_link};
 
 pub const TEAM: &str = "NixOS/nixpkgs-committers";
+/// The team that grants commit access. The Nixpkgs core team disbanded in
+/// August 2026 (NixOS/org#277); the CI team holds the role, as the README of
+/// NixOS/nixpkgs-committers says.
+pub const DELEGATION: &str = "NixOS/nixpkgs-ci";
+/// How long a read of the delegation team opens `/committers` to its
+/// members when no later read succeeds.
+pub const DELEGATION_KEPT_DAYS: i64 = 7;
 const MERGED_DAYS: i64 = 365;
 pub const SECURITY: &str = "1.severity: security";
 /// Rows of the list on the first page of the tab; later pages hold `review::PAGE`.
@@ -30,6 +37,9 @@ pub struct Committers {
     pub from_merges: usize,
     pub from_team: usize,
     pub team_at: Option<DateTime<Utc>>,
+    /// The members of [`DELEGATION`], and the logins of `--delegate`.
+    delegates: HashSet<String>,
+    pub delegation_at: Option<DateTime<Utc>>,
 }
 
 impl Committers {
@@ -55,6 +65,8 @@ impl Committers {
             from_team: team.len(),
             logins: merged.union(&team).cloned().collect(),
             team_at,
+            delegates: HashSet::new(),
+            delegation_at: None,
         }
     }
 
@@ -67,11 +79,56 @@ impl Committers {
             .unwrap_or_default();
         let at = store.get_time("committers_team_read").ok().flatten();
         let history = store.merges().unwrap_or_default();
-        Self::build(prs, &history, &team, at, now)
+        let mut c = Self::build(prs, &history, &team, at, now);
+        let logins = |key: &str| -> Vec<String> {
+            store
+                .get(key)
+                .ok()
+                .flatten()
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default()
+        };
+        // a list the server could not refresh for a week is not trusted:
+        // a person removed from the team must lose the page
+        c.delegation_at = store.get_time("delegation_team_read").ok().flatten();
+        let fresh = c
+            .delegation_at
+            .is_some_and(|t| now - t < Duration::days(DELEGATION_KEPT_DAYS));
+        let team = if fresh {
+            logins("delegation_team")
+        } else {
+            Vec::new()
+        };
+        c.delegates = team
+            .into_iter()
+            .chain(logins("delegates_extra"))
+            .map(|l| l.to_lowercase())
+            .collect();
+        c
+    }
+
+    /// Every login that counts as a committer, in lower case.
+    pub fn logins(&self) -> impl Iterator<Item = &str> {
+        self.logins.iter().map(String::as_str)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_delegates(mut self, logins: &[&str]) -> Self {
+        self.delegates = logins.iter().map(|l| l.to_lowercase()).collect();
+        self
     }
 
     pub fn is(&self, login: &str) -> bool {
         self.logins.contains(&login.to_lowercase())
+    }
+
+    /// Whether the login grants commit access: a member of [`DELEGATION`].
+    pub fn delegates(&self, login: &str) -> bool {
+        self.delegates.contains(&login.to_lowercase())
+    }
+
+    pub fn delegate_count(&self) -> usize {
+        self.delegates.len()
     }
 
     pub fn len(&self) -> usize {
@@ -79,19 +136,45 @@ impl Committers {
     }
 }
 
-/// Reads the team once a day with the server's own tokens. A token that may
-/// not see the team is normal: the merges in the synced data still count.
+/// Reads the committers team and the delegation team once a day with the
+/// server's own tokens. A token that may not see a team is normal: the
+/// merges in the synced data still count, and `/committers` opens to the
+/// logins of `--delegate` only, once a read is a week old.
 pub async fn refresh_team(store: &Store, tokens: Vec<String>) -> Result<()> {
     let tried = store.get_time("committers_team_tried")?;
     if tokens.is_empty() || tried.is_some_and(|t| Utc::now() - t < Duration::hours(24)) {
         return Ok(());
     }
     store.set("committers_team_tried", &Utc::now().to_rfc3339())?;
-    let (org, slug) = TEAM.split_once('/').unwrap();
-    let query = "query($org: String!, $slug: String!, $after: String) { rateLimit { remaining }
-        organization(login: $org) { team(slug: $slug) {
-          members(first: 100, after: $after, membership: ALL) { nodes { login } pageInfo { hasNextPage endCursor } } } } }";
     let mut client = crate::github::Client::new(tokens);
+    let mut out = Ok(());
+    // child teams of the committers count; a child team of the delegation
+    // team does not grant commit access
+    for (team, key, membership) in [
+        (TEAM, "committers_team", "ALL"),
+        (DELEGATION, "delegation_team", "IMMEDIATE"),
+    ] {
+        match read_team(&mut client, store, team, membership).await {
+            Ok(logins) => {
+                store.set(key, &serde_json::to_string(&logins)?)?;
+                store.set(&format!("{key}_read"), &Utc::now().to_rfc3339())?;
+            }
+            Err(e) => out = Err(e),
+        }
+    }
+    out
+}
+
+async fn read_team(
+    client: &mut crate::github::Client,
+    store: &Store,
+    team: &str,
+    membership: &str,
+) -> Result<Vec<String>> {
+    let (org, slug) = team.split_once('/').unwrap();
+    let query = "query($org: String!, $slug: String!, $after: String, $membership: TeamMembershipType!) { rateLimit { remaining }
+        organization(login: $org) { team(slug: $slug) {
+          members(first: 100, after: $after, membership: $membership) { nodes { login } pageInfo { hasNextPage endCursor } } } } }";
     let mut after = serde_json::Value::Null;
     let mut logins = Vec::new();
     for _ in 0..50 {
@@ -99,12 +182,12 @@ pub async fn refresh_team(store: &Store, tokens: Vec<String>) -> Result<()> {
             .graphql(
                 store,
                 query,
-                json!({ "org": org, "slug": slug, "after": after }),
+                json!({ "org": org, "slug": slug, "after": after, "membership": membership }),
             )
             .await?;
         let members = &data["organization"]["team"]["members"];
         if members.is_null() {
-            bail!("{TEAM} is not visible to the server token");
+            bail!("{team} is not visible to the server token");
         }
         logins.extend(
             members["nodes"]
@@ -115,13 +198,11 @@ pub async fn refresh_team(store: &Store, tokens: Vec<String>) -> Result<()> {
                 .map(str::to_string),
         );
         if members["pageInfo"]["hasNextPage"] != true {
-            store.set("committers_team", &serde_json::to_string(&logins)?)?;
-            store.set("committers_team_read", &Utc::now().to_rfc3339())?;
-            return Ok(());
+            return Ok(logins);
         }
         after = members["pageInfo"]["endCursor"].clone();
     }
-    bail!("{TEAM}: too many pages")
+    bail!("{team}: too many pages")
 }
 
 #[derive(Debug, Clone, Serialize)]

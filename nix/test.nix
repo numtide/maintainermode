@@ -357,6 +357,13 @@ pkgs.testers.runNixOSTest {
     machine.succeed("grep -q '<a href=\"/inbox\" aria-current=\"page\">' /tmp/s-inbox && ! grep -q 'site-tab\" href=\"[^\"]*\" aria-current' /tmp/s-inbox")
     machine.succeed("grep -q '<a href=\"/me/settings\" aria-current=\"page\">' /tmp/s-settings && ! grep -q 'site-tab\" href=\"[^\"]*\" aria-current' /tmp/s-settings")
     machine.succeed("curl -s -D /tmp/inbox0.h -o /dev/null http://127.0.0.1:8790/inbox && grep -q '^HTTP/1.1 303' /tmp/inbox0.h && grep -qi '^cache-control: private, no-store' /tmp/inbox0.h")
+    # commit access: a page for the delegation team only; alice is not in it
+    machine.succeed("curl -s -D /tmp/ca0.h -o /dev/null http://127.0.0.1:8790/committers && grep -q '^HTTP/1.1 303' /tmp/ca0.h && grep -qi '^cache-control: private, no-store' /tmp/ca0.h")
+    signed_in("/committers", "/tmp/s-committers", 403)
+    machine.succeed("grep -q 'NixOS/nixpkgs-ci' /tmp/s-committers && ! grep -q 'href=\"/committers\"' /tmp/s-inbox")
+    signed_in("/api/v1/committers", "/tmp/s-committers.json", 403)
+    machine.succeed("grep -q 'grant commit access' /tmp/s-committers.json")
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/api/v1/committers | grep -q 401")
     for f, label in [("mine", "All"), ("machines", "On my machines"), ("maintain", "I maintain"), ("watch", "I watch")]:
         signed_in(f"/packages?filter={f}", f"/tmp/s-pk-{f}")
         machine.succeed(f"grep -q 'href=\"/packages?filter={f}\" aria-current=\"page\">{label} <span class=\"Counter\">' /tmp/s-pk-{f}")

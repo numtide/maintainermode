@@ -246,6 +246,33 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
         cli: By("get"),
     },
     Endpoint {
+        path: "/api/v1/committers",
+        about: "The rows of /committers: everyone with a status about commit access (active committer, committer with no merge in 6 months, not a committer, former committer), with the facts of their whole history: pull requests reviewed, approvals that a committer merged, own pull requests merged, pull requests merged for others, first pull request, what they maintain. Only for the members of the team that grants commit access; 403 for everyone else. No score: the order is the one fact that sort names.",
+        params: &[
+            opt(
+                "status",
+                Type::OneOf(&crate::access::STATUSES),
+                "keep one status: all by default",
+            ),
+            opt(
+                "sort",
+                Type::OneOf(&crate::access::SORTS),
+                "the fact that orders the rows: reviews (the last 12 months) by default",
+            ),
+            opt(
+                "min",
+                Type::Int,
+                "for the people who are not committers: keep those who reviewed at least this many pull requests in the last 12 months, 10 by default",
+            ),
+            opt("q", Type::Text, "part of a login"),
+            LIMIT_P,
+            CURSOR_P,
+        ],
+        private: true,
+        answered: true,
+        cli: By("get"),
+    },
+    Endpoint {
         path: "/api/v1/search",
         about: "What the search box of the site finds: packages, NixOS modules and areas of the tree with their health flags, maintainers, pull requests whose title has the words, and advisories with that id. `page` is the page the site opens at once, if any.",
         params: &[
@@ -566,6 +593,63 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/inbox?kind=release", By(&["/api/v1/inbox?kind=release"])),
     ("/inbox?kind=build", By(&["/api/v1/inbox?kind=build"])),
     ("/me/progress", By(&["/api/v1/progress"])),
+    ("/committers", By(&["/api/v1/committers"])),
+    (
+        "/committers?status=all",
+        By(&["/api/v1/committers?status=all"]),
+    ),
+    (
+        "/committers?status=active",
+        By(&["/api/v1/committers?status=active"]),
+    ),
+    (
+        "/committers?status=inactive",
+        By(&["/api/v1/committers?status=inactive"]),
+    ),
+    (
+        "/committers?status=candidate",
+        By(&["/api/v1/committers?status=candidate"]),
+    ),
+    (
+        "/committers?status=former",
+        By(&["/api/v1/committers?status=former"]),
+    ),
+    (
+        "/committers?sort=reviews",
+        By(&["/api/v1/committers?sort=reviews"]),
+    ),
+    (
+        "/committers?sort=reviews_all",
+        By(&["/api/v1/committers?sort=reviews_all"]),
+    ),
+    (
+        "/committers?sort=approved",
+        By(&["/api/v1/committers?sort=approved"]),
+    ),
+    (
+        "/committers?sort=merged",
+        By(&["/api/v1/committers?sort=merged"]),
+    ),
+    (
+        "/committers?sort=merges",
+        By(&["/api/v1/committers?sort=merges"]),
+    ),
+    (
+        "/committers?sort=last_merge",
+        By(&["/api/v1/committers?sort=last_merge"]),
+    ),
+    (
+        "/committers?sort=first",
+        By(&["/api/v1/committers?sort=first"]),
+    ),
+    (
+        "/committers?sort=maintains",
+        By(&["/api/v1/committers?sort=maintains"]),
+    ),
+    ("/committers?min=1", By(&["/api/v1/committers?min=1"])),
+    ("/committers?min=10", By(&["/api/v1/committers?min=10"])),
+    ("/committers?min=25", By(&["/api/v1/committers?min=25"])),
+    ("/committers?min=50", By(&["/api/v1/committers?min=50"])),
     (
         "/me/settings",
         By(&["/api/v1/sets", "/api/v1/progress", "/api/v1/needs"]),
@@ -690,6 +774,8 @@ pub(crate) struct Args {
     pub owner: Option<String>,
     pub repo: Option<String>,
     pub number: Option<u64>,
+    pub status: Option<String>,
+    pub min: Option<usize>,
     pub limit: Option<usize>,
     pub cursor: Option<String>,
     pub tab: Option<String>,
@@ -736,13 +822,15 @@ pub(crate) enum Fail {
     /// A pull request that is not in the synced data: its GitHub URL helps.
     Unsynced(u64),
     SignIn,
+    /// Signed in, but not one of the people the endpoint is for.
+    Forbidden(String),
     Failed(String),
 }
 
 impl Fail {
     pub(crate) fn text(self) -> String {
         match self {
-            Fail::Bad(m) | Fail::Missing(m) | Fail::Failed(m) => m,
+            Fail::Bad(m) | Fail::Missing(m) | Fail::Forbidden(m) | Fail::Failed(m) => m,
             Fail::Unsynced(n) => crate::prpage::not_in_data(n),
             Fail::SignIn => "sign in first, or send your API token".into(),
         }
@@ -762,6 +850,7 @@ impl Fail {
             Fail::Bad(_) => StatusCode::BAD_REQUEST,
             Fail::Missing(_) | Fail::Unsynced(_) => StatusCode::NOT_FOUND,
             Fail::SignIn => StatusCode::UNAUTHORIZED,
+            Fail::Forbidden(_) => StatusCode::FORBIDDEN,
             Fail::Failed(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -838,6 +927,20 @@ pub(crate) async fn answer(
         .map_err(Fail::Bad)?,
         "/api/v1/progress" => {
             json!({ "login": me, "progress": crate::progress::of(app, me) })
+        }
+        "/api/v1/committers" => {
+            if !app.snap().committers.delegates(me) {
+                return Err(Fail::Forbidden(crate::access::forbidden_text(app)));
+            }
+            let o = crate::access::Opts {
+                status: a.status.clone(),
+                sort: a.sort.clone(),
+                min: a.min,
+                q: a.q.clone(),
+                after: None,
+            };
+            crate::access::value(app, &o, a.limit, a.cursor.as_deref(), chrono::Utc::now())
+                .map_err(Fail::Bad)?
         }
         "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit),
         "/api/v1/first" => paged(&crate::first::rows(app))?,
@@ -1278,6 +1381,7 @@ pub(crate) mod tests {
                 .map(|(id, _)| format!("/zhf?tab={id}")),
         );
         v.extend(crate::profile::views());
+        v.extend(crate::access::tests::views());
         v.extend(
             crate::mine::Filter::ALL
                 .iter()

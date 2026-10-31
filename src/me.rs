@@ -32,8 +32,8 @@ pub fn routes() -> Router<Shared> {
 }
 
 /// Every answer for one person, a redirect or an error too: /me, /inbox,
-/// /needs, the private API, the CLI login, and /packages with a session,
-/// whose filters are private.
+/// /needs, the private API, the CLI login, /committers, and /packages with a
+/// session, whose filters are private.
 pub async fn no_store(req: Request, next: Next) -> Response {
     let path = req.uri().path();
     let private = path == "/me"
@@ -41,6 +41,7 @@ pub async fn no_store(req: Request, next: Next) -> Response {
         || path == crate::notify::INBOX
         || path.starts_with("/needs/")
         || crate::api::is_private(path)
+        || path == "/committers"
         || path == "/login/cli"
         || path.starts_with("/api/v1/login")
         || (path == "/packages" && crate::web::cookie(req.headers(), "session").is_some());

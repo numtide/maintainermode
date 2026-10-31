@@ -289,6 +289,7 @@ pub fn router(app: Shared) -> Router {
         .merge(crate::needs::routes())
         .merge(crate::followup::routes())
         .merge(crate::zhf::routes())
+        .merge(crate::access::routes())
         .layer(axum::middleware::from_fn(crate::me::no_store))
         .layer(axum::middleware::from_fn(same_origin))
         .layer(axum::middleware::from_fn(crate::assets::etag))
@@ -871,6 +872,9 @@ pub(crate) fn status_value(app: &App) -> serde_json::Value {
             "team": crate::committer::TEAM,
             "team_members": s.committers.from_team,
             "team_read_at": s.committers.team_at,
+            "delegation_team": crate::committer::DELEGATION,
+            "delegates": s.committers.delegate_count(),
+            "delegation_read_at": s.committers.delegation_at,
         }),
         rules: json!({
             "move_days": ledger::MOVE_DAYS,

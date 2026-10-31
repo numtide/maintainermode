@@ -58,6 +58,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
   pull requests, merges, issues, advisories and releases.
 - **Your progress**: your reviews and your weekly goal. Only you see it.
 - **For committers**: what is ready to merge in your areas, on the Ready to merge tab of the review page.
+- **For the people who grant commit access**: one queue of every committer and every active reviewer, each with a status, with the facts and the links to judge by. Only the delegation team sees it.
 - **Onboarding**: three first steps. A person who maintains nothing yet learns how to start; a maintainer gets help to keep up.
 
 ## 3. Act on it

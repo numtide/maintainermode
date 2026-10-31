@@ -26,6 +26,8 @@ pub(crate) enum Personal {
     Inbox,
     Progress,
     Settings,
+    /// Only for the people who grant commit access.
+    Access,
 }
 
 pub(crate) const NAV: [(Section, &str, &str, &str); 4] = [
@@ -301,8 +303,10 @@ fn menu(app: &App, viewer: Option<&str>, section_now: Section) -> Html {
     } else {
         Html::new()
     };
+    let delegate = app.snap().committers.delegates(v);
     let items: Html = MENU
         .iter()
+        .filter(|(item, ..)| *item != Personal::Access || delegate)
         .map(|&(item, href, svg, label)| {
             let cur = current(section_now == Section::Personal(item));
             let count = match item {
@@ -324,13 +328,19 @@ fn menu(app: &App, viewer: Option<&str>, section_now: Section) -> Html {
     )
 }
 
-const MENU: [(Personal, &str, &str, &str); 3] = [
+const MENU: [(Personal, &str, &str, &str); 4] = [
     (Personal::Inbox, "/inbox", octicon!("inbox"), "Inbox"),
     (
         Personal::Progress,
         "/me/progress",
         octicon!("pulse"),
         "Progress",
+    ),
+    (
+        Personal::Access,
+        "/committers",
+        octicon!("people"),
+        "Commit access",
     ),
     (
         Personal::Settings,
@@ -649,6 +659,13 @@ mod tests {
     #[test]
     fn a_personal_page_marks_its_menu_item_and_no_tab() {
         let app = crate::sets::tests::app(&[]);
+        // not a delegate: no Commit access entry
+        let m = menu(&app, Some("alice"), Section::Home);
+        assert!(m.contains("href=\"/inbox\"") && !m.contains("href=\"/committers\""));
+        *app.snapshot.write().unwrap() = std::sync::Arc::new(crate::web::Snapshot {
+            committers: crate::committer::Committers::default().with_delegates(&["alice"]),
+            ..Default::default()
+        });
         for (item, href, ..) in MENU {
             let s = Section::Personal(item);
             assert_eq!(nav(s).matches("aria-current").count(), 0);

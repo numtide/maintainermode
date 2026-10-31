@@ -157,7 +157,7 @@ impl Facts {
         self.labels.iter().any(|l| l == label)
     }
 
-    fn first_time(&self) -> bool {
+    pub(crate) fn first_time(&self) -> bool {
         matches!(
             self.association.as_str(),
             "FIRST_TIME_CONTRIBUTOR" | "FIRST_TIMER"
@@ -396,6 +396,9 @@ pub struct Report {
     /// Lower-case login → when its first pull request in the data opened.
     #[serde(skip)]
     pub first_pr: HashMap<String, DateTime<Utc>>,
+    /// The facts of each person, for `/committers`.
+    #[serde(skip)]
+    pub people: crate::access::People,
 }
 
 fn percentile(v: &mut [f64], p: f64) -> Option<f64> {
@@ -776,6 +779,7 @@ pub fn compute(facts: &[Facts], now: DateTime<Utc>) -> Report {
         kinds_to,
         newcomers_from: Some(format!("{}-{:02}", newcomers_from.0, newcomers_from.1)),
         first_pr,
+        people: crate::access::compute(facts, now),
     }
 }
 

@@ -22,6 +22,7 @@ removed, not redirected.
 | `GET /api/v1/sets`                            | your named package sets and their output labels (private)        |
 | `GET /api/v1/inbox`                           | your inbox (private)                                             |
 | `GET /api/v1/progress`                        | your progress, your goal and your badges (private)               |
+| `GET /api/v1/committers`                      | everyone around commit access, with a status (private, one team) |
 | `GET /api/v1/search`                          | what the search box finds: packages, people, PRs, advisories     |
 | `GET /api/v1/first`                           | packages for a first contribution, paged                         |
 | `GET /api/v1/need-help`                       | packages with an open advisory, the highest risk first, paged    |
@@ -74,6 +75,14 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_API_TOKEN" 'https://<host>/api/v
   `reviews_month`, `goal`, `counterparties`, `listed`, `listed_until`,
   `all_time` (`reviewed`, `since`, `months`, `areas`) and `badges` (`id`,
   `name`, `how`, `earned`, `left`).
+- **`/api/v1/committers`**: the rows of `/committers`, for the members of
+  the team that grants commit access only; 403 for anyone else. `status`
+  is `all` (the default), `active`, `inactive`, `candidate` or `former`.
+  `sort` names the fact that orders the rows. `min` is the review
+  threshold for the people who are not committers. `q` is part of a login.
+  The answer also has `counts` (the people of each status) and
+  `inactive_days`. See [For the people who grant commit
+  access](personal.md#for-the-people-who-grant-commit-access).
 
 ## Paging
 

@@ -1,3 +1,4 @@
+mod access;
 mod affected;
 mod api;
 mod apitoken;
@@ -237,6 +238,14 @@ enum Command {
         git_dir: Option<PathBuf>,
         #[command(flatten)]
         rescan: Box<rescan::Args>,
+        /// Logins that see `/committers` next to the members of the team
+        /// that grants commit access, for a test of the page.
+        #[arg(
+            long = "delegate",
+            env = "MAINTAINER_MODE_DELEGATES",
+            value_delimiter = ','
+        )]
+        delegates: Vec<String>,
     },
     /// The full copy of issues and pull requests
     Archive {
@@ -963,6 +972,7 @@ async fn run(cli: Cli) -> Result<i32> {
             archive_git,
             git_dir,
             rescan,
+            delegates,
         } => {
             telemetry::started();
             // before the seconds of loading: the kernel queues the requests
@@ -997,6 +1007,16 @@ async fn run(cli: Cli) -> Result<i32> {
             match &nvd_api_key_file {
                 Some(_) => store.set("nvd_api", "1")?,
                 None => store.delete_key("nvd_api")?,
+            }
+            let delegates: Vec<&str> = delegates
+                .iter()
+                .map(|l| l.trim())
+                .filter(|l| !l.is_empty())
+                .collect();
+            if delegates.is_empty() {
+                store.delete_key("delegates_extra")?;
+            } else {
+                store.set("delegates_extra", &serde_json::to_string(&delegates)?)?;
             }
             let github_app = match (github_app_id, Secret::open(github_app_key_file)?) {
                 (Some(id), Some(key)) => Some(github_app::GithubApp::new(

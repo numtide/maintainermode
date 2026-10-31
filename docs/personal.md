@@ -826,3 +826,36 @@ In the last three lists, "ready" means that the checks pass, that there is no kn
 Maintainer Mode never merges. Each row links to GitHub, and you decide. Read the [nixpkgs contributor guide](https://github.com/NixOS/nixpkgs/blob/master/CONTRIBUTING.md) for how to review and merge.
 
 **The API.** `/api/v1/prs?queue=ready&section=<id>` gives each list. `section=yours` needs your own login, with a session or an API token, because your subscriptions are private.
+
+The people who grant and remove commit access have a page of their own: [For the people who grant commit access](#for-the-people-who-grant-commit-access).
+
+## For the people who grant commit access
+
+**Commit access** (`/committers`) is one queue of everyone around commit access, each with a status, for the people who grant and remove it. Only the members of the GitHub team `NixOS/nixpkgs-ci` see it: the Nixpkgs core team disbanded in August 2026 ([NixOS/org#277](https://github.com/NixOS/org/pull/277)), and the CI team holds the role, as the [README of nixpkgs-committers](https://github.com/NixOS/nixpkgs-committers) says. The server reads the team once a day with its own token, together with the committers team, and takes the direct members only. `/api/v1/status` shows when. A read older than 7 days opens the page to nobody, so a person removed from the team loses it even when GitHub cannot be read. A person who signed in sees the page in their menu when the team has them; everyone else gets 403. The constant `DELEGATION` in `src/committer.rs` names the team; `--delegate <login>` (`MAINTAINER_MODE_DELEGATES`) adds logins, for a test of the page.
+
+The facts are public: they come from the whole pull request history of nixpkgs, as the [state of nixpkgs](rules.md#the-state-of-nixpkgs) does. The list is not public, because a list of people with numbers next to their names invites a ranking, and [Maintainer Mode gives no rights](rules.md#maintainer-mode-gives-no-rights). The page shows no score and makes no recommendation. The order is one fact, the one the viewer picks; the default is pull requests reviewed in the last 12 months.
+
+**The status** comes from the committer fact (see [For committers](#for-committers)) and the merges:
+
+| Status                          | Id          | Who                                                                                                                                                                                                                                     |
+| ------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| committer                       | `active`    | a committer who merged a pull request in the last 180 days                                                                                                                                                                              |
+| committer, no merge in 6 months | `inactive`  | a committer with no merge in 180 days. [RFC 55](https://github.com/NixOS/rfcs/blob/master/rfcs/0055-retired-committers.md) retires a committer with no use of commit access in six months; the site sees merges only, not direct pushes |
+| not a committer                 | `candidate` | not a committer, never merged; reviewed at least the chosen number of pull requests of other people in the last 12 months (10 by default; 1, 25 and 50 are the other choices)                                                           |
+| former committer                | `former`    | not a committer now, merged pull requests before; the same review threshold applies                                                                                                                                                     |
+
+Bots and `ghost` are left out, as mergers too: a merge by the merge bot counts for nobody. Every committer is in the queue, with or without reviews. The committer fact holds for 365 days after a merge (see [For committers](#for-committers)), so a committer retired by the team shows as `inactive`, not `former`, until a year after their last merge.
+
+**The facts of a row.** Each is the whole history, unless it says a window:
+
+- pull requests of other people reviewed in the last 12 months, and ever, with the month of the first review and the number of [parts of nixpkgs](rules.md#the-state-of-nixpkgs) reviewed;
+- for a committer or a former committer: pull requests of other people merged in the last 12 months, ever, and the month of the last merge;
+- for a person who is not a committer: approvals in the last 12 months on pull requests that someone else merged, where the judgement of the person agreed with the person who merged;
+- pull requests of first-time contributors reviewed in the last 12 months: where teaching happens;
+- from the [review record](#profiles) of the last 60 days: pull requests a committer merged with no change after the review, and problems found;
+- own pull requests merged in the last 12 months and ever, with the month of the first pull request;
+- packages and NixOS modules whose `meta.maintainers` name the login.
+
+**How they work.** The people who grant commit access look for good communication, good judgement and relevant experience, and say that no number decides. The numbers above say where to look; the links under each row lead to the evidence: the review record on this site, and on GitHub the reviews, the comments and the pull requests of the person, and the nominations that name them in nixpkgs-committers.
+
+**The API.** `/api/v1/committers` gives the rows, with `status`, `sort`, `min`, `q`, `limit` and `cursor`, and the count of each status. It answers only for a member of the team, with a session or an API token.

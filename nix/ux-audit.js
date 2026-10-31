@@ -413,6 +413,8 @@ function seedSql() {
   return [
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
+    // the seeded person grants commit access, so /committers opens
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('delegation_team', ${q([SEED_LOGIN])});`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'laptop', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'web-1', ${q(set.slice(0, 2))}, 0, '${daysAgo(3)}', '${daysAgo(3)}', '${index.rev}');`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev, outputs) VALUES ('${SEED_LOGIN}', 'infra', ${q(set)}, 2, '${daysAgo(2)}', '${daysAgo(2)}', '${index.rev}', ${q(infraOutputs)});`,

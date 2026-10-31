@@ -72,6 +72,8 @@ signed-in /packages?filter=all
 signed-in /me/settings
 signed-in /login/cli?code=BCDF-GHJK
 signed-in /me/progress
+signed-in /committers
+signed-in /committers?sort=first&min=1
 
 skip /merge
 skip /committer
@@ -114,6 +116,7 @@ skip /api/v1/mine
 skip /api/v1/sets
 skip /api/v1/inbox
 skip /api/v1/progress
+skip /api/v1/committers
 skip /api/v1/search
 skip /api/v1/first
 skip /api/v1/need-help

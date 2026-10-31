@@ -29,6 +29,15 @@ The site shows no score and no rank of people. A ranking makes people review
 more, not better. Each person has a page with the results of their own
 reviews. It shows no count of reviews.
 
+One page is the exception, and it is not public: the people who grant and
+remove commit access see every committer and every active reviewer in one
+queue, each with a status and with counts, on `/committers`. It has no score
+either, and the order is one fact that the viewer picks. The counts say where
+to look; the links under each row lead to the reviews themselves, which is
+what those people read. [For the people who grant commit
+access](personal.md#for-the-people-who-grant-commit-access) tells what it
+shows.
+
 ## Inside the nixpkgs rules
 
 Maintainer Mode works inside the nixpkgs
