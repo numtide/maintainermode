@@ -145,12 +145,22 @@ impl Committers {
 /// merges in the synced data still count, and `/committers` opens to the
 /// logins of `--delegate` only, once a read is a week old.
 pub async fn refresh_team(store: &Store, tokens: Vec<String>) -> Result<()> {
-    let tried = store.get_time("committers_team_tried")?;
-    if tokens.is_empty() || tried.is_some_and(|t| Utc::now() - t < Duration::hours(24)) {
+    let within = |key: &str, hours: i64| {
+        store
+            .get_time(key)
+            .ok()
+            .flatten()
+            .is_some_and(|t| Utc::now() - t < Duration::hours(hours))
+    };
+    // once a day after a read of both teams; once an hour after a failure
+    let read = within("committers_team_read", 24) && within("delegation_team_read", 24);
+    if tokens.is_empty()
+        || within("committers_team_tried", 1)
+        || (read && within("committers_team_tried", 24))
+    {
         return Ok(());
     }
     store.set("committers_team_tried", &Utc::now().to_rfc3339())?;
-    let mut client = crate::github::Client::new(tokens);
     let mut out = Ok(());
     // child teams of the committers count; a child team of the delegation
     // team does not grant commit access
@@ -158,7 +168,17 @@ pub async fn refresh_team(store: &Store, tokens: Vec<String>) -> Result<()> {
         (TEAM, "committers_team", "ALL"),
         (DELEGATION, "delegation_team", "IMMEDIATE"),
     ] {
-        match read_team(&mut client, store, team, membership).await {
+        // each token in turn: the GitHub App's token sees no team, and a
+        // null team is an answer, not an error that moves the client on
+        let mut result = Err(anyhow::anyhow!("{team}: no token"));
+        for token in &tokens {
+            let mut client = crate::github::Client::new(vec![token.clone()]);
+            result = read_team(&mut client, store, team, membership).await;
+            if result.is_ok() {
+                break;
+            }
+        }
+        match result {
             Ok(logins) => {
                 store.set(key, &serde_json::to_string(&logins)?)?;
                 store.set(&format!("{key}_read"), &Utc::now().to_rfc3339())?;
@@ -191,7 +211,7 @@ async fn read_team(
             .await?;
         let members = &data["organization"]["team"]["members"];
         if members.is_null() {
-            bail!("{team} is not visible to the server token");
+            bail!("{team} is not visible to this server token");
         }
         logins.extend(
             members["nodes"]
