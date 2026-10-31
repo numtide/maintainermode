@@ -25,6 +25,9 @@ pub const DELEGATION: &str = "NixOS/nixpkgs-ci";
 /// How long a read of the delegation team opens `/committers` to its
 /// members when no later read succeeds.
 pub const DELEGATION_KEPT_DAYS: i64 = 7;
+/// The person who runs the site sees `/committers` too: the page is theirs
+/// to design, and the facts on it are public.
+pub const OWNER: &str = "zimbatm";
 const MERGED_DAYS: i64 = 365;
 pub const SECURITY: &str = "1.severity: security";
 /// Rows of the list on the first page of the tab; later pages hold `review::PAGE`.
@@ -102,6 +105,7 @@ impl Committers {
         c.delegates = team
             .into_iter()
             .chain(logins("delegates_extra"))
+            .chain([OWNER.to_string()])
             .map(|l| l.to_lowercase())
             .collect();
         c

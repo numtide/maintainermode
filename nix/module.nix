@@ -134,6 +134,12 @@ in
       description = "Package sets the daily sweep evaluates; `pkgs` is the top level.";
     };
 
+    delegates = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [ ];
+      description = "GitHub logins that see /committers next to the members of the team that grants commit access, and the owner of the site.";
+    };
+
     channels = lib.mkOption {
       type = lib.types.listOf lib.types.str;
       default = [
@@ -273,6 +279,7 @@ in
         MAINTAINER_MODE_PUBLIC_URL = cfg.publicUrl;
         MAINTAINER_MODE_INDEX_SETS = lib.concatStringsSep "," cfg.indexSets;
         MAINTAINER_MODE_CHANNELS = lib.concatStringsSep "," cfg.channels;
+        MAINTAINER_MODE_DELEGATES = lib.concatStringsSep "," cfg.delegates;
         MAINTAINER_MODE_ARCHIVE_REPOS = lib.concatStringsSep "," cfg.archive.repositories;
         MAINTAINER_MODE_ARCHIVE_ITEMS = toString cfg.archive.itemsPerPass;
         MAINTAINER_MODE_ARCHIVE_GIT = lib.boolToString cfg.archive.git;
