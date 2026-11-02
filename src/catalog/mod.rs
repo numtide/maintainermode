@@ -1824,6 +1824,7 @@ pub(crate) mod tests {
             read_at: None,
             versions: [("cups".to_string(), "2.4.19".to_string())].into(),
             out_paths: Default::default(),
+            hydra_sets: Default::default(),
         };
         let ch = Channels { list: vec![stable] };
         let html = |master: &str| {
@@ -1909,6 +1910,7 @@ pub(crate) mod tests {
             read_at: None,
             versions: [("unbound".to_string(), v.to_string())].into(),
             out_paths: Default::default(),
+            hydra_sets: Default::default(),
         };
         let ch = Channels {
             list: vec![

@@ -64,7 +64,7 @@ async fn channel_builds(
         .cloned()
         .collect();
     let got = futures_util::future::join_all(jobsets.iter().map(|j| async {
-        let job = j.path(attr);
+        let job = app.hydra.builds.path(j, attr);
         let last = hydra_last(app, &job, wait).await;
         (j.clone(), job, last)
     }))
@@ -84,6 +84,18 @@ async fn channel_builds(
             }
         })
         .collect()
+}
+
+/// The attribute a name means in the index: itself, the attribute that
+/// spells the package name, or the index attribute of a Hydra job name,
+/// so that `python314Packages.certifi` leads to `python3Packages.certifi`.
+pub(crate) fn resolve(app: &crate::web::App, name: &str) -> Option<String> {
+    let index = app.index.read().unwrap();
+    if let Some(attr) = index.resolve(name) {
+        return Some(attr.to_string());
+    }
+    let hydra = app.hydra.builds.index_attr(name)?;
+    index.resolve(&hydra).map(String::from)
 }
 
 /// The version of `attr` in the nixpkgs that a jobset builds: master's
@@ -1013,8 +1025,7 @@ pub(super) async fn page(
     Path(name): Path<String>,
 ) -> Response {
     let viewer = app.viewer(&headers);
-    let resolved = app.index.read().unwrap().resolve(&name).map(String::from);
-    let Some(attr) = resolved else {
+    let Some(attr) = resolve(&app, &name) else {
         return not_found(&app, viewer.as_deref(), &name);
     };
     if attr != name {
@@ -1066,7 +1077,7 @@ pub(super) async fn hydra_part(
 }
 
 pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
-    let attr = app.index.read().unwrap().resolve(name)?.to_string();
+    let attr = resolve(app, name)?;
     let builds = channel_builds(app, &attr, None, Wait::Answer).await;
     let cache = binary_cache(app, &attr);
     let s = app.snap();

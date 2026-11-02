@@ -35,6 +35,10 @@ pub struct Index {
     /// team `shortName` → member logins.
     #[serde(default)]
     pub teams: BTreeMap<String, Vec<String>>,
+    /// index set → the set Hydra builds in its place, like
+    /// `python3Packages` → `python314Packages`.
+    #[serde(default)]
+    pub hydra_sets: crate::builds::Sets,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -182,6 +186,7 @@ pub fn from_entries(rev: &str, entries: &[attrs::Entry], owners: &str, nixos: Ni
         pkgs,
         modules: nixos.modules,
         teams: nixos.teams,
+        hydra_sets: Default::default(),
     }
 }
 
@@ -307,6 +312,7 @@ pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
     }
     let owners = std::fs::read_to_string(dir.join("ci/OWNERS")).unwrap_or_default();
     let sets = sets.to_vec();
+    let index_sets = sets.clone();
     let d = dir.clone();
     let entries = tokio::task::spawn_blocking(move || -> Result<Vec<attrs::Entry>> {
         let _one = crate::eval::SWEEP.lock().unwrap_or_else(|e| e.into_inner());
@@ -350,7 +356,26 @@ pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
         tracing::warn!("NixOS modules: {e:#}");
         Nixos::default()
     });
-    Ok(from_entries(&rev, &entries, &owners, nixos))
+    let d = dir.clone();
+    let hydra_sets = tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let s = crate::builds::hydra_sets(&d, &index_sets);
+        if let Ok(s) = &s {
+            tracing::info!(
+                "swept the Hydra sets: {s:?} in {:.1}s",
+                started.elapsed().as_secs_f64()
+            );
+        }
+        s
+    })
+    .await?
+    .unwrap_or_else(|e| {
+        tracing::warn!("Hydra sets: {e:#}");
+        Default::default()
+    });
+    let mut index = from_entries(&rev, &entries, &owners, nixos);
+    index.hydra_sets = hydra_sets;
+    Ok(index)
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

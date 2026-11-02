@@ -527,3 +527,56 @@ async fn settings_tokens_and_sign_out() {
     let a = site.get("/review", Some(SID)).await;
     assert!(!a.body.contains("menu-login"));
 }
+
+/// Hydra builds `python3Packages.certifi` as `python314Packages.certifi`:
+/// the page names that job, and the Hydra name leads to the page.
+#[tokio::test]
+async fn a_package_of_an_alias_set_names_its_hydra_job_and_the_job_name_redirects() {
+    let app = signed_in_app();
+    {
+        let mut index = app.index.write().unwrap();
+        index.pkgs.insert(
+            "python3Packages.certifi".into(),
+            crate::area::Package {
+                pname: "certifi".into(),
+                version: "2026.07.22".into(),
+                file: Some("pkgs/development/python-modules/certifi/default.nix".into()),
+                maintainers: vec!["alice".into()],
+                ..Default::default()
+            },
+        );
+        index
+            .hydra_sets
+            .insert("python3Packages".into(), "python314Packages".into());
+    }
+    crate::builds::refresh(&app);
+    let site = serve(app.clone()).await;
+    let a = site.get("/p/python3Packages.certifi", None).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    assert!(
+        a.body
+            .contains("nixpkgs/unstable/python314Packages.certifi.x86_64-linux"),
+        "{}",
+        a.body
+    );
+    assert!(!a.body.contains("python3Packages.certifi.x86_64-linux"));
+    let a = site.get("/p/python314Packages.certifi", None).await;
+    assert_eq!(a.status, StatusCode::SEE_OTHER, "{}", a.body);
+    assert_eq!(a.location.as_deref(), Some("/p/python3Packages.certifi"));
+    let a = site.get("/p/python313Packages.certifi", None).await;
+    assert_eq!(
+        a.status,
+        StatusCode::NOT_FOUND,
+        "another Python is no alias"
+    );
+    let a = site
+        .get("/api/v1/packages/python314Packages.certifi", None)
+        .await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    let v: serde_json::Value = serde_json::from_str(&a.body).unwrap();
+    assert_eq!(v["attr"], "python3Packages.certifi");
+    assert_eq!(
+        v["hydra_job"],
+        "nixpkgs/unstable/python314Packages.certifi.x86_64-linux"
+    );
+}

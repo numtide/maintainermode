@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration as StdDuration;
 
@@ -141,6 +141,49 @@ impl Jobset {
     }
 }
 
+/// The set Hydra builds in place of each index set, in one nixpkgs tree:
+/// `python3Packages` → `python314Packages` on master. A set that Hydra
+/// builds under its own name is not here.
+pub type Sets = BTreeMap<String, String>;
+
+/// The attribute of the Hydra job of `attr`: `python3Packages.certifi`
+/// is built as `python314Packages.certifi`. The longest set wins, so a
+/// nested set beats its parent.
+pub fn job_attr(sets: &Sets, attr: &str) -> String {
+    sets.iter()
+        .filter(|(s, _)| attr == *s || attr.starts_with(&format!("{s}.")))
+        .max_by_key(|(s, _)| s.len())
+        .map(|(s, t)| format!("{t}{}", &attr[s.len()..]))
+        .unwrap_or_else(|| attr.to_string())
+}
+
+/// The index attribute that a job attribute means, the reverse of
+/// [`job_attr`]: `python314Packages.certifi` is `python3Packages.certifi`.
+/// An attribute of no mapped set is itself.
+pub fn index_attr(sets: &Sets, attr: &str) -> String {
+    sets.iter()
+        .filter(|(_, t)| attr == *t || attr.starts_with(&format!("{t}.")))
+        .max_by_key(|(_, t)| t.len())
+        .map(|(s, t)| format!("{s}{}", &attr[t.len()..]))
+        .unwrap_or_else(|| attr.to_string())
+}
+
+/// The sets of each jobset: master's from the index, a channel's from
+/// the channel.
+pub(crate) fn sets_of(app: &App) -> HashMap<String, Sets> {
+    let mut out = HashMap::new();
+    out.insert(
+        Jobset::master().key(),
+        app.index.read().unwrap().hydra_sets.clone(),
+    );
+    for c in &app.channels.read().unwrap().list {
+        if let Some(j) = Jobset::of_channel(&c.name) {
+            out.entry(j.key()).or_insert_with(|| c.hydra_sets.clone());
+        }
+    }
+    out
+}
+
 /// `nixos/release-26.05` is `nixos-26.05`; master is `unstable`.
 pub fn label(key: &str) -> String {
     match key.strip_prefix("nixos/release-") {
@@ -260,6 +303,8 @@ type Key = (String, String);
 pub struct Builds {
     states: RwLock<HashMap<Key, (u64, State)>>,
     jobsets: RwLock<Arc<Vec<Jobset>>>,
+    /// jobset key → the [`Sets`] of the tree it builds.
+    sets: RwLock<Arc<HashMap<String, Sets>>>,
     tracked: RwLock<Arc<HashSet<String>>>,
     pending: Mutex<Vec<(String, String, u64, i64)>>,
     stats: Mutex<Stats>,
@@ -272,6 +317,7 @@ impl Default for Builds {
         Builds {
             states: Default::default(),
             jobsets: RwLock::new(Arc::new(vec![Jobset::master()])),
+            sets: Default::default(),
             tracked: Default::default(),
             pending: Default::default(),
             stats: Default::default(),
@@ -303,6 +349,52 @@ impl Builds {
 
     pub fn jobsets(&self) -> Arc<Vec<Jobset>> {
         self.jobsets.read().unwrap().clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_sets(jobsets: Vec<Jobset>, sets: HashMap<String, Sets>) -> Builds {
+        let b = Builds::default();
+        *b.jobsets.write().unwrap() = Arc::new(jobsets);
+        *b.sets.write().unwrap() = Arc::new(sets);
+        b
+    }
+
+    /// The Hydra job of `attr` on a jobset: see [`job_attr`].
+    pub fn job(&self, j: &Jobset, attr: &str) -> String {
+        let sets = self.sets.read().unwrap();
+        let attr = match sets.get(&j.key()) {
+            Some(s) => job_attr(s, attr),
+            None => attr.to_string(),
+        };
+        j.job(&attr)
+    }
+
+    /// What [`crate::health::Hydra::last`] takes, for `attr` on a jobset.
+    pub fn path(&self, j: &Jobset, attr: &str) -> String {
+        format!("{}/{}", j.key(), self.job(j, attr))
+    }
+
+    /// The index attribute of a job of a jobset: see [`index_attr`].
+    pub fn attr_of(&self, j: &Jobset, job: &str) -> Option<String> {
+        let attr = j.attr_of(job)?;
+        let sets = self.sets.read().unwrap();
+        Some(match sets.get(&j.key()) {
+            Some(s) => index_attr(s, attr),
+            None => attr.to_string(),
+        })
+    }
+
+    /// The index attribute that a Hydra attribute of any jobset means, when
+    /// it is another one: `python314Packages.certifi` on master, or
+    /// `python313Packages.certifi` on nixos-26.05, is
+    /// `python3Packages.certifi`.
+    pub fn index_attr(&self, attr: &str) -> Option<String> {
+        let sets = self.sets.read().unwrap();
+        self.jobsets()
+            .iter()
+            .filter_map(|j| sets.get(&j.key()))
+            .map(|s| index_attr(s, attr))
+            .find(|a| a != attr)
     }
 
     pub fn state(&self, jobset: &str, attr: &str) -> Option<State> {
@@ -341,13 +433,15 @@ impl Builds {
         let Some(j) = jobsets.iter().find(|j| j.project == p && j.name == n) else {
             return;
         };
-        let Some(attr) = j.attr_of(job) else { return };
-        if !self.tracked.read().unwrap().contains(attr) {
+        let Some(attr) = self.attr_of(j, job) else {
+            return;
+        };
+        if !self.tracked.read().unwrap().contains(&attr) {
             return;
         }
         let mut pending = self.pending.lock().unwrap();
         if pending.len() < 1000 {
-            pending.push((j.key(), attr.to_string(), id, code));
+            pending.push((j.key(), attr, id, code));
         }
     }
 
@@ -506,13 +600,14 @@ async fn feed(app: &App, http: &reqwest::Client, base: &str) -> Result<()> {
     let (mut new, _) = fresh(&rows, seen_max);
     new.sort_by_key(|r| r.id);
     for r in &new {
-        let (Some(attr), Some(code)) = (master.attr_of(&r.job), r.buildstatus) else {
+        let (Some(attr), Some(code)) = (app.hydra.builds.attr_of(&master, &r.job), r.buildstatus)
+        else {
             continue;
         };
-        if tracked.contains(attr) {
+        if tracked.contains(&attr) {
             app.hydra
                 .builds
-                .record(&app.store, &master.key(), attr, r.id, code, now);
+                .record(&app.store, &master.key(), &attr, r.id, code, now);
         }
     }
     if let Some(max) = rows.iter().map(|r| r.id).max().filter(|m| *m > seen_max) {
@@ -545,7 +640,12 @@ async fn sweep_one(app: &App, http: &reqwest::Client, base: &str) -> Result<bool
     app.hydra.builds.stats.lock().unwrap().sweep_requests += 1;
     let rows = fetch(
         http,
-        &latest_url(base, j.pair(), Some(&j.job(attr)), JOB_ROWS),
+        &latest_url(
+            base,
+            j.pair(),
+            Some(&app.hydra.builds.job(j, attr)),
+            JOB_ROWS,
+        ),
     )
     .await?;
     match telling(&rows).filter(|r| recent(r.timestamp, now)) {
@@ -569,6 +669,99 @@ const CACHE: &str = "https://cache.nixos.org";
 const CACHE_AGAIN: Duration = Duration::hours(1);
 /// cache.nixos.org is a CDN: 5 small requests a tick are 50 a minute.
 const CACHE_PER_TICK: usize = 5;
+
+/// The set Hydra builds in place of each index set that it does not
+/// recurse into. `pkgs/top-level/release-lib.nix` recurses only into a set
+/// with `recurseForDerivations` or `recurseForRelease`, so a
+/// `dontRecurseIntoAttrs` alias like `python3Packages` has no job. The
+/// set it means is the recursed top-level set that gives the same output
+/// paths for its first 5 derivations. Nothing names Python: any alias set
+/// in `--index-set` finds its set the same way.
+///
+/// `toJSON` and not a JSON attribute set: the iets evaluator does not
+/// force nested values when it prints JSON.
+const HYDRA_SETS_EXPR: &str = r#"
+let
+  input = builtins.fromJSON (builtins.readFile ./input.json);
+  pkgs = import input.path {
+    inherit (input) system;
+    overlays = [ ];
+    config = {
+      allowUnfree = true;
+      allowBroken = true;
+      allowInsecurePredicate = _: true;
+    };
+  };
+  lib = pkgs.lib;
+  safe =
+    default: v:
+    let
+      r = builtins.tryEval v;
+    in
+    if r.success then r.value else default;
+  recursed = s: builtins.isAttrs s && (s.recurseForDerivations or false || s.recurseForRelease or false);
+  at = path: lib.attrByPath (lib.splitString "." path) null pkgs;
+  outPath =
+    s: name:
+    safe null (
+      let
+        p = s.${name} or null;
+      in
+      if lib.isDerivation p then builtins.seq p.outPath p.outPath else null
+    );
+  # the first n derivations of a set, by name, with their output paths: a
+  # loop, so that it never evaluates the whole set
+  sample =
+    s: names: n:
+    if n == 0 || names == [ ] then
+      [ ]
+    else
+      let
+        name = builtins.head names;
+        path = outPath s name;
+        rest = builtins.tail names;
+      in
+      if path == null then sample s rest n else [ { inherit name path; } ] ++ sample s rest (n - 1);
+  candidates = builtins.filter (n: safe false (recursed pkgs.${n})) (builtins.attrNames pkgs);
+  same = t: probe: builtins.all (x: outPath t x.name == x.path) probe;
+  hydraSet =
+    set:
+    let
+      s = at set;
+      probe = if builtins.isAttrs s && !(safe false (recursed s)) then sample s (builtins.attrNames s) 5 else [ ];
+      found = builtins.filter (n: n != set && same pkgs.${n} probe) candidates;
+    in
+    if probe == [ ] || found == [ ] then null else builtins.head found;
+in
+builtins.toJSON (
+  lib.filterAttrs (_: v: v != null) (
+    lib.listToAttrs (
+      map (s: {
+        name = s;
+        value = hydraSet s;
+      }) (builtins.filter (s: s != "") input.sets)
+    )
+  )
+)
+"#;
+
+/// The [`Sets`] of the nixpkgs at `dir`, for the index sets, under the
+/// sweep lock. It forces every top-level attribute, like the top-level
+/// sweep: about half a minute with nix, less with iets.
+pub fn hydra_sets(dir: &std::path::Path, sets: &[String]) -> Result<Sets> {
+    if sets.iter().all(|s| s.is_empty()) {
+        return Ok(Sets::new());
+    }
+    let _one = crate::eval::SWEEP.lock().unwrap_or_else(|e| e.into_inner());
+    let input = serde_json::json!({
+        "path": dir.to_string_lossy(),
+        "system": SYSTEM,
+        "sets": sets,
+    });
+    let text = crate::eval::eval_with_input("hydrasets", HYDRA_SETS_EXPR, &input)?;
+    let json: String = serde_json::from_str(&text)?;
+    Ok(serde_json::from_str(&json)?)
+}
 
 /// `toJSON` and not a JSON attribute set: the iets evaluator does not
 /// force nested values when it prints JSON.
@@ -727,10 +920,13 @@ fn load(app: &App) {
     }
 }
 
-/// The channels resolve after the start, so the jobsets follow them.
-fn refresh(app: &App) {
+/// The channels resolve after the start, so the jobsets follow them, and
+/// the index and the channels move, so the sets follow them: both are
+/// small, so every tick.
+pub(crate) fn refresh(app: &App) {
     let j = jobsets(&app.channels.read().unwrap());
     *app.hydra.builds.jobsets.write().unwrap() = Arc::new(j);
+    *app.hydra.builds.sets.write().unwrap() = Arc::new(sets_of(app));
 }
 
 pub async fn run(app: Arc<App>) {
@@ -746,8 +942,8 @@ async fn run_with(app: Arc<App>, base: String, cache: String) {
     load(&app);
     let mut tick: u32 = 0;
     loop {
+        refresh(&app);
         if tick.is_multiple_of(TRACK_EVERY) {
-            refresh(&app);
             let a = app.clone();
             if let Ok(t) = tokio::task::spawn_blocking(move || tracked(&a)).await {
                 *app.hydra.builds.tracked.write().unwrap() = Arc::new(t);
@@ -895,6 +1091,106 @@ mod tests {
         };
         let keys: Vec<String> = jobsets(&ch).iter().map(Jobset::key).collect();
         assert_eq!(keys, [MASTER, STABLE]);
+    }
+
+    #[test]
+    fn an_alias_set_is_built_under_the_set_it_means() {
+        let sets: Sets = [(
+            "python3Packages".to_string(),
+            "python314Packages".to_string(),
+        )]
+        .into();
+        assert_eq!(
+            job_attr(&sets, "python3Packages.certifi"),
+            "python314Packages.certifi"
+        );
+        assert_eq!(job_attr(&sets, "python3Packages"), "python314Packages");
+        assert_eq!(job_attr(&sets, "hello"), "hello");
+        assert_eq!(
+            job_attr(&sets, "python3PackagesExtra.x"),
+            "python3PackagesExtra.x",
+            "a set is a whole segment"
+        );
+        assert_eq!(
+            index_attr(&sets, "python314Packages.certifi"),
+            "python3Packages.certifi"
+        );
+        assert_eq!(
+            index_attr(&sets, "python313Packages.certifi"),
+            "python313Packages.certifi",
+            "another Python that Hydra builds too is not the index set"
+        );
+        assert_eq!(index_attr(&sets, "hello"), "hello");
+        let nested: Sets = [
+            ("a".to_string(), "x".to_string()),
+            ("a.b".to_string(), "y".to_string()),
+        ]
+        .into();
+        assert_eq!(job_attr(&nested, "a.b.c"), "y.c", "the longest set wins");
+        assert_eq!(job_attr(&nested, "a.c"), "x.c");
+        assert_eq!(index_attr(&nested, "y.c"), "a.b.c");
+
+        let stable = Jobset::of_channel("nixos-26.05").unwrap();
+        let b = Builds::with_sets(
+            vec![Jobset::master(), stable.clone()],
+            [
+                (MASTER.to_string(), sets.clone()),
+                (
+                    STABLE.to_string(),
+                    [(
+                        "python3Packages".to_string(),
+                        "python313Packages".to_string(),
+                    )]
+                    .into(),
+                ),
+            ]
+            .into(),
+        );
+        assert_eq!(
+            b.path(&Jobset::master(), "python3Packages.certifi"),
+            "nixpkgs/unstable/python314Packages.certifi.x86_64-linux"
+        );
+        assert_eq!(
+            b.path(&stable, "python3Packages.certifi"),
+            "nixos/release-26.05/nixpkgs.python313Packages.certifi.x86_64-linux"
+        );
+        assert_eq!(
+            b.path(&stable, "hello"),
+            "nixos/release-26.05/nixpkgs.hello.x86_64-linux"
+        );
+        assert_eq!(
+            b.attr_of(&Jobset::master(), "python314Packages.certifi.x86_64-linux")
+                .as_deref(),
+            Some("python3Packages.certifi")
+        );
+        assert_eq!(
+            b.attr_of(&stable, "nixpkgs.python313Packages.certifi.x86_64-linux")
+                .as_deref(),
+            Some("python3Packages.certifi")
+        );
+        assert_eq!(
+            b.attr_of(&stable, "nixpkgs.python314Packages.certifi.x86_64-linux")
+                .as_deref(),
+            Some("python314Packages.certifi"),
+            "on 26.05, python314Packages is not the alias"
+        );
+        assert_eq!(
+            b.index_attr("python314Packages.certifi").as_deref(),
+            Some("python3Packages.certifi")
+        );
+        assert_eq!(
+            b.index_attr("python313Packages.certifi").as_deref(),
+            Some("python3Packages.certifi"),
+            "the Hydra set of any jobset"
+        );
+        assert_eq!(b.index_attr("python3Packages.certifi"), None);
+        assert_eq!(b.index_attr("hello"), None);
+        let none = Builds::default();
+        assert_eq!(
+            none.path(&Jobset::master(), "python3Packages.certifi"),
+            "nixpkgs/unstable/python3Packages.certifi.x86_64-linux",
+            "no map yet: the attribute is the job"
+        );
     }
 
     #[test]
@@ -1174,6 +1470,80 @@ mod tests {
             None,
             "a page view saw it fixed"
         );
+    }
+
+    #[tokio::test]
+    async fn the_feed_and_the_sweep_use_the_hydra_name_of_an_alias_set() {
+        let app = crate::sets::tests::app(&[]);
+        let attr = "python3Packages.certifi";
+        *app.hydra.builds.tracked.write().unwrap() =
+            Arc::new([attr.to_string()].into_iter().collect());
+        app.index.write().unwrap().hydra_sets = [(
+            "python3Packages".to_string(),
+            "python314Packages".to_string(),
+        )]
+        .into();
+        refresh(&app);
+        let (base, asked) = hydra(vec![
+            r#"[{"id":5,"job":"python314Packages.certifi.x86_64-linux","buildstatus":0},{"id":4,"job":"python313Packages.certifi.x86_64-linux","buildstatus":1},{"id":3,"job":"python3Packages.certifi.x86_64-linux","buildstatus":1}]"#,
+            r#"[{"id":7,"job":"python314Packages.certifi.x86_64-linux","buildstatus":1}]"#,
+        ])
+        .await;
+        let http = reqwest::Client::new();
+        feed(&app, &http, &base).await.unwrap();
+        assert_eq!(
+            app.hydra.builds.state(MASTER, attr),
+            Some(State::Passes),
+            "the build of python314Packages.certifi is the state of python3Packages.certifi"
+        );
+        assert_eq!(
+            app.hydra.builds.state(MASTER, "python313Packages.certifi"),
+            None
+        );
+        app.store
+            .hydra_checked(MASTER, attr, Utc::now() - Duration::days(2))
+            .unwrap();
+        assert!(sweep_one(&app, &http, &base).await.unwrap());
+        assert_eq!(app.hydra.builds.state(MASTER, attr), Some(State::Fails));
+        let asked = asked.lock().unwrap().clone();
+        assert!(
+            asked[1].contains("job=python314Packages.certifi.x86_64-linux"),
+            "{asked:?}"
+        );
+        app.hydra.builds.saw(
+            "nixpkgs/unstable/python314Packages.certifi.x86_64-linux",
+            8,
+            0,
+        );
+        assert_eq!(app.hydra.builds.pending.lock().unwrap().len(), 1);
+        flush(&app);
+        assert_eq!(app.hydra.builds.state(MASTER, attr), Some(State::Passes));
+    }
+
+    #[test]
+    fn an_index_and_a_channel_from_before_the_sets_still_load() {
+        let index: crate::area::Index =
+            serde_json::from_str(r#"{"rev":"r","maintainers":{},"owners":[]}"#).unwrap();
+        assert!(index.hydra_sets.is_empty());
+        let channel: crate::channels::Channel = serde_json::from_str(
+            r#"{"key":"stable","name":"nixos-26.05","rev":"r","read_at":null}"#,
+        )
+        .unwrap();
+        assert!(channel.hydra_sets.is_empty());
+        let sets: Sets = [(
+            "python3Packages".to_string(),
+            "python313Packages".to_string(),
+        )]
+        .into();
+        let again: crate::channels::Channel = serde_json::from_str(
+            &serde_json::to_string(&crate::channels::Channel {
+                hydra_sets: sets.clone(),
+                ..channel
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(again.hydra_sets, sets);
     }
 
     #[test]

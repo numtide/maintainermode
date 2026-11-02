@@ -65,7 +65,9 @@ A channel of another system, like `nixpkgs-26.05-darwin`, has no row.
 
 **The build history.** Each row shows the last 30 finished builds of the job as a strip, the oldest on the left. Green passed, red failed, grey was aborted or cancelled. Hover a cell for its status and time. The strip links to the job on Hydra. "N of M passed" counts the builds that were not aborted or cancelled. The JSON API gives `hydra_channels`: for each channel, `channel`, `jobset`, `job`, `state`, `build` (with `history`, the newest first), `passed`, `counted` and `dead_job`.
 
-**A job that Hydra no longer builds.** The page uses the attribute name as the job name. For an alias, Hydra may build the package under another name: `python3Packages.tornado` is built as `python314Packages.tornado`, and the job `python3Packages.tornado` last built in 2016. A job is dead when its newest build is more than 180 days old and no build in its history has the version that nixpkgs has now. Then the row says that Hydra stopped building the job, and shows no state and no strip. nixpkgs rebuilds nearly every package every few weeks, so a live job always has a recent build.
+**An alias set.** Hydra builds the sets that `pkgs/top-level/release-lib.nix` recurses into, and `python3Packages` is not one: it is `dontRecurseIntoAttrs python314Packages` on master and `dontRecurseIntoAttrs python313Packages` on `nixos-26.05`, so Hydra builds `python3Packages.tornado` as `python314Packages.tornado`, and the job `python3Packages.tornado` last built in 2016. Each sweep of nixpkgs (the index on master, and each channel) finds the set Hydra builds in place of each index set that it does not recurse into: the recursed top-level set that gives the same output paths for the first 5 derivations of the index set. Nothing is hardcoded, and nothing names Python: any alias set in `--index-set` finds its set the same way, and a channel can name another set than master. The rows, the build watch and the ZHF page use that name: the job of `python3Packages.tornado` is `python314Packages.tornado.x86_64-linux` on master and `nixpkgs.python313Packages.tornado.x86_64-linux` on `nixos-26.05`. `job` in `hydra_channels` and `hydra_job` give the job Hydra builds. The Hydra name leads to the page: `/p/python314Packages.tornado` and `/api/v1/packages/python314Packages.tornado` go to `python3Packages.tornado`. Another Python that Hydra builds too, like `python313Packages.tornado` on master, is not the index set and has no page.
+
+**A job that Hydra no longer builds.** For an alias that the sweep did not resolve, the page uses the attribute name as the job name, and Hydra may build the package under another name. A job is dead when its newest build is more than 180 days old and no build in its history has the version that nixpkgs has now. Then the row says that Hydra stopped building the job, and shows no state and no strip. nixpkgs rebuilds nearly every package every few weeks, so a live job always has a recent build.
 
 **The binary cache.** The output path of a package does not depend on its attribute name, so it works for an alias too. When the server reads a channel, it also computes the output path of each package that someone maintains or watches, in that channel's nixpkgs. One evaluation for a few hundred packages takes seconds; it does not evaluate the other packages. Then it asks `https://cache.nixos.org/<hash>.narinfo` with a `HEAD` request, at most 50 a minute. A path that is there is not asked again. A missing path is asked again after an hour. The "Binary cache" row shows, for each channel, "built", "not in the cache" or "not asked yet". Hover a word for the path. The JSON API gives `binary_cache`: for each channel, `channel`, `rev`, `out_path` and `cached`. There is no row for master: the index reads a master revision that Hydra has often not built yet. There is no row for a package that nobody maintains or watches, and a newly watched package gets its path when its channel moves to a new revision. "Not in the cache" does not tell why: the build failed, a dependency failed, or Hydra did not build it.
 
@@ -110,7 +112,7 @@ The nixpkgs jobsets build Linux too; only their Darwin builds count, so a build 
 
 - **Yours** (signed in): the packages you maintain, through a team, or watch, that fail.
 - **No maintainer**: packages with no maintainer that fail themselves. Fix one, and add yourself to `meta.maintainers` if you like it.
-- **All**: every failing job, with a filter by name or maintainer. A job is a package (`nixpkgs.hello.x86_64-linux` is `hello`), a NixOS test (`nixos.tests.acl`) or something else of the release, like an installer image.
+- **All**: every failing job, with a filter by name or maintainer. A job is a package (`nixpkgs.hello.x86_64-linux` is `hello`), a NixOS test (`nixos.tests.acl`) or something else of the release, like an installer image. A job of an alias set keeps its name and finds its package in the index: `python314Packages.tornado` is the package `python3Packages.tornado`, with its maintainers and its page (`attr` in the API).
 - **Pick one**: one direct failure at random, a package with no maintainer when there is one. "Another one" picks again.
 
 Each row merges the systems of a job: a badge per system, red when the build itself failed, grey when a dependency did; the badge links to the build. The row links to the log, the build and the package page. The ones that fail themselves come first, then the packages the index knows, then the ones on the most systems. The home page links to the page; during a campaign, the link names the release and counts your failures, or the ones with no maintainer. The JSON API gives the same at `/api/v1/zhf`: the campaign, the jobsets with their newest evaluation and counts, `failing`, `start`, `burndown`, and the rows of one tab, paged. `/state?tab=status` and `zhf` in `/api/v1/sync` show the reads.
@@ -305,10 +307,13 @@ comma-separated) or with the NixOS option
 `services.maintainer-mode.channels`.
 
 - **What it keeps.** For each channel: its revision, the time it first saw
-  that revision, and the version of each attribute. It keeps nothing else.
+  that revision, the version of each attribute, the output paths of the
+  [binary cache](#hydra) row, and the set Hydra builds in place of each
+  [alias set](#hydra). It keeps nothing else.
 - **How it reads.** A separate task checks the revision of each channel
   every hour. When a revision changes, the task downloads that nixpkgs,
-  evaluates only the version of each attribute in the swept sets, and deletes
+  evaluates only the version of each attribute in the swept sets, the output
+  paths and the Hydra sets, and deletes
   the source. It reads the channels one after the other. It never evaluates at
   the same time as the master sweep, so the peak memory stays near 2 GB. It
   waits while the master index is missing or older than 22 hours. It checks

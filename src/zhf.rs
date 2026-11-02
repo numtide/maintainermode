@@ -783,6 +783,10 @@ pub struct Item {
     pub teams: Vec<String>,
     /// In the index: the page `/p/<attr>` exists.
     pub indexed: bool,
+    /// The index attribute of a package: `python3Packages.certifi` for the
+    /// job `python314Packages.certifi`. None for a test or something else.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attr: Option<String>,
 }
 
 impl Item {
@@ -792,14 +796,15 @@ impl Item {
 
     pub fn subject(&self) -> Option<Subject> {
         self.indexed
-            .then(|| self.kind.attr().map(|a| Subject::Pkg(a.to_string())))
+            .then(|| self.attr.clone().map(Subject::Pkg))
             .flatten()
     }
 }
 
 /// Every failing job of the snapshot, one item per job name, the direct
-/// failures first, then the ones on most systems, then by name.
-pub(crate) fn items(snap: &Snapshot, index: &Index) -> Vec<Item> {
+/// failures first, then the ones on most systems, then by name. `builds`
+/// knows the index attribute of a job of an alias set.
+pub(crate) fn items(snap: &Snapshot, index: &Index, builds: &crate::builds::Builds) -> Vec<Item> {
     let mut by_kind: BTreeMap<Kind, Item> = BTreeMap::new();
     for src in &snap.sources {
         let Some(eval) = snap.eval_of(src) else {
@@ -811,7 +816,10 @@ pub(crate) fn items(snap: &Snapshot, index: &Index) -> Vec<Item> {
             }
             let kind = src.kind(&r.job, &r.system);
             let item = by_kind.entry(kind.clone()).or_insert_with(|| {
-                let p = kind.attr().and_then(|a| index.pkgs.get(a));
+                let attr = kind
+                    .attr()
+                    .map(|a| builds.index_attr(a).unwrap_or_else(|| a.to_string()));
+                let p = attr.as_deref().and_then(|a| index.pkgs.get(a));
                 Item {
                     kind: kind.clone(),
                     nixname: None,
@@ -820,6 +828,7 @@ pub(crate) fn items(snap: &Snapshot, index: &Index) -> Vec<Item> {
                     maintainers: p.map(|p| p.maintainers.clone()).unwrap_or_default(),
                     teams: p.map(|p| p.teams.clone()).unwrap_or_default(),
                     indexed: p.is_some(),
+                    attr,
                 }
             });
             if item.builds.iter().any(|b| b.system == r.system) {
@@ -881,6 +890,7 @@ fn own(app: &App, index: &Index, login: &str) -> HashSet<String> {
 fn matches(i: &Item, q: &str) -> bool {
     q.is_empty()
         || i.kind.name().contains(q)
+        || i.attr.as_deref().is_some_and(|a| a.contains(q))
         || i.nixname.as_deref().is_some_and(|n| n.contains(q))
         || i.maintainers.iter().any(|m| m.eq_ignore_ascii_case(q))
 }
@@ -889,14 +899,14 @@ fn matches(i: &Item, q: &str) -> bool {
 pub(crate) fn list(app: &App, tab: &str, login: Option<&str>, q: &str) -> Vec<Item> {
     let snap = app.hydra.zhf.snapshot();
     let index = app.index.read().unwrap();
-    let all = items(&snap, &index);
+    let all = items(&snap, &index, &app.hydra.builds);
     let q = q.trim().to_lowercase();
     match tab {
         "yours" => {
             let Some(login) = login else { return vec![] };
             let mine = own(app, &index, login);
             all.into_iter()
-                .filter(|i| i.kind.attr().is_some_and(|a| mine.contains(a)))
+                .filter(|i| i.attr.as_deref().is_some_and(|a| mine.contains(a)))
                 .filter(|i| matches(i, &q))
                 .collect()
         }
@@ -914,7 +924,7 @@ pub(crate) fn list(app: &App, tab: &str, login: Option<&str>, q: &str) -> Vec<It
 pub(crate) fn pick(app: &App, seed: u64) -> Option<Item> {
     let snap = app.hydra.zhf.snapshot();
     let index = app.index.read().unwrap();
-    let all = items(&snap, &index);
+    let all = items(&snap, &index, &app.hydra.builds);
     let direct: Vec<&Item> = all.iter().filter(|i| i.failed && i.indexed).collect();
     let unowned: Vec<&Item> = direct.iter().copied().filter(|i| i.unowned()).collect();
     let pool = if unowned.is_empty() {
@@ -1022,11 +1032,12 @@ fn system_badge(b: &Build) -> Html {
 
 fn item_html(i: &Item) -> Html {
     let title = match (&i.kind, i.subject()) {
-        (_, Some(sub)) => html!(
+        // the job's name, which the page of the index attribute explains
+        (k, Some(sub)) => html!(
             "<a class=\"Link--primary text-bold\" href=\"{}\">{} {}</a>",
             sub.href(),
             sub.icon(),
-            sub.label()
+            k.name()
         ),
         (Kind::Test(t), _) => html!(
             "<span class=\"text-bold\">{} NixOS test {t}</span>",
@@ -1551,7 +1562,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let items = items(&snap, &index);
+        let items = items(&snap, &index, &crate::builds::Builds::default());
         let names: Vec<&str> = items.iter().map(|i| i.kind.name()).collect();
         // Direct failures first, then what the index knows, then by name.
         assert_eq!(names, ["hello", "acl", "dep"]);
@@ -1563,6 +1574,77 @@ mod tests {
         assert!(!items[2].failed);
         assert_eq!(items[2].maintainers, ["alice"]);
         assert_eq!(snap.failing(), 5);
+    }
+
+    #[test]
+    fn a_failing_job_of_an_alias_set_finds_its_package_in_the_index() {
+        let srcs = sources(Some("26.11"));
+        let linux = eval(
+            "nixos/release-26.11",
+            10,
+            1,
+            vec![
+                row(
+                    1,
+                    "nixpkgs.python314Packages.certifi.x86_64-linux",
+                    "Failed",
+                    "x86_64-linux",
+                ),
+                row(
+                    2,
+                    "nixpkgs.python313Packages.certifi.x86_64-linux",
+                    "Failed",
+                    "x86_64-linux",
+                ),
+            ],
+        );
+        let snap = Snapshot {
+            sources: srcs,
+            evals: vec![linux],
+            ..Default::default()
+        };
+        let mut index = Index::default();
+        index.pkgs.insert(
+            "python3Packages.certifi".into(),
+            crate::area::Package {
+                maintainers: vec!["alice".into()],
+                ..Default::default()
+            },
+        );
+        let builds = crate::builds::Builds::with_sets(
+            vec![crate::builds::Jobset::master()],
+            [(
+                "nixpkgs/unstable".to_string(),
+                [(
+                    "python3Packages".to_string(),
+                    "python314Packages".to_string(),
+                )]
+                .into(),
+            )]
+            .into(),
+        );
+        let items = items(&snap, &index, &builds);
+        let names: Vec<&str> = items.iter().map(|i| i.kind.name()).collect();
+        assert_eq!(
+            names,
+            ["python314Packages.certifi", "python313Packages.certifi"],
+            "the job keeps its name, and the indexed one comes first"
+        );
+        let it = &items[0];
+        assert!(it.indexed);
+        assert_eq!(it.attr.as_deref(), Some("python3Packages.certifi"));
+        assert_eq!(it.maintainers, ["alice"]);
+        assert_eq!(
+            it.subject(),
+            Some(Subject::Pkg("python3Packages.certifi".into()))
+        );
+        assert!(matches(it, "python3Packages"));
+        let other = &items[1];
+        assert!(!other.indexed, "another Python is not the alias");
+        assert_eq!(other.attr.as_deref(), Some("python313Packages.certifi"));
+        let html = item_html(it).to_string();
+        assert!(html.contains("/p/python3Packages.certifi"), "{html}");
+        assert!(html.contains("python314Packages.certifi"), "{html}");
     }
 
     #[test]

@@ -89,6 +89,10 @@ its known limits.
   of them adds 500 MB more. One more evaluation, of NixOS with no configuration, reads
   `meta.maintainers` and `meta.teams` of every module, and `lib.teams` gives
   the members of each team. A team member counts as a maintainer.
+  One more finds the set Hydra builds in place of each index set that
+  Hydra does not recurse into, like `python3Packages` → `python314Packages`
+  (see [health.md](health.md#hydra)): it forces every top-level attribute,
+  like the top-level sweep, about half a minute with nix.
   It evaluates a local tree, not a flake reference, so the evaluator
   needs no daemon and writes nothing to a store.
 - **The evaluator is one setting**, `--evaluator` (`MAINTAINER_MODE_EVALUATOR`):

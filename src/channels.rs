@@ -37,6 +37,10 @@ pub struct Channel {
     /// watches only: computing one instantiates the package.
     #[serde(default)]
     pub out_paths: HashMap<String, String>,
+    /// index set → the set Hydra builds in its place in this channel, like
+    /// `python3Packages` → `python313Packages`.
+    #[serde(default)]
+    pub hydra_sets: crate::builds::Sets,
 }
 
 impl Channel {
@@ -275,13 +279,17 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
             tracing::warn!("output paths: {e:#}");
             HashMap::new()
         });
-        anyhow::Ok((versions, paths))
+        let hydra_sets = crate::builds::hydra_sets(&d, &sets).unwrap_or_else(|e| {
+            tracing::warn!("Hydra sets: {e:#}");
+            Default::default()
+        });
+        anyhow::Ok((versions, paths, hydra_sets))
     })
     .await?;
     let _ = std::fs::remove_dir_all(&dir);
-    let (versions, out_paths) = swept.with_context(|| format!("sweep {name}"))?;
+    let (versions, out_paths, hydra_sets) = swept.with_context(|| format!("sweep {name}"))?;
     tracing::info!(
-        "swept channel {name} at {}: {} attributes, {} output paths in {:.1}s",
+        "swept channel {name} at {}: {} attributes, {} output paths, Hydra sets {hydra_sets:?} in {:.1}s",
         &rev[..12],
         versions.len(),
         out_paths.len(),
@@ -294,6 +302,7 @@ async fn refresh(app: &App, key: &str) -> Result<bool> {
         read_at: Some(Utc::now()),
         versions,
         out_paths,
+        hydra_sets,
     };
     app.store.put_channel(&channel)?;
     let list = current
@@ -378,6 +387,7 @@ mod tests {
             read_at: None,
             versions: [("a".to_string(), v.to_string())].into(),
             out_paths: HashMap::new(),
+            hydra_sets: Default::default(),
         };
         let behind = |v: &str| Channels { list: vec![c(v)] }.backport("a", "1.0").len();
         assert_eq!(behind("1.0-rc1"), 1);
@@ -456,6 +466,7 @@ mod tests {
             read_at: None,
             versions: [("cups".to_string(), v.to_string())].into(),
             out_paths: Default::default(),
+            hydra_sets: Default::default(),
         };
         let c = Channels {
             list: vec![
