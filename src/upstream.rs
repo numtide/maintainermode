@@ -36,8 +36,9 @@ pub enum Origin {
 /// What a pass found for one package.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Direct {
-    /// `None`: the source did not answer, or its newest tag is older than
-    /// nixpkgs, which means the tags were not read right.
+    /// `None`: the source did not answer, or its tags do not reach the
+    /// version nixpkgs has (the newest tag is older, or the oldest tag is
+    /// newer), which means the tags were not read right.
     pub latest: Option<String>,
     /// `tags`, `crates.io`, `PyPI` or `npm`.
     pub from: String,
@@ -218,6 +219,10 @@ fn scale(v: &str) -> Option<usize> {
 }
 
 /// The newest tag on the same numbering scheme as the version nixpkgs has.
+/// The tags must reach back to that version: a repository whose oldest tag
+/// is already newer than nixpkgs never tagged what nixpkgs ships, so its
+/// tags count something else (`trunk-5.5` of an OS that bundles ldacbt
+/// 2.0.72).
 pub fn newest(tags: &[String], pname: &str, current: &str) -> Option<String> {
     let ours = scale(current);
     // a repository that holds several projects names ours in its tags
@@ -232,11 +237,19 @@ pub fn newest(tags: &[String], pname: &str, current: &str) -> Option<String> {
     } else {
         tags.iter().collect()
     };
-    pool.into_iter()
+    let versions: Vec<String> = pool
+        .into_iter()
         .filter_map(|tag| version_of(tag, pname))
         .filter_map(|c| dotted(c, current))
         .filter(|c| ours.is_none() || scale(c) == ours)
-        .max_by(|a, b| version::compare(a, b))
+        .collect();
+    if !versions
+        .iter()
+        .any(|v| version::compare(v, current) != Ordering::Greater)
+    {
+        return None;
+    }
+    versions.into_iter().max_by(|a, b| version::compare(a, b))
 }
 
 /// `curl-8_21_0` names 8.21.0, but `drm-5-0-0-20010105` is no libdrm 2.4:
@@ -492,7 +505,8 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                     current += 1;
                     Some(v)
                 }
-                // newest tag older than nixpkgs: the tags were misread
+                // newest tag older than nixpkgs (`newest` already drops
+                // tags that are all newer): the tags were misread
                 Ordering::Less => {
                     unclear += 1;
                     None
@@ -679,17 +693,42 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(newest(&tags, "thing", "1.9.0").as_deref(), Some("1.10.0"));
-        let drm: Vec<String> = ["drm-5-0-0-20010105", "4.3.99.12", "libdrm-2.4.125"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let drm: Vec<String> = [
+            "drm-5-0-0-20010105",
+            "4.3.99.12",
+            "libdrm-2.4.100",
+            "libdrm-2.4.125",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(
             newest(&drm, "libdrm", "2.4.100").as_deref(),
             Some("2.4.125")
         );
-        let curl = vec!["curl-8_21_0".to_string()];
+        let curl = vec!["curl-8_20_0".to_string(), "curl-8_21_0".to_string()];
         assert_eq!(newest(&curl, "curl", "8.20.0").as_deref(), Some("8.21.0"));
         assert_eq!(newest(&[], "thing", "1.0"), None);
+    }
+
+    #[test]
+    fn tags_that_never_reach_nixpkgs_count_for_nothing() {
+        // the OS that bundles ldacbt tags its own releases
+        let vela: Vec<String> = ["dev_20250801", "trunk-5.2", "trunk-5.4", "trunk-5.5"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(newest(&vela, "ldacbt", "2.0.72"), None);
+        let tags: Vec<String> = ["v1.0", "v2.0"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(newest(&tags, "thing", "1.0").as_deref(), Some("2.0"));
+        assert_eq!(newest(&tags, "thing", "2.0").as_deref(), Some("2.0"));
+        assert_eq!(newest(&tags, "thing", "0.9"), None);
+        // an unstable version after a release still reaches that release
+        let tags: Vec<String> = ["v1.2.3", "v1.3.0"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(
+            newest(&tags, "thing", "1.2.3-unstable-2025-01-01").as_deref(),
+            Some("1.3.0")
+        );
     }
 
     #[test]

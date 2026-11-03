@@ -285,7 +285,9 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   prerelease is older than its release.
 - **Correction.** An answer from the tags or the registry overrules
   repology: it can show that nixpkgs is current. When the newest tag is
-  older than nixpkgs, the tags were misread, and repology stays. A repology
+  older than nixpkgs, or the oldest tag is already newer than it (the tags
+  of an OS that bundles the package), the tags were misread, and repology
+  stays. A repology
   version counts only when it is newer, is no prerelease, and uses the same
   scheme.
 - **Budget.** Each pass of the health task makes up to 300 requests, with
