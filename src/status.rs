@@ -127,6 +127,7 @@ pub(crate) fn state(app: &App) -> Value {
         },
         "notifications": app.notifications.json(Utc::now()),
         "hydra": app.hydra.stats(),
+        "update_bot": app.updatebot.stats(),
         "hydra_builds": app.hydra.builds.stats(),
         "zhf": app.hydra.zhf.stats(),
         "rescans": rescans(app),
@@ -519,6 +520,31 @@ pub(crate) fn body(app: &App) -> Html {
             b["cache_requests"],
             b["cache_known"]
         ),
+    ));
+    let u = &v["update_bot"];
+    out.push(&kv(
+        "Update bot",
+        match u["read_at"].as_str() {
+            Some(_) => html!(
+                "the state of nixpkgs-update, read {} (file from {}), every {} · {} entries in the queue · {} attributes with an attempt · {} attempts a day over {} days · \
+                 the log of an attempt is read when a package page is shown, at most {} at a time and {} a minute · {} logs kept · {} not asked",
+                when(&u["read_at"]),
+                when(&u["file_at"]),
+                minutes(u["every_seconds"].as_i64().unwrap_or(3600)),
+                u["queue"],
+                u["logged"],
+                u["attempts_per_day"],
+                u["rate_days"],
+                u["tails"]["concurrent"],
+                u["tails"]["per_minute"],
+                u["tails"]["cached"],
+                u["tails"]["not_asked"]
+            ),
+            None => html!(
+                "the state of nixpkgs-update, not read yet · read every {}",
+                minutes(u["every_seconds"].as_i64().unwrap_or(3600))
+            ),
+        },
     ));
     let z = &v["zhf"];
     out.push(&kv(

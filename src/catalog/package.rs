@@ -257,6 +257,225 @@ pub(super) fn build_body(job: &str, last: &Last) -> Html {
     }
 }
 
+/// The update bot on one package: its last attempt, its place in the
+/// queue, and the reason of the attempt when a page may read its log.
+pub(crate) struct BotView {
+    pub(crate) attr: String,
+    pub(crate) entry: Option<crate::updatebot::Entry>,
+    pub(crate) read_at: Option<DateTime<Utc>>,
+    pub(crate) queue_len: usize,
+    pub(crate) next_at: Option<DateTime<Utc>>,
+    pub(crate) tail: Option<crate::updatebot::Tail>,
+}
+
+impl BotView {
+    fn last(&self) -> Option<&crate::updatebot::Attempt> {
+        self.entry.as_ref()?.last.as_ref()
+    }
+
+    fn queued(&self) -> Option<&crate::updatebot::Queued> {
+        self.entry.as_ref()?.queued.as_ref()
+    }
+
+    pub(crate) fn logs_url(&self) -> String {
+        format!("{}/{}/", crate::updatebot::BASE, self.attr)
+    }
+}
+
+impl Serialize for BotView {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let now = Utc::now();
+        let last = self.last().map(|a| {
+            json!({
+                "started": a.started, "finished": a.finished, "exit_code": a.exit_code,
+                "state": a.state(now), "log_url": a.log_url(&self.attr),
+                "reason": self.tail.as_ref().and_then(|t| t.outcome()),
+                "reason_state": self.tail.as_ref().map(|t| t.state()),
+            })
+        });
+        let queue = self.queued().map(|q| {
+            json!({
+                "position": q.position, "length": self.queue_len, "next_attempt_at": self.next_at,
+                "source": q.fetcher, "old": q.versions().map(|v| v.0), "new": q.versions().map(|v| v.1),
+                "url": q.url,
+            })
+        });
+        json!({
+            "read_at": self.read_at, "logs_url": self.logs_url(),
+            "last_attempt": last, "queue": queue,
+        })
+        .serialize(s)
+    }
+}
+
+/// What the bot knows about a package, and the reason of its last attempt
+/// as far as `wait` lets the page read the log.
+pub(super) async fn bot_view(app: &crate::web::App, attr: &str, wait: Wait<'_>) -> BotView {
+    let d = app.updatebot.snapshot();
+    let entry = d.get(attr).cloned();
+    let tail = match entry.as_ref().and_then(|e| e.last.as_ref()) {
+        Some(a) => Some(match wait {
+            Wait::Never => app
+                .updatebot
+                .known(attr, a)
+                .unwrap_or(crate::updatebot::Tail::Later),
+            Wait::Part(shared) => crate::updatebot::Bot::tail_for_part(shared, attr, a).await,
+            Wait::Answer => app.updatebot.tail(attr, a).await,
+        }),
+        None => None,
+    };
+    let next_at = entry
+        .as_ref()
+        .and_then(|e| e.queued.as_ref())
+        .and_then(|q| d.eta(q.position));
+    BotView {
+        attr: attr.to_string(),
+        entry,
+        read_at: d.read_at,
+        queue_len: d.queue_len,
+        next_at,
+        tail,
+    }
+}
+
+fn in_about(until: DateTime<Utc>) -> String {
+    let h = (until - Utc::now()).num_minutes() as f64 / 60.0;
+    if h < 1.0 {
+        "within an hour".into()
+    } else if h < 48.0 {
+        format!("in about {h:.0} hours")
+    } else {
+        format!("in about {:.0} days", h / 24.0)
+    }
+}
+
+/// The reason, once the log was read.
+fn bot_reason(tail: &crate::updatebot::Tail) -> Html {
+    use crate::updatebot::Tail;
+    match tail {
+        Tail::Read(o) => match (o.pr, o.existing) {
+            (Some(n), _) => html!(": opened <a href=\"/pr/{n}\">#{n}</a>"),
+            (None, Some(n)) => {
+                html!(": <a href=\"/pr/{n}\">#{n}</a> may already carry this update")
+            }
+            _ if o.line.is_empty() => Html::new(),
+            _ => html!(": <span class=\"color-fg-muted\">{}</span>", o.line),
+        },
+        Tail::NoAnswer | Tail::NotAsked | Tail::Later => Html::new(),
+        Tail::Asking => html!(
+            " <span class=\"color-fg-muted\">(the log has not answered yet: reload in a few seconds)</span>"
+        ),
+    }
+}
+
+/// The value of the Update bot row.
+pub(super) fn bot_body(v: &BotView) -> Html {
+    use crate::updatebot::State;
+    let now = Utc::now();
+    if v.read_at.is_none() {
+        return html!(
+            "<span class=\"color-fg-muted\">no data yet: this server reads the state of <a href=\"{}\">nixpkgs-update</a> every hour</span>",
+            crate::updatebot::README
+        );
+    }
+    let mut parts: Vec<Html> = Vec::new();
+    match v.last() {
+        Some(a) => {
+            let url = a.log_url(&v.attr);
+            let title = match a.exit_code {
+                Some(c) => format!("nixpkgs-update exit code {c}; open its log"),
+                None => "open its log".to_string(),
+            };
+            let (word, class, when) = match a.state(now) {
+                State::Succeeded => (
+                    "succeeded",
+                    "color-fg-success",
+                    format!("{} ago", ago(a.started)),
+                ),
+                State::Failed => (
+                    "failed",
+                    "color-fg-danger",
+                    format!("{} ago", ago(a.started)),
+                ),
+                State::TimedOut => (
+                    "timed out",
+                    "color-fg-danger",
+                    format!(
+                        "after {} hours, {} ago",
+                        crate::updatebot::TIMEOUT_HOURS,
+                        ago(a.started)
+                    ),
+                ),
+                State::Running => (
+                    "running",
+                    "color-fg-attention",
+                    format!("since {} ago", ago(a.started)),
+                ),
+                State::Lost => (
+                    "started",
+                    "color-fg-muted",
+                    format!("{} ago, no result", ago(a.started)),
+                ),
+            };
+            let reason = v.tail.as_ref().map(bot_reason).unwrap_or_default();
+            // the last line of a running attempt is not its outcome yet
+            let reason = match a.state(now) {
+                State::Running if !reason.is_empty() => html!(" so far{reason}"),
+                _ => reason,
+            };
+            parts.push(html!(
+                "<a href=\"{url}\" class=\"{class}\" title=\"{title}\">{word}</a> {when}{reason}"
+            ));
+        }
+        None => parts.push(html!(
+            "<span class=\"color-fg-muted\">no attempt logged</span>"
+        )),
+    }
+    match v.queued() {
+        Some(q) => {
+            let next = v
+                .next_at
+                .map(|t| html!(", next attempt {}", in_about(t)))
+                .unwrap_or_default();
+            let found = match q.versions() {
+                Some((old, new)) => html!("{old} → {new} from {}", q.source()),
+                None => html!("found by {}", q.source()),
+            };
+            let found = match &q.url {
+                Some(u) => html!("<a href=\"{u}\">{found}</a>"),
+                None => found,
+            };
+            parts.push(html!(
+                "queued <span title=\"position {} of {} in the queue of the bot\">{} of {}</span>{next} · {found}",
+                q.position,
+                v.queue_len,
+                crate::chart::thousands(q.position as i64),
+                crate::chart::thousands(v.queue_len as i64)
+            ));
+        }
+        None => parts.push(html!(
+            "<span class=\"color-fg-muted\">not in the queue</span>"
+        )),
+    }
+    if v.last().is_some() {
+        parts.push(html!("<a href=\"{}\">logs</a>", v.logs_url()));
+    }
+    crate::html::join(parts, " · ")
+}
+
+/// The row of the bot. Before the log of the attempt is read, the script
+/// of the page asks for the part.
+fn bot_value(v: &BotView) -> Html {
+    let body = bot_body(v);
+    match v.tail {
+        Some(crate::updatebot::Tail::Later) => html!(
+            "<span data-part=\"/part/bot/{}\">{body}</span>",
+            crate::github::urlencode(&v.attr)
+        ),
+        _ => body,
+    }
+}
+
 fn severity_html(w: &Worst) -> Html {
     let mut out = Html::new();
     if let Some(b) = w.band {
@@ -801,6 +1020,7 @@ pub(crate) struct PackageView<'a> {
     pub(crate) channels: Vec<ChannelRow<'a>>,
     pub(crate) needs_backport: Vec<BackportRow<'a>>,
     pub(crate) version_bumps: Vec<u64>,
+    pub(crate) update_bot: BotView,
     #[serde(skip)]
     open: Vec<(&'a Advisory, &'a Verdict)>,
     #[serde(skip)]
@@ -816,6 +1036,7 @@ pub(crate) fn data<'a>(
     attr: &'a str,
     builds: Vec<HydraBuild>,
     binary_cache: Vec<CacheRow>,
+    update_bot: BotView,
 ) -> PackageView<'a> {
     let (s, h, ch) = (i.s, i.h, i.ch);
     let package = i.index.pkgs.get(attr);
@@ -897,6 +1118,7 @@ pub(crate) fn data<'a>(
         channels,
         needs_backport,
         version_bumps,
+        update_bot,
         open,
         osv_extra,
         closed,
@@ -973,6 +1195,7 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         ),
     };
     health.push(&kv("Version", version));
+    health.push(&kv("Update bot", bot_value(&v.update_bot)));
     health.push(&kv("Channels", channels_html(ch, attr, &p.version)));
     for b in &v.builds.0 {
         let label = if b.jobset.key() == Jobset::master().key() {
@@ -1034,6 +1257,7 @@ pub(super) async fn page(
     let subject = Subject::Pkg(attr.clone());
     let builds = channel_builds(&app, &attr, None, Wait::Never).await;
     let cache = binary_cache(&app, &attr);
+    let bot = bot_view(&app, &attr, Wait::Never).await;
     let next = crate::needs::here(&app, &headers, &subject.key());
     let watch = subscribe_button(watching(&app, viewer.as_deref(), &subject), &subject);
     let s = app.snap();
@@ -1049,7 +1273,7 @@ pub(super) async fn page(
         ch: &ch,
         index: &index,
     };
-    let page = view(&i, &data(&i, &attr, builds, cache), personal);
+    let page = view(&i, &data(&i, &attr, builds, cache, bot), personal);
     drop(index);
     page.render(&app, viewer.as_deref())
 }
@@ -1076,10 +1300,21 @@ pub(super) async fn hydra_part(
     }
 }
 
+/// The Update bot row of `/p/<attr>`, with the reason of the last attempt,
+/// for the page script.
+pub(super) async fn bot_part(State(app): State<Shared>, Path(attr): Path<String>) -> Response {
+    let known = app.index.read().unwrap().resolve(&attr) == Some(attr.as_str());
+    if !known {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    bot_body(&bot_view(&app, &attr, Wait::Part(&app)).await).into_response()
+}
+
 pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
     let attr = resolve(app, name)?;
     let builds = channel_builds(app, &attr, None, Wait::Answer).await;
     let cache = binary_cache(app, &attr);
+    let bot = bot_view(app, &attr, Wait::Answer).await;
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
@@ -1090,5 +1325,5 @@ pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
         ch: &ch,
         index: &index,
     };
-    Some(json!(data(&i, &attr, builds, cache)))
+    Some(json!(data(&i, &attr, builds, cache, bot)))
 }

@@ -93,6 +93,7 @@ skip /auth/callback
 skip /feed/:token
 skip /part/p/:attr
 skip /part/m/*file
+skip /part/bot/:attr
 skip /static/:file
 skip /robots.txt
 skip /favicon.ico

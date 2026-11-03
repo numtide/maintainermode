@@ -955,6 +955,7 @@ pub(crate) mod tests {
             health: Default::default(),
             channels: Default::default(),
             hydra: Default::default(),
+            updatebot: Default::default(),
             data_dir: Default::default(),
             git_dir: None,
             index_sets: vec![],

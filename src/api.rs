@@ -577,6 +577,7 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     ("/p/:attr", By(&["/api/v1/packages/:name"])),
     ("/m/*file", By(&["/api/v1/modules/*file"])),
     ("/part/p/:attr", By(&["/api/v1/packages/:name"])),
+    ("/part/bot/:attr", By(&["/api/v1/packages/:name"])),
     ("/part/m/*file", By(&["/api/v1/modules/*file"])),
     ("/a/*path", By(&["/api/v1/areas/*path"])),
     ("/u/:login", By(&["/api/v1/people/:login"])),

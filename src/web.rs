@@ -78,6 +78,8 @@ pub struct App {
     /// nixpkgs channels next to master, in the configured order.
     pub channels: RwLock<Arc<crate::channels::Channels>>,
     pub hydra: crate::health::Hydra,
+    /// The update bot: its queue, its attempts, and their logs.
+    pub updatebot: crate::updatebot::Bot,
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,
     /// The git copy of the archived repositories, when this server keeps one.

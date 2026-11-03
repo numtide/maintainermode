@@ -61,6 +61,7 @@ let
     "arrow-right"
     "info"
     "flame"
+    "hubot"
   ];
   trim = ''
     find ${classes} -type f -exec cat {} + | tr -cs 'A-Za-z0-9_-' '\n' | sort -u > words

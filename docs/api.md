@@ -26,7 +26,7 @@ removed, not redirected.
 | `GET /api/v1/search`                          | what the search box finds: packages, people, PRs, advisories     |
 | `GET /api/v1/first`                           | packages for a first contribution, paged                         |
 | `GET /api/v1/need-help`                       | packages with an open advisory, the highest risk first, paged    |
-| `GET /api/v1/packages/<name>`                 | one package: health, issues and pull requests                    |
+| `GET /api/v1/packages/<name>`                 | one package: health, issues, pull requests and the update bot    |
 | `GET /api/v1/modules/<file>`                  | one NixOS module; `nixos/<name>` also works                      |
 | `GET /api/v1/areas/<path>`                    | one path of the nixpkgs tree                                     |
 | `GET /api/v1/find/<name>`                     | a redirect to the package, module or area of a name              |

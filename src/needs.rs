@@ -239,6 +239,7 @@ pub(crate) struct Inputs<'a> {
     pub(crate) interests: &'a Interests,
     /// Attributes whose last Hydra build is red, from the build watch.
     pub(crate) failed: &'a HashMap<String, (BuildState, String)>,
+    pub(crate) bot: &'a crate::updatebot::Data,
     pub(crate) plans: &'a Plans,
     pub(crate) now: DateTime<Utc>,
 }
@@ -498,6 +499,15 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         labels.push((Tone::Attention, format!("{v} available")));
         let _ = write!(detail, " Upstream released {v}.");
     }
+    let bot = up.and_then(|_| i.bot.failed_attempt(attr, i.now));
+    if let Some(a) = bot {
+        labels.push((Tone::Attention, "update bot failed".into()));
+        let _ = write!(
+            detail,
+            " The update bot tried on {} and gave up: the package page says why.",
+            a.started.format("%Y-%m-%d")
+        );
+    }
     let version = i.index.pkgs.get(attr).map_or("", |p| p.version.as_str());
     Some(Item {
         key: format!("pkg:{attr}"),
@@ -518,6 +528,8 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
             up.unwrap_or(""),
             red.as_ref().map_or("", |r| r.0.key()),
             red.as_ref().map_or("", |r| r.1.as_str()),
+            &bot.map(|a| a.started.timestamp().to_string())
+                .unwrap_or_default(),
         ]),
         moods: vec![Mood::Maintain],
         labels,
@@ -928,6 +940,7 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
     let s = app.snap();
     let plans = Plans::of(app, login, s.committers.is(login));
     let h = app.health.read().unwrap().clone();
+    let bot = app.updatebot.snapshot();
     let index = app.index.read().unwrap();
     let failed = app.hydra.builds.red(
         interests
@@ -946,6 +959,7 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
         h: &h,
         interests: &interests,
         failed: &failed,
+        bot: &bot,
         plans: &plans,
         now: Utc::now(),
     })
@@ -1338,6 +1352,7 @@ mod tests {
         versions: HashMap<String, String>,
         hosts: HashMap<String, Vec<(String, String)>>,
         failed: HashMap<String, (BuildState, String)>,
+        bot: crate::updatebot::Data,
         plans: Plans,
     }
 
@@ -1367,6 +1382,7 @@ mod tests {
                 h: Health::default(),
                 machines: vec!["curl".into(), "hello".into()],
                 failed: HashMap::new(),
+                bot: Default::default(),
                 versions: HashMap::new(),
                 hosts: HashMap::new(),
                 plans: Plans::none(false),
@@ -1415,6 +1431,7 @@ mod tests {
                 h: &self.h,
                 interests: &interests,
                 failed: &self.failed,
+                bot: &self.bot,
                 plans: &self.plans,
                 now: now(),
             })
@@ -1809,6 +1826,45 @@ mod tests {
         );
         assert_eq!(find(&items, "pkg:hello").action, "Look at the build");
         assert!(items.iter().all(|i| i.moods == [Mood::Maintain]));
+    }
+
+    #[test]
+    fn a_failed_attempt_of_the_update_bot_marks_the_item_of_a_release() {
+        let mut w = World::new();
+        w.h.upstream.insert("jq".into(), "2.0".into());
+        let attempt = |code: i64| crate::updatebot::Entry {
+            last: Some(crate::updatebot::Attempt {
+                started: now() - Duration::days(3),
+                finished: Some(now() - Duration::days(3) + Duration::minutes(2)),
+                exit_code: Some(code),
+            }),
+            queued: None,
+        };
+        // a failure on a package with no new release is no item
+        w.bot.entries.insert("hello".into(), attempt(1));
+        let before = w.items();
+        assert_eq!(keys(&before), ["pkg:jq"]);
+        let plain = find(&before, "pkg:jq").fingerprint.clone();
+        let marked = |items: &[Item]| {
+            find(items, "pkg:jq")
+                .labels
+                .iter()
+                .any(|l| l.1 == "update bot failed")
+        };
+        assert!(!marked(&before));
+        w.bot.entries.insert("jq".into(), attempt(0));
+        assert!(!marked(&w.items()));
+        w.bot.entries.insert("jq".into(), attempt(1));
+        let items = w.items();
+        assert_eq!(keys(&items), ["pkg:jq"]);
+        assert!(marked(&items));
+        let jq = find(&items, "pkg:jq");
+        assert!(
+            jq.detail.contains("The update bot tried on "),
+            "{}",
+            jq.detail
+        );
+        assert_ne!(jq.fingerprint, plain);
     }
 
     fn mixed() -> Vec<Item> {

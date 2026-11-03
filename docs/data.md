@@ -116,6 +116,12 @@ its known limits.
   finished builds every 5 minutes, and a sweep of at most 10 jobs a minute.
   The health sources run in their own
   task, every 10 minutes. A slow source does not delay the archive walk.
+- **The update bot.** Its own task downloads the SQLite state of the
+  nixpkgs-update supervisor (about 15 MB) every hour, with
+  `If-Modified-Since`, and keeps the last attempt and the queue position
+  of each attribute (see [The update bot](health.md#the-update-bot)). The
+  end of a log is read per page view, at most 4 at a time and 60 a minute,
+  and kept 30 days once the attempt is over.
 - **Advisory detail.** For each CVE that the tracker names:
   - The CVSS score and the CISA exploitation decision come from the
     [CVE Program's records](https://github.com/CVEProject/cvelistV5), one

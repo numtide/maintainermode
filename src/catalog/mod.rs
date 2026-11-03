@@ -65,6 +65,7 @@ pub fn routes() -> Router<Shared> {
         .route("/p/:attr", get(package::page))
         .route("/m/*file", get(module::page))
         .route("/part/p/:attr", get(package::hydra_part))
+        .route("/part/bot/:attr", get(package::bot_part))
         .route("/part/m/*file", get(module::hydra_part))
         .route("/a/*path", get(area::page))
         .route("/me/watch", post(add_watch))
@@ -543,6 +544,9 @@ pub(crate) struct Flags {
     /// A jobset's last Hydra build failed. Only the views of your packages
     /// set it.
     pub(crate) build_failed: bool,
+    /// Upstream has a newer release, and the last attempt of the update bot
+    /// failed. Only the views of your packages set it.
+    pub(crate) bot_failed: bool,
 }
 
 impl Flags {
@@ -581,6 +585,7 @@ impl Flags {
             open_issues: issues.iter().filter(|i| i.is_open()).count(),
             score,
             build_failed: false,
+            bot_failed: false,
         }
     }
 
@@ -622,6 +627,12 @@ impl Flags {
         }
         if let Some(u) = &self.upstream {
             out.push(badge(Tone::Attention, upstream_badge(u)));
+        }
+        if self.bot_failed {
+            out.push(badge(
+                Tone::Attention,
+                html!("{} update bot failed", icon(octicon!("hubot"))),
+            ));
         }
         out
     }
@@ -2276,6 +2287,148 @@ pub(crate) mod tests {
             "{later}"
         );
         assert!(later.contains(link), "{later}");
+    }
+
+    fn bot_entry() -> crate::updatebot::Entry {
+        crate::updatebot::Entry {
+            last: Some(crate::updatebot::Attempt {
+                started: Utc::now() - Duration::days(12),
+                finished: Some(Utc::now() - Duration::days(12) + Duration::minutes(1)),
+                exit_code: Some(1),
+            }),
+            queued: Some(crate::updatebot::Queued {
+                position: 1234,
+                fetcher: "repology".into(),
+                old: "14.0.0".into(),
+                new: "15.0.0".into(),
+                url: Some("https://repology.org/project/flameshot/versions".into()),
+            }),
+        }
+    }
+
+    fn bot_data(attr: &str) -> crate::updatebot::Data {
+        crate::updatebot::Data {
+            read_at: Some(Utc::now()),
+            queue_len: 24589,
+            attempts: 7 * 2000,
+            logged: 1,
+            entries: [(attr.to_string(), bot_entry())].into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_update_bot_row_tells_the_attempt_the_queue_and_the_reason() {
+        use crate::updatebot::{Outcome, Tail};
+        let view = |entry: Option<crate::updatebot::Entry>, tail: Option<Tail>, read: bool| {
+            super::package::BotView {
+                attr: "a<b>".into(),
+                entry,
+                read_at: read.then(Utc::now),
+                queue_len: 24589,
+                next_at: Some(Utc::now() + Duration::hours(15)),
+                tail,
+            }
+        };
+        let row = super::package::bot_body(&view(None, None, false));
+        assert!(row.contains("no data yet"), "{row}");
+        let row = super::package::bot_body(&view(None, None, true));
+        assert!(row.contains("no attempt logged"), "{row}");
+        assert!(row.contains("not in the queue"), "{row}");
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(Tail::Later), true));
+        assert!(row.contains("class=\"color-fg-danger\""), "{row}");
+        assert!(row.contains(">failed</a> 12d ago"), "{row}");
+        assert!(row.contains("queued <span"), "{row}");
+        assert!(
+            row.contains(">1,234 of 24,589</span>, next attempt in about 15 hours"),
+            "{row}"
+        );
+        assert!(row.contains("14.0.0 → 15.0.0 from repology"), "{row}");
+        assert!(
+            row.contains("https://nixpkgs-update-logs.nixos.org/a&lt;b&gt;/"),
+            "{row}"
+        );
+        assert!(!row.contains("a<b>"), "{row}");
+        let reason = Tail::Read(Outcome {
+            line: "The diff <was> empty.".into(),
+            ..Default::default()
+        });
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(reason), true));
+        assert!(
+            row.contains(
+                "12d ago: <span class=\"color-fg-muted\">The diff &lt;was&gt; empty.</span>"
+            ),
+            "{row}"
+        );
+        let opened = Tail::Read(Outcome {
+            pr: Some(582811),
+            ..Default::default()
+        });
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(opened), true));
+        assert!(
+            row.contains(": opened <a href=\"/pr/582811\">#582811</a>"),
+            "{row}"
+        );
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(Tail::Asking), true));
+        assert!(row.contains("has not answered yet"), "{row}");
+    }
+
+    #[tokio::test]
+    async fn the_package_page_and_the_api_carry_the_update_bot() {
+        let app = crate::sets::tests::app(&["flameshot"]);
+        *app.updatebot.data.write().unwrap() = std::sync::Arc::new(bot_data("flameshot"));
+        let site = crate::e2e::serve(app.clone()).await;
+        let page = site.get("/p/flameshot", None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(page.body.contains("Update bot"), "{}", page.body);
+        assert!(
+            page.body.contains("data-part=\"/part/bot/flameshot\""),
+            "{}",
+            page.body
+        );
+        assert!(page.body.contains("1,234 of 24,589"), "{}", page.body);
+        // the reason is in the cache, so no test reaches the log server
+        app.updatebot.preset(
+            "flameshot",
+            bot_entry().last.as_ref().unwrap(),
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "The diff was empty after rewrites.".into(),
+                ..Default::default()
+            }),
+        );
+        let part = site.get("/part/bot/flameshot", None).await;
+        assert_eq!(part.status, StatusCode::OK);
+        assert!(part.body.contains(">failed</a>"), "{}", part.body);
+        assert!(part.body.contains("The diff was empty"), "{}", part.body);
+        assert!(!part.body.contains("data-part"), "{}", part.body);
+        assert_eq!(
+            site.get("/part/bot/nothing", None).await.status,
+            StatusCode::NOT_FOUND
+        );
+        let api = site.get("/api/v1/packages/flameshot", None).await;
+        let v: Value = serde_json::from_str(&api.body).unwrap();
+        let u = &v["update_bot"];
+        assert_eq!(u["queue"]["position"], 1234);
+        assert_eq!(u["queue"]["length"], 24589);
+        assert_eq!(u["queue"]["new"], "15.0.0");
+        assert!(u["queue"]["next_attempt_at"].is_string(), "{u}");
+        assert_eq!(u["last_attempt"]["state"], "failed");
+        assert_eq!(u["last_attempt"]["exit_code"], 1);
+        assert!(
+            u["last_attempt"]["log_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("https://nixpkgs-update-logs.nixos.org/flameshot/")
+        );
+        assert_eq!(
+            u["logs_url"],
+            "https://nixpkgs-update-logs.nixos.org/flameshot/"
+        );
+        assert_eq!(
+            u["last_attempt"]["reason"]["line"],
+            "The diff was empty after rewrites."
+        );
+        assert_eq!(u["last_attempt"]["reason_state"], "read");
     }
 
     #[test]

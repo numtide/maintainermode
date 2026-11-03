@@ -24,6 +24,7 @@ Information about all of nixpkgs, for everyone, with no login:
   - the newest upstream release, and the open version bumps;
   - advisories from the security tracker, with CVSS, EPSS and OSV;
   - the last Hydra build, or the NixOS test of a module;
+  - the last attempt of the update bot, why it gave up, and its place in the queue;
   - the version in each channel, and when a fix needs a backport;
   - packaging gaps, and one risk score that sums it all up.
 - **A page for each pull request**: its place in the queues, the packages it touches and their health, the diff, the reviews, who built it with nixpkgs-review and on which systems, and a review checklist. You leave the review on GitHub.

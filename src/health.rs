@@ -668,13 +668,20 @@ impl Last {
 }
 
 /// A fixed one-minute window.
-struct Window {
+pub(crate) struct Window {
     start: Instant,
     used: u32,
 }
 
 impl Window {
-    fn take(&mut self, now: Instant, cap: u32) -> bool {
+    pub(crate) fn new() -> Self {
+        Window {
+            start: Instant::now(),
+            used: 0,
+        }
+    }
+
+    pub(crate) fn take(&mut self, now: Instant, cap: u32) -> bool {
         if now.duration_since(self.start) >= Duration::from_secs(60) {
             self.start = now;
             self.used = 0;
@@ -724,10 +731,7 @@ impl Hydra {
             cache: Mutex::new(HashMap::new()),
             running: tokio::sync::Semaphore::new(concurrent),
             asking: Mutex::new(Default::default()),
-            window: Mutex::new(Window {
-                start: Instant::now(),
-                used: 0,
-            }),
+            window: Mutex::new(Window::new()),
             per_minute,
             not_asked: AtomicU64::new(0),
             builds: Default::default(),

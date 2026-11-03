@@ -155,6 +155,14 @@ pub(crate) fn order(why: Why, attention: bool) -> (u8, bool) {
     (why.group(), !attention)
 }
 
+/// The sources a view of your packages reads live: Hydra and the update
+/// bot. A test passes none.
+#[derive(Clone, Copy)]
+pub(crate) struct Live<'a> {
+    pub(crate) hydra: &'a Hydra,
+    pub(crate) bot: &'a crate::updatebot::Data,
+}
+
 pub(crate) struct Row {
     pub(crate) sub: Subject,
     pub(crate) why: Why,
@@ -292,13 +300,13 @@ impl Interests {
         s: &Snapshot,
         index: &Index,
         h: &crate::health::Health,
-        hydra: Option<&Hydra>,
+        live: Option<Live<'_>>,
         f: Filter,
         q: &str,
         set: Option<&str>,
         output: Option<&str>,
     ) -> Vec<Row> {
-        let mut rows = self.rows(s, index, h, hydra, f, q);
+        let mut rows = self.rows(s, index, h, live, f, q);
         if let Some(name) = set {
             let keys = &self.sets[name];
             rows.retain(|r| keys.contains(&r.sub.key()));
@@ -317,11 +325,12 @@ impl Interests {
         s: &Snapshot,
         index: &Index,
         h: &crate::health::Health,
-        hydra: Option<&Hydra>,
+        live: Option<Live<'_>>,
         f: Filter,
         q: &str,
     ) -> Vec<Row> {
         let ql = q.to_lowercase();
+        let now = chrono::Utc::now();
         let mut rows: Vec<Row> = self
             .items
             .values()
@@ -329,12 +338,13 @@ impl Interests {
             .filter(|(sub, ..)| ql.is_empty() || sub.label().to_lowercase().contains(&ql))
             .map(|(sub, why, via)| {
                 let mut flags = Flags::of(s, index, h, sub);
-                if let (Some(hy), Subject::Pkg(a)) = (hydra, sub) {
-                    flags.build_failed = hy.builds.red_on(a).is_some()
+                if let (Some(l), Subject::Pkg(a)) = (live, sub) {
+                    flags.build_failed = l.hydra.builds.red_on(a).is_some()
                         || matches!(
-                            hy.known(&Hydra::package_job(a)),
+                            l.hydra.known(&Hydra::package_job(a)),
                             Some(Last::Build(b)) if !b.ok
                         );
+                    flags.bot_failed = flags.upstream.is_some() && l.bot.failed_on(a, now);
                 }
                 Row {
                     sub: sub.clone(),
@@ -645,7 +655,12 @@ pub(crate) fn view(
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    let bot = app.updatebot.snapshot();
+    let live = Live {
+        hydra: &app.hydra,
+        bot: &bot,
+    };
+    let rows = i.picked(&s, &index, &h, Some(live), f, q, set, output);
     let mut out = Html::new();
     let mut actions = Html::new();
     let mut extra = Html::new();
@@ -801,7 +816,12 @@ pub(crate) fn value(
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let rows = i.picked(&s, &index, &h, Some(&app.hydra), f, q, set, output);
+    let bot = app.updatebot.snapshot();
+    let live = Live {
+        hydra: &app.hydra,
+        bot: &bot,
+    };
+    let rows = i.picked(&s, &index, &h, Some(live), f, q, set, output);
     let items: Vec<MineItem> = rows
         .iter()
         .map(|r| {
@@ -917,6 +937,60 @@ mod tests {
         assert_eq!(keys(&watch), ["curl", "jq"]);
         let found = i.rows(&s, &index, &h, None, Filter::Mine, "LI");
         assert_eq!(keys(&found), ["zlib"]);
+    }
+
+    #[test]
+    fn a_failed_attempt_of_the_update_bot_flags_a_package_behind_upstream() {
+        let index = index();
+        let i = Interests::build(&index, "alice", &[], &[], true);
+        let s = Snapshot::default();
+        let mut h = crate::health::Health::default();
+        h.set_upstream(
+            [("hello".to_string(), "2".to_string())].into(),
+            chrono::Utc::now(),
+        );
+        let failed = |attr: &str| {
+            (
+                attr.to_string(),
+                crate::updatebot::Entry {
+                    last: Some(crate::updatebot::Attempt {
+                        started: chrono::Utc::now() - chrono::Duration::days(2),
+                        finished: Some(chrono::Utc::now() - chrono::Duration::days(2)),
+                        exit_code: Some(1),
+                    }),
+                    queued: None,
+                },
+            )
+        };
+        let bot = crate::updatebot::Data {
+            entries: [failed("hello"), failed("curl")].into(),
+            ..Default::default()
+        };
+        let hydra = Hydra::default();
+        let live = Live {
+            hydra: &hydra,
+            bot: &bot,
+        };
+        let rows = i.rows(&s, &index, &h, Some(live), Filter::Maintain, "");
+        let flag = |name: &str| {
+            rows.iter()
+                .find(|r| r.sub.label() == name)
+                .unwrap()
+                .flags
+                .bot_failed
+        };
+        assert!(flag("hello"));
+        // behind nothing: a failure of the bot is no news
+        assert!(!flag("curl"));
+        assert!(
+            rows[0]
+                .flags
+                .badges()
+                .iter()
+                .any(|b| b.contains("update bot failed"))
+        );
+        let none = i.rows(&s, &index, &h, None, Filter::Maintain, "");
+        assert!(none.iter().all(|r| !r.flags.bot_failed));
     }
 
     #[test]

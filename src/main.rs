@@ -65,6 +65,7 @@ mod subject;
 mod telemetry;
 mod trace;
 mod ui;
+mod updatebot;
 mod upstream;
 mod version;
 mod web;
@@ -1055,6 +1056,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 snapshot: Default::default(),
                 secure_cookies: public_url.starts_with("https://"),
                 hydra: Default::default(),
+                updatebot: Default::default(),
                 public_url: public_url.clone(),
                 data_dir: data_dir(&db),
                 git_dir: (archive_git && !archive_repos.is_empty())
@@ -1085,6 +1087,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::spawn(background(app.clone(), sync_every));
             tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
             tokio::spawn(channels::run(app.clone()));
+            tokio::spawn(updatebot::run(app.clone()));
             tokio::spawn(builds::run(app.clone()));
             tokio::spawn(zhf::run(app.clone()));
             match bot_token {
@@ -1150,6 +1153,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
+                updatebot: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
                 git_dir: None,
@@ -1204,6 +1208,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 snapshot: Default::default(),
                 secure_cookies: false,
                 hydra: Default::default(),
+                updatebot: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
                 git_dir: None,
