@@ -167,8 +167,9 @@ The keys do nothing while you type in a field.
 | `?`            | show the keys of the page                         |
 
 Some pages add keys, such as `n` and `e` of
-[Needs you](personal.md#keys). The first Tab of a page goes to "Skip to
-content".
+[Needs you](personal.md#keys), and `x` of the
+[inbox](personal.md#notifications). The first Tab of a page goes to "Skip
+to content".
 
 ## The risk score
 

@@ -377,6 +377,40 @@ async fn forms_change_what_the_pages_show() {
     assert_eq!(a.status, StatusCode::SEE_OTHER);
     private(&a, "inbox/read");
 
+    // a bare post, with no body and no content type, as the VM test sends it
+    let rb = site
+        .client
+        .post(format!("{}/me/inbox/read", site.base))
+        .header(COOKIE, format!("session={SID}"));
+    let a = site.answer(rb).await;
+    assert_eq!(a.status, StatusCode::SEE_OTHER, "inbox/read without a form");
+
+    // the same form with checked events: repeated `id` fields
+    let a = site
+        .post(
+            "/me/inbox/read",
+            SID,
+            &[
+                ("selected", "1"),
+                ("id", "pr-1-opened"),
+                ("id", "pr-2-opened"),
+                ("back", "/inbox?kind=pr"),
+            ],
+        )
+        .await;
+    assert_eq!(a.status, StatusCode::SEE_OTHER);
+    assert_eq!(a.location.as_deref(), Some("/inbox?kind=pr"));
+    private(&a, "inbox/read some");
+    assert_eq!(app.store.read_ids("alice").unwrap().len(), 2);
+    let a = site
+        .post(
+            "/me/inbox/read",
+            SID,
+            &[("id", "pr-3-opened"), ("back", "//evil.example")],
+        )
+        .await;
+    assert_eq!(a.location.as_deref(), Some("/inbox"));
+
     let a = site
         .post(
             "/me/tags",

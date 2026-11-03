@@ -9,7 +9,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::RwLock;
 
 use crate::catalog::{Event, person_events};
@@ -19,6 +19,9 @@ use crate::ui::{Page, Personal, Section, Tab};
 use crate::web::{App, Shared, ago, icon, octicon};
 
 pub(crate) const INBOX: &str = "/inbox";
+const READ: &str = "/me/inbox/read";
+/// The id of the form that "Mark selected read" and the checkboxes share.
+const SELECT: &str = "inbox-select";
 const READ_AT: &str = "inbox_read_at";
 const KINDS: &str = "notify_kinds";
 const MINE_OFF: &str = "notify_mine_off";
@@ -31,7 +34,7 @@ const FIRST_KINDS: &str = "pr,issue,advisory,release";
 pub fn routes() -> Router<Shared> {
     Router::new()
         .route("/inbox", get(inbox_page))
-        .route("/me/inbox/read", post(mark_read))
+        .route(READ, post(mark_read))
         .route("/me/notify", post(save_notify))
 }
 
@@ -146,14 +149,31 @@ pub(crate) fn read_at(app: &App, login: &str) -> Option<DateTime<Utc>> {
     app.store.setting_time(login, READ_AT)
 }
 
-fn unread(e: &Event, read_at: Option<DateTime<Utc>>) -> bool {
-    read_at.is_none_or(|r| e.at > r)
+/// What a person read: everything up to `at` ("Mark all read"), and the
+/// events marked one by one after that.
+#[derive(Default)]
+pub struct Read {
+    at: Option<DateTime<Utc>>,
+    ids: HashSet<String>,
 }
 
-pub fn unread_count(events: &[Event], read_at: Option<DateTime<Utc>>, kinds: &[Kind]) -> usize {
+impl Read {
+    pub fn of(app: &App, login: &str) -> Self {
+        Read {
+            at: read_at(app, login),
+            ids: app.store.read_ids(login).unwrap_or_default(),
+        }
+    }
+
+    fn unread(&self, e: &Event) -> bool {
+        self.at.is_none_or(|r| e.at > r) && !self.ids.contains(&e.id)
+    }
+}
+
+pub fn unread_count(events: &[Event], read: &Read, kinds: &[Kind]) -> usize {
     events
         .iter()
-        .filter(|e| unread(e, read_at) && kinds.contains(&Kind::of(&e.id)))
+        .filter(|e| read.unread(e) && kinds.contains(&Kind::of(&e.id)))
         .count()
 }
 
@@ -175,7 +195,7 @@ impl Counts {
 pub fn recount_one(app: &App, login: &str) {
     let n = unread_count(
         &person_events(app, login),
-        read_at(app, login),
+        &Read::of(app, login),
         &kinds(app, login),
     );
     app.inbox.set(login, n);
@@ -186,8 +206,18 @@ pub fn recount_one(app: &App, login: &str) {
 pub fn recount(app: &App) {
     crate::followup::purge(app);
     crate::review::purge(app);
+    purge(app);
     for m in app.store.members().unwrap_or_default() {
         recount_one(app, &m.login);
+    }
+}
+
+/// Forgets the marks on events that left the inbox: an event is at most
+/// `FEED_DAYS` old, and a mark is never older than its event.
+fn purge(app: &App) {
+    let before = Utc::now() - chrono::Duration::days(crate::catalog::FEED_DAYS);
+    if let Err(e) = app.store.purge_inbox_read(before) {
+        tracing::warn!("inbox marks: {e:#}");
     }
 }
 
@@ -242,7 +272,7 @@ impl<'a> Inbox<'a> {
         kind: Option<Kind>,
         sub: Option<&'a str>,
     ) -> Self {
-        let read = read_at(app, login);
+        let read = Read::of(app, login);
         Inbox {
             rows: all
                 .iter()
@@ -255,11 +285,11 @@ impl<'a> Inbox<'a> {
                     title: &e.title,
                     url: &e.url,
                     subject: &e.subject,
-                    unread: unread(e, read),
+                    unread: read.unread(e),
                 })
                 .collect(),
-            unread: unread_count(all, read, &kinds(app, login)),
-            any_unread: all.iter().any(|e| unread(e, read)),
+            unread: unread_count(all, &read, &kinds(app, login)),
+            any_unread: all.iter().any(|e| read.unread(e)),
             subjects: all.iter().map(|e| e.subject.as_str()).collect(),
             kind,
             sub,
@@ -312,13 +342,22 @@ async fn inbox_page(
 
 fn inbox_view(inbox: &Inbox) -> Page {
     let (sub, kind) = (inbox.sub, inbox.kind);
-    let actions = if inbox.any_unread {
-        Html::from(
-            "<form method=\"post\" action=\"/me/inbox/read\"><button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>",
-        )
-    } else {
-        Html::new()
-    };
+    let here = inbox_href(sub, kind);
+    let back = html!("<input type=\"hidden\" name=\"back\" value=\"{here}\">");
+    let some_unread = inbox.rows.iter().any(|e| e.unread);
+    let mut actions = Html::new();
+    if some_unread {
+        actions.push(&html!(
+            "<form method=\"post\" action=\"{READ}\" id=\"{SELECT}\" class=\"d-inline\">\
+             <input type=\"hidden\" name=\"selected\" value=\"1\">{back}\
+             <button class=\"btn btn-sm\" type=\"submit\" data-needs-checked title=\"Mark the checked events read\">Mark selected read</button></form> "
+        ));
+    }
+    if inbox.any_unread {
+        actions.push(&html!(
+            "<form method=\"post\" action=\"{READ}\" class=\"d-inline\">{back}<button class=\"btn btn-sm\" type=\"submit\">Mark all read</button></form>"
+        ));
+    }
     let mut tabs = vec![Tab::new(inbox_href(sub, None), "All", kind.is_none())];
     for k in Kind::ALL {
         tabs.push(Tab::new(
@@ -356,30 +395,59 @@ fn inbox_view(inbox: &Inbox) -> Page {
         ));
     } else {
         out.push(&Html::from("<div class=\"Box\">"));
+        if some_unread {
+            out.push(&html!(
+                "<div class=\"Box-header py-2\"><label class=\"f6 d-inline-flex flex-items-center\" style=\"min-height:24px\"><input type=\"checkbox\" class=\"mr-2\" data-check-all=\"{SELECT}\"> Select all unread</label></div>"
+            ));
+        }
         for e in &inbox.rows {
             let class = if e.unread {
                 "Link--primary text-bold"
             } else {
                 "Link--primary"
             };
+            // the label is the tap target: a checkbox alone is too small
+            // for a thumb
+            let check = if e.unread {
+                html!(
+                    "<label class=\"mr-1 flex-shrink-0 d-flex flex-items-center\" style=\"min-width:24px;min-height:24px;margin-top:-2px\">\
+                     <input type=\"checkbox\" name=\"id\" value=\"{}\" form=\"{SELECT}\" aria-label=\"select\" data-hotkey=\"x\" data-hotkey-label=\"Select or deselect the event\"></label>",
+                    e.id
+                )
+            } else if some_unread {
+                // the width of a label, so the icons stay in one column
+                Html::from(
+                    "<span class=\"mr-1 flex-shrink-0\" style=\"width:24px\" aria-hidden=\"true\"></span>",
+                )
+            } else {
+                Html::new()
+            };
+            // "new" above the button: one narrow column, so a phone keeps
+            // room for the title
+            let read = if e.unread {
+                html!(
+                    "<div class=\"ml-2 flex-shrink-0 d-flex flex-column flex-items-end\">\
+                     <span class=\"Label Label--accent\">new</span>\
+                     <form method=\"post\" action=\"{READ}\" class=\"mt-1\">\
+                     <input type=\"hidden\" name=\"id\" value=\"{}\">{back}\
+                     <button class=\"btn btn-sm\" type=\"submit\" title=\"Mark this event read\">Mark read</button></form></div>",
+                    e.id
+                )
+            } else {
+                Html::new()
+            };
             let title = if e.url.is_empty() {
                 html!("<span class=\"{class}\">{}</span>", e.title)
             } else {
                 crate::prpage::link(e.url, Html::text(e.title), class)
             };
-            let new = if e.unread {
-                "<span class=\"Label Label--accent ml-2 flex-shrink-0\">new</span>"
-            } else {
-                ""
-            };
             out.push(&html!(
-                "<div class=\"Box-row d-flex flex-items-start\"><span class=\"mr-2 color-fg-muted\">{}</span>\
+                "<div class=\"Box-row d-flex flex-items-start\">{check}<span class=\"mr-2 color-fg-muted\">{}</span>\
                  <div class=\"flex-auto min-width-0 wb-break-word\">{title}\
-                 <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{}</div>",
+                 <div class=\"f6 color-fg-muted mt-1\">{} · {} ago</div></div>{read}</div>",
                 e.kind.icon(),
                 e.subject,
-                ago(e.at),
-                Html::from(new)
+                ago(e.at)
             ));
         }
         out.push(&Html::from("</div>"));
@@ -395,18 +463,45 @@ fn inbox_view(inbox: &Inbox) -> Page {
         .body(out)
 }
 
-async fn mark_read(State(app): State<Shared>, headers: HeaderMap) -> Response {
+/// `POST /me/inbox/read`. Each `id` field marks one event read; with no
+/// `id`, it marks everything read, unless `selected` says that the person
+/// checked nothing. `back` is the inbox filter to return to. A post with
+/// no form at all, as before the checkboxes, marks everything read.
+async fn mark_read(
+    State(app): State<Shared>,
+    headers: HeaderMap,
+    form: Option<Form<Vec<(String, String)>>>,
+) -> Response {
     let Some(login) = app.viewer(&headers) else {
         return Redirect::to("/auth/login").into_response();
     };
-    if let Err(e) = app
-        .store
-        .set_setting(&login, READ_AT, &Utc::now().to_rfc3339())
-    {
+    let f = form.map(|Form(f)| f).unwrap_or_default();
+    let field = |k: &str| f.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+    let back = field("back")
+        .filter(|b| b.starts_with(INBOX) && crate::web::local_path(b))
+        .unwrap_or(INBOX)
+        .to_string();
+    let ids: Vec<String> = f
+        .iter()
+        .filter(|(n, v)| n == "id" && !v.is_empty())
+        .map(|(_, v)| v.clone())
+        .collect();
+    let done = if !ids.is_empty() {
+        app.store
+            .mark_inbox_read(&login, &ids, Utc::now())
+            .map(|()| recount_one(&app, &login))
+    } else if field("selected").is_some() {
+        Ok(())
+    } else {
+        app.store
+            .set_setting(&login, READ_AT, &Utc::now().to_rfc3339())
+            .and_then(|()| app.store.clear_inbox_read(&login))
+            .map(|()| app.inbox.set(&login, 0))
+    };
+    if let Err(e) = done {
         return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response();
     }
-    app.inbox.set(&login, 0);
-    Redirect::to(INBOX).into_response()
+    Redirect::to(&back).into_response()
 }
 
 /// The `#notifications` section of `/me/settings`.
@@ -538,12 +633,42 @@ pub(crate) mod tests {
             event("upstream-hello-2", now - Duration::hours(3)),
             event("pr-3-pull request opened", now - Duration::days(2)),
         ];
-        assert_eq!(unread_count(&list, None, &Kind::ALL), 4);
-        let read = Some(now - Duration::days(1));
-        assert_eq!(unread_count(&list, read, &Kind::ALL), 3);
-        assert_eq!(unread_count(&list, read, &[Kind::PullRequest]), 1);
-        assert_eq!(unread_count(&list, read, &[]), 0);
-        assert_eq!(unread_count(&list, Some(now), &Kind::ALL), 0);
+        let none = Read::default();
+        assert_eq!(unread_count(&list, &none, &Kind::ALL), 4);
+        let read = Read {
+            at: Some(now - Duration::days(1)),
+            ids: HashSet::new(),
+        };
+        assert_eq!(unread_count(&list, &read, &Kind::ALL), 3);
+        assert_eq!(unread_count(&list, &read, &[Kind::PullRequest]), 1);
+        assert_eq!(unread_count(&list, &read, &[]), 0);
+        let all = Read {
+            at: Some(now),
+            ids: HashSet::new(),
+        };
+        assert_eq!(unread_count(&list, &all, &Kind::ALL), 0);
+        let some = Read {
+            at: Some(now - Duration::days(1)),
+            ids: HashSet::from([
+                "pr-1-merged".to_string(),
+                "pr-3-pull request opened".to_string(),
+            ]),
+        };
+        assert_eq!(
+            unread_count(&list, &some, &Kind::ALL),
+            2,
+            "an event marked read one by one, or older than the read time, is read"
+        );
+        assert!(!some.unread(&list[0]) && some.unread(&list[1]));
+    }
+
+    fn form(fields: &[(&str, &str)]) -> Option<Form<Vec<(String, String)>>> {
+        Some(Form(
+            fields
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        ))
     }
 
     pub(crate) fn signed_in(app: &Shared, login: &str) -> HeaderMap {
@@ -556,7 +681,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn the_inbox_is_for_its_owner_and_marks_all_read() {
         let app = crate::sets::tests::app(&[]);
-        let r = mark_read(State(app.clone()), HeaderMap::new()).await;
+        let r = mark_read(State(app.clone()), HeaderMap::new(), form(&[])).await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
         assert!(read_at(&app, "alice").is_none());
         let h = signed_in(&app, "alice");
@@ -582,10 +707,65 @@ pub(crate) mod tests {
         assert_eq!(app.inbox.get("alice"), 0);
         app.inbox.set("alice", 3);
         assert_eq!(app.inbox.get("alice"), 3);
-        let r = mark_read(State(app.clone()), h).await;
+        app.store
+            .mark_inbox_read("alice", &["pr-1-opened".into()], Utc::now())
+            .unwrap();
+        // a post with no form, as before the checkboxes
+        let r = mark_read(State(app.clone()), h, None).await;
         assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        assert_eq!(r.headers()[header::LOCATION], "/inbox");
         assert_eq!(app.inbox.get("alice"), 0);
         assert!(read_at(&app, "alice").is_some());
+        assert!(
+            app.store.read_ids("alice").unwrap().is_empty(),
+            "mark all read drops the marks made one by one"
+        );
+    }
+
+    #[tokio::test]
+    async fn some_events_are_marked_read_one_by_one() {
+        let app = crate::sets::tests::app(&[]);
+        let h = signed_in(&app, "alice");
+        let r = mark_read(
+            State(app.clone()),
+            h.clone(),
+            form(&[
+                ("selected", "1"),
+                ("id", "pr-1-opened"),
+                ("id", "issue-2-issue opened"),
+                ("id", ""),
+                ("back", "/inbox?kind=pr"),
+            ]),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        assert_eq!(r.headers()[header::LOCATION], "/inbox?kind=pr");
+        assert!(read_at(&app, "alice").is_none(), "the read time stays");
+        let ids = app.store.read_ids("alice").unwrap();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains("pr-1-opened") && ids.contains("issue-2-issue opened"));
+
+        // nothing checked: nothing changes
+        let r = mark_read(
+            State(app.clone()),
+            h.clone(),
+            form(&[("selected", "1"), ("back", "//evil.example")]),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::SEE_OTHER);
+        assert_eq!(r.headers()[header::LOCATION], "/inbox");
+        assert!(read_at(&app, "alice").is_none());
+        assert_eq!(app.store.read_ids("alice").unwrap().len(), 2);
+
+        // a back outside the inbox is refused
+        let r = mark_read(
+            State(app.clone()),
+            h,
+            form(&[("id", "pr-3-opened"), ("back", "/review")]),
+        )
+        .await;
+        assert_eq!(r.headers()[header::LOCATION], "/inbox");
+        assert_eq!(app.store.read_ids("alice").unwrap().len(), 3);
     }
 
     #[tokio::test]

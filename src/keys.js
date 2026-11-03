@@ -88,7 +88,8 @@
     });
     var el = inRow || free;
     if (!el) return false;
-    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)) el.focus();
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && el.type !== "checkbox")
+      el.focus();
     else el.click();
     return true;
   }
@@ -349,6 +350,42 @@
     });
   }
   [].forEach.call(document.querySelectorAll("input[data-search]"), suggest);
+
+  // A checkbox with `data-check-all="<form id>"` checks or clears every
+  // checkbox of that form, also one that names the form with `form=`; a
+  // button with `data-needs-checked` in the form is on while one is checked.
+  [].forEach.call(
+    document.querySelectorAll("[data-check-all]"),
+    function (all) {
+      var form = document.getElementById(all.getAttribute("data-check-all"));
+      if (!form) return;
+      var need = form.querySelector("[data-needs-checked]");
+      function boxes() {
+        return [].filter.call(form.elements, function (el) {
+          return el.type === "checkbox";
+        });
+      }
+      function sync() {
+        var b = boxes();
+        var n = b.filter(function (x) {
+          return x.checked;
+        }).length;
+        if (need) need.disabled = n === 0;
+        all.checked = n > 0 && n === b.length;
+        all.indeterminate = n > 0 && n < b.length;
+      }
+      all.addEventListener("change", function () {
+        boxes().forEach(function (x) {
+          x.checked = all.checked;
+        });
+        sync();
+      });
+      document.addEventListener("change", function (e) {
+        if (e.target !== all && e.target.form === form) sync();
+      });
+      sync();
+    },
+  );
 
   // A page sends what it knows at once; a slow source, such as Hydra,
   // comes after, in place of each `data-part` element.

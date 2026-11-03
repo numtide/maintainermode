@@ -408,8 +408,14 @@ and to your package set. The newest event comes first. A pull request that
 touches more than one thing you watch gives one event, not one for each
 thing. Filter the list by
 kind (your pull requests, pull request, issue, advisory, release, Hydra
-build) or by subscription. "Mark all read" marks every event as read. Only
-you see your inbox.
+build) or by subscription. Only you see your inbox.
+
+**Mark read.** Each unread event has a "Mark read" button and a checkbox.
+Check some events, or "Select all unread" above the list, and "Mark
+selected read" marks the checked ones. "Mark all read" marks every event,
+also those outside the filter. Press `x` to check or uncheck the selected
+row. A mark on one event stays until the event leaves the inbox, after 30
+days.
 
 **Hydra builds.** When the Hydra build of a package that you maintain or
 watch turns red or green again, you get an event. See

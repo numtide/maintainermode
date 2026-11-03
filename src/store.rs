@@ -227,6 +227,12 @@ impl Store {
                at TEXT NOT NULL,
                PRIMARY KEY (login, number)
              );
+             CREATE TABLE IF NOT EXISTS inbox_read (
+               login TEXT NOT NULL,
+               id TEXT NOT NULL,
+               at TEXT NOT NULL,
+               PRIMARY KEY (login, id)
+             );
              CREATE TABLE IF NOT EXISTS needs_seen (
                session TEXT NOT NULL,
                key TEXT NOT NULL,
@@ -1970,6 +1976,46 @@ impl Store {
         Ok(n)
     }
 }
+
+/// The events of the inbox a login marked read one by one. "Mark all read"
+/// uses a time instead; see `notify::READ_AT`.
+impl Store {
+    pub fn read_ids(&self, login: &str) -> Result<std::collections::HashSet<String>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT id FROM inbox_read WHERE login = ?1")?;
+        let rows = stmt.query_map([login], |r| r.get(0))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn mark_inbox_read(&self, login: &str, ids: &[String], at: DateTime<Utc>) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO inbox_read (login, id, at) VALUES (?1, ?2, ?3)",
+                params![login, id, at.to_rfc3339()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Forgets the marks of a login: "Mark all read" makes them redundant.
+    pub fn clear_inbox_read(&self, login: &str) -> Result<()> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM inbox_read WHERE login = ?1", [login])?;
+        Ok(())
+    }
+
+    /// Forgets the marks made before `before`: their events left the inbox.
+    pub fn purge_inbox_read(&self, before: DateTime<Utc>) -> Result<usize> {
+        let conn = self.lock();
+        Ok(conn.execute(
+            "DELETE FROM inbox_read WHERE at < ?1",
+            [before.to_rfc3339()],
+        )?)
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2054,6 +2100,29 @@ mod tests {
         stale.updated_at = at("2018-01-01T00:00:00Z");
         s.put_facts(&[stale]).unwrap();
         assert_eq!(seen(&s, "alice").len(), 1);
+    }
+
+    #[test]
+    fn inbox_marks_are_per_login_and_leave_with_their_events() {
+        let s = Store::open(std::path::Path::new(":memory:")).unwrap();
+        let old = at("2026-01-01T00:00:00Z");
+        let new = at("2026-02-01T00:00:00Z");
+        s.mark_inbox_read("alice", &["pr-1-opened".into()], old)
+            .unwrap();
+        s.mark_inbox_read("alice", &["pr-2-opened".into(), "pr-1-opened".into()], new)
+            .unwrap();
+        s.mark_inbox_read("bob", &["pr-3-opened".into()], new)
+            .unwrap();
+        let alice = s.read_ids("alice").unwrap();
+        assert_eq!(alice.len(), 2);
+        assert!(alice.contains("pr-1-opened") && alice.contains("pr-2-opened"));
+        assert_eq!(s.read_ids("bob").unwrap().len(), 1);
+        // the first mark keeps its time, so it is purged with its event
+        assert_eq!(s.purge_inbox_read(at("2026-01-15T00:00:00Z")).unwrap(), 1);
+        assert_eq!(s.read_ids("alice").unwrap().len(), 1);
+        s.clear_inbox_read("alice").unwrap();
+        assert!(s.read_ids("alice").unwrap().is_empty());
+        assert_eq!(s.read_ids("bob").unwrap().len(), 1);
     }
 
     #[test]
