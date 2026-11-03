@@ -294,14 +294,18 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   `debian/1.2` do not. A prerelease (`alpha`, `beta`, `rc`, `dev` and the
   like) never counts. A tag must use the numbering scheme of the nixpkgs
   version: the same number of digits in the first part, and dots when
-  nixpkgs writes dots. When some tags name the package, only those count.
+  nixpkgs writes dots. The tags that name the package are asked first,
+  then the bare versions (`1.2.3`, `v1.2.3`, `release/v1.2.3`), then all
+  of them (`word-1.2`): the first group that reaches the nixpkgs version
+  answers. A tag with a `/` after its prefix is a branch kept as a tag.
 - **Order.** Versions compare as nix compares them, except that a
   prerelease is older than its release.
 - **Correction.** An answer from the tags or the registry overrules
   repology: it can show that nixpkgs is current. When the newest tag is
   older than nixpkgs, or the oldest tag is already newer than it (the tags
   of an OS that bundles the package), the tags were misread, and repology
-  stays. A repology
+  stays. A snapshot (`0-unstable-2024-01-01`) has no release to reach, so
+  any tag counts for it. A repology
   version counts only when it is newer, is no prerelease, and uses the same
   scheme.
 - **Budget.** Each pass of the health task makes up to 300 requests, with

@@ -157,6 +157,24 @@ const PRERELEASE: [&str; 9] = [
     "dev",
 ];
 
+/// Prefixes that say "release" in any repository.
+const RELEASE: [&str; 3] = ["release-", "release/", "REL_"];
+
+/// A tag that is a version and nothing else: `1.2.3`, `v1.2.3` or
+/// `release/v1.2.3`. When a repository has such tags, a `word-1.2` tag
+/// names something else (`hello_1.39` next to `v0.12.0`).
+fn plain(tag: &str) -> bool {
+    let tag = tag.trim();
+    let tag = tag.strip_suffix("^{}").unwrap_or(tag);
+    let tag = RELEASE
+        .iter()
+        .find_map(|p| tag.strip_prefix(p))
+        .unwrap_or(tag);
+    tag.strip_prefix(['v', 'V'])
+        .unwrap_or(tag)
+        .starts_with(|c: char| c.is_ascii_digit())
+}
+
 /// The version a tag names, or `None` when it names none: tags carry
 /// prefixes (`v1.2.3`, `release-1.2.3`, `openssl-3.5.0`), and some are not
 /// releases at all.
@@ -173,15 +191,17 @@ pub fn version_of(tag: &str, pname: &str) -> Option<String> {
             format!("{pname}/"),
         ]
     };
-    for prefix in named
-        .iter()
-        .map(String::as_str)
-        .chain(["release-", "release/", "REL_", "v", "V"])
-    {
+    for prefix in named.iter().map(String::as_str).chain(RELEASE) {
         if let Some(stripped) = rest.strip_prefix(prefix) {
             rest = stripped;
             break;
         }
+    }
+    // `v1.2.3`, and `release/v1.2.3` or `foo-v1.2.3` alike
+    rest = rest.strip_prefix(['v', 'V']).unwrap_or(rest);
+    // `someone/fix-a-thing-3-05.02.2026` is a branch kept as a tag
+    if rest.contains('/') {
+        return None;
     }
     // `ghostpdl-10.07.1` in the ghostscript repository: cut at the first
     // digit after a `-` or `_`, but not `libx11-1.8` into `11-1.8`
@@ -218,38 +238,57 @@ fn scale(v: &str) -> Option<usize> {
         .map(str::len)
 }
 
+/// nixpkgs has no release of it, only a snapshot: `0-unstable-2024-01-01`.
+fn snapshot(current: &str) -> bool {
+    current.starts_with("0-unstable") || current.starts_with("unstable-")
+}
+
 /// The newest tag on the same numbering scheme as the version nixpkgs has.
-/// The tags must reach back to that version: a repository whose oldest tag
-/// is already newer than nixpkgs never tagged what nixpkgs ships, so its
-/// tags count something else (`trunk-5.5` of an OS that bundles ldacbt
-/// 2.0.72).
+/// The tags must reach the version nixpkgs has: a repository whose oldest
+/// tag is already newer than nixpkgs never tagged what nixpkgs ships, so
+/// its tags count something else (`trunk-5.5` of an OS that bundles ldacbt
+/// 2.0.72), and one whose newest tag is older was misread. A snapshot has
+/// no release to reach, so any tag counts.
+///
+/// The tags that name the package are asked first (a repository that holds
+/// several projects), then the bare versions, then all: the first pool
+/// that reaches nixpkgs answers.
 pub fn newest(tags: &[String], pname: &str, current: &str) -> Option<String> {
-    let ours = scale(current);
-    // a repository that holds several projects names ours in its tags
     let named = |t: &&String| {
         !pname.is_empty()
             && ["-", "_", "/"]
                 .iter()
                 .any(|s| t.starts_with(&format!("{pname}{s}")))
     };
-    let pool: Vec<&String> = if tags.iter().any(|t| named(&t)) {
-        tags.iter().filter(named).collect()
-    } else {
-        tags.iter().collect()
-    };
-    let versions: Vec<String> = pool
+    let pools: [Vec<&String>; 3] = [
+        tags.iter().filter(named).collect(),
+        tags.iter().filter(|t| plain(t)).collect(),
+        tags.iter().collect(),
+    ];
+    pools
         .into_iter()
+        .find_map(|pool| newest_of(&pool, pname, current))
+}
+
+fn newest_of(pool: &[&String], pname: &str, current: &str) -> Option<String> {
+    let ours = scale(current);
+    let versions: Vec<String> = pool
+        .iter()
         .filter_map(|tag| version_of(tag, pname))
         .filter_map(|c| dotted(c, current))
         .filter(|c| ours.is_none() || scale(c) == ours)
         .collect();
-    if !versions
-        .iter()
-        .any(|v| version::compare(v, current) != Ordering::Greater)
+    if !snapshot(current)
+        && !versions
+            .iter()
+            .any(|v| version::compare(v, current) != Ordering::Greater)
     {
         return None;
     }
-    versions.into_iter().max_by(|a, b| version::compare(a, b))
+    versions
+        .into_iter()
+        .max_by(|a, b| version::compare(a, b))
+        .filter(|v| version::compare(v, current) != Ordering::Less)
 }
 
 /// `curl-8_21_0` names 8.21.0, but `drm-5-0-0-20010105` is no libdrm 2.4:
@@ -505,8 +544,7 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                     current += 1;
                     Some(v)
                 }
-                // newest tag older than nixpkgs (`newest` already drops
-                // tags that are all newer): the tags were misread
+                // `newest` never answers this; kept for a registry that does
                 Ordering::Less => {
                     unclear += 1;
                     None
@@ -674,6 +712,8 @@ mod tests {
     fn a_tag_is_not_always_a_version() {
         assert_eq!(version_of("v1.2.3", "zlib").as_deref(), Some("1.2.3"));
         assert_eq!(version_of("zlib-1.3.1", "zlib").as_deref(), Some("1.3.1"));
+        assert_eq!(version_of("zlib-v1.3.1", "zlib").as_deref(), Some("1.3.1"));
+        assert_eq!(version_of("release/v4.3.0", "x").as_deref(), Some("4.3.0"));
         assert_eq!(
             version_of("ghostpdl-10.07.1", "ghostscript").as_deref(),
             Some("10.07.1")
@@ -682,6 +722,15 @@ mod tests {
         assert_eq!(version_of("v2.0.0-rc1", "x"), None);
         assert_eq!(version_of("nightly", "x"), None);
         assert_eq!(version_of("debian/1.2.3", "x"), None);
+        assert_eq!(
+            version_of("someone/fix-a-thing-3-05.02.2026", "kotlin"),
+            None
+        );
+        assert_eq!(version_of("release/1.2.3", "x").as_deref(), Some("1.2.3"));
+        assert_eq!(
+            version_of("kotlin/1.2.3", "kotlin").as_deref(),
+            Some("1.2.3")
+        );
         assert_eq!(version_of("942850058", "libwebsockets"), None);
         assert_eq!(version_of("2024.1", "x").as_deref(), Some("2024.1"));
     }
@@ -728,6 +777,52 @@ mod tests {
         assert_eq!(
             newest(&tags, "thing", "1.2.3-unstable-2025-01-01").as_deref(),
             Some("1.3.0")
+        );
+        // a snapshot of a project that has a release has nothing to reach
+        assert_eq!(
+            newest(&tags, "thing", "0-unstable-2022-08-14").as_deref(),
+            Some("1.3.0")
+        );
+    }
+
+    #[test]
+    fn plain_tags_outrank_tags_with_a_word() {
+        let tags = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mrustc = tags(&["v0.11.2", "v0.12.0", "hello_1.39", "rust1.90_rustc"]);
+        assert_eq!(
+            newest(&mrustc, "mrustc", "0.12.0").as_deref(),
+            Some("0.12.0")
+        );
+        let arx = tags(&["1.2", "1.2.1", "ArxFatalis-1.21"]);
+        assert_eq!(
+            newest(&arx, "arx-libertatis", "1.2.1").as_deref(),
+            Some("1.2.1")
+        );
+        // one odd tag that names the package does not hide the bare ones
+        let rabbit = tags(&["rabbitmq-c-v0.3.0", "v0.15.0", "v0.18.1"]);
+        assert_eq!(
+            newest(&rabbit, "rabbitmq-c", "0.15.0").as_deref(),
+            Some("0.18.1")
+        );
+        // a release prefix is as plain as a `v`
+        let approxmc = tags(&["4.1.24", "release/4.2.0", "release/v4.4.0", "cav2020-paper"]);
+        assert_eq!(
+            newest(&approxmc, "approxmc", "4.1.24").as_deref(),
+            Some("4.4.0")
+        );
+        // no plain tags: the words count
+        let rel = tags(&["build-1.2", "build-1.3"]);
+        assert_eq!(newest(&rel, "thing", "1.2").as_deref(), Some("1.3"));
+        // tags that name the package still come first
+        let gs = tags(&[
+            "ghostpdl-10.07.1",
+            "ghostscript-10.03.0",
+            "ghostscript-10.05.1",
+            "10.03.0",
+        ]);
+        assert_eq!(
+            newest(&gs, "ghostscript", "10.03.0").as_deref(),
+            Some("10.05.1")
         );
     }
 
