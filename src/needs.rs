@@ -239,7 +239,7 @@ pub(crate) struct Inputs<'a> {
     pub(crate) interests: &'a Interests,
     /// Attributes whose last Hydra build is red, from the build watch.
     pub(crate) failed: &'a HashMap<String, (BuildState, String)>,
-    pub(crate) bot: &'a crate::updatebot::Data,
+    pub(crate) bot: &'a crate::updatebot::Bot,
     pub(crate) plans: &'a Plans,
     pub(crate) now: DateTime<Utc>,
 }
@@ -499,7 +499,10 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         labels.push((Tone::Attention, format!("{v} available")));
         let _ = write!(detail, " Upstream released {v}.");
     }
-    let bot = up.and_then(|_| i.bot.failed_attempt(attr, i.now));
+    let data = i.bot.snapshot();
+    let bot = up
+        .filter(|_| i.bot.failed_on(attr, i.now))
+        .and_then(|_| data.failed_attempt(attr, i.now));
     if let Some(a) = bot {
         labels.push((Tone::Attention, "update bot failed".into()));
         let _ = write!(
@@ -940,7 +943,6 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
     let s = app.snap();
     let plans = Plans::of(app, login, s.committers.is(login));
     let h = app.health.read().unwrap().clone();
-    let bot = app.updatebot.snapshot();
     let index = app.index.read().unwrap();
     let failed = app.hydra.builds.red(
         interests
@@ -959,7 +961,7 @@ fn read_inputs<T>(app: &App, login: &str, f: impl FnOnce(&Inputs<'_>) -> T) -> T
         h: &h,
         interests: &interests,
         failed: &failed,
-        bot: &bot,
+        bot: &app.updatebot,
         plans: &plans,
         now: Utc::now(),
     })
@@ -1352,7 +1354,7 @@ mod tests {
         versions: HashMap<String, String>,
         hosts: HashMap<String, Vec<(String, String)>>,
         failed: HashMap<String, (BuildState, String)>,
-        bot: crate::updatebot::Data,
+        bot: crate::updatebot::Bot,
         plans: Plans,
     }
 
@@ -1841,7 +1843,12 @@ mod tests {
             queued: None,
         };
         // a failure on a package with no new release is no item
-        w.bot.entries.insert("hello".into(), attempt(1));
+        let set = |w: &World, attr: &str, e: crate::updatebot::Entry| {
+            let mut d = (*w.bot.snapshot()).clone();
+            d.entries.insert(attr.into(), e);
+            *w.bot.data.write().unwrap() = std::sync::Arc::new(d);
+        };
+        set(&w, "hello", attempt(1));
         let before = w.items();
         assert_eq!(keys(&before), ["pkg:jq"]);
         let plain = find(&before, "pkg:jq").fingerprint.clone();
@@ -1852,9 +1859,9 @@ mod tests {
                 .any(|l| l.1 == "update bot failed")
         };
         assert!(!marked(&before));
-        w.bot.entries.insert("jq".into(), attempt(0));
+        set(&w, "jq", attempt(0));
         assert!(!marked(&w.items()));
-        w.bot.entries.insert("jq".into(), attempt(1));
+        set(&w, "jq", attempt(1));
         let items = w.items();
         assert_eq!(keys(&items), ["pkg:jq"]);
         assert!(marked(&items));
@@ -1865,6 +1872,17 @@ mod tests {
             jq.detail
         );
         assert_ne!(jq.fingerprint, plain);
+        // once the log says there was nothing to do, the mark goes
+        w.bot.preset(
+            "jq",
+            attempt(1).last.as_ref().unwrap(),
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "The diff was empty after rewrites.".into(),
+                nothing_to_do: true,
+                ..Default::default()
+            }),
+        );
+        assert!(!marked(&w.items()));
     }
 
     fn mixed() -> Vec<Item> {

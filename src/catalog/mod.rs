@@ -2414,6 +2414,27 @@ pub(crate) mod tests {
         );
         let row = super::package::bot_body(&view(Some(bot_entry()), Some(Tail::Asking), true));
         assert!(row.contains("has not answered yet"), "{row}");
+        // a failure with nothing to do is green, not red
+        let nothing = Tail::Read(Outcome {
+            line: "The diff was empty after rewrites.".into(),
+            nothing_to_do: true,
+            ..Default::default()
+        });
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(nothing), true));
+        assert!(
+            row.contains("class=\"color-fg-success\" title=\"nixpkgs-update exit code 1; open its log\">no update found</a> 12d ago: "),
+            "{row}"
+        );
+        assert!(!row.contains("color-fg-danger"), "{row}");
+        let existing = Tail::Read(Outcome {
+            existing: Some(582351),
+            ..Default::default()
+        });
+        let row = super::package::bot_body(&view(Some(bot_entry()), Some(existing), true));
+        assert!(
+            row.contains(">stepped back</a> 12d ago: <a href=\"/pr/582351\">#582351</a> may already carry this update"),
+            "{row}"
+        );
     }
 
     #[tokio::test]

@@ -162,10 +162,6 @@ impl Data {
         let a = self.get(attr)?.last.as_ref()?;
         matches!(a.state(now), State::Failed | State::TimedOut).then_some(a)
     }
-
-    pub fn failed_on(&self, attr: &str, now: DateTime<Utc>) -> bool {
-        self.failed_attempt(attr, now).is_some()
-    }
 }
 
 /// `old new [url]`, as the fetchers write it.
@@ -279,6 +275,23 @@ pub struct Outcome {
     /// A pull request that may already carry the update.
     pub existing: Option<u64>,
     pub build_failed: bool,
+    /// The bot gave up because there was nothing to do: the update script
+    /// changed nothing, or a bot branch already has the version.
+    pub nothing_to_do: bool,
+}
+
+impl Outcome {
+    /// Not a failure anyone has to act on.
+    pub fn benign(&self) -> bool {
+        self.nothing_to_do || self.existing.is_some()
+    }
+}
+
+/// A last line that says the bot had nothing to do.
+fn nothing_to_do(line: &str) -> bool {
+    line.starts_with("The diff was empty")
+        || line.starts_with("An auto update branch exists with an equal or greater version")
+        || line.contains(" is not newer than ")
 }
 
 /// The numbers the bot prints as API URLs.
@@ -337,6 +350,7 @@ pub fn outcome(tail: &str) -> Outcome {
             .map(|l| shorten(l))
             .unwrap_or_default(),
     };
+    out.nothing_to_do = out.pr.is_none() && out.existing.is_none() && nothing_to_do(&out.line);
     out
 }
 
@@ -435,6 +449,16 @@ impl Bot {
                 "not_asked": self.not_asked.load(std::sync::atomic::Ordering::Relaxed),
             },
         })
+    }
+
+    /// The last attempt failed, and its log, when read, does not say that
+    /// there was nothing to do.
+    pub fn failed_on(&self, attr: &str, now: DateTime<Utc>) -> bool {
+        let data = self.snapshot();
+        let Some(a) = data.failed_attempt(attr, now) else {
+            return false;
+        };
+        !matches!(self.known(attr, a), Some(Tail::Read(o)) if o.benign())
     }
 
     /// What the cache holds about the log of an attempt; it never asks.
@@ -808,6 +832,12 @@ pub(crate) mod tests {
         );
         let o = outcome("attrpath: x\n\nThe diff was empty after rewrites.\n\n");
         assert_eq!(o.line, "The diff was empty after rewrites.");
+        assert!(o.nothing_to_do && o.benign());
+        assert!(
+            outcome("An auto update branch exists with an equal or greater version\n").benign()
+        );
+        assert!(outcome("0.3.0 is not newer than 0.3.0-unstable-2023-12-27 according to Nix; versionComparison: -1\n").nothing_to_do);
+        assert!(!outcome("Version in attr path x not compatible with 3.4.11\n").benign());
         assert_eq!(outcome("").line, "");
         let long = "x".repeat(300);
         assert_eq!(outcome(&long).line.chars().count(), LINE_MAX);
@@ -859,6 +889,25 @@ pub(crate) mod tests {
         );
         assert_eq!(bot.known("flameshot", &a), Some(t));
         assert_eq!(bot.stats()["tails"]["cached"], 1);
+        // a failure with nothing to do is no failure once the log is read
+        let mut d = Data::default();
+        d.entries.insert(
+            "flameshot".into(),
+            Entry {
+                last: Some(a.clone()),
+                queued: None,
+            },
+        );
+        d.entries.insert(
+            "other".into(),
+            Entry {
+                last: Some(a.clone()),
+                queued: None,
+            },
+        );
+        *bot.data.write().unwrap() = Arc::new(d);
+        assert!(!bot.failed_on("flameshot", Utc::now()));
+        assert!(bot.failed_on("other", Utc::now()));
     }
 
     #[tokio::test]

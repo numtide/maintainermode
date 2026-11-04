@@ -160,7 +160,7 @@ pub(crate) fn order(why: Why, attention: bool) -> (u8, bool) {
 #[derive(Clone, Copy)]
 pub(crate) struct Live<'a> {
     pub(crate) hydra: &'a Hydra,
-    pub(crate) bot: &'a crate::updatebot::Data,
+    pub(crate) bot: &'a crate::updatebot::Bot,
 }
 
 pub(crate) struct Row {
@@ -655,10 +655,9 @@ pub(crate) fn view(
     let h = app.health.read().unwrap().clone();
     let ch = app.channels.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let bot = app.updatebot.snapshot();
     let live = Live {
         hydra: &app.hydra,
-        bot: &bot,
+        bot: &app.updatebot,
     };
     let rows = i.picked(&s, &index, &h, Some(live), f, q, set, output);
     let mut out = Html::new();
@@ -816,10 +815,9 @@ pub(crate) fn value(
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let index = app.index.read().unwrap();
-    let bot = app.updatebot.snapshot();
     let live = Live {
         hydra: &app.hydra,
-        bot: &bot,
+        bot: &app.updatebot,
     };
     let rows = i.picked(&s, &index, &h, Some(live), f, q, set, output);
     let items: Vec<MineItem> = rows
@@ -962,10 +960,11 @@ mod tests {
                 },
             )
         };
-        let bot = crate::updatebot::Data {
+        let bot = crate::updatebot::Bot::default();
+        *bot.data.write().unwrap() = std::sync::Arc::new(crate::updatebot::Data {
             entries: [failed("hello"), failed("curl")].into(),
             ..Default::default()
-        };
+        });
         let hydra = Hydra::default();
         let live = Live {
             hydra: &hydra,

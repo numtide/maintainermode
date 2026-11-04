@@ -386,10 +386,23 @@ pub(super) fn bot_body(v: &BotView) -> Html {
                 Some(c) => format!("nixpkgs-update exit code {c}; open its log"),
                 None => "open its log".to_string(),
             };
+            // the log can say that a failure was no failure: nothing to
+            // update, or a pull request that already carries the update
+            let outcome = v.tail.as_ref().and_then(|t| t.outcome());
             let (word, class, when) = match a.state(now) {
                 State::Succeeded => (
                     "succeeded",
                     "color-fg-success",
+                    format!("{} ago", ago(a.started)),
+                ),
+                State::Failed if outcome.is_some_and(|o| o.nothing_to_do) => (
+                    "no update found",
+                    "color-fg-success",
+                    format!("{} ago", ago(a.started)),
+                ),
+                State::Failed if outcome.is_some_and(|o| o.existing.is_some()) => (
+                    "stepped back",
+                    "color-fg-muted",
                     format!("{} ago", ago(a.started)),
                 ),
                 State::Failed => (
