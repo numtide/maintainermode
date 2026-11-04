@@ -2438,6 +2438,53 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn the_version_row_links_to_repology_and_says_what_it_thinks() {
+        let app = crate::sets::tests::app(&["ee", "python3Packages.requests"]);
+        {
+            let mut index = app.index.write().unwrap();
+            index.pkgs.get_mut("ee").unwrap().version = "1.5.2-unstable-2024-06-20".into();
+            index
+                .hydra_sets
+                .insert("python3Packages".into(), "python314Packages".into());
+        }
+        let mut h = crate::health::Health {
+            repology_at: Some(chrono::Utc::now()),
+            statuses_at: Some(chrono::Utc::now()),
+            ..Default::default()
+        };
+        h.statuses.insert("ee".into(), "ignored".into());
+        *app.health.write().unwrap() = std::sync::Arc::new(h);
+        let site = crate::e2e::serve(app.clone()).await;
+        let page = site.get("/p/ee", None).await;
+        assert_eq!(page.status, StatusCode::OK);
+        assert!(
+            page.body.contains(
+                "a snapshot: repology ignores unstable versions, so it has nothing to compare"
+            ),
+            "{}",
+            page.body
+        );
+        assert!(
+            page.body.contains(
+                "href=\"https://repology.org/tools/project-by?repo=nix_unstable&amp;name_type=srcname&amp;name=ee&amp;target_page=project_versions\">repology ↗</a>"
+            ),
+            "{}",
+            page.body
+        );
+        let api = site.get("/api/v1/packages/ee", None).await;
+        let v: Value = serde_json::from_str(&api.body).unwrap();
+        assert_eq!(v["repology"]["status"], "ignored");
+        assert_eq!(v["repology"]["srcname"], "ee");
+        let api = site
+            .get("/api/v1/packages/python3Packages.requests", None)
+            .await;
+        let v: Value = serde_json::from_str(&api.body).unwrap();
+        assert_eq!(v["repology"]["srcname"], "python314Packages.requests");
+        assert_eq!(v["repology"]["status"], Value::Null);
+        assert_eq!(v["repology"]["note"], "not on repology");
+    }
+
+    #[tokio::test]
     async fn the_package_page_and_the_api_carry_the_update_bot() {
         let app = crate::sets::tests::app(&["flameshot"]);
         *app.updatebot.data.write().unwrap() = std::sync::Arc::new(bot_data("flameshot"));

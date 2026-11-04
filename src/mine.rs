@@ -173,10 +173,14 @@ pub(crate) struct Row {
     pub(crate) hosts: Vec<(String, String)>,
 }
 
-/// An open advisory, a newer upstream release, a failing Hydra build or an
-/// open pull request that is not treewide.
+/// An open advisory, a newer upstream release, a failing Hydra build, a
+/// failed update, or an open pull request that is not treewide.
 pub(crate) fn attention(f: &Flags) -> bool {
-    f.advisories > 0 || f.upstream.is_some() || f.build_failed || f.open_prs > f.open_treewide
+    f.advisories > 0
+        || f.upstream.is_some()
+        || f.build_failed
+        || f.bot_failed
+        || f.open_prs > f.open_treewide
 }
 
 /// One package name for an attribute of a machine report, as
@@ -344,7 +348,11 @@ impl Interests {
                             l.hydra.known(&Hydra::package_job(a)),
                             Some(Last::Build(b)) if !b.ok
                         );
-                    flags.bot_failed = flags.upstream.is_some() && l.bot.failed_on(a, now);
+                    // behind a release someone knows of, or the update
+                    // script of the package found something: a failure
+                    // over nothing is no news
+                    flags.bot_failed = l.bot.failed_on(a, now)
+                        && (flags.upstream.is_some() || l.bot.by_update_script(a));
                 }
                 Row {
                     sub: sub.clone(),
@@ -940,14 +948,20 @@ mod tests {
     #[test]
     fn a_failed_attempt_of_the_update_bot_flags_a_package_behind_upstream() {
         let index = index();
-        let i = Interests::build(&index, "alice", &[], &[], true);
+        let i = Interests::build(
+            &index,
+            "alice",
+            &[],
+            &[Subject::Pkg("zlib".into()), Subject::Pkg("jq".into())],
+            true,
+        );
         let s = Snapshot::default();
         let mut h = crate::health::Health::default();
         h.set_upstream(
             [("hello".to_string(), "2".to_string())].into(),
             chrono::Utc::now(),
         );
-        let failed = |attr: &str| {
+        let failed = |attr: &str, fetcher: Option<&str>| {
             (
                 attr.to_string(),
                 crate::updatebot::Entry {
@@ -956,13 +970,27 @@ mod tests {
                         finished: Some(chrono::Utc::now() - chrono::Duration::days(2)),
                         exit_code: Some(1),
                     }),
-                    queued: None,
+                    queued: fetcher.map(|f| crate::updatebot::Queued {
+                        position: 1,
+                        fetcher: f.into(),
+                        old: "0".into(),
+                        new: "1".into(),
+                        url: None,
+                    }),
                 },
             )
         };
+        // hello is behind a known release; zlib's own update script found
+        // something, with no version known; curl and jq are behind nothing
         let bot = crate::updatebot::Bot::default();
         *bot.data.write().unwrap() = std::sync::Arc::new(crate::updatebot::Data {
-            entries: [failed("hello"), failed("curl")].into(),
+            entries: [
+                failed("hello", None),
+                failed("curl", None),
+                failed("jq", Some("repology")),
+                failed("zlib", Some("updatescript")),
+            ]
+            .into(),
             ..Default::default()
         });
         let hydra = Hydra::default();
@@ -970,7 +998,7 @@ mod tests {
             hydra: &hydra,
             bot: &bot,
         };
-        let rows = i.rows(&s, &index, &h, Some(live), Filter::Maintain, "");
+        let rows = i.rows(&s, &index, &h, Some(live), Filter::Mine, "");
         let flag = |name: &str| {
             rows.iter()
                 .find(|r| r.sub.label() == name)
@@ -979,8 +1007,13 @@ mod tests {
                 .bot_failed
         };
         assert!(flag("hello"));
+        assert!(flag("zlib"));
         // behind nothing: a failure of the bot is no news
         assert!(!flag("curl"));
+        assert!(!flag("jq"));
+        assert!(attention(
+            &rows.iter().find(|r| r.sub.label() == "zlib").unwrap().flags
+        ));
         assert!(
             rows[0]
                 .flags

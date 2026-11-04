@@ -955,6 +955,65 @@ pub(super) fn package_box(index: &Index, rev: &str, p: &crate::area::Package) ->
     out
 }
 
+/// The name repology files a package under: its attribute as Hydra builds
+/// it (`python314Packages.requests` for `python3Packages.requests`), which
+/// is the srcname repology reads from nixpkgs.
+pub(crate) fn repology_name(index: &Index, attr: &str) -> String {
+    crate::builds::job_attr(&index.hydra_sets, attr)
+}
+
+/// repology's own lookup by srcname, which lands on the versions page of
+/// the project, whatever repology named it.
+pub(crate) fn repology_url(srcname: &str) -> String {
+    format!(
+        "https://repology.org/tools/project-by?repo=nix_unstable&name_type=srcname&name={}&target_page=project_versions",
+        crate::github::urlencode(srcname)
+    )
+}
+
+/// Why repology names no newer release: its status of the package, when
+/// the status sweep has it, or the shape of the version until then.
+pub(crate) fn repology_note(h: &Health, version: &str, srcname: &str) -> String {
+    let snapshot = version.contains("unstable");
+    let (status, complete) = h.repology_status(srcname);
+    match status {
+        Some("ignored") if snapshot => {
+            "a snapshot: repology ignores unstable versions, so it has nothing to compare"
+        }
+        Some("ignored") => "repology ignores this version, so it has nothing to compare",
+        Some("untrusted") => "repology does not trust this version, so it has nothing to compare",
+        Some("incorrect") => "repology calls this version incorrect, so it has nothing to compare",
+        Some("noscheme") => "no version scheme that repology can compare",
+        Some("legacy") => "an older release kept on purpose; repology compares the newer attribute",
+        Some("devel") => "a development release, the newest repology knows",
+        Some("rolling") => "a rolling release, which repology does not compare",
+        Some("unique") => "no other repository packages it, so repology has nothing to compare",
+        Some("newest") => "the newest release repology knows",
+        Some(other) => return format!("repology: {other}"),
+        None => match h.upstream.get(srcname) {
+            Some(v) => {
+                return format!("repology lists {v}, which is no release on the same scheme");
+            }
+            None if complete => "not on repology",
+            None if snapshot => "a snapshot: repology ignores unstable versions",
+            None => "repology lists no newer release",
+        },
+    }
+    .to_string()
+}
+
+/// repology on the package, as the API gives it.
+#[derive(Serialize)]
+pub(crate) struct RepologyView {
+    srcname: String,
+    url: String,
+    /// repology's status of the `nix_unstable` package, when the status
+    /// sweep has it and the package is not behind.
+    status: Option<String>,
+    /// The sentence of the Version row when no newer release is known.
+    note: Option<String>,
+}
+
 /// The snapshots a package page reads. None of them is the store.
 pub(crate) struct Inputs<'a> {
     pub(crate) s: &'a Snapshot,
@@ -1034,6 +1093,7 @@ pub(crate) struct PackageView<'a> {
     pub(crate) needs_backport: Vec<BackportRow<'a>>,
     pub(crate) version_bumps: Vec<u64>,
     pub(crate) update_bot: BotView,
+    pub(crate) repology: Option<RepologyView>,
     #[serde(skip)]
     open: Vec<(&'a Advisory, &'a Verdict)>,
     #[serde(skip)]
@@ -1132,6 +1192,18 @@ pub(crate) fn data<'a>(
         needs_backport,
         version_bumps,
         update_bot,
+        repology: package.map(|p| {
+            let name = repology_name(i.index, attr);
+            RepologyView {
+                url: repology_url(&name),
+                status: h.repology_status(&name).0.map(String::from),
+                note: h
+                    .repology_at
+                    .is_some()
+                    .then(|| repology_note(h, &p.version, &name)),
+                srcname: name,
+            }
+        }),
         open,
         osv_extra,
         closed,
@@ -1185,13 +1257,17 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
             ),
         ));
     }
+    let repology = html!(
+        "<a class=\"color-fg-muted f6 ml-2\" href=\"{}\">repology ↗</a>",
+        repology_url(&repology_name(index, attr))
+    );
     let version = match upstream_from(s, index, h, attr) {
         Some((u, from)) => html!(
-            "{} <span class=\"Label Label--attention\" title=\"Upstream released a newer version, from {from}\">{u} available</span>",
+            "{} <span class=\"Label Label--attention\" title=\"Upstream released a newer version, from {from}\">{u} available</span>{repology}",
             p.version
         ),
         None => html!(
-            "{} <span class=\"color-fg-muted f6\">{}</span>",
+            "{} <span class=\"color-fg-muted f6\">{}</span>{repology}",
             p.version,
             match (h.direct.get(attr), s.series.get(attr)) {
                 // nixpkgs carries a newer series under another attribute
@@ -1206,7 +1282,8 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
                         d.from.as_str()
                     }
                 ),
-                _ if h.repology_at.is_some() => "no newer release known to repology".into(),
+                _ if h.repology_at.is_some() =>
+                    repology_note(h, &p.version, &repology_name(index, attr)),
                 _ => "no upstream check yet".into(),
             }
         ),
@@ -1343,4 +1420,60 @@ pub(crate) async fn value(app: &crate::web::App, name: &str) -> Option<Value> {
         index: &index,
     };
     Some(json!(data(&i, &attr, builds, cache, bot)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repology_files_a_package_under_the_attribute_hydra_builds() {
+        let mut index = Index::default();
+        index
+            .hydra_sets
+            .insert("python3Packages".into(), "python314Packages".into());
+        assert_eq!(
+            repology_name(&index, "python3Packages.requests"),
+            "python314Packages.requests"
+        );
+        assert_eq!(repology_name(&index, "ee"), "ee");
+        assert_eq!(
+            repology_url("python314Packages.requests"),
+            "https://repology.org/tools/project-by?repo=nix_unstable&name_type=srcname&name=python314Packages.requests&target_page=project_versions"
+        );
+    }
+
+    #[test]
+    fn the_version_row_says_why_repology_names_nothing() {
+        let mut h = Health {
+            repology_at: Some(Utc::now()),
+            ..Default::default()
+        };
+        // before the status sweep: the shape of the version
+        assert_eq!(
+            repology_note(&h, "1.5.2-unstable-2024-06-20", "ee"),
+            "a snapshot: repology ignores unstable versions"
+        );
+        assert_eq!(
+            repology_note(&h, "2.0.72", "ldacbt"),
+            "repology lists no newer release"
+        );
+        h.upstream.insert("foo".into(), "2.0-rc1".into());
+        assert_eq!(
+            repology_note(&h, "1.9", "foo"),
+            "repology lists 2.0-rc1, which is no release on the same scheme"
+        );
+        // after it: the status, or its absence
+        h.statuses_at = Some(Utc::now());
+        h.statuses.insert("ee".into(), "ignored".into());
+        h.statuses.insert("ldacbt".into(), "newest".into());
+        h.statuses.insert("only".into(), "unique".into());
+        assert!(repology_note(&h, "1.5.2-unstable-2024-06-20", "ee").starts_with("a snapshot"));
+        assert_eq!(
+            repology_note(&h, "2.0.72", "ldacbt"),
+            "the newest release repology knows"
+        );
+        assert!(repology_note(&h, "1.0", "only").starts_with("no other repository"));
+        assert_eq!(repology_note(&h, "1.0", "nowhere"), "not on repology");
+    }
 }

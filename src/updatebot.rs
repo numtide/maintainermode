@@ -162,6 +162,14 @@ impl Data {
         let a = self.get(attr)?.last.as_ref()?;
         matches!(a.state(now), State::Failed | State::TimedOut).then_some(a)
     }
+
+    /// The update script of the package itself put it in the queue: it
+    /// found something, even when no version is known.
+    pub fn by_update_script(&self, attr: &str) -> bool {
+        self.get(attr)
+            .and_then(|e| e.queued.as_ref())
+            .is_some_and(|q| q.fetcher == "updatescript")
+    }
 }
 
 /// `old new [url]`, as the fetchers write it.
@@ -459,6 +467,11 @@ impl Bot {
             return false;
         };
         !matches!(self.known(attr, a), Some(Tail::Read(o)) if o.benign())
+    }
+
+    /// See [`Data::by_update_script`].
+    pub fn by_update_script(&self, attr: &str) -> bool {
+        self.snapshot().by_update_script(attr)
     }
 
     /// What the cache holds about the log of an attempt; it never asks.

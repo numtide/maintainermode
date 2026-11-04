@@ -20,6 +20,25 @@ const REPOLOGY_REPO: &str = "nix_unstable";
 /// repology asks for no more than one request a second.
 const REPOLOGY_PAUSE: Duration = Duration::from_millis(1100);
 const REPOLOGY_PAGES: usize = 100;
+/// The status sweep reads every project of `nix_unstable`: about 600 pages
+/// of 2.6 MB in 2026-11. A week between sweeps, and so many pages a pass,
+/// so a restart loses one pass and repology sees a steady trickle.
+const STATUS_EVERY: chrono::Duration = chrono::Duration::days(7);
+const STATUS_PAGES: usize = 100;
+/// The statuses kept: the ones that say why there is nothing to compare,
+/// and the two that say the comparison was made. `outdated` is in
+/// `upstream`, with the version.
+const STATUSES: [&str; 9] = [
+    "ignored",
+    "untrusted",
+    "incorrect",
+    "noscheme",
+    "legacy",
+    "devel",
+    "rolling",
+    "unique",
+    "newest",
+];
 const TRACKER: &str = "https://tracker.security.nixos.org/api/v1/issues";
 /// The tracker ignores `limit` and sends 10 issues a page: 3094 issues on
 /// 2026-10-17 are 310 pages, about 13 minutes a day with the pause.
@@ -97,6 +116,15 @@ pub struct Health {
     /// source → what its last pass did.
     #[serde(default)]
     pub runs: BTreeMap<String, Run>,
+    /// repology srcname → repology's status of the `nix_unstable` package,
+    /// one of [`STATUSES`]. The reason a package has nothing to compare.
+    #[serde(default)]
+    pub statuses: BTreeMap<String, String>,
+    #[serde(default)]
+    pub statuses_at: Option<DateTime<Utc>>,
+    /// A status sweep in progress, carried from pass to pass.
+    #[serde(default)]
+    pub statuses_sweep: Option<Sweep>,
     /// attribute → advisory code → its verdict against master and the
     /// channels. Derived, so never stored; see [`Health::assess`].
     #[serde(skip)]
@@ -104,6 +132,15 @@ pub struct Health {
     /// The index and channel revisions the verdicts were made from.
     #[serde(skip)]
     pub assessed: String,
+}
+
+/// A paged read of repology that spans passes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Sweep {
+    /// The last project name read; empty before the first page.
+    pub cursor: String,
+    pub pages: usize,
+    pub found: BTreeMap<String, String>,
 }
 
 /// What one source did on its last pass, for `/sync`.
@@ -150,6 +187,16 @@ impl Health {
             .collect();
         self.upstream = upstream;
         self.repology_at = Some(now);
+    }
+
+    /// What repology says of the package, when it is not behind: the
+    /// status, and whether the sweep has read every project yet. `None`
+    /// with a complete sweep means repology does not know the srcname.
+    pub fn repology_status(&self, srcname: &str) -> (Option<&str>, bool) {
+        (
+            self.statuses.get(srcname).map(String::as_str),
+            self.statuses_at.is_some(),
+        )
     }
 
     /// When `version` of `attr` was first seen upstream.
@@ -371,6 +418,11 @@ pub async fn run(app: Arc<App>, nvd_key: Option<crate::secret::Secret>) {
                 Err(e) => tracing::warn!("repology: {e:#}"),
             }
         }
+        if h.statuses_sweep.is_some() || older(h.statuses_at, STATUS_EVERY) {
+            let r = repology_statuses(&mut h).await;
+            note(&mut h, "repology-status", r);
+            publish(&app, &h);
+        }
         if stale(h.tracker_at) {
             match tracker().await {
                 Ok(a) => {
@@ -429,6 +481,83 @@ pub(crate) fn http(timeout: Duration) -> reqwest::Client {
         .expect("http client")
 }
 
+/// One page of projects in nixpkgs unstable, 200 at most, from the
+/// project after `cursor`.
+async fn repology_page(
+    http: &reqwest::Client,
+    cursor: &str,
+    filter: &str,
+) -> Result<BTreeMap<String, Vec<Value>>> {
+    let url = if cursor.is_empty() {
+        format!("{REPOLOGY}/?inrepo={REPOLOGY_REPO}{filter}")
+    } else {
+        format!(
+            "{REPOLOGY}/{}/?inrepo={REPOLOGY_REPO}{filter}",
+            crate::github::urlencode(cursor)
+        )
+    };
+    Ok(http
+        .get(&url)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
+}
+
+/// The status of every project of nixpkgs unstable, [`STATUS_PAGES`] pages
+/// a pass. The map is swapped in whole when the last page is read, so a
+/// page view never sees half a sweep.
+pub async fn repology_statuses(h: &mut Health) -> Run {
+    let http = http(Duration::from_secs(60));
+    let mut sweep = h.statuses_sweep.take().unwrap_or_default();
+    for _ in 0..STATUS_PAGES {
+        let page = match repology_page(&http, &sweep.cursor, "").await {
+            Ok(p) => p,
+            Err(e) => {
+                let line = format!("page {} failed: {e:#}", sweep.pages + 1);
+                h.statuses_sweep = Some(sweep);
+                return Run::failed(line);
+            }
+        };
+        sweep.pages += 1;
+        let count = page.len();
+        for (project, entries) in &page {
+            for e in entries.iter().filter(|e| e["repo"] == REPOLOGY_REPO) {
+                let (Some(name), Some(status)) = (e["srcname"].as_str(), e["status"].as_str())
+                else {
+                    continue;
+                };
+                if STATUSES.contains(&status) {
+                    sweep.found.insert(name.to_string(), status.to_string());
+                }
+            }
+            if *project > sweep.cursor {
+                sweep.cursor = project.clone();
+            }
+        }
+        if count < 200 {
+            let line = format!(
+                "{} pages read · {} attributes have a status",
+                sweep.pages,
+                sweep.found.len()
+            );
+            h.statuses = sweep.found;
+            h.statuses_at = Some(Utc::now());
+            return Run::ok(line);
+        }
+        tokio::time::sleep(REPOLOGY_PAUSE).await;
+    }
+    let line = format!(
+        "{} pages read so far, up to {} · {} attributes have a status · continues next pass",
+        sweep.pages,
+        sweep.cursor,
+        sweep.found.len()
+    );
+    h.statuses_sweep = Some(sweep);
+    Run::ok(line)
+}
+
 /// Every project repology calls outdated in nixpkgs unstable, page by page.
 /// The cursor is the last project name of a page.
 pub async fn repology() -> Result<BTreeMap<String, String>> {
@@ -436,21 +565,7 @@ pub async fn repology() -> Result<BTreeMap<String, String>> {
     let mut out = BTreeMap::new();
     let mut cursor = String::new();
     for _ in 0..REPOLOGY_PAGES {
-        let url = if cursor.is_empty() {
-            format!("{REPOLOGY}/?inrepo={REPOLOGY_REPO}&outdated=1")
-        } else {
-            format!(
-                "{REPOLOGY}/{}/?inrepo={REPOLOGY_REPO}&outdated=1",
-                crate::github::urlencode(&cursor)
-            )
-        };
-        let page: BTreeMap<String, Vec<Value>> = http
-            .get(&url)
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let page = repology_page(&http, &cursor, "&outdated=1").await?;
         let count = page.len();
         for (project, entries) in &page {
             let Some(newest) = entries

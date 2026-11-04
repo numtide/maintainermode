@@ -319,6 +319,20 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   the same series and sets no series. The newest series tracks nothing. A
   release that nixpkgs already carries under another attribute of the same
   package name is no news either.
+- **What repology thinks.** When no newer release is known, the Version
+  row says why, from repology's status of the package: a snapshot or a
+  date that repology ignores, a version it does not trust or calls
+  incorrect, no version scheme, an older release kept on purpose
+  (`legacy`), a development or rolling release, no other repository that
+  packages it (`unique`), or the newest release it knows. A package
+  repology never heard of says "not on repology". The row links to
+  repology's own lookup by nixpkgs attribute, which lands on the versions
+  page of the project; for `python3Packages.x` the attribute is the one
+  Hydra builds, `python314Packages.x`, which is what repology reads. The
+  statuses come from a sweep of every project of `nix_unstable`, about 600
+  pages at one request a second, 100 pages a pass of the health task, once
+  a week; the JSON API gives them as `repology` (`srcname`, `url`,
+  `status`, `note`).
 - **Budget.** Each pass of the health task makes up to 300 requests, with
   100 ms between them. Packages that someone who signed in maintains, or
   that anyone watches, come first and are asked again after a day. The

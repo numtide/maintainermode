@@ -108,6 +108,7 @@ pub(crate) fn state(app: &App) -> Value {
         "channels": { "checked_at": time(app, "channels_checked_at"), "list": channels },
         "health": {
             "repology_at": h.repology_at, "outdated": h.upstream.len(),
+            "statuses_at": h.statuses_at, "with_status": h.statuses.len(),
             "tracker_at": h.tracker_at, "attributes_with_advisories": h.advisories.len(),
             "every_seconds": crate::health::PASS.as_secs(),
             "cves": h.cves.len(),
@@ -454,9 +455,11 @@ pub(crate) fn body(app: &App) -> Html {
     out.push(&kv(
         "Upstream versions",
         html!(
-            "repology, read {} · {} attributes behind upstream",
+            "repology, read {} · {} attributes behind upstream · statuses read {} · {} attributes have one",
             when(&h["repology_at"]),
-            h["outdated"]
+            h["outdated"],
+            when(&h["statuses_at"]),
+            h["with_status"]
         ),
     ));
     out.push(&kv(
