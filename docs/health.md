@@ -308,6 +308,17 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   any tag counts for it. A repology
   version counts only when it is newer, is no prerelease, and uses the same
   scheme.
+- **Series.** When nixpkgs carries a newer series of the same source under
+  another attribute of the same file, a package tracks its own series:
+  `wesnoth` 1.18.8 next to `wesnoth-devel` 1.19.28 tracks 1.18, `python312`
+  next to `python313` tracks 3.12, `nodejs_20` next to `nodejs_22` tracks 20.
+  The series is the version up to the first number where the newer sibling
+  differs. Only a tag, a registry release or a repology version on that
+  series counts, so 1.19.29 is no news for `wesnoth`. A sibling that
+  differs in the last number only (1.2.5 next to 1.2.3) is a newer patch of
+  the same series and sets no series. The newest series tracks nothing. A
+  release that nixpkgs already carries under another attribute of the same
+  package name is no news either.
 - **Budget.** Each pass of the health task makes up to 300 requests, with
   100 ms between them. Packages that someone who signed in maintains, or
   that anyone watches, come first and are asked again after a day. The

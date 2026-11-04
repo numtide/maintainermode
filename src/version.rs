@@ -19,7 +19,7 @@ pub fn compare(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn chunks(v: &str) -> Vec<String> {
+pub(crate) fn chunks(v: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
     let mut digits = false;

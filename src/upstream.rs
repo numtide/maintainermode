@@ -238,6 +238,84 @@ fn scale(v: &str) -> Option<usize> {
         .map(str::len)
 }
 
+/// The leading numbers of a version: `1.18.8` gives 1, 18, 8; `3.12.15b`
+/// gives 3, 12, 15.
+fn numbers(v: &str) -> Vec<u64> {
+    version::chunks(v)
+        .iter()
+        .map_while(|c| c.parse().ok())
+        .collect()
+}
+
+/// The series a package tracks when nixpkgs carries a newer series of the
+/// same source under another attribute: `python312` 3.12.15 next to
+/// `python313` tracks 3.12, `wesnoth` 1.18.8 next to `wesnoth-devel`
+/// 1.19.28 tracks 1.18, `nodejs_20` next to `nodejs_22` tracks 20. The
+/// series is the version up to the first number where the newer sibling
+/// differs; a sibling that differs in the last number only is a newer
+/// patch of the same series and says nothing. With no newer sibling: none.
+pub fn series<'a>(version: &str, siblings: impl IntoIterator<Item = &'a str>) -> Option<String> {
+    let ours = numbers(version);
+    if ours.len() < 2 {
+        return None;
+    }
+    let mut depth: Option<usize> = None;
+    for s in siblings {
+        if version::compare(s, version) != Ordering::Greater {
+            continue;
+        }
+        let theirs = numbers(s);
+        let k = ours
+            .iter()
+            .zip(&theirs)
+            .position(|(a, b)| a != b)
+            .unwrap_or(ours.len().min(theirs.len()));
+        if k + 1 < ours.len() {
+            depth = Some(depth.map_or(k, |d| d.min(k)));
+        }
+    }
+    depth.map(|k| {
+        ours[..=k]
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(".")
+    })
+}
+
+/// Whether a version is on a series: its leading numbers start with it.
+pub fn in_series(v: &str, series: &str) -> bool {
+    let s = numbers(series);
+    let n = numbers(v);
+    n.len() >= s.len() && n[..s.len()] == s[..]
+}
+
+/// attribute → the series it tracks, for every package that nixpkgs carries
+/// next to a newer series from the same file.
+pub fn series_map(index: &crate::area::Index) -> HashMap<String, String> {
+    let mut by_file: HashMap<&str, Vec<(&str, &str)>> = HashMap::new();
+    for (attr, p) in &index.pkgs {
+        if let Some(f) = &p.file {
+            if !p.version.is_empty() {
+                by_file.entry(f).or_default().push((attr, &p.version));
+            }
+        }
+    }
+    let mut out = HashMap::new();
+    for group in by_file.values() {
+        if group.len() < 2 {
+            continue;
+        }
+        for (attr, v) in group {
+            let others = group.iter().filter(|(a, _)| a != attr).map(|(_, w)| *w);
+            if let Some(s) = series(v, others) {
+                out.insert(attr.to_string(), s);
+            }
+        }
+    }
+    out
+}
+
 /// nixpkgs has no release of it, only a snapshot: `0-unstable-2024-01-01`.
 fn snapshot(current: &str) -> bool {
     current.starts_with("0-unstable") || current.starts_with("unstable-")
@@ -253,7 +331,7 @@ fn snapshot(current: &str) -> bool {
 /// The tags that name the package are asked first (a repository that holds
 /// several projects), then the bare versions, then all: the first pool
 /// that reaches nixpkgs answers.
-pub fn newest(tags: &[String], pname: &str, current: &str) -> Option<String> {
+pub fn newest(tags: &[String], pname: &str, current: &str, series: Option<&str>) -> Option<String> {
     let named = |t: &&String| {
         !pname.is_empty()
             && ["-", "_", "/"]
@@ -267,16 +345,17 @@ pub fn newest(tags: &[String], pname: &str, current: &str) -> Option<String> {
     ];
     pools
         .into_iter()
-        .find_map(|pool| newest_of(&pool, pname, current))
+        .find_map(|pool| newest_of(&pool, pname, current, series))
 }
 
-fn newest_of(pool: &[&String], pname: &str, current: &str) -> Option<String> {
+fn newest_of(pool: &[&String], pname: &str, current: &str, series: Option<&str>) -> Option<String> {
     let ours = scale(current);
     let versions: Vec<String> = pool
         .iter()
         .filter_map(|tag| version_of(tag, pname))
         .filter_map(|c| dotted(c, current))
         .filter(|c| ours.is_none() || scale(c) == ours)
+        .filter(|c| series.is_none_or(|s| in_series(c, s)))
         .collect();
     if !snapshot(current)
         && !versions
@@ -438,6 +517,8 @@ pub struct Candidate {
     pub origin: Origin,
     /// Someone maintains or watches it.
     pub first: bool,
+    /// The series it tracks, when nixpkgs carries a newer one next to it.
+    pub series: Option<String>,
 }
 
 /// When a package first gets `latest`. A first answer, or the first one
@@ -508,7 +589,10 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                     tokio::time::sleep(PAUSE).await;
                 }
                 match &seen[repo] {
-                    Ok(t) => (Ok(newest(t, &c.pname, &c.version)), "tags"),
+                    Ok(t) => (
+                        Ok(newest(t, &c.pname, &c.version, c.series.as_deref())),
+                        "tags",
+                    ),
                     Err(()) => (Err(()), "tags"),
                 }
             }
@@ -521,7 +605,12 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                     registries.insert(key.clone(), got);
                     tokio::time::sleep(PAUSE).await;
                 }
-                (registries[&key].clone(), *ecosystem)
+                // a registry names one newest release; off the series it
+                // says nothing about this package
+                let answer = registries[&key]
+                    .clone()
+                    .map(|v| v.filter(|v| c.series.as_deref().is_none_or(|s| in_series(v, s))));
+                (answer, *ecosystem)
             }
         };
         done += 1;
@@ -736,12 +825,59 @@ mod tests {
     }
 
     #[test]
+    fn a_package_next_to_a_newer_series_tracks_its_own() {
+        assert_eq!(series("1.18.8", ["1.19.28"]).as_deref(), Some("1.18"));
+        assert_eq!(
+            series("3.12.15", ["3.13.11", "3.14.2"]).as_deref(),
+            Some("3.12")
+        );
+        assert_eq!(
+            series("20.19.0", ["22.4.0", "24.1.0"]).as_deref(),
+            Some("20")
+        );
+        // the newest series tracks nothing
+        assert_eq!(series("1.19.28", ["1.18.8"]), None);
+        // a sibling on a newer patch of the same series says nothing
+        assert_eq!(series("1.2.3", ["1.2.5"]), None);
+        // an alias with the same version says nothing
+        assert_eq!(series("1.2.3", ["1.2.3"]), None);
+        assert_eq!(series("1.18", ["1.19"]), None);
+        assert_eq!(series("1.18", ["2.0"]).as_deref(), Some("1"));
+        assert_eq!(series("7", ["8"]), None);
+        assert_eq!(series("0-unstable-2024-01-01", ["1.0.0"]), None);
+        assert!(in_series("1.18.9", "1.18"));
+        assert!(in_series("1.18", "1.18"));
+        assert!(!in_series("1.19.29", "1.18"));
+        assert!(!in_series("1.180.0", "1.18"));
+        assert!(!in_series("1", "1.18"));
+        let tags: Vec<String> = ["1.18.8", "1.18.9", "1.19.29"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            newest(&tags, "wesnoth", "1.18.8", None).as_deref(),
+            Some("1.19.29")
+        );
+        assert_eq!(
+            newest(&tags, "wesnoth", "1.18.8", Some("1.18")).as_deref(),
+            Some("1.18.9")
+        );
+        assert_eq!(
+            newest(&tags, "wesnoth", "1.18.9", Some("1.18")).as_deref(),
+            Some("1.18.9")
+        );
+    }
+
+    #[test]
     fn the_newest_release_on_our_scheme_wins() {
         let tags: Vec<String> = ["v1.2.3", "v1.10.0", "v2.0.0-rc1", "2015-11-19-1"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(newest(&tags, "thing", "1.9.0").as_deref(), Some("1.10.0"));
+        assert_eq!(
+            newest(&tags, "thing", "1.9.0", None).as_deref(),
+            Some("1.10.0")
+        );
         let drm: Vec<String> = [
             "drm-5-0-0-20010105",
             "4.3.99.12",
@@ -752,12 +888,15 @@ mod tests {
         .map(|s| s.to_string())
         .collect();
         assert_eq!(
-            newest(&drm, "libdrm", "2.4.100").as_deref(),
+            newest(&drm, "libdrm", "2.4.100", None).as_deref(),
             Some("2.4.125")
         );
         let curl = vec!["curl-8_20_0".to_string(), "curl-8_21_0".to_string()];
-        assert_eq!(newest(&curl, "curl", "8.20.0").as_deref(), Some("8.21.0"));
-        assert_eq!(newest(&[], "thing", "1.0"), None);
+        assert_eq!(
+            newest(&curl, "curl", "8.20.0", None).as_deref(),
+            Some("8.21.0")
+        );
+        assert_eq!(newest(&[], "thing", "1.0", None), None);
     }
 
     #[test]
@@ -767,20 +906,20 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(newest(&vela, "ldacbt", "2.0.72"), None);
+        assert_eq!(newest(&vela, "ldacbt", "2.0.72", None), None);
         let tags: Vec<String> = ["v1.0", "v2.0"].iter().map(|s| s.to_string()).collect();
-        assert_eq!(newest(&tags, "thing", "1.0").as_deref(), Some("2.0"));
-        assert_eq!(newest(&tags, "thing", "2.0").as_deref(), Some("2.0"));
-        assert_eq!(newest(&tags, "thing", "0.9"), None);
+        assert_eq!(newest(&tags, "thing", "1.0", None).as_deref(), Some("2.0"));
+        assert_eq!(newest(&tags, "thing", "2.0", None).as_deref(), Some("2.0"));
+        assert_eq!(newest(&tags, "thing", "0.9", None), None);
         // an unstable version after a release still reaches that release
         let tags: Vec<String> = ["v1.2.3", "v1.3.0"].iter().map(|s| s.to_string()).collect();
         assert_eq!(
-            newest(&tags, "thing", "1.2.3-unstable-2025-01-01").as_deref(),
+            newest(&tags, "thing", "1.2.3-unstable-2025-01-01", None).as_deref(),
             Some("1.3.0")
         );
         // a snapshot of a project that has a release has nothing to reach
         assert_eq!(
-            newest(&tags, "thing", "0-unstable-2022-08-14").as_deref(),
+            newest(&tags, "thing", "0-unstable-2022-08-14", None).as_deref(),
             Some("1.3.0")
         );
     }
@@ -790,29 +929,29 @@ mod tests {
         let tags = |l: &[&str]| l.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let mrustc = tags(&["v0.11.2", "v0.12.0", "hello_1.39", "rust1.90_rustc"]);
         assert_eq!(
-            newest(&mrustc, "mrustc", "0.12.0").as_deref(),
+            newest(&mrustc, "mrustc", "0.12.0", None).as_deref(),
             Some("0.12.0")
         );
         let arx = tags(&["1.2", "1.2.1", "ArxFatalis-1.21"]);
         assert_eq!(
-            newest(&arx, "arx-libertatis", "1.2.1").as_deref(),
+            newest(&arx, "arx-libertatis", "1.2.1", None).as_deref(),
             Some("1.2.1")
         );
         // one odd tag that names the package does not hide the bare ones
         let rabbit = tags(&["rabbitmq-c-v0.3.0", "v0.15.0", "v0.18.1"]);
         assert_eq!(
-            newest(&rabbit, "rabbitmq-c", "0.15.0").as_deref(),
+            newest(&rabbit, "rabbitmq-c", "0.15.0", None).as_deref(),
             Some("0.18.1")
         );
         // a release prefix is as plain as a `v`
         let approxmc = tags(&["4.1.24", "release/4.2.0", "release/v4.4.0", "cav2020-paper"]);
         assert_eq!(
-            newest(&approxmc, "approxmc", "4.1.24").as_deref(),
+            newest(&approxmc, "approxmc", "4.1.24", None).as_deref(),
             Some("4.4.0")
         );
         // no plain tags: the words count
         let rel = tags(&["build-1.2", "build-1.3"]);
-        assert_eq!(newest(&rel, "thing", "1.2").as_deref(), Some("1.3"));
+        assert_eq!(newest(&rel, "thing", "1.2", None).as_deref(), Some("1.3"));
         // tags that name the package still come first
         let gs = tags(&[
             "ghostpdl-10.07.1",
@@ -821,7 +960,7 @@ mod tests {
             "10.03.0",
         ]);
         assert_eq!(
-            newest(&gs, "ghostscript", "10.03.0").as_deref(),
+            newest(&gs, "ghostscript", "10.03.0", None).as_deref(),
             Some("10.05.1")
         );
     }

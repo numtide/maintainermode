@@ -317,6 +317,7 @@ fn candidates(app: &App) -> Vec<crate::upstream::Candidate> {
     }
     let attrs: std::collections::BTreeSet<&String> =
         index.by_pname.values().chain(first.iter()).collect();
+    let series = crate::upstream::series_map(&index);
     attrs
         .into_iter()
         .filter_map(|attr| {
@@ -328,6 +329,7 @@ fn candidates(app: &App) -> Vec<crate::upstream::Candidate> {
                 version: p.version.clone(),
                 origin: crate::upstream::origin(url)?,
                 first: first.contains(attr),
+                series: series.get(attr).cloned(),
             })
         })
         .filter(|c| !c.version.is_empty())

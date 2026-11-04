@@ -62,6 +62,9 @@ pub struct Snapshot {
     pub open_by_dir: HashMap<String, usize>,
     /// pname → every version nixpkgs carries of it, under any attribute.
     pub versions: HashMap<String, std::collections::HashSet<String>>,
+    /// attribute → the series it tracks, when nixpkgs carries a newer series
+    /// of the same source next to it (see [`crate::upstream::series`]).
+    pub series: HashMap<String, String>,
     pub committers: crate::committer::Committers,
     pub board: crate::committer::Board,
 }
@@ -148,6 +151,7 @@ impl App {
                 .or_default()
                 .insert(p.version.clone());
         }
+        let series = crate::upstream::series_map(&index);
         let committers = crate::committer::Committers::load(&self.store, &prs, Utc::now());
         let board = crate::committer::board(&prs, &ledger, &index, &links);
         *self.snapshot.write().unwrap() = Arc::new(Snapshot {
@@ -167,6 +171,7 @@ impl App {
                 .is_some_and(|a| a.open_complete().unwrap_or(false)),
             open_by_dir,
             versions,
+            series,
             committers,
             board,
         });

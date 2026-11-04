@@ -333,7 +333,14 @@ fn upstream_from<'a>(
 ) -> Option<(&'a str, &'a str)> {
     let p = index.pkgs.get(attr)?;
     let (newest, from) = h.newest(attr, &p.version)?;
-    (!s.versions.get(&p.pname).is_some_and(|v| v.contains(newest))).then_some((newest, from))
+    // a release that nixpkgs carries under another attribute, or one off
+    // the series this package tracks, is no news
+    let carried = s.versions.get(&p.pname).is_some_and(|v| v.contains(newest));
+    let off = s
+        .series
+        .get(attr)
+        .is_some_and(|series| !crate::upstream::in_series(newest, series));
+    (!carried && !off).then_some((newest, from))
 }
 
 pub(crate) fn upstream<'a>(
@@ -1630,6 +1637,42 @@ pub(crate) mod tests {
         );
         i.teams.insert("py".into(), vec!["alice".into()]);
         i
+    }
+
+    #[test]
+    fn a_release_off_the_series_a_package_tracks_is_no_news() {
+        let mut i = Index::default();
+        for (attr, v) in [("wesnoth", "1.18.8"), ("wesnoth-devel", "1.19.28")] {
+            i.pkgs.insert(
+                attr.into(),
+                Package {
+                    pname: attr.into(),
+                    version: v.into(),
+                    file: Some("pkgs/by-name/we/wesnoth/package.nix".into()),
+                    ..Default::default()
+                },
+            );
+        }
+        let mut h = Health::default();
+        h.set_upstream(
+            [
+                ("wesnoth".to_string(), "1.19.29".to_string()),
+                ("wesnoth-devel".to_string(), "1.19.29".to_string()),
+            ]
+            .into(),
+            Utc::now(),
+        );
+        let mut s = Snapshot::default();
+        assert_eq!(upstream(&s, &i, &h, "wesnoth"), Some("1.19.29"));
+        s.series = crate::upstream::series_map(&i);
+        assert_eq!(s.series.get("wesnoth").map(String::as_str), Some("1.18"));
+        assert_eq!(upstream(&s, &i, &h, "wesnoth"), None);
+        assert_eq!(upstream(&s, &i, &h, "wesnoth-devel"), Some("1.19.29"));
+        h.set_upstream(
+            [("wesnoth".to_string(), "1.18.9".to_string())].into(),
+            Utc::now(),
+        );
+        assert_eq!(upstream(&s, &i, &h, "wesnoth"), Some("1.18.9"));
     }
 
     #[test]
