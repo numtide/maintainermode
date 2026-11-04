@@ -512,7 +512,13 @@ pub async fn repology_statuses(h: &mut Health) -> Run {
     let http = http(Duration::from_secs(60));
     let mut sweep = h.statuses_sweep.take().unwrap_or_default();
     for _ in 0..STATUS_PAGES {
-        let page = match repology_page(&http, &sweep.cursor, "").await {
+        // a connection repology closes under a page is tried once more
+        let mut page = repology_page(&http, &sweep.cursor, "").await;
+        if page.is_err() {
+            tokio::time::sleep(REPOLOGY_PAUSE).await;
+            page = repology_page(&http, &sweep.cursor, "").await;
+        }
+        let page = match page {
             Ok(p) => p,
             Err(e) => {
                 let line = format!("page {} failed: {e:#}", sweep.pages + 1);
