@@ -314,7 +314,7 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   next to `python313` tracks 3.12, `nodejs_20` next to `nodejs_22` tracks 20.
   The series is the version up to the first number where the newer sibling
   differs. Only a tag, a registry release or a repology version on that
-  series counts, so 1.19.29 is no news for `wesnoth`. A sibling that
+  series counts, so 1.19.29 is no news for `wesnoth`, and its Version row says that nixpkgs has a newer series under another attribute. A sibling that
   differs in the last number only (1.2.5 next to 1.2.3) is a newer patch of
   the same series and sets no series. The newest series tracks nothing. A
   release that nixpkgs already carries under another attribute of the same

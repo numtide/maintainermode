@@ -1193,8 +1193,12 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
         None => html!(
             "{} <span class=\"color-fg-muted f6\">{}</span>",
             p.version,
-            match h.direct.get(attr) {
-                Some(d) if d.latest.is_some() => format!(
+            match (h.direct.get(attr), s.series.get(attr)) {
+                // nixpkgs carries a newer series under another attribute
+                (_, Some(series)) => format!(
+                    "no newer {series} release known; nixpkgs has a newer series under another attribute"
+                ),
+                (Some(d), None) if d.latest.is_some() => format!(
                     "no newer release in {}",
                     if d.from == "tags" {
                         "its git tags"
