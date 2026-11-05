@@ -340,7 +340,9 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   statuses come from a sweep of every project of `nix_unstable`, about 600
   pages at one request a second, 100 pages a pass of the health task, once
   a week; the JSON API gives them as `repology` (`srcname`, `url`,
-  `status`, `note`).
+  `status`, `note`). The row also links to the package on
+  [nixkeeper](https://nixkeeper.com), which reads upstream too and names
+  a Python package the same way (`nixkeeper_url` in the API).
 - **Budget.** Each pass of the health task makes up to 300 requests, with
   100 ms between them. Packages that someone who signed in maintains, or
   that anyone watches, come first and are asked again after a day. The

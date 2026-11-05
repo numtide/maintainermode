@@ -962,6 +962,16 @@ pub(crate) fn repology_name(index: &Index, attr: &str) -> String {
     crate::builds::job_attr(&index.hydra_sets, attr)
 }
 
+/// The package on [nixkeeper](https://nixkeeper.com), which reads upstream
+/// too and names a Python package by the set Hydra builds, as repology
+/// does.
+pub(crate) fn nixkeeper_url(attr: &str) -> String {
+    format!(
+        "https://nixkeeper.com/?pkg={}",
+        crate::github::urlencode(attr)
+    )
+}
+
 /// repology's own lookup by srcname, which lands on the versions page of
 /// the project, whatever repology named it.
 pub(crate) fn repology_url(srcname: &str) -> String {
@@ -1094,6 +1104,7 @@ pub(crate) struct PackageView<'a> {
     pub(crate) version_bumps: Vec<u64>,
     pub(crate) update_bot: BotView,
     pub(crate) repology: Option<RepologyView>,
+    pub(crate) nixkeeper_url: Option<String>,
     #[serde(skip)]
     open: Vec<(&'a Advisory, &'a Verdict)>,
     #[serde(skip)]
@@ -1192,6 +1203,7 @@ pub(crate) fn data<'a>(
         needs_backport,
         version_bumps,
         update_bot,
+        nixkeeper_url: package.map(|_| nixkeeper_url(&repology_name(i.index, attr))),
         repology: package.map(|p| {
             let name = repology_name(i.index, attr);
             RepologyView {
@@ -1257,9 +1269,11 @@ pub(crate) fn view(i: &Inputs, v: &PackageView, personal: Personal) -> Page {
             ),
         ));
     }
+    // the two other watchers of upstream, for a second opinion
     let repology = html!(
-        "<a class=\"color-fg-muted f6 ml-2\" href=\"{}\">repology ↗</a>",
-        repology_url(&repology_name(index, attr))
+        "<a class=\"color-fg-muted f6 ml-2\" href=\"{}\">repology ↗</a><a class=\"color-fg-muted f6 ml-2\" href=\"{}\">nixkeeper ↗</a>",
+        repology_url(&repology_name(index, attr)),
+        nixkeeper_url(&repology_name(index, attr))
     );
     let version = match upstream_from(s, index, h, attr) {
         Some((u, from)) => html!(

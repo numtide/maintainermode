@@ -2452,15 +2452,26 @@ pub(crate) mod tests {
             "{}",
             page.body
         );
+        assert!(
+            page.body
+                .contains("href=\"https://nixkeeper.com/?pkg=ee\">nixkeeper ↗</a>"),
+            "{}",
+            page.body
+        );
         let api = site.get("/api/v1/packages/ee", None).await;
         let v: Value = serde_json::from_str(&api.body).unwrap();
         assert_eq!(v["repology"]["status"], "ignored");
+        assert_eq!(v["nixkeeper_url"], "https://nixkeeper.com/?pkg=ee");
         assert_eq!(v["repology"]["srcname"], "ee");
         let api = site
             .get("/api/v1/packages/python3Packages.requests", None)
             .await;
         let v: Value = serde_json::from_str(&api.body).unwrap();
         assert_eq!(v["repology"]["srcname"], "python314Packages.requests");
+        assert_eq!(
+            v["nixkeeper_url"],
+            "https://nixkeeper.com/?pkg=python314Packages.requests"
+        );
         assert_eq!(v["repology"]["status"], Value::Null);
         assert_eq!(v["repology"]["note"], "not on repology");
     }
