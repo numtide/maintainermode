@@ -199,7 +199,7 @@ fn needs_review(
     tab: &str,
     q: &ReviewQuery,
 ) -> Html {
-    let opts = Opts {
+    let mut opts = Opts {
         sort: q.sort.clone(),
         checks: q.checks.clone(),
         reviews: q.reviews.clone(),
@@ -208,6 +208,13 @@ fn needs_review(
         label: q.label.clone(),
         q: q.q.clone(),
     };
+    let typed = q.q.clone().unwrap_or_default();
+    let problems = crate::search::problem_lines(&typed, &opts.read_words(), |to| {
+        format!(
+            "/review?tab={tab}&q={}",
+            crate::github::urlencode(to.trim())
+        )
+    });
     let bumps = tab == "bumps";
     let only_mine = bumps && v.is_some() && q.filter.as_deref() == Some("mine");
     let show_hidden = !bumps && v.is_some() && q.hidden.as_deref() == Some("1");
@@ -253,7 +260,7 @@ fn needs_review(
             crate::bumps::rows(page)
         };
         return html!(
-            "{}{}{}",
+            "{}{problems}{}{}",
             bar(
                 &opts,
                 tab,
@@ -324,7 +331,7 @@ fn needs_review(
         (label, intro(tab))
     };
     html!(
-        "{}{}{}",
+        "{}{problems}{}{}",
         bar(
             &opts,
             tab,
@@ -424,7 +431,72 @@ pub(crate) struct Opts {
     pub q: Option<String>,
 }
 
+/// The keys a title search can hold, each a field of [`Opts`].
+const KEYS: [&str; 6] = ["sort", "checks", "reviews", "conflicts", "base", "label"];
+
 impl Opts {
+    /// Reads the qualifiers of `q` into the fields, as GitHub's box does:
+    /// `checks:fail reviews:none base:staging label:python sort:oldest`
+    /// beside the words of a title. A qualifier wins over the field of the
+    /// same name, and `q` keeps the words. The problems: the words the
+    /// queue does not know, with what was likely meant.
+    pub(crate) fn read_words(&mut self) -> Vec<crate::query::Problem> {
+        use crate::query::Problem;
+        let Some(q) = self.q.as_deref() else {
+            return Vec::new();
+        };
+        let parsed = crate::query::parse(q);
+        let mut problems = Vec::new();
+        let mut labels: Vec<&str> = Vec::new();
+        for t in &parsed.terms {
+            let key = t.key.as_str();
+            if !KEYS.contains(&key) {
+                problems.push(Problem::of_key(
+                    t,
+                    format!("no {key}: qualifier here"),
+                    KEYS,
+                ));
+                continue;
+            }
+            if t.value.is_empty() {
+                continue;
+            }
+            if t.neg {
+                problems.push(Problem::new(&t.raw, format!("-{key}: leaves nothing out")));
+                continue;
+            }
+            let allowed: &[&str] = match key {
+                "sort" => &SORTS,
+                "checks" => &CHECKS,
+                "reviews" => &REVIEWS,
+                "conflicts" => &CONFLICTS,
+                _ => &[],
+            };
+            let v = t.value.to_lowercase();
+            if !allowed.is_empty() && !allowed.contains(&v.as_str()) {
+                problems.push(Problem::of_value(
+                    t,
+                    format!("no {key}:{}", t.value),
+                    allowed.iter().copied(),
+                ));
+                continue;
+            }
+            match key {
+                "sort" => self.sort = Some(v),
+                "checks" => self.checks = Some(v),
+                "reviews" => self.reviews = Some(v),
+                "conflicts" => self.conflicts = Some(v),
+                "base" => self.base = Some(t.value.clone()),
+                _ => labels.push(&t.value),
+            }
+        }
+        if !labels.is_empty() {
+            self.label = Some(labels.join(","));
+        }
+        self.q = Some(parsed.text).filter(|t| !t.is_empty());
+        problems
+    }
+
     fn get<'a>(o: &'a Option<String>, allowed: &[&str]) -> Option<&'a str> {
         o.as_deref()
             .map(str::trim)
@@ -665,7 +737,7 @@ fn bar(
         choices,
         action: "/review",
         keep,
-        placeholder: "Words in the title",
+        placeholder: "Words in the title, or checks:fail",
         q: o.q.clone().unwrap_or_default(),
         fields: label,
         more,
@@ -991,6 +1063,56 @@ mod tests {
         assert_eq!(o.query(), "&sort=newest&q=a%20b");
         assert!(o.active() && o.sorted());
         assert_eq!(bases(&list), ["master", "staging"]);
+    }
+
+    #[test]
+    fn the_words_of_the_box_set_the_filters() {
+        let mut o = Opts {
+            checks: Some("pass".into()),
+            q: Some(
+                "checks:FAIL base:staging label:python label:\"6.topic: rust\" sort:oldest hel"
+                    .into(),
+            ),
+            ..Default::default()
+        };
+        assert!(o.read_words().is_empty());
+        assert_eq!(o.checks.as_deref(), Some("fail"), "the word wins");
+        assert_eq!(o.base.as_deref(), Some("staging"));
+        assert_eq!(o.label.as_deref(), Some("python,6.topic: rust"));
+        assert_eq!(o.sort.as_deref(), Some("oldest"));
+        assert_eq!(o.q.as_deref(), Some("hel"));
+        let mut o = Opts {
+            q: Some("checks:fal -base:master is:outdated colour:red".into()),
+            ..Default::default()
+        };
+        let seen: Vec<(String, String, Option<String>)> = o
+            .read_words()
+            .into_iter()
+            .map(|p| (p.token, p.message, p.suggestion))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                (
+                    "checks:fal".into(),
+                    "no checks:fal".into(),
+                    Some("checks:fail".into())
+                ),
+                (
+                    "-base:master".into(),
+                    "-base: leaves nothing out".into(),
+                    None
+                ),
+                ("is:outdated".into(), "no is: qualifier here".into(), None),
+                (
+                    "colour:red".into(),
+                    "no colour: qualifier here".into(),
+                    None
+                ),
+            ]
+        );
+        assert_eq!(o.q, None);
+        assert_eq!(o.checks, None);
     }
 
     #[test]

@@ -155,7 +155,7 @@ When one of them is false, the item says which, for example "Do not merge it yet
 
 ## Your packages
 
-Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The chips above the list keep one part of it. Each chip shows its count. The "Words in the name" box filters the list of the current chip, and a chip keeps those words. **Clear** removes them. `/review` has the same bar.
+Signed out, `/packages` shows the catalog of nixpkgs: the directories. Signed in, it shows one list: the packages of your machines, what you maintain and what you watch. Only you see it. The chips above the list keep one part of it. Each chip shows its count. The "Words in the name" box filters the list of the current chip, and a chip keeps those words; it takes the qualifiers of `/search` too, such as `is:outdated -has:pr`. **Clear** removes them. `/review` has the same bar.
 
 | Filter         | Address                     | What it keeps                                                   |
 | -------------- | --------------------------- | --------------------------------------------------------------- |
@@ -369,6 +369,8 @@ Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it i
 | `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                 |
 | `label`     | part of a label, such as `python`                | the labels that contain it, in any case; commas for several, all needed |
 | `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch  |
+
+The search box takes the same choices as words, as GitHub's does: `checks:fail reviews:none base:staging label:python sort:oldest hello`. A word sets its choice, and wins over it; the words of the title stay in the box. A word the queue does not know is said under the bar, with what was likely meant, and the rest applies. On `/packages` and `/search`, the words are the traits of a package (`is:outdated`, `-has:pr`, `by:login`...), in the grammar of [nixkeeper](https://nixkeeper.com/), so one query works on both sites; `/search` lists them.
 
 "Clear" removes them. With a sort, "Next page" counts rows, as on For you. `GET /api/v1/prs` takes the same parameters for every queue but `ready`. For your own login it leaves out what you hid, gives the count as `hidden`, and adds `why` to each row of `queue=foryou`.
 

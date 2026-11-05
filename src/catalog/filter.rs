@@ -251,11 +251,8 @@ impl Filter {
             return;
         }
         if !KEYS.contains(&key) {
-            let p = Problem::new(&t.raw, format!("no {key}: qualifier")).suggest(key, KEYS);
-            self.problems.push(Problem {
-                suggestion: p.suggestion.map(|s| format!("{s}:")),
-                ..p
-            });
+            self.problems
+                .push(Problem::of_key(t, format!("no {key}: qualifier"), KEYS));
             return;
         }
         // A key still waiting for its value: nothing to say.
@@ -321,19 +318,21 @@ impl Filter {
             "sort" => match v.to_lowercase().as_str() {
                 "pressing" => self.sort = Sort::Pressing,
                 "az" => self.sort = Sort::Az,
-                other => self.problems.push(
-                    Problem::new(&t.raw, format!("no sort:{other} here"))
-                        .suggest(other, Sort::WORDS.iter().copied()),
-                ),
+                other => self.problems.push(Problem::of_value(
+                    t,
+                    format!("no sort:{other} here"),
+                    Sort::WORDS,
+                )),
             },
             "order" => {
                 if v.eq_ignore_ascii_case("reverse") {
                     self.reverse = true;
                 } else {
-                    self.problems.push(
-                        Problem::new(&t.raw, format!("order:{v}: only order:reverse"))
-                            .suggest(v, ["reverse"]),
-                    );
+                    self.problems.push(Problem::of_value(
+                        t,
+                        format!("order:{v}: only order:reverse"),
+                        ["reverse"],
+                    ));
                 }
             }
             _ => {}
@@ -668,9 +667,11 @@ mod tests {
                 ("-in:x", "-in: leaves nothing out", None),
             ]
         );
-        let f = Filter::parse("sort:oldest ha:pr");
+        let f = Filter::parse("sort:oldest ha:pr order:reverse order:revers");
         assert_eq!(f.problems[0].suggestion, None);
-        assert_eq!(f.problems[1].suggestion.as_deref(), Some("has:"));
+        assert_eq!(f.problems[1].suggestion.as_deref(), Some("has:pr"));
+        assert_eq!(f.problems[2].suggestion.as_deref(), Some("order:reverse"));
+        assert!(f.reverse);
     }
 
     #[test]

@@ -141,7 +141,7 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
             opt(
                 "q",
                 Type::Text,
-                "not with ready: keep the titles with a word that starts with this text",
+                "not with ready: keep the titles with a word that starts with this text; takes the other filters as qualifiers too, as checks:fail reviews:none base:staging label:python sort:oldest, and problems names the words it does not know",
             ),
             LIMIT_P,
             CURSOR_P,
@@ -1141,7 +1141,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
     let login = Args::text(&q.login).or(caller.filter(|_| queue == "foryou" || yours));
     let own = login.is_some() && login == caller;
     let s = app.snap();
-    let opts = crate::review::Opts {
+    let mut opts = crate::review::Opts {
         sort: q.sort.clone(),
         checks: q.checks.clone(),
         reviews: q.reviews.clone(),
@@ -1150,6 +1150,7 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         label: q.label.clone(),
         q: q.q.clone(),
     };
+    let problems = opts.read_words();
     let mut out;
     let mut private = false;
     match queue {
@@ -1223,6 +1224,9 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         }
     }
     out["queue"] = json!(queue);
+    if !problems.is_empty() {
+        out["problems"] = json!(problems);
+    }
     Ok(Prs {
         value: out,
         private,

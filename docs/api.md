@@ -134,7 +134,12 @@ The queues:
 For every queue but `ready`, the parameters `q`, `sort` (`oldest`, `newest`,
 `updated`), `checks` (`pass`, `fail`, `pending`), `reviews` (`none`, `some`),
 `conflicts` (`hide`), `base` and `label` narrow and order the list, as the filter bar
-of `/review` does (see [personal.md](personal.md#review-for-you)). For your
+of `/review` does (see [personal.md](personal.md#review-for-you)). `q` also
+takes them as qualifiers, as GitHub's box does: `checks:fail reviews:none
+base:staging label:python sort:oldest hello`; a qualifier wins over the
+parameter of the same name, and `problems` names the words the queue does
+not know, each with `token`, `message` and, when a known word is close,
+`suggestion`. For your
 own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
 requests you hid on the site, and `hidden` gives their count. Each row of
 your own `foryou` has `why`: the reasons it is yours, such as

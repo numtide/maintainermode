@@ -400,6 +400,27 @@ async fn me_pages_show_their_parts() {
     );
     assert!(!a.body.contains("aria-label=\"Views\""));
     assert!(!a.body.contains("<details class=\"filter-more\" open>"));
+    // A word of the box sets a filter; one the queue does not know is said.
+    let a = site
+        .get("/review?tab=all&q=checks:fail+checks:fal+hel", Some(SID))
+        .await;
+    assert!(
+        a.body.contains("<option value=\"fail\" selected>"),
+        "{}",
+        a.body
+    );
+    assert!(
+        a.body
+            .contains("value=\"hel\" placeholder=\"Words in the title"),
+        "{}",
+        a.body
+    );
+    assert!(a.body.contains("<details class=\"filter-more\" open>"));
+    assert!(
+        a.body.contains("no checks:fal: <a href=\"/review?tab=all&amp;q=checks%3Afail%20checks%3Afail%20hel\">checks:fail</a>?"),
+        "{}",
+        a.body
+    );
     let a = site.get("/review?tab=ready", Some(SID)).await;
     assert!(
         a.body

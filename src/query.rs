@@ -60,7 +60,44 @@ impl Problem {
         }
     }
 
-    /// With the closest of `words` to `as_typed`, when one is close.
+    /// A key the page does not know: the closest of `keys`, as the whole
+    /// word with the sign and the value kept, so it can replace the token.
+    pub(crate) fn of_key<'a>(
+        t: &Term,
+        message: impl Into<String>,
+        keys: impl IntoIterator<Item = &'a str>,
+    ) -> Problem {
+        let mut p = Problem::new(&t.raw, message);
+        p.suggestion = closest(&t.key, keys).map(|k| {
+            Term {
+                key: k.to_string(),
+                ..t.clone()
+            }
+            .word()
+        });
+        p
+    }
+
+    /// A value the page does not know: the closest of `values`, as the
+    /// whole word under the same key.
+    pub(crate) fn of_value<'a>(
+        t: &Term,
+        message: impl Into<String>,
+        values: impl IntoIterator<Item = &'a str>,
+    ) -> Problem {
+        let mut p = Problem::new(&t.raw, message);
+        p.suggestion = closest(&t.value, values).map(|v| {
+            Term {
+                value: v.to_string(),
+                ..t.clone()
+            }
+            .word()
+        });
+        p
+    }
+
+    /// With the closest of `words` to `as_typed`, when one is close; the
+    /// words are whole tokens.
     pub(crate) fn suggest<'a>(
         mut self,
         as_typed: &str,
