@@ -410,9 +410,43 @@ function seedSql() {
       association: "FIRST_TIME_CONTRIBUTOR",
     }),
   ];
+  // the update bot failed on hello (maintained) and ripgrep (watched):
+  // their update scripts failed, and the logs were read
+  const attempt = {
+    started: daysAgo(2),
+    finished: new Date(Date.parse(daysAgo(2)) + 60000).toISOString(),
+    exit_code: 1,
+  };
+  const updatebot = {
+    read_at: now,
+    file_at: now,
+    queue_len: 24589,
+    attempts: 14000,
+    logged: 2,
+    entries: {
+      hello: { last: attempt, queued: null },
+      ripgrep: { last: attempt, queued: null },
+    },
+  };
+  const botTail = (attr, version) => [
+    `https://nixpkgs-update-logs.nixos.org/${attr}/${attempt.started.slice(0, 10)}.log`,
+    {
+      line: `The update script for ${attr}-${version} failed with exit code 1`,
+      pr: null,
+      existing: null,
+      build_failed: false,
+      nothing_to_do: false,
+      update_script_failed: true,
+    },
+  ];
   return [
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('index', ${q(index)});`,
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('health', ${q(health)});`,
+    `INSERT OR REPLACE INTO meta (key, value) VALUES ('updatebot', ${q(updatebot)});`,
+    ...[botTail("hello", "2.12.1"), botTail("ripgrep", "14.1.0")].map(
+      ([url, outcome]) =>
+        `INSERT OR REPLACE INTO bot_tail (url, read_at, outcome) VALUES ('${url}', '${now}', ${q(outcome)});`,
+    ),
     // the seeded person grants commit access, so /committers opens
     `INSERT OR REPLACE INTO meta (key, value) VALUES ('delegation_team', ${q([SEED_LOGIN])});`,
     `INSERT OR REPLACE INTO package_set (login, name, attrs, dropped, uploaded_at, scanned_at, nixpkgs_rev) VALUES ('${SEED_LOGIN}', 'laptop', ${q(set)}, 3, '${now}', '${now}', '${index.rev}');`,

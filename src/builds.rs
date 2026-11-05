@@ -342,6 +342,12 @@ impl Builds {
         self.tracked.read().unwrap().clone()
     }
 
+    /// The tracked packages of a test.
+    #[cfg(test)]
+    pub(crate) fn set_tracked(&self, attrs: HashSet<String>) {
+        *self.tracked.write().unwrap() = Arc::new(attrs);
+    }
+
     /// Whether cache.nixos.org has the path, when the server asked.
     pub fn cached(&self, path: &str) -> Option<bool> {
         self.cache.read().unwrap().get(path).map(|(ok, _)| *ok)

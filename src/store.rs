@@ -274,6 +274,11 @@ impl Store {
                counts TEXT NOT NULL,
                rows TEXT,
                PRIMARY KEY (jobset, eval)
+             );
+             CREATE TABLE IF NOT EXISTS bot_tail (
+               url TEXT PRIMARY KEY,
+               read_at TEXT NOT NULL,
+               outcome TEXT NOT NULL
              );",
         )?;
         migrate_sets(&mut conn)?;
@@ -1803,6 +1808,62 @@ impl Store {
                 build: build as u64,
                 state,
                 at: at.with_timezone(&Utc),
+            });
+        }
+        Ok(out)
+    }
+
+    /// Keeps the tails of logs of the update bot that were read, and drops
+    /// the ones read before `before`.
+    pub fn put_bot_tails(
+        &self,
+        tails: &[crate::updatebot::KeptTail],
+        before: DateTime<Utc>,
+    ) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for t in tails {
+            tx.execute(
+                "INSERT INTO bot_tail (url, read_at, outcome) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(url) DO UPDATE SET read_at = ?2, outcome = ?3",
+                params![
+                    t.url,
+                    t.read_at.to_rfc3339(),
+                    serde_json::to_string(&t.outcome)?
+                ],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM bot_tail WHERE read_at < ?1",
+            [before.to_rfc3339()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn bot_tails(&self) -> Result<Vec<crate::updatebot::KeptTail>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT url, read_at, outcome FROM bot_tail")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (url, read_at, outcome) = row?;
+            let (Ok(read_at), Ok(outcome)) = (
+                DateTime::parse_from_rfc3339(&read_at),
+                serde_json::from_str(&outcome),
+            ) else {
+                continue;
+            };
+            out.push(crate::updatebot::KeptTail {
+                url,
+                read_at: read_at.with_timezone(&Utc),
+                outcome,
             });
         }
         Ok(out)

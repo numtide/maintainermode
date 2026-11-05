@@ -530,7 +530,7 @@ pub(crate) fn body(app: &App) -> Html {
         match u["read_at"].as_str() {
             Some(_) => html!(
                 "the state of nixpkgs-update, read {} (file from {}), every {} · {} entries in the queue · {} attributes with an attempt · {} attempts a day over {} days · \
-                 the log of an attempt is read when a package page is shown, at most {} at a time and {} a minute · {} logs kept · {} not asked",
+                 the log of an attempt is read when a package page is shown, at most {} at a time and {} a minute · after each read of the state, the logs of the failed attempts on the packages people maintain or watch, at most {} a minute · {} logs kept · {} not asked · {} read by the sweep",
                 when(&u["read_at"]),
                 when(&u["file_at"]),
                 minutes(u["every_seconds"].as_i64().unwrap_or(3600)),
@@ -540,8 +540,10 @@ pub(crate) fn body(app: &App) -> Html {
                 u["rate_days"],
                 u["tails"]["concurrent"],
                 u["tails"]["per_minute"],
+                u["tails"]["sweep_per_minute"],
                 u["tails"]["cached"],
-                u["tails"]["not_asked"]
+                u["tails"]["not_asked"],
+                u["tails"]["swept"]
             ),
             None => html!(
                 "the state of nixpkgs-update, not read yet · read every {}",

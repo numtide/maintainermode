@@ -320,7 +320,10 @@ does not change `plans` and `events`.
 ```
 
 - `cause`: `advisory`, `follow_up`, `reviewed`, `blocked`, `waiting`,
-  `review` or `package`. This is also the order of urgency.
+  `review` or `package`. This is also the order of urgency. A `package`
+  item says in `labels` what waits: `Hydra build fails`, `update script
+failed`, `<version> available` or `update bot failed`; its `action` is
+  `Look at the build`, `Fix the update script` or `Update it`.
 - `stale`: `true` for a pull request with no push for a year (one of your
   own: no push or comment from you). Stale items come last, after every
   cause.

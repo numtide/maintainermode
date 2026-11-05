@@ -405,6 +405,11 @@ pub(super) fn bot_body(v: &BotView) -> Html {
                     "color-fg-muted",
                     format!("{} ago", ago(a.started)),
                 ),
+                State::Failed if outcome.is_some_and(|o| o.update_script_failed) => (
+                    "update script failed",
+                    "color-fg-danger",
+                    format!("{} ago", ago(a.started)),
+                ),
                 State::Failed => (
                     "failed",
                     "color-fg-danger",

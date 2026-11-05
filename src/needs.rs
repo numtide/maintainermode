@@ -108,7 +108,8 @@ pub(crate) enum Cause {
     Waiting,
     /// A pull request on the person's machines or on what they maintain.
     Review,
-    /// A package the person maintains has a new release or a failed build.
+    /// A package the person maintains has a new release or a failed build,
+    /// or the update script of a package they maintain or watch failed.
     Package,
 }
 
@@ -252,7 +253,7 @@ pub(crate) fn collect(i: &Inputs) -> Vec<Item> {
         if why.machine {
             out.extend(advisory(i, attr, *why));
         }
-        if why.maintain {
+        if why.maintain || why.watch {
             out.extend(package(i, attr, *why));
         }
     }
@@ -472,15 +473,34 @@ fn fix_hint(i: &Inputs, attr: &str) -> String {
     out
 }
 
+/// A package the person maintains with a new release or a red Hydra
+/// build, or one they maintain or watch whose update script failed: the
+/// bot cannot update it, so someone has to.
 fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
+    let script = i.bot.script_failed(attr, i.now);
+    if !why.maintain && script.is_none() {
+        return None;
+    }
     let up = crate::catalog::upstream(i.s, i.index, i.h, attr);
     let red = i.failed.get(attr).cloned();
     let failed = red.is_some();
-    if up.is_none() && !failed {
+    if up.is_none() && !failed && script.is_none() {
         return None;
     }
     let mut labels = Vec::new();
-    let mut detail = String::from("You maintain it.");
+    let mut detail = String::from(if why.maintain {
+        "You maintain it."
+    } else {
+        "You watch it."
+    });
+    if let Some(a) = &script {
+        labels.push((Tone::Danger, "update script failed".into()));
+        let _ = write!(
+            detail,
+            " Its update script failed on {}, so the update bot cannot update it: fix the script, or update the package by hand. The package page links to the log.",
+            a.started.format("%Y-%m-%d")
+        );
+    }
     if let Some((state, on)) = &red {
         let (tag, on) = if on == "unstable" {
             (String::new(), String::new())
@@ -499,9 +519,10 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         labels.push((Tone::Attention, format!("{v} available")));
         let _ = write!(detail, " Upstream released {v}.");
     }
+    // the failed script already names the attempt
     let data = i.bot.snapshot();
     let bot = up
-        .filter(|_| i.bot.failed_on(attr, i.now))
+        .filter(|_| script.is_none() && i.bot.failed_on(attr, i.now))
         .and_then(|_| data.failed_attempt(attr, i.now));
     if let Some(a) = bot {
         labels.push((Tone::Attention, "update bot failed".into()));
@@ -524,6 +545,8 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         href: Subject::Pkg(attr.to_string()).href(),
         action: if failed {
             "Look at the build".into()
+        } else if script.is_some() {
+            "Fix the update script".into()
         } else {
             "Update it".into()
         },
@@ -531,7 +554,8 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
             up.unwrap_or(""),
             red.as_ref().map_or("", |r| r.0.key()),
             red.as_ref().map_or("", |r| r.1.as_str()),
-            &bot.map(|a| a.started.timestamp().to_string())
+            &bot.or(script.as_ref())
+                .map(|a| a.started.timestamp().to_string())
                 .unwrap_or_default(),
         ]),
         moods: vec![Mood::Maintain],
@@ -542,7 +566,7 @@ fn package(i: &Inputs, attr: &str, why: Why) -> Option<Item> {
         stale: false,
         rank: (
             crate::mine::order(why, true).0,
-            i64::from(!failed),
+            i64::from(!failed) + i64::from(!failed && script.is_none()),
             attr.to_string(),
         ),
     })
@@ -1356,6 +1380,7 @@ mod tests {
         failed: HashMap<String, (BuildState, String)>,
         bot: crate::updatebot::Bot,
         plans: Plans,
+        watched: Vec<Subject>,
     }
 
     impl World {
@@ -1388,6 +1413,7 @@ mod tests {
                 versions: HashMap::new(),
                 hosts: HashMap::new(),
                 plans: Plans::none(false),
+                watched: Vec::new(),
             }
         }
 
@@ -1423,7 +1449,8 @@ mod tests {
         }
 
         fn items(&self) -> Vec<Item> {
-            let mut interests = Interests::build(&self.index, "alice", &self.machines, &[], true);
+            let mut interests =
+                Interests::build(&self.index, "alice", &self.machines, &self.watched, true);
             interests.versions = self.versions.clone();
             interests.hosts = self.hosts.clone();
             collect(&Inputs {
@@ -1883,6 +1910,97 @@ mod tests {
             }),
         );
         assert!(!marked(&w.items()));
+    }
+
+    #[test]
+    fn a_failed_update_script_is_an_item_with_no_known_release() {
+        let mut w = World::new();
+        // curl has no maintainer: alice watches it
+        w.watched.push(Subject::Pkg("curl".into()));
+        let attempt = crate::updatebot::Attempt {
+            started: now() - Duration::days(2),
+            finished: Some(now() - Duration::days(2) + Duration::minutes(1)),
+            exit_code: Some(1),
+        };
+        let set = |w: &World, attr: &str| {
+            let mut d = (*w.bot.snapshot()).clone();
+            d.entries.insert(
+                attr.into(),
+                crate::updatebot::Entry {
+                    last: Some(attempt.clone()),
+                    queued: None,
+                },
+            );
+            *w.bot.data.write().unwrap() = std::sync::Arc::new(d);
+        };
+        set(&w, "jq");
+        set(&w, "curl");
+        set(&w, "hello");
+        // a failed attempt with no log read is no item: no false alarm
+        assert!(w.items().is_empty());
+        let script = |line: &str| {
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: line.into(),
+                update_script_failed: true,
+                ..Default::default()
+            })
+        };
+        w.bot.preset(
+            "jq",
+            &attempt,
+            script("The update script for jq-1.0 failed with exit code 1"),
+        );
+        w.bot.preset(
+            "curl",
+            &attempt,
+            script("The update script for curl-1.0 failed with exit code 2"),
+        );
+        // a failure of another kind, with no known release, is no item
+        w.bot.preset(
+            "hello",
+            &attempt,
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "Version in attr path hello not compatible with 1.1".into(),
+                ..Default::default()
+            }),
+        );
+        let items = w.items();
+        // the order of your packages: curl runs on a machine of alice
+        assert_eq!(keys(&items), ["pkg:curl", "pkg:jq"]);
+        let jq = find(&items, "pkg:jq");
+        assert_eq!(jq.cause, Cause::Package);
+        assert_eq!(jq.action, "Fix the update script");
+        assert_eq!(
+            jq.labels,
+            [(Tone::Danger, "update script failed".to_string())]
+        );
+        assert!(
+            jq.detail
+                .starts_with("You maintain it. Its update script failed on "),
+            "{}",
+            jq.detail
+        );
+        assert_eq!(jq.moods, [Mood::Maintain]);
+        let curl = find(&items, "pkg:curl");
+        assert!(curl.detail.starts_with("You watch it. "), "{}", curl.detail);
+        // a new release adds its label, but not the generic bot mark
+        w.h.upstream.insert("jq".into(), "2.0".into());
+        let items = w.items();
+        let jq = find(&items, "pkg:jq");
+        assert_eq!(
+            jq.labels,
+            [
+                (Tone::Danger, "update script failed".to_string()),
+                (Tone::Attention, "2.0 available".to_string())
+            ]
+        );
+        assert_eq!(jq.action, "Fix the update script");
+        // a red build still comes first
+        w.failed
+            .insert("jq".into(), (BuildState::Fails, "unstable".into()));
+        let jq = w.items().into_iter().find(|i| i.key == "pkg:jq").unwrap();
+        assert_eq!(jq.action, "Look at the build");
+        assert_eq!(jq.labels.len(), 3);
     }
 
     fn mixed() -> Vec<Item> {

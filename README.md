@@ -46,7 +46,7 @@ Sign in with GitHub, and Maintainer Mode shows what you care about:
 - **What you watch**: subscribe to any package, module or directory.
 - **Your packages**: one list on the packages page. The packages of your machines come first, then what you maintain, then what you watch.
 - **Your Hydra failures**: the Yours tab of Zero Hydra Failures lists what you maintain or watch that fails on the next release.
-- **Needs you**: the top of the home page. It lists what waits for you, the most urgent first: a serious advisory on your machines, a new review on your pull request, a blocked pull request, a pull request to review. Snooze an item, or push Next to go through them.
+- **Needs you**: the top of the home page. It lists what waits for you, the most urgent first: a serious advisory on your machines, a new review on your pull request, a blocked pull request, a pull request to review, a package whose update script failed. Snooze an item, or push Next to go through them.
 - **Your pull requests**: set a follow-up plan on each one. If nobody
   reviews in some days, you get a reminder to ask the maintainers, or to
   merge it yourself when you are a committer. Maintainer Mode never merges.

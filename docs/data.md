@@ -120,8 +120,13 @@ its known limits.
   nixpkgs-update supervisor (about 15 MB) every hour, with
   `If-Modified-Since`, and keeps the last attempt and the queue position
   of each attribute (see [The update bot](health.md#the-update-bot)). The
-  end of a log is read per page view, at most 4 at a time and 60 a minute,
-  and kept 30 days once the attempt is over.
+  end of a log is read per page view, at most 4 at a time and 60 a minute.
+  After each read of the state, a sweep reads the end of the log of the
+  last failed attempt on each package that someone maintains or watches,
+  the same packages as [the build watch](health.md#the-build-watch), at
+  most 30 of the 60 a minute, so the pages keep the rest. A tail read is
+  kept 30 days once the attempt is over, in the database, so a restart
+  reads none again.
 - **Advisory detail.** For each CVE that the tracker names:
   - The CVSS score and the CISA exploitation decision come from the
     [CVE Program's records](https://github.com/CVEProject/cvelistV5), one

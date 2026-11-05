@@ -2,7 +2,10 @@
 //! do for each package: its last attempt, its place in the queue, and why
 //! it gave up. The supervisor of the bot publishes its SQLite state and the
 //! log of each attempt at nixpkgs-update-logs.nixos.org; this reads the
-//! state every hour, and the tail of a log when a page asks.
+//! state every hour, the tail of a log when a page asks, and, after each
+//! read of the state, the tail of each failed attempt on a package that
+//! someone maintains or watches, so Needs you can name a failed update
+//! script with no page view.
 
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
@@ -43,6 +46,16 @@ const TAIL_RETRY: Duration = Duration::from_secs(300);
 const TAIL_CACHE_MAX: usize = 20_000;
 const TAIL_CONCURRENT: usize = 4;
 const TAIL_PER_MINUTE: u32 = 60;
+/// The sweep takes at most this many of [`TAIL_PER_MINUTE`]: the pages
+/// keep the rest.
+const SWEEP_PER_MINUTE: u32 = 30;
+/// When the minute is used up, the sweep looks again after this.
+const SWEEP_WAIT: Duration = Duration::from_secs(2);
+/// A log server that answers nothing this many times in a row is left for
+/// the next pass.
+const SWEEP_GIVE_UP: usize = 5;
+/// The kept tails go to the store this often.
+const FLUSH_EVERY: Duration = Duration::from_secs(60);
 /// How long a part of a page waits for a log.
 const PART_WAIT: Duration = Duration::from_secs(4);
 const LINE_MAX: usize = 200;
@@ -274,7 +287,7 @@ pub fn read(path: &Path, now: DateTime<Utc>) -> Result<Data> {
 }
 
 /// The end of a log, read.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Outcome {
     /// The last line, or the line that says the most.
     pub line: String,
@@ -286,6 +299,11 @@ pub struct Outcome {
     /// The bot gave up because there was nothing to do: the update script
     /// changed nothing, or a bot branch already has the version.
     pub nothing_to_do: bool,
+    /// The update script of the package itself (`passthru.updateScript`)
+    /// failed: the bot cannot update the package until someone fixes the
+    /// script, or updates the package by hand.
+    #[serde(default)]
+    pub update_script_failed: bool,
 }
 
 impl Outcome {
@@ -293,6 +311,14 @@ impl Outcome {
     pub fn benign(&self) -> bool {
         self.nothing_to_do || self.existing.is_some()
     }
+}
+
+/// A line that says the update script of the package failed:
+/// `maintainers/scripts/update.py` of nixpkgs writes the first, nixpkgs-update
+/// (`Rewrite.hs`) the second.
+fn update_script_failed(line: &str) -> bool {
+    (line.starts_with("The update script for ") && line.contains(" failed with exit code "))
+        || line.starts_with("[updateScript] Failed with exit code")
 }
 
 /// A last line that says the bot had nothing to do.
@@ -344,7 +370,12 @@ pub fn outcome(tail: &str) -> Outcome {
             out.build_failed = true;
             out.line = shorten(l);
         }
+        if update_script_failed(l) {
+            out.update_script_failed = true;
+        }
     }
+    // a pull request means the bot got past the script after all
+    out.update_script_failed &= out.pr.is_none();
     if out.build_failed {
         return out;
     }
@@ -400,14 +431,30 @@ impl Tail {
 pub struct Bot {
     pub data: RwLock<Arc<Data>>,
     http: reqwest::Client,
-    base: String,
-    /// log URL → when it was read, whether the attempt was over, and the
-    /// tail.
-    tails: Mutex<HashMap<String, (Instant, bool, Tail)>>,
+    base: RwLock<String>,
+    /// log URL → its cached tail.
+    tails: Mutex<HashMap<String, Cached>>,
+    /// The tails of finished attempts read since the last flush, for the
+    /// store: they outlive a restart.
+    pending: Mutex<Vec<KeptTail>>,
     asking: Mutex<HashSet<String>>,
     running: tokio::sync::Semaphore,
     window: Mutex<crate::health::Window>,
     not_asked: std::sync::atomic::AtomicU64,
+    /// Tails the sweep read.
+    swept: std::sync::atomic::AtomicU64,
+}
+
+/// A tail in the cache: when it was read, whether the attempt was over,
+/// and the tail.
+type Cached = (DateTime<Utc>, bool, Tail);
+
+/// A tail as the store keeps it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeptTail {
+    pub url: String,
+    pub read_at: DateTime<Utc>,
+    pub outcome: Outcome,
 }
 
 impl Default for Bot {
@@ -421,12 +468,14 @@ impl Bot {
         Self {
             data: Default::default(),
             http: crate::health::http(TAIL_TIMEOUT),
-            base: base.to_string(),
+            base: RwLock::new(base.to_string()),
             tails: Mutex::new(HashMap::new()),
+            pending: Mutex::new(Vec::new()),
             asking: Mutex::new(HashSet::new()),
             running: tokio::sync::Semaphore::new(TAIL_CONCURRENT),
             window: Mutex::new(crate::health::Window::new()),
             not_asked: Default::default(),
+            swept: Default::default(),
         }
     }
 
@@ -435,7 +484,8 @@ impl Bot {
     }
 
     fn log_url(&self, attr: &str, a: &Attempt) -> String {
-        a.log_url(attr).replacen(BASE, &self.base, 1)
+        a.log_url(attr)
+            .replacen(BASE, &self.base.read().unwrap(), 1)
     }
 
     /// The limits and the counts, for `/sync`.
@@ -453,10 +503,39 @@ impl Bot {
             "tails": {
                 "concurrent": TAIL_CONCURRENT,
                 "per_minute": TAIL_PER_MINUTE,
+                "sweep_per_minute": SWEEP_PER_MINUTE,
                 "cached": self.tails.lock().unwrap().len(),
                 "not_asked": self.not_asked.load(std::sync::atomic::Ordering::Relaxed),
+                "swept": self.swept.load(std::sync::atomic::Ordering::Relaxed),
             },
         })
+    }
+
+    /// The last attempt, when its log, read, says that the update script of
+    /// the package failed. An unread log says nothing: no false alarm.
+    pub fn script_failed(&self, attr: &str, now: DateTime<Utc>) -> Option<Attempt> {
+        let data = self.snapshot();
+        let a = data.failed_attempt(attr, now)?;
+        matches!(self.known(attr, a), Some(Tail::Read(o)) if o.update_script_failed)
+            .then(|| a.clone())
+    }
+
+    /// The logs the sweep has to read: the last attempt of each package in
+    /// `tracked` that failed or timed out, and whose log is not in the
+    /// cache. By attribute, so two passes go the same way.
+    pub fn unread(&self, tracked: &HashSet<String>, now: DateTime<Utc>) -> Vec<(String, Attempt)> {
+        let data = self.snapshot();
+        let mut out: Vec<(String, Attempt)> = tracked
+            .iter()
+            .filter_map(|attr| {
+                let a = data.failed_attempt(attr, now)?;
+                self.known(attr, a)
+                    .is_none()
+                    .then(|| (attr.clone(), a.clone()))
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
     }
 
     /// The last attempt failed, and its log, when read, does not say that
@@ -479,25 +558,85 @@ impl Bot {
         let url = self.log_url(attr, a);
         let tails = self.tails.lock().unwrap();
         let (at, over, tail) = tails.get(&url)?;
-        let ttl = match tail {
-            Tail::Read(_) if *over => TAIL_TTL,
-            _ => TAIL_RETRY,
-        };
-        (at.elapsed() < ttl).then(|| tail.clone())
+        fresh(Utc::now(), *at, *over, tail).then(|| tail.clone())
     }
 
     fn keep(&self, url: &str, over: bool, tail: &Tail) {
+        let now = Utc::now();
         let mut tails = self.tails.lock().unwrap();
         if tails.len() >= TAIL_CACHE_MAX {
-            tails.retain(|_, (at, over, t)| {
-                at.elapsed()
-                    < match t {
-                        Tail::Read(_) if *over => TAIL_TTL,
-                        _ => TAIL_RETRY,
-                    }
+            tails.retain(|_, (at, over, t)| fresh(now, *at, *over, t));
+        }
+        tails.insert(url.to_string(), (now, over, tail.clone()));
+        if let (true, Tail::Read(o)) = (over, tail) {
+            self.pending.lock().unwrap().push(KeptTail {
+                url: url.to_string(),
+                read_at: now,
+                outcome: o.clone(),
             });
         }
-        tails.insert(url.to_string(), (Instant::now(), over, tail.clone()));
+    }
+
+    /// The tails the store kept, back in the cache. Only the tails of
+    /// finished attempts are kept, and only [`TAIL_TTL`] long.
+    pub fn restore(&self, kept: Vec<KeptTail>) {
+        let now = Utc::now();
+        let mut tails = self.tails.lock().unwrap();
+        for k in kept {
+            let t = Tail::Read(k.outcome);
+            if fresh(now, k.read_at, true, &t) {
+                tails.entry(k.url).or_insert((k.read_at, true, t));
+            }
+        }
+    }
+
+    /// The tails read since the last call, for the store.
+    pub fn take_pending(&self) -> Vec<KeptTail> {
+        std::mem::take(&mut *self.pending.lock().unwrap())
+    }
+
+    /// One read for the sweep: it waits for its share of the minute and for
+    /// a free slot, so a page never waits for the sweep.
+    async fn sweep_one(&self, attr: &str, a: &Attempt) -> Tail {
+        loop {
+            let taken = self
+                .window
+                .lock()
+                .unwrap()
+                .take(Instant::now(), SWEEP_PER_MINUTE);
+            if taken {
+                break;
+            }
+            tokio::time::sleep(SWEEP_WAIT).await;
+        }
+        let _permit = self.running.acquire().await;
+        if let Some(t) = self.known(attr, a) {
+            return t;
+        }
+        let t = self.fetch(attr, a).await;
+        self.swept
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        t
+    }
+
+    /// Reads the log and keeps the tail.
+    async fn fetch(&self, attr: &str, a: &Attempt) -> Tail {
+        let url = self.log_url(attr, a);
+        let tail = match fetch_tail(&self.http, &url).await {
+            Ok(text) => Tail::Read(outcome(&text)),
+            Err(e) => {
+                tracing::debug!("update bot log {url}: {e:#}");
+                Tail::NoAnswer
+            }
+        };
+        self.keep(&url, a.finished.is_some(), &tail);
+        tail
+    }
+
+    /// A log server of a test, in place of the real one.
+    #[cfg(test)]
+    pub(crate) fn set_base(&self, base: &str) {
+        *self.base.write().unwrap() = base.to_string();
     }
 
     /// A reason for the cache, so a test never reaches the log server.
@@ -530,16 +669,7 @@ impl Bot {
         {
             return self.refuse();
         }
-        let url = self.log_url(attr, a);
-        let tail = match fetch_tail(&self.http, &url).await {
-            Ok(text) => Tail::Read(outcome(&text)),
-            Err(e) => {
-                tracing::debug!("update bot log {url}: {e:#}");
-                Tail::NoAnswer
-            }
-        };
-        self.keep(&url, a.finished.is_some(), &tail);
-        tail
+        self.fetch(attr, a).await
     }
 
     /// [`Bot::tail`] for a part of a page: after [`PART_WAIT`] the part goes
@@ -564,6 +694,16 @@ impl Bot {
             Err(_) => Tail::Asking,
         }
     }
+}
+
+/// Whether a cached tail still serves: a read tail of a finished attempt
+/// for [`TAIL_TTL`], anything else for [`TAIL_RETRY`].
+fn fresh(now: DateTime<Utc>, at: DateTime<Utc>, over: bool, tail: &Tail) -> bool {
+    let ttl = match tail {
+        Tail::Read(_) if over => TAIL_TTL,
+        _ => TAIL_RETRY,
+    };
+    (now - at).to_std().is_ok_and(|age| age < ttl)
 }
 
 /// The last [`TAIL`] bytes of a log. The server honours `Range`; one that
@@ -597,6 +737,53 @@ pub fn load(store: &crate::store::Store) -> Data {
         .flatten()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default()
+}
+
+/// The tails read since the last flush go to the store, and the ones
+/// older than [`TAIL_TTL`] leave it.
+fn flush(app: &App) {
+    let pending = app.updatebot.take_pending();
+    if pending.is_empty() {
+        return;
+    }
+    let before = Utc::now() - chrono::Duration::from_std(TAIL_TTL).unwrap_or_default();
+    if let Err(e) = app.store.put_bot_tails(&pending, before) {
+        tracing::warn!("update bot: keep tails: {e:#}");
+    }
+}
+
+/// Reads the log of each failed attempt on a tracked package (one that
+/// someone maintains or watches) that the cache does not hold, at most
+/// [`SWEEP_PER_MINUTE`] a minute. A server that answers nothing
+/// [`SWEEP_GIVE_UP`] times in a row waits for the next pass.
+async fn sweep(app: &App) {
+    let tracked = app.hydra.builds.tracked();
+    let due = app.updatebot.unread(&tracked, Utc::now());
+    if due.is_empty() {
+        return;
+    }
+    tracing::info!(
+        "update bot: {} logs to read for {} tracked packages",
+        due.len(),
+        tracked.len()
+    );
+    let mut silent = 0;
+    let mut last_flush = Instant::now();
+    for (attr, a) in due {
+        match app.updatebot.sweep_one(&attr, &a).await {
+            Tail::NoAnswer => silent += 1,
+            _ => silent = 0,
+        }
+        if silent >= SWEEP_GIVE_UP {
+            tracing::warn!("update bot: the log server answers nothing; the sweep waits");
+            break;
+        }
+        if last_flush.elapsed() >= FLUSH_EVERY {
+            flush(app);
+            last_flush = Instant::now();
+        }
+    }
+    flush(app);
 }
 
 /// Downloads the state file when it changed, reads it, and publishes it.
@@ -660,6 +847,10 @@ pub async fn run(app: Arc<App>) {
     if stored.read_at.is_some() {
         *app.updatebot.data.write().unwrap() = Arc::new(stored);
     }
+    match app.store.bot_tails() {
+        Ok(kept) => app.updatebot.restore(kept),
+        Err(e) => tracing::warn!("update bot: kept tails: {e:#}"),
+    }
     let http = crate::health::http(DOWNLOAD_TIMEOUT);
     let dir = app.data_dir.join("updatebot");
     loop {
@@ -670,7 +861,14 @@ pub async fn run(app: Arc<App>) {
                 RETRY
             }
         };
-        tokio::time::sleep(wait).await;
+        let until = Instant::now() + wait;
+        sweep(&app).await;
+        // the pages read tails too: theirs reach the store within a minute
+        while Instant::now() < until {
+            tokio::time::sleep(FLUSH_EVERY.min(until.saturating_duration_since(Instant::now())))
+                .await;
+            flush(&app);
+        }
     }
 }
 
@@ -851,6 +1049,34 @@ pub(crate) mod tests {
         );
         assert!(outcome("0.3.0 is not newer than 0.3.0-unstable-2023-12-27 according to Nix; versionComparison: -1\n").nothing_to_do);
         assert!(!outcome("Version in attr path x not compatible with 3.4.11\n").benign());
+        // the update script of the package failed: update.py says so last
+        let o = outcome(
+            "[updateScript] Failed with exit code 1\n - altdns-1.0.2-unstable-2021-09-09: ERROR\n\n\
+             --- SHOWING ERROR LOG FOR altdns-1.0.2-unstable-2021-09-09 ----------------------\n\
+             The update script for altdns-1.0.2-unstable-2021-09-09 failed with exit code 1\n",
+        );
+        assert!(o.update_script_failed && !o.benign() && !o.build_failed);
+        assert_eq!(
+            o.line,
+            "The update script for altdns-1.0.2-unstable-2021-09-09 failed with exit code 1"
+        );
+        // a script that failed in a build of its own: both are true
+        let o = outcome(
+            "error: Cannot build '/nix/store/p-aerogramme-0.5.1-vendor-staging.drv'.\n\
+             Reason: 1 dependency failed.\n\
+             The update script for aerogramme-0.3.0 failed with exit code 1\n",
+        );
+        assert!(o.update_script_failed && o.build_failed);
+        assert!(o.line.starts_with("error: Cannot build"));
+        // the first marker alone, deep in a long log, counts too
+        assert!(
+            outcome("[updateScript] Failed with exit code 2\nTraceback\n").update_script_failed
+        );
+        // a script that ran and found nothing is not a failed script
+        assert!(
+            !outcome("[updateScript] Success\nThe diff was empty after rewrites.\n")
+                .update_script_failed
+        );
         assert_eq!(outcome("").line, "");
         let long = "x".repeat(300);
         assert_eq!(outcome(&long).line.chars().count(), LINE_MAX);
@@ -921,6 +1147,164 @@ pub(crate) mod tests {
         *bot.data.write().unwrap() = Arc::new(d);
         assert!(!bot.failed_on("flameshot", Utc::now()));
         assert!(bot.failed_on("other", Utc::now()));
+    }
+
+    /// A log server with one body per path, that counts the paths asked.
+    async fn log_dir(bodies: &[(&'static str, &'static str)]) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let bodies: HashMap<String, &'static str> =
+            bodies.iter().map(|(p, b)| (p.to_string(), *b)).collect();
+        let seen = asked.clone();
+        tokio::spawn(async move {
+            let app = axum::Router::new().route(
+                "/*path",
+                axum::routing::get(
+                    move |axum::extract::Path(path): axum::extract::Path<String>| async move {
+                        seen.lock().unwrap().push(path.clone());
+                        match bodies.get(&path) {
+                            Some(b) => (axum::http::StatusCode::OK, *b),
+                            None => (axum::http::StatusCode::NOT_FOUND, ""),
+                        }
+                    },
+                ),
+            );
+            axum::serve(listener, app).await.unwrap();
+        });
+        (base, asked)
+    }
+
+    fn failed_two_days_ago() -> Attempt {
+        Attempt {
+            started: Utc::now() - chrono::Duration::days(2),
+            finished: Some(Utc::now() - chrono::Duration::days(2) + chrono::Duration::minutes(1)),
+            exit_code: Some(1),
+        }
+    }
+
+    fn with_attempts(bot: &Bot, attempts: &[(&str, Attempt)]) {
+        let mut d = Data {
+            read_at: Some(Utc::now()),
+            ..Default::default()
+        };
+        for (attr, a) in attempts {
+            d.entries.insert(
+                attr.to_string(),
+                Entry {
+                    last: Some(a.clone()),
+                    queued: None,
+                },
+            );
+        }
+        *bot.data.write().unwrap() = Arc::new(d);
+    }
+
+    #[tokio::test]
+    async fn the_sweep_reads_the_failed_attempts_of_the_tracked_packages_once() {
+        let failed = failed_two_days_ago();
+        let day = failed.started.format("%Y-%m-%d");
+        let script = "[updateScript] Failed with exit code 1\nThe update script for altdns-1.0 failed with exit code 1\n";
+        let altdns: &'static str = Box::leak(format!("altdns/{day}.log").into_boxed_str());
+        let linkding: &'static str = Box::leak(format!("linkding/{day}.log").into_boxed_str());
+        let (base, asked) = log_dir(&[
+            (altdns, script),
+            (linkding, "The diff was empty after rewrites.\n"),
+        ])
+        .await;
+        let app = crate::sets::tests::app(&[]);
+        app.updatebot.set_base(&base);
+        let ok = Attempt {
+            exit_code: Some(0),
+            ..failed.clone()
+        };
+        with_attempts(
+            &app.updatebot,
+            &[
+                ("altdns", failed.clone()),
+                ("linkding", failed.clone()),
+                ("hello", ok),
+                ("gone", failed.clone()),
+                ("nobody", failed.clone()),
+            ],
+        );
+        app.hydra.builds.set_tracked(
+            ["altdns", "linkding", "hello", "gone"]
+                .map(String::from)
+                .into_iter()
+                .collect(),
+        );
+        let now = Utc::now();
+        assert_eq!(
+            app.updatebot.script_failed("altdns", now),
+            None,
+            "not read yet"
+        );
+        sweep(&app).await;
+        let mut paths = asked.lock().unwrap().clone();
+        paths.sort();
+        // the succeeded one and the untracked one are not asked
+        assert_eq!(
+            paths,
+            [
+                altdns.to_string(),
+                format!("gone/{day}.log"),
+                linkding.to_string()
+            ]
+        );
+        assert_eq!(
+            app.updatebot.script_failed("altdns", now),
+            Some(failed.clone())
+        );
+        assert_eq!(app.updatebot.script_failed("linkding", now), None);
+        assert!(!app.updatebot.failed_on("linkding", now));
+        assert!(app.updatebot.failed_on("altdns", now));
+        assert_eq!(app.updatebot.stats()["tails"]["swept"], 3);
+        // a second pass asks nothing: the two are kept, the 404 waits
+        sweep(&app).await;
+        assert_eq!(asked.lock().unwrap().len(), 3);
+        // the read tails are in the store, and come back after a restart
+        let kept = app.store.bot_tails().unwrap();
+        let mut urls: Vec<&str> = kept.iter().map(|k| k.url.as_str()).collect();
+        urls.sort();
+        assert_eq!(
+            urls,
+            [format!("{base}/{altdns}"), format!("{base}/{linkding}")]
+        );
+        let fresh = Bot::new(&base);
+        assert_eq!(fresh.known("altdns", &failed), None);
+        fresh.restore(kept);
+        assert!(matches!(
+            fresh.known("altdns", &failed),
+            Some(Tail::Read(o)) if o.update_script_failed
+        ));
+        assert_eq!(fresh.known("gone", &failed), None);
+        // a tail older than its time to live is not restored
+        let stale = Bot::new(&base);
+        stale.restore(vec![KeptTail {
+            url: format!("{base}/{altdns}"),
+            read_at: Utc::now() - chrono::Duration::days(31),
+            outcome: Outcome::default(),
+        }]);
+        assert_eq!(stale.known("altdns", &failed), None);
+    }
+
+    #[tokio::test]
+    async fn a_silent_log_server_stops_the_sweep() {
+        let (base, asked) = log_dir(&[]).await;
+        let app = crate::sets::tests::app(&[]);
+        app.updatebot.set_base(&base);
+        let failed = failed_two_days_ago();
+        let attrs: Vec<String> = (0..SWEEP_GIVE_UP + 3).map(|n| format!("p{n}")).collect();
+        let attempts: Vec<(&str, Attempt)> =
+            attrs.iter().map(|a| (a.as_str(), failed.clone())).collect();
+        with_attempts(&app.updatebot, &attempts);
+        app.hydra
+            .builds
+            .set_tracked(attrs.iter().cloned().collect());
+        sweep(&app).await;
+        assert_eq!(asked.lock().unwrap().len(), SWEEP_GIVE_UP);
+        assert!(app.store.bot_tails().unwrap().is_empty());
     }
 
     #[tokio::test]

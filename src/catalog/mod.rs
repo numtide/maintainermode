@@ -535,6 +535,9 @@ pub(crate) struct Flags {
     /// Upstream has a newer release, and the last attempt of the update bot
     /// failed. Only the views of your packages set it.
     pub(crate) bot_failed: bool,
+    /// The update script of the package failed on the last attempt of the
+    /// bot. Only the views of your packages set it.
+    pub(crate) script_failed: bool,
 }
 
 impl Flags {
@@ -574,6 +577,7 @@ impl Flags {
             score,
             build_failed: false,
             bot_failed: false,
+            script_failed: false,
         }
     }
 
@@ -616,7 +620,12 @@ impl Flags {
         if let Some(u) = &self.upstream {
             out.push(badge(Tone::Attention, upstream_badge(u)));
         }
-        if self.bot_failed {
+        if self.script_failed {
+            out.push(badge(
+                Tone::Danger,
+                html!("{} update script failed", icon(octicon!("hubot"))),
+            ));
+        } else if self.bot_failed {
             out.push(badge(
                 Tone::Attention,
                 html!("{} update bot failed", icon(octicon!("hubot"))),
@@ -2532,6 +2541,29 @@ pub(crate) mod tests {
             "The diff was empty after rewrites."
         );
         assert_eq!(u["last_attempt"]["reason_state"], "read");
+        assert_eq!(u["last_attempt"]["reason"]["update_script_failed"], false);
+        // a failed update script has its own word
+        app.updatebot.preset(
+            "flameshot",
+            bot_entry().last.as_ref().unwrap(),
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "The update script for flameshot-13.0.0 failed with exit code 1".into(),
+                update_script_failed: true,
+                ..Default::default()
+            }),
+        );
+        let part = site.get("/part/bot/flameshot", None).await;
+        assert!(
+            part.body.contains(">update script failed</a>"),
+            "{}",
+            part.body
+        );
+        let api = site.get("/api/v1/packages/flameshot", None).await;
+        let v: Value = serde_json::from_str(&api.body).unwrap();
+        assert_eq!(
+            v["update_bot"]["last_attempt"]["reason"]["update_script_failed"],
+            true
+        );
     }
 
     #[test]

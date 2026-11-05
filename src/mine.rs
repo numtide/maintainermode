@@ -181,6 +181,7 @@ pub(crate) fn attention(f: &Flags) -> bool {
         || f.upstream.is_some()
         || f.build_failed
         || f.bot_failed
+        || f.script_failed
         || f.open_prs > f.open_treewide
 }
 
@@ -356,7 +357,9 @@ impl Interests {
                     // behind a release someone knows of, or the update
                     // script of the package found something: a failure
                     // over nothing is no news
-                    flags.bot_failed = l.bot.failed_on(a, now)
+                    flags.script_failed = l.bot.script_failed(a, now).is_some();
+                    flags.bot_failed = !flags.script_failed
+                        && l.bot.failed_on(a, now)
                         && (flags.upstream.is_some() || l.bot.by_update_script(a));
                 }
                 if !query.is_plain() && !keeps(&query, s, index, h, sub, &flags) {
@@ -414,7 +417,10 @@ fn keeps(
                 attr,
                 p,
                 &t,
-                Some(&failing(flags.build_failed, flags.bot_failed)),
+                Some(&failing(
+                    flags.build_failed,
+                    flags.bot_failed || flags.script_failed,
+                )),
             )
         }
         Subject::Module(file) => {
@@ -1108,6 +1114,39 @@ mod tests {
         );
         let none = i.rows(&s, &index, &h, None, Filter::Maintain, "");
         assert!(none.iter().all(|r| !r.flags.bot_failed));
+        // the log of curl, read, says its update script failed: that is
+        // news, behind nothing or not, and one badge says it
+        let (_, curl) = failed("curl", None);
+        bot.preset(
+            "curl",
+            curl.last.as_ref().unwrap(),
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "The update script for curl-8.0 failed with exit code 1".into(),
+                update_script_failed: true,
+                ..Default::default()
+            }),
+        );
+        let (_, hello) = failed("hello", None);
+        bot.preset(
+            "hello",
+            hello.last.as_ref().unwrap(),
+            crate::updatebot::Tail::Read(crate::updatebot::Outcome {
+                line: "The update script for hello-1 failed with exit code 1".into(),
+                update_script_failed: true,
+                ..Default::default()
+            }),
+        );
+        let rows = i.rows(&s, &index, &h, Some(live), Filter::Mine, "");
+        let row = |name: &str| rows.iter().find(|r| r.sub.label() == name).unwrap();
+        assert!(row("curl").flags.script_failed && !row("curl").flags.bot_failed);
+        assert!(attention(&row("curl").flags));
+        assert!(row("hello").flags.script_failed && !row("hello").flags.bot_failed);
+        let badges = row("hello").flags.badges();
+        assert!(badges.iter().any(|b| b.contains("update script failed")));
+        assert!(!badges.iter().any(|b| b.contains("update bot failed")));
+        assert!(!row("jq").flags.script_failed);
+        let updates = i.rows(&s, &index, &h, Some(live), Filter::Mine, "is:updates");
+        assert!(updates.iter().any(|r| r.sub.label() == "curl"));
     }
 
     #[test]
