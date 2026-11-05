@@ -227,21 +227,47 @@
   // The values of a qualifier being typed (search.rs, catalog/filter.rs).
   var WORDS = {
     is: [
-      "outdated",
-      "vulnerable",
-      "backport",
-      "broken",
-      "insecure",
-      "unfree",
-      "unmaintained",
-      "failed",
-      "blocked",
-      "updates",
+      ["outdated", "upstream has a newer version"],
+      ["vulnerable", "an open advisory can affect master"],
+      ["backport", "fixed in master, a channel still affected"],
+      ["broken", "meta.broken"],
+      ["insecure", "meta.knownVulnerabilities"],
+      ["unfree", "an unfree license"],
+      ["unmaintained", "no maintainer and no team"],
+      ["failed", "its last Hydra build failed"],
+      ["blocked", "a dependency fails on Hydra"],
+      ["updates", "the update bot failed on it"],
     ],
-    has: ["maintainer", "team", "pr", "issue", "gaps", "advisory", "newer"],
-    sort: ["pressing", "az"],
-    order: ["reverse"],
+    has: [
+      ["maintainer", "someone in meta.maintainers"],
+      ["team", "a team in meta.teams"],
+      ["pr", "an open pull request touches it"],
+      ["issue", "an open issue names it"],
+      ["gaps", "packaging gaps"],
+      ["advisory", "the same as is:vulnerable"],
+      ["newer", "the same as is:outdated"],
+    ],
+    sort: [
+      ["pressing", "the highest risk first"],
+      ["az", "by name"],
+    ],
+    order: [["reverse", "the other way round"]],
   };
+  // The qualifiers the card offers in an empty box, or after a space, with
+  // what each does (catalog/filter.rs). Picking one writes it in the box.
+  var QUALIFIERS = [
+    ["is:", "a trait: outdated, vulnerable, broken, unmaintained…"],
+    ["-is:", "without the trait"],
+    ["has:", "an open PR, an issue, a maintainer, packaging gaps…"],
+    ["-has:", "without one"],
+    ["in:", "a package set, such as python3Packages"],
+    ["by:", "a maintainer"],
+    ["-maintainer:", "a maintainer left out"],
+    ["team:", "the packages of a team; team:none for no team"],
+    ["-team:", "a team left out"],
+    ["sort:", "the order: pressing (the default) or az"],
+    ["order:", "order:reverse turns it round"],
+  ];
   // The last word of q as a qualifier with a value to finish: [sign+key,
   // typed value, the text before it], or null.
   function qualifier(q) {
@@ -256,7 +282,7 @@
       timer = 0,
       items = [],
       at = -1,
-      asked = "";
+      asked = null;
     list.className = "suggest";
     list.id = "suggest-" + Math.random().toString(36).slice(2);
     list.setAttribute("role", "listbox");
@@ -283,7 +309,8 @@
       else input.removeAttribute("aria-activedescendant");
     }
     function render(q, v) {
-      items = [];
+      // A last word that begins a qualifier (-h, tea) offers it first.
+      items = card(input.value.replace(/^\s+/, ""));
       (v.results || []).forEach(function (r) {
         items.push([r.name, KIND[r.kind] || "", r.url]);
       });
@@ -307,7 +334,16 @@
       ]);
       show(items);
     }
-    // The list drawn from items: [name, kind, url] each.
+    // A pick of the card goes in the box, not to a page: the text ends
+    // with a space when the word is whole, and the menu asks again.
+    function put(text) {
+      input.value = text;
+      input.setSelectionRange(text.length, text.length);
+      asked = null;
+      ask();
+    }
+    // The list drawn from items: [name, kind, url, put] each; one with
+    // put goes in the box instead of to a page.
     function show(found) {
       items = found;
       list.innerHTML = items
@@ -318,8 +354,10 @@
             "-" +
             i +
             '"><a href="' +
-            esc(it[2]) +
-            '" tabindex="-1">' +
+            esc(it[2] || "#") +
+            '" tabindex="-1"' +
+            (it[3] ? ' data-put="' + esc(it[3]) + '"' : "") +
+            ">" +
             '<span class="suggest-name">' +
             esc(it[0]) +
             '</span><span class="suggest-kind">' +
@@ -332,22 +370,44 @@
       input.setAttribute("aria-expanded", "true");
       mark(-1);
     }
+    // The card: the qualifiers that start with the word being typed, each
+    // written after what is before it in the box.
+    function card(raw) {
+      var typed = raw.replace(/^[\s\S]*\s/, "").toLowerCase();
+      var before = raw.slice(0, raw.length - typed.length);
+      var found = QUALIFIERS.filter(function (k) {
+        return k[0].indexOf(typed) === 0;
+      }).map(function (k) {
+        return [k[0], k[1], "", before + k[0]];
+      });
+      if (!typed) found.push(["How to search", "Help", "/search", ""]);
+      return found;
+    }
     function ask() {
-      var q = input.value.trim();
-      if (q.length < 2) return close();
+      var raw = input.value.replace(/^\s+/, "");
+      var q = raw.trim();
       if (q === asked) return;
       asked = q;
+      // An empty box, or a new word: the card.
+      if (!q || /\s$/.test(raw)) return show(card(raw));
       var word = qualifier(q);
       if (word) {
         var found = WORDS[word[0].replace(/^-/, "")].filter(function (w) {
-          return w.indexOf(word[1]) === 0 && w !== word[1];
+          return w[0].indexOf(word[1]) === 0 && w[0] !== word[1];
         });
         if (!found.length) return close();
         items = found.map(function (w) {
-          var whole = word[2] + word[0] + ":" + w;
-          return [whole, "Filter", "/search?q=" + encodeURIComponent(whole)];
+          var whole = word[2] + word[0] + ":" + w[0];
+          return [whole, w[1], "", whole + " "];
         });
         return show(items);
+      }
+      // A key with free values (in:, by:, team:): nothing to offer.
+      if (/(^|\s)-?(in|by|team|maintainer):\S*$/i.test(raw)) return close();
+      // One letter, or a sign: the qualifiers it begins; a name needs two.
+      if (q.length < 2) {
+        var starts = card(raw);
+        return starts.length ? show(starts) : close();
       }
       fetch("/api/v1/search?limit=5&q=" + encodeURIComponent(q), {
         headers: { Accept: "application/json" },
@@ -363,11 +423,18 @@
     }
     input.addEventListener("input", function () {
       clearTimeout(timer);
-      asked = "";
+      asked = null;
       timer = setTimeout(ask, 150);
     });
     input.addEventListener("focus", function () {
-      if (input.value.trim().length >= 2) ask();
+      asked = null;
+      ask();
+    });
+    list.addEventListener("click", function (e) {
+      var a = e.target.closest("a[data-put]");
+      if (!a) return;
+      e.preventDefault();
+      put(a.getAttribute("data-put"));
     });
     // Without this, a press held longer than a tap blurs the input, the list
     // closes, and the click never reaches the link.
@@ -376,7 +443,7 @@
     });
     input.addEventListener("blur", function () {
       close();
-      asked = "";
+      asked = null;
     });
     input.addEventListener("keydown", function (e) {
       if (list.hidden) return;
@@ -385,6 +452,12 @@
         mark((at + 1) % n);
       else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p"))
         mark(at <= 0 ? n - 1 : at - 1);
+      else if (
+        (e.key === "Enter" || e.key === "Tab") &&
+        at >= 0 &&
+        items[at][3]
+      )
+        put(items[at][3]);
       else if (e.key === "Enter" && at >= 0) location.href = items[at][2];
       else if (e.key === "Escape") close();
       else return;
