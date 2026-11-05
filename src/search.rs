@@ -139,7 +139,9 @@ pub(crate) fn find(app: &App, s: &Snapshot, index: &Index, h: &Health, q: &str) 
         };
     }
     let stats = app.packages.read().unwrap().clone();
-    let failing = f.asks_hydra().then(|| Failing::gather(&app.hydra, index));
+    let failing = f
+        .asks_live()
+        .then(|| Failing::gather(&app.hydra, &app.updatebot, index));
     let subjects = filter::select(&f, index, &stats.traits, failing.as_ref())
         .into_iter()
         .map(|(attr, _)| Subject::Pkg(attr.clone()))

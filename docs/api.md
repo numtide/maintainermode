@@ -408,10 +408,11 @@ name), the highest risk first, and the other kinds match the words that
 are not qualifiers. A `-` leaves out. The words:
 
 - `is:`: `outdated`, `vulnerable`, `backport`, `broken`, `insecure`,
-  `unfree`, `unmaintained`, `failed`, `blocked`. The `/search` page says
-  what each means; `failed` and `blocked` come from Hydra, and only where
-  the server follows it: the packages people maintain or watch, and the
-  release jobset of Zero Hydra Failures.
+  `unfree`, `unmaintained`, `failed`, `blocked`, `updates`. The `/search`
+  page says what each means; `failed` and `blocked` come from Hydra, and
+  only where the server follows it: the packages people maintain or watch,
+  and the release jobset of Zero Hydra Failures; `updates` is a failed
+  last attempt of the update bot.
 - `has:`: `maintainer`, `team`, `pr`, `issue`, `gaps`, `advisory` (the
   same as `is:vulnerable`), `newer` (the same as `is:outdated`).
 - `in:SET`: the package set, as `python3Packages` (any `python3NNPackages`)

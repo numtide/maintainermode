@@ -236,6 +236,7 @@
       "unmaintained",
       "failed",
       "blocked",
+      "updates",
     ],
     has: ["maintainer", "team", "pr", "issue", "gaps", "advisory", "newer"],
     sort: ["pressing", "az"],

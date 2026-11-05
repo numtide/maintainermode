@@ -394,10 +394,13 @@ fn keeps(
 ) -> bool {
     let mut q = q.clone();
     q.text.clear();
-    let failing = |failed: bool| {
+    let failing = |failed: bool, updates: bool| {
         let mut f = Failing::default();
         if failed {
             f.failed.insert(sub.label());
+        }
+        if updates {
+            f.updates.insert(sub.label());
         }
         f
     };
@@ -407,7 +410,12 @@ fn keeps(
                 return false;
             };
             let t = Traits::of(s, index, h, attr).unwrap_or_default();
-            q.keeps(attr, p, &t, Some(&failing(flags.build_failed)))
+            q.keeps(
+                attr,
+                p,
+                &t,
+                Some(&failing(flags.build_failed, flags.bot_failed)),
+            )
         }
         Subject::Module(file) => {
             let m = index.modules.get(file);
@@ -422,7 +430,7 @@ fn keeps(
                 open_issues: flags.open_issues as u32,
                 ..Default::default()
             };
-            q.keeps(&sub.label(), &p, &t, Some(&failing(false)))
+            q.keeps(&sub.label(), &p, &t, Some(&failing(false, false)))
         }
         Subject::Area(_) => {
             let t = Traits {
@@ -430,7 +438,12 @@ fn keeps(
                 open_issues: flags.open_issues as u32,
                 ..Default::default()
             };
-            q.keeps(&sub.label(), &Default::default(), &t, Some(&failing(false)))
+            q.keeps(
+                &sub.label(),
+                &Default::default(),
+                &t,
+                Some(&failing(false, false)),
+            )
         }
     }
 }

@@ -31,10 +31,11 @@ pub(crate) enum Is {
     Unmaintained,
     Failed,
     Blocked,
+    Updates,
 }
 
 impl Is {
-    pub(crate) const ALL: [Is; 9] = [
+    pub(crate) const ALL: [Is; 10] = [
         Is::Outdated,
         Is::Vulnerable,
         Is::Backport,
@@ -44,6 +45,7 @@ impl Is {
         Is::Unmaintained,
         Is::Failed,
         Is::Blocked,
+        Is::Updates,
     ];
 
     pub(crate) fn word(self) -> &'static str {
@@ -57,6 +59,7 @@ impl Is {
             Is::Unmaintained => "unmaintained",
             Is::Failed => "failed",
             Is::Blocked => "blocked",
+            Is::Updates => "updates",
         }
     }
 
@@ -77,6 +80,9 @@ impl Is {
             Is::Blocked => {
                 "Hydra did not build it because a dependency failed, on the release jobset of Zero Hydra Failures"
             }
+            Is::Updates => {
+                "the last attempt of the update bot, nixpkgs-update, on it failed or timed out"
+            }
         }
     }
 
@@ -93,6 +99,7 @@ impl Is {
             // "builds" a build failure; here both are the build.
             "failed" | "builds" => Is::Failed,
             "blocked" => Is::Blocked,
+            "updates" => Is::Updates,
             _ => return None,
         })
     }
@@ -236,11 +243,12 @@ impl Filter {
             && !self.reverse
     }
 
-    /// The filter asks about Hydra, so the sets of failing builds are needed.
-    pub(crate) fn asks_hydra(&self) -> bool {
+    /// The filter asks about Hydra or the update bot, so [`Failing`] is
+    /// needed.
+    pub(crate) fn asks_live(&self) -> bool {
         self.is
             .iter()
-            .any(|(_, i)| matches!(i, Is::Failed | Is::Blocked))
+            .any(|(_, i)| matches!(i, Is::Failed | Is::Blocked | Is::Updates))
     }
 
     fn read(&mut self, t: &Term) {
@@ -340,7 +348,8 @@ impl Filter {
     }
 
     /// Whether a package with these traits stays in the list. `failing`
-    /// says what Hydra knows, when the filter asks ([`Filter::asks_hydra`]).
+    /// says what Hydra and the update bot know, when the filter asks
+    /// ([`Filter::asks_live`]).
     pub(crate) fn keeps(
         &self,
         attr: &str,
@@ -365,6 +374,7 @@ impl Filter {
                 Is::Unmaintained => t.unmaintained,
                 Is::Failed => failing.is_some_and(|f| f.failed.contains(attr)),
                 Is::Blocked => failing.is_some_and(|f| f.blocked.contains(attr)),
+                Is::Updates => failing.is_some_and(|f| f.updates.contains(attr)),
             };
             if on == neg {
                 return false;
@@ -554,18 +564,32 @@ impl Traits {
     }
 }
 
-/// What Hydra knows of failing builds, for `is:failed` and `is:blocked`:
-/// the tracked packages whose last build is red on a jobset the site
-/// follows, and the jobs of the Zero Hydra Failures snapshot.
+/// What the live sources know of failures, for `is:failed`, `is:blocked`
+/// and `is:updates`: the tracked packages whose last build is red on a
+/// jobset the site follows, the jobs of the Zero Hydra Failures snapshot,
+/// and the attributes whose last attempt of the update bot failed.
 #[derive(Debug, Default)]
 pub(crate) struct Failing {
     pub failed: HashSet<String>,
     pub blocked: HashSet<String>,
+    pub updates: HashSet<String>,
 }
 
 impl Failing {
-    pub(crate) fn gather(hydra: &crate::health::Hydra, index: &Index) -> Failing {
+    pub(crate) fn gather(
+        hydra: &crate::health::Hydra,
+        bot: &crate::updatebot::Bot,
+        index: &Index,
+    ) -> Failing {
         let mut out = Failing::default();
+        let now = chrono::Utc::now();
+        let data = bot.snapshot();
+        out.updates.extend(
+            data.entries
+                .keys()
+                .filter(|a| data.failed_attempt(a, now).is_some())
+                .cloned(),
+        );
         let tracked = hydra.builds.tracked();
         out.failed
             .extend(hydra.builds.red(tracked.iter().cloned()).into_keys());
