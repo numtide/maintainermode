@@ -1,6 +1,8 @@
 //! The search box of the header. A name that has a page goes to it; other
 //! words list the packages, modules, directories, people, pull requests and
-//! advisories that match.
+//! advisories that match. A qualifier such as `is:outdated` or `by:login`
+//! lists the packages of all of nixpkgs with that trait, in the grammar of
+//! [`crate::query`]; see [`crate::catalog::filter`] for the words.
 
 use axum::Router;
 use axum::extract::{Query, State};
@@ -12,10 +14,12 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 use crate::area::Index;
+use crate::catalog::filter::{self, Failing, Filter, Has, Is};
 use crate::catalog::{Flags, Subject, valid_login};
 use crate::health::Health;
 use crate::html::{Html, html};
-use crate::ui::{Kind, Page, Section, item_row, section};
+use crate::query::Problem;
+use crate::ui::{Kind, Page, Section, item_row, pager, section};
 use crate::web::{App, Shared, Snapshot, icon, octicon};
 
 const PEOPLE: usize = 20;
@@ -30,14 +34,21 @@ pub fn routes() -> Router<Shared> {
 #[derive(Deserialize)]
 struct Params {
     q: Option<String>,
+    after: Option<u64>,
 }
 
 #[derive(Default)]
 pub(crate) struct Hits {
+    /// With a qualifier in the query, the whole list of the packages it
+    /// keeps, in its order; the page shows one page of it.
     pub subjects: Vec<Subject>,
     pub people: Vec<String>,
     pub prs: Vec<Pr>,
     pub advisories: Vec<Advisory>,
+    /// The query had a qualifier.
+    pub filtered: bool,
+    /// The words of the query that this site does not know.
+    pub problems: Vec<Problem>,
 }
 
 pub(crate) struct Pr {
@@ -63,6 +74,27 @@ impl Hits {
     }
 }
 
+/// The problems of a query, each with the query as it was likely meant,
+/// as a link that `href` makes.
+pub(crate) fn problem_lines(q: &str, problems: &[Problem], href: impl Fn(&str) -> String) -> Html {
+    let mut out = Html::new();
+    for p in problems {
+        let fix = p
+            .suggestion
+            .as_ref()
+            .map(|s| {
+                let to = q.replacen(&p.token, s, 1);
+                html!(": <a href=\"{}\">{s}</a>?", href(&to))
+            })
+            .unwrap_or_default();
+        out.push(&html!(
+            "<p class=\"f6 color-fg-danger mb-1\" data-problem>{}{fix}</p>",
+            p.message
+        ));
+    }
+    out
+}
+
 /// `#123`, `123` or a link to the pull request.
 fn pr_number(q: &str) -> Option<u64> {
     let q = q.trim();
@@ -75,8 +107,12 @@ fn pr_number(q: &str) -> Option<u64> {
     n.parse().ok().filter(|&n| n > 0)
 }
 
-/// Where a query goes without a list of hits.
+/// Where a query goes without a list of hits. A query with a qualifier
+/// always lists.
 pub(crate) fn jump(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
+    if !Filter::parse(q).is_plain() {
+        return None;
+    }
     if let Some(login) = q.strip_prefix('@').filter(|l| valid_login(l)) {
         return Some(format!("/u/{login}"));
     }
@@ -86,17 +122,42 @@ pub(crate) fn jump(s: &Snapshot, index: &Index, q: &str) -> Option<String> {
     pr_number(q).map(|n| format!("/pr/{n}"))
 }
 
-pub(crate) fn find(s: &Snapshot, index: &Index, h: &Health, q: &str) -> Hits {
+pub(crate) fn find(app: &App, s: &Snapshot, index: &Index, h: &Health, q: &str) -> Hits {
     let q = q.trim();
     if q.is_empty() {
         return Hits::default();
     }
-    let ql = q.trim_start_matches('@').to_lowercase();
+    let f = Filter::parse(q);
+    if f.is_plain() && f.problems.is_empty() {
+        let ql = q.trim_start_matches('@').to_lowercase();
+        return Hits {
+            subjects: crate::catalog::search(s, index, q),
+            people: people(index, &ql),
+            prs: prs(s, &ql),
+            advisories: advisories(h, q),
+            ..Default::default()
+        };
+    }
+    let stats = app.packages.read().unwrap().clone();
+    let failing = f.asks_hydra().then(|| Failing::gather(&app.hydra, index));
+    let subjects = filter::select(&f, index, &stats.traits, failing.as_ref())
+        .into_iter()
+        .map(|(attr, _)| Subject::Pkg(attr.clone()))
+        .collect();
+    // The other kinds match the words of a name, as without qualifiers.
+    let ql = f.text.trim_start_matches('@');
+    let (people, prs, advisories) = if f.text.is_empty() {
+        Default::default()
+    } else {
+        (people(index, ql), prs(s, ql), advisories(h, &f.text))
+    };
     Hits {
-        subjects: crate::catalog::search(s, index, q),
-        people: people(index, &ql),
-        prs: prs(s, &ql),
-        advisories: advisories(h, q),
+        subjects,
+        people,
+        prs,
+        advisories,
+        filtered: true,
+        problems: f.problems,
     }
 }
 
@@ -198,18 +259,22 @@ async fn page(State(app): State<Shared>, headers: HeaderMap, Query(p): Query<Par
     let q = p.q.unwrap_or_default().trim().to_string();
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
-    let (hits, rows) = {
+    let (hits, rows, next) = {
         let index = app.index.read().unwrap();
         if let Some(href) = jump(&s, &index, &q) {
             return Redirect::to(&href).into_response();
         }
-        let hits = find(&s, &index, &h, &q);
-        let rows: Vec<(Subject, Flags)> = hits
-            .subjects
+        let hits = find(&app, &s, &index, &h, &q);
+        let (shown, next) = if hits.filtered {
+            crate::review::paged_by_offset(&hits.subjects, p.after)
+        } else {
+            (&hits.subjects[..], None)
+        };
+        let rows: Vec<(Subject, Flags)> = shown
             .iter()
             .map(|sub| (sub.clone(), Flags::of(&s, &index, &h, sub)))
             .collect();
-        (hits, rows)
+        (hits, rows, next)
     };
     let title = if q.is_empty() {
         "Search".to_string()
@@ -220,7 +285,7 @@ async fn page(State(app): State<Shared>, headers: HeaderMap, Query(p): Query<Par
         .heading("Search")
         .icon(octicon!("search"))
         .query(&q)
-        .body(body(&q, &hits, &rows))
+        .body(body(&q, &hits, &rows, next.as_deref()))
         .render(&app, viewer.as_deref())
 }
 
@@ -231,7 +296,35 @@ const HELP: &str = "<ul class=\"ml-3\">\
 <li>a person: <code>@login</code></li>\
 <li>a pull request: <code>#123456</code> or its link</li>\
 <li>an advisory: <code>CVE-2024-3094</code>, <code>GHSA-…</code>, <code>NIXPKGS-2026-…</code></li>\
-</ul><p class=\"f6 color-fg-muted mt-2\">Press <kbd>/</kbd> on any page to search.</p>";
+</ul>";
+
+/// The qualifiers, as GitHub's and nixkeeper's, so one query works on both
+/// sites.
+fn filter_help() -> Html {
+    let word = |w: String, about: &str| {
+        html!(
+            "<li><a href=\"/search?q={}\"><code>{w}</code></a> {about}</li>",
+            crate::github::urlencode(&w)
+        )
+    };
+    let is: Html = Is::ALL
+        .iter()
+        .map(|i| word(format!("is:{}", i.word()), i.about()))
+        .collect();
+    let has: Html = Has::ALL
+        .iter()
+        .map(|h| word(format!("has:{}", h.word()), h.about()))
+        .collect();
+    html!(
+        "<p class=\"mt-3\">Or packages with a trait, with the words of <a href=\"https://nixkeeper.com/\">nixkeeper</a> \
+         and GitHub: <code>is:outdated -has:pr in:python3Packages</code>. A <code>-</code> leaves them out. \
+         <code>in:</code> is a package set, <code>by:</code> a maintainer, <code>-maintainer:</code> one left out, \
+         <code>team:</code> a team (<code>team:none</code>, <code>-team:</code>), \
+         <code>sort:az</code> and <code>order:reverse</code> the order; the highest risk comes first otherwise.</p>\
+         <ul class=\"ml-3\">{is}{has}</ul>\
+         <p class=\"f6 color-fg-muted mt-2\">Press <kbd>/</kbd> on any page to search.</p>"
+    )
+}
 
 /// A search box in the page. `search-inline` alone shows it only on a
 /// phone, where the header has no box; `inline-form` in `class` comes later
@@ -245,9 +338,15 @@ pub(crate) fn page_form(q: &str, class: &str) -> Html {
     )
 }
 
-fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
-    let help = Html::from(HELP);
-    let mut out = page_form(q, "inline-form mb-4");
+fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)], next: Option<&str>) -> Html {
+    let help = html!("{}{}", Html::from(HELP), filter_help());
+    let mut out = page_form(q, "inline-form mb-2");
+    out.push(&html!(
+        "<div class=\"mb-4\">{}</div>",
+        problem_lines(q, &hits.problems, |to| {
+            format!("/search?q={}", crate::github::urlencode(to))
+        })
+    ));
     if q.is_empty() {
         out.push(&html!(
             "<div class=\"Box p-3 mb-4\"><p>Type one of these in the search box:</p>{help}</div>"
@@ -260,7 +359,19 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
         ));
         return out;
     }
-    if !rows.is_empty() {
+    if hits.filtered {
+        if !hits.subjects.is_empty() {
+            let mut list = Html::new();
+            for (sub, f) in rows {
+                list.push(&crate::catalog::subject_row(sub, f, "", ""));
+            }
+            out.push(&section("Packages", Some(hits.subjects.len()), None, list));
+            out.push(&pager(
+                &format!("/search?q={}", crate::github::urlencode(q)),
+                next,
+            ));
+        }
+    } else if !rows.is_empty() {
         out.push(&section(
             "Packages, modules and directories",
             Some(rows.len()),
@@ -345,24 +456,33 @@ fn body(q: &str, hits: &Hits, rows: &[(Subject, Flags)]) -> Html {
     out
 }
 
-/// The hits of `/search`, as JSON, at most `limit` of each kind. A query
-/// that `/search` would send to a page also names that page.
-pub(crate) fn value(app: &App, q: &str, limit: Option<usize>) -> Value {
+/// The hits of `/search`, as JSON: one page of `results`, `limit` rows
+/// from `cursor`, with `total` and `next_cursor`; at most `limit` of each
+/// other kind. A query that `/search` would send to a page also names
+/// that page.
+pub(crate) fn value(
+    app: &App,
+    q: &str,
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<Value, String> {
     let q = q.trim();
     let s = app.snap();
     let h = app.health.read().unwrap().clone();
     let (mut hits, page) = {
         let index = app.index.read().unwrap();
-        (find(&s, &index, &h, q), jump(&s, &index, q))
+        (find(app, &s, &index, &h, q), jump(&s, &index, q))
     };
+    let total = hits.subjects.len();
+    let (range, next) = crate::api::window(total, limit, cursor)?;
+    let subjects: Vec<Subject> = hits.subjects.drain(range).collect();
     if let Some(n) = limit {
-        hits.subjects.truncate(n);
         hits.people.truncate(n);
         hits.prs.truncate(n);
         hits.advisories.truncate(n);
     }
-    let mut results = crate::catalog::subject_list(app, &hits.subjects);
-    for (r, sub) in results.iter_mut().zip(&hits.subjects) {
+    let mut results = crate::catalog::subject_list(app, &subjects);
+    for (r, sub) in results.iter_mut().zip(&subjects) {
         let (kind, url) = match sub {
             Subject::Pkg(a) => ("pkg", format!("/p/{a}")),
             Subject::Module(f) => ("module", format!("/m/{f}")),
@@ -371,10 +491,13 @@ pub(crate) fn value(app: &App, q: &str, limit: Option<usize>) -> Value {
         r["kind"] = json!(kind);
         r["url"] = json!(url);
     }
-    json!({
+    Ok(json!({
         "query": q,
         "page": page,
+        "problems": hits.problems,
         "results": results,
+        "total": total,
+        "next_cursor": next,
         "people": hits.people.iter().map(|l| json!({"login": l, "url": format!("/u/{l}")})).collect::<Vec<_>>(),
         "pull_requests": hits.prs.iter().map(|p| json!({
             "number": p.number, "title": p.title, "state": p.state, "draft": p.draft, "url": format!("/pr/{}", p.number),
@@ -382,7 +505,7 @@ pub(crate) fn value(app: &App, q: &str, limit: Option<usize>) -> Value {
         "advisories": hits.advisories.iter().map(|a| json!({
             "id": a.id, "title": a.title, "url": a.url, "packages": a.packages,
         })).collect::<Vec<_>>(),
-    })
+    }))
 }
 
 #[cfg(test)]

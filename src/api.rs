@@ -193,7 +193,11 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
                 Type::Text,
                 "with set: an output label of that set, like web-1; keep the packages of that output",
             ),
-            opt("q", Type::Text, "keep the rows whose name holds this text"),
+            opt(
+                "q",
+                Type::Text,
+                "keep the rows whose name holds this text; takes the qualifiers of /api/v1/search, such as is:outdated -has:pr",
+            ),
             LIMIT_P,
             CURSOR_P,
         ],
@@ -274,18 +278,19 @@ pub(crate) const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         path: "/api/v1/search",
-        about: "What the search box of the site finds: packages, NixOS modules and areas of the tree with their health flags, maintainers, pull requests whose title has the words, and advisories with that id. `page` is the page the site opens at once, if any.",
+        about: "What the search box of the site finds: packages, NixOS modules and areas of the tree with their health flags, maintainers, pull requests whose title has the words, and advisories with that id. `page` is the page the site opens at once, if any. A qualifier in q, as on GitHub and nixkeeper (is:outdated, -has:pr, in:python3Packages, by:login, team:name, sort:az, order:reverse), lists the packages of all of nixpkgs that it keeps, the highest risk first; see /search for the words. results is one page of them, with total and next_cursor; problems names the words the site does not know.",
         params: &[
             need(
                 "q",
                 Type::Text,
-                "an attribute, a package name, nixos/NAME, a module file, a path, @login, #NUMBER, words of a pull request title, or a CVE, GHSA or NIXPKGS id",
+                "an attribute, a package name, nixos/NAME, a module file, a path, @login, #NUMBER, words of a pull request title, a CVE, GHSA or NIXPKGS id, or qualifiers such as is:outdated",
             ),
             opt(
                 "limit",
                 Type::Int,
-                "at most this many of each kind; the search box asks for 5",
+                "rows of results per page, 50 by default and 200 at most, and at most this many of each other kind; the search box asks for 5",
             ),
+            CURSOR_P,
         ],
         private: false,
         answered: true,
@@ -943,7 +948,8 @@ pub(crate) async fn answer(
             crate::access::value(app, &o, a.limit, a.cursor.as_deref(), chrono::Utc::now())
                 .map_err(Fail::Bad)?
         }
-        "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit),
+        "/api/v1/search" => crate::search::value(app, &text(&a.q), a.limit, a.cursor.as_deref())
+            .map_err(Fail::Bad)?,
         "/api/v1/first" => paged(&crate::first::rows(app))?,
         "/api/v1/need-help" => paged(&need_help(app))?,
         "/api/v1/zhf" => {
@@ -1080,18 +1086,29 @@ pub(crate) fn page<T: Serialize>(
     limit: Option<usize>,
     cursor: Option<&str>,
 ) -> Result<Value, String> {
+    let (range, next) = window(items.len(), limit, cursor)?;
+    Ok(json!({
+        "total": items.len(),
+        "items": items.get(range).unwrap_or(&[]),
+        "next_cursor": next,
+    }))
+}
+
+/// The rows of one page of a list of `len` rows, and the cursor of the
+/// next page, for a caller that builds the rows of the page only.
+pub(crate) fn window(
+    len: usize,
+    limit: Option<usize>,
+    cursor: Option<&str>,
+) -> Result<(std::ops::Range<usize>, Option<String>), String> {
     let start = match cursor.map(str::trim).filter(|c| !c.is_empty()) {
         None => 0,
         Some(c) => c.parse::<usize>().map_err(|_| format!("bad cursor {c}"))?,
     };
     let limit = limit.unwrap_or(LIMIT).clamp(1, MAX_LIMIT);
-    let end = start.saturating_add(limit).min(items.len());
-    let slice = items.get(start..end).unwrap_or(&[]);
-    Ok(json!({
-        "total": items.len(),
-        "items": slice,
-        "next_cursor": (end < items.len()).then(|| end.to_string()),
-    }))
+    let start = start.min(len);
+    let end = start.saturating_add(limit).min(len);
+    Ok((start..end, (end < len).then(|| end.to_string())))
 }
 
 struct Prs {

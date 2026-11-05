@@ -224,6 +224,31 @@
 
   // Suggestions under each search box, as GitHub's "Jump to".
   var KIND = { pkg: "Package", module: "Module", area: "Directory" };
+  // The values of a qualifier being typed (search.rs, catalog/filter.rs).
+  var WORDS = {
+    is: [
+      "outdated",
+      "vulnerable",
+      "backport",
+      "broken",
+      "insecure",
+      "unfree",
+      "unmaintained",
+      "failed",
+      "blocked",
+    ],
+    has: ["maintainer", "team", "pr", "issue", "gaps", "advisory", "newer"],
+    sort: ["pressing", "az"],
+    order: ["reverse"],
+  };
+  // The last word of q as a qualifier with a value to finish: [sign+key,
+  // typed value, the text before it], or null.
+  function qualifier(q) {
+    var m = q.match(/(^|\s)(-?)(is|has|sort|order):([a-z-]*)$/i);
+    if (!m) return null;
+    var head = q.slice(0, q.length - (m[2] + m[3] + ":" + m[4]).length);
+    return [m[2] + m[3].toLowerCase(), m[4].toLowerCase(), head];
+  }
   function suggest(input) {
     var form = input.form,
       list = document.createElement("ul"),
@@ -279,6 +304,11 @@
         "Search",
         "/search?q=" + encodeURIComponent(q),
       ]);
+      show(items);
+    }
+    // The list drawn from items: [name, kind, url] each.
+    function show(found) {
+      items = found;
       list.innerHTML = items
         .map(function (it, i) {
           return (
@@ -306,6 +336,18 @@
       if (q.length < 2) return close();
       if (q === asked) return;
       asked = q;
+      var word = qualifier(q);
+      if (word) {
+        var found = WORDS[word[0].replace(/^-/, "")].filter(function (w) {
+          return w.indexOf(word[1]) === 0 && w !== word[1];
+        });
+        if (!found.length) return close();
+        items = found.map(function (w) {
+          var whole = word[2] + word[0] + ":" + w;
+          return [whole, "Filter", "/search?q=" + encodeURIComponent(whole)];
+        });
+        return show(items);
+      }
       fetch("/api/v1/search?limit=5&q=" + encodeURIComponent(q), {
         headers: { Accept: "application/json" },
       })

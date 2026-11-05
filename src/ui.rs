@@ -352,7 +352,8 @@ const MENU: [(Personal, &str, &str, &str); 4] = [
 
 const ISSUES: &str = "https://github.com/numtide/maintainermode/issues";
 
-pub(crate) const SEARCH_PLACEHOLDER: &str = "Search packages, modules, @people, #PRs, CVEs";
+pub(crate) const SEARCH_PLACEHOLDER: &str =
+    "Search packages, modules, @people, #PRs, CVEs, is:outdated";
 
 fn search_box(q: &str) -> Html {
     html!(

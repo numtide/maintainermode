@@ -23,7 +23,7 @@ removed, not redirected.
 | `GET /api/v1/inbox`                           | your inbox (private)                                             |
 | `GET /api/v1/progress`                        | your progress, your goal and your badges (private)               |
 | `GET /api/v1/committers`                      | everyone around commit access, with a status (private, one team) |
-| `GET /api/v1/search`                          | what the search box finds: packages, people, PRs, advisories     |
+| `GET /api/v1/search`                          | what the search box finds, or the packages a filter keeps, paged |
 | `GET /api/v1/first`                           | packages for a first contribution, paged                         |
 | `GET /api/v1/need-help`                       | packages with an open advisory, the highest risk first, paged    |
 | `GET /api/v1/packages/<name>`                 | one package: health, issues, pull requests and the update bot    |
@@ -58,7 +58,8 @@ curl -H "Authorization: Bearer $MAINTAINER_MODE_API_TOKEN" 'https://<host>/api/v
   your sets, with `filter=machines`. `output`, with `set`, keeps the
   packages of one output label of that set, as `&output=<label>` does on the
   page. An unknown set or output is an error. `q` keeps the names that hold
-  the text. Each row has `key`, `name`, `version`, `machine_version` (the
+  the text, and takes the qualifiers of [`/api/v1/search`](#get-apiv1search)
+  (`is:outdated -has:pr`). Each row has `key`, `name`, `version`, `machine_version` (the
   version that your report gave), `why` (`machine`, `maintain` and `watch`),
   `via_team`, `flags` and `outputs` (the `set` and the `output` label of
   each output that holds it). The answer also has `sets` (the names of your
@@ -389,14 +390,43 @@ output, or `output` without `set`, is a 404 with an `error`.
 
 ## `GET /api/v1/search`
 
-It gives what the search box of the site finds for `q`. With `limit`, it
-gives at most that many of each kind; the suggestions of the box ask for 5.
+It gives what the search box of the site finds for `q`. `results` is
+paged: `limit` rows (50 by default, 200 at most) from `cursor`, with
+`total` and `next_cursor` as in [Paging](#paging). `limit` also caps
+each other kind; the suggestions of the box ask for 5.
+
+`q` takes qualifiers, in the grammar of GitHub and of
+[nixkeeper](https://nixkeeper.com/), so one query works on both sites:
+`is:outdated -has:pr in:python3Packages by:zimbatm`. With one, `results`
+is the packages of all of nixpkgs that the qualifiers keep (one per package
+name), the highest risk first, and the other kinds match the words that
+are not qualifiers. A `-` leaves out. The words:
+
+- `is:`: `outdated`, `vulnerable`, `backport`, `broken`, `insecure`,
+  `unfree`, `unmaintained`, `failed`, `blocked`. The `/search` page says
+  what each means; `failed` and `blocked` come from Hydra, and only where
+  the server follows it: the packages people maintain or watch, and the
+  release jobset of Zero Hydra Failures.
+- `has:`: `maintainer`, `team`, `pr`, `issue`, `gaps`, `advisory` (the
+  same as `is:vulnerable`), `newer` (the same as `is:outdated`).
+- `in:SET`: the package set, as `python3Packages` (any `python3NNPackages`)
+  or `top-level`; `by:LOGIN`: a maintainer; `-maintainer:LOGIN`: one left
+  out; `team:NAME`, `-team:NAME`, `team:none`; `sort:az` (the default is
+  `sort:pressing`, the highest risk first); `order:reverse`.
+- `problems`: the words the site does not know, each with `token`,
+  `message` and, when a known word is close, `suggestion`. The rest of the
+  query still applies. The nixkeeper words this site has no data for
+  (`age:`, `on:`, `build:`, `update:`, `status:`, `ofteam:`) are
+  problems too.
+
+The fields:
 
 - `page`: the page that the site opens at once, or `null`. It is set for a
-  name with a page, `@login`, `#NUMBER` or a link to a pull request.
+  name with a page, `@login`, `#NUMBER` or a link to a pull request; never
+  for a query with a qualifier.
 - `results`: packages, NixOS modules and areas, each with `key`, `name`,
   `kind` (`pkg`, `module` or `area`), `url` and
-  `flags`.
+  `flags`; `total` and `next_cursor` page them.
 - `people`: maintainers whose login holds the text, each with `login` and
   `url`.
 - `pull_requests`: stored pull requests whose title has the text at the start of a word (3

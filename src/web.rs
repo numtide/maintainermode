@@ -968,6 +968,14 @@ pub(crate) fn metrics_value(app: &App) -> serde_json::Value {
     v
 }
 
+/// A link to the search that lists the packages of a count.
+fn listed(q: &str) -> Html {
+    html!(
+        "<a href=\"/search?q={}\"><code>{q}</code></a>",
+        crate::github::urlencode(q)
+    )
+}
+
 pub(crate) fn packages_section(app: &App) -> Html {
     let p = package_stats(app);
     let mut out = Html::from("<h2 class=\"f4 mt-4 mb-2\" id=\"packages\">Packages</h2>");
@@ -988,33 +996,52 @@ pub(crate) fn packages_section(app: &App) -> Html {
         stat(
             p.behind_upstream,
             "behind upstream",
-            "a newer release in its git tags, its registry or repology"
+            html!(
+                "a newer release in its git tags, its registry or repology; {}",
+                listed("is:outdated")
+            )
         ),
         stat(
             p.with_advisories,
             "with open advisories",
             html!(
                 "that can affect master; worst: {} critical, {} high, {} medium, {} low, {} with no score; \
-                 {} more only in a channel",
+                 {} more only in a channel; {} and {}",
                 b.critical,
                 b.high,
                 b.medium,
                 b.low,
                 b.unscored,
-                p.fixed_in_master_only
+                p.fixed_in_master_only,
+                listed("is:vulnerable"),
+                listed("is:backport")
             )
         ),
         stat(
             p.unmaintained,
             "unmaintained",
-            "no meta.maintainers and no meta.teams"
+            html!(
+                "no meta.maintainers and no meta.teams; {}",
+                listed("is:unmaintained")
+            )
         ),
-        stat(p.broken, "broken", "meta.broken"),
-        stat(p.insecure, "insecure", "meta.knownVulnerabilities is set"),
+        stat(
+            p.broken,
+            "broken",
+            html!("meta.broken; {}", listed("is:broken"))
+        ),
+        stat(
+            p.insecure,
+            "insecure",
+            html!("meta.knownVulnerabilities is set; {}", listed("is:insecure"))
+        ),
         stat(
             p.with_packaging_gaps,
             "with packaging gaps",
-            "see the Packaging row of a package page"
+            html!(
+                "see the Packaging row of a package page; {}",
+                listed("has:gaps")
+            )
         ),
         stat(
             p.open_bumps,

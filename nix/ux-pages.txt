@@ -49,6 +49,8 @@ public /packages
 both /search
 both /search?q=zzzz-nothing-matches
 both /search?q=hel
+both /search?q=is:outdated
+both /search?q=is:outdatd
 both /p/${attr}
 public /p/unbound
 public /m/${module}

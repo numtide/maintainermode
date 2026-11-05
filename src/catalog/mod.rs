@@ -28,11 +28,13 @@ use crate::ui::{Page, Section, Tab, Tone, badge, empty, item_row, kv};
 use crate::web::{Shared, Snapshot, ago, icon, octicon, random_id};
 
 pub(crate) mod area;
+pub(crate) mod filter;
 pub(crate) mod maintains;
 pub(crate) mod module;
 pub(crate) mod package;
 
-use package::{Wait, build_body, channel_names, hover, hydra_last, hydra_value, osv_worst, rated};
+use filter::Traits;
+use package::{Wait, build_body, channel_names, hover, hydra_last, hydra_value, osv_worst};
 
 const LIST: usize = 100;
 const META_GUIDE: &str =
@@ -432,6 +434,10 @@ pub(crate) struct PackageStats {
     pub(crate) maintainers: crate::load::Spread,
     /// Open tracker issues that master and every channel already fix.
     pub(crate) tracker_issues_to_close: Vec<ToClose>,
+    /// The canonical attribute of each package name, with what a search
+    /// filter reads of it. The counts above are made from it.
+    #[serde(skip)]
+    pub(crate) traits: HashMap<String, Traits>,
 }
 
 /// An open tracker issue that nixpkgs already fixes everywhere.
@@ -481,34 +487,14 @@ pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageS
         ..Default::default()
     };
     for attr in index.by_pname.values() {
-        let Some(p) = index.pkgs.get(attr) else {
+        let Some(t) = Traits::of(s, index, h, attr) else {
             continue;
         };
         out.packages += 1;
-        if upstream(s, index, h, attr).is_some() {
-            out.behind_upstream += 1;
-        }
-        let all = judged(h, s, attr);
-        let open: Vec<&Advisory> = all
-            .iter()
-            .filter(|(_, v)| v.open())
-            .map(|(a, _)| *a)
-            .collect();
-        let osv = h.osv_extra(attr);
-        if open.is_empty()
-            && osv.is_empty()
-            && all.iter().any(|(_, v)| matches!(v, Verdict::Behind { .. }))
-        {
-            out.fixed_in_master_only += 1;
-        }
-        if !open.is_empty() || !osv.is_empty() {
+        out.behind_upstream += usize::from(t.outdated);
+        out.fixed_in_master_only += usize::from(t.backport);
+        if let Some(band) = t.band {
             out.with_advisories += 1;
-            let band = rated(h, &open)
-                .into_iter()
-                .map(|(_, w)| w.band)
-                .chain(osv.into_iter().map(|(_, v)| osv_worst(h, v).band))
-                .max()
-                .flatten();
             let b = &mut out.advisories_by_band;
             *match band {
                 Some(severity::Band::Critical) => &mut b.critical,
@@ -518,16 +504,11 @@ pub(crate) fn package_stats(s: &Snapshot, index: &Index, h: &Health) -> PackageS
                 None => &mut b.unscored,
             } += 1;
         }
-        if p.maintainers.is_empty() && p.teams.is_empty() {
-            out.unmaintained += 1;
-        }
-        if let Some(f) = &p.facts {
-            out.broken += usize::from(f.broken);
-            out.insecure += usize::from(f.insecure);
-        }
-        if hygiene::gaps(attr, p).is_some_and(|g| !g.is_empty()) {
-            out.with_packaging_gaps += 1;
-        }
+        out.unmaintained += usize::from(t.unmaintained);
+        out.broken += usize::from(t.broken);
+        out.insecure += usize::from(t.insecure);
+        out.with_packaging_gaps += usize::from(t.gaps);
+        out.traits.insert(attr.clone(), t);
     }
     let bumps = crate::bumps::open(s, index, h);
     out.open_bumps = bumps.len();

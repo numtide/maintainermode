@@ -6,6 +6,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::area::Index;
+use crate::catalog::filter::{Failing, Filter as PackageFilter, Sort, Traits};
 use crate::catalog::{Flags, Subject, maintained, subject_row, subscriptions};
 use crate::channels::Channels;
 use crate::health::{Hydra, Last};
@@ -324,6 +325,9 @@ impl Interests {
         rows
     }
 
+    /// `q` takes the qualifiers of [`crate::catalog::filter`] too:
+    /// `is:outdated -has:pr hello`. A module or a directory stays for the
+    /// words it can answer (`is:unmaintained`, `has:pr`, `has:issue`).
     pub(crate) fn rows(
         &self,
         s: &Snapshot,
@@ -333,14 +337,15 @@ impl Interests {
         f: Filter,
         q: &str,
     ) -> Vec<Row> {
-        let ql = q.to_lowercase();
+        let query = PackageFilter::parse(q);
+        let ql = query.text.clone();
         let now = chrono::Utc::now();
         let mut rows: Vec<Row> = self
             .items
             .values()
             .filter(|(_, w, _)| f.keeps(*w))
             .filter(|(sub, ..)| ql.is_empty() || sub.label().to_lowercase().contains(&ql))
-            .map(|(sub, why, via)| {
+            .filter_map(|(sub, why, via)| {
                 let mut flags = Flags::of(s, index, h, sub);
                 if let (Some(l), Subject::Pkg(a)) = (live, sub) {
                     flags.build_failed = l.hydra.builds.red_on(a).is_some()
@@ -354,17 +359,79 @@ impl Interests {
                     flags.bot_failed = l.bot.failed_on(a, now)
                         && (flags.upstream.is_some() || l.bot.by_update_script(a));
                 }
-                Row {
+                if !query.is_plain() && !keeps(&query, s, index, h, sub, &flags) {
+                    return None;
+                }
+                Some(Row {
                     sub: sub.clone(),
                     why: *why,
                     via: via.clone(),
                     flags,
                     hosts: self.hosts.get(&sub.key()).cloned().unwrap_or_default(),
-                }
+                })
             })
             .collect();
         rank(&mut rows);
+        if query.sort == Sort::Az {
+            rows.sort_by_cached_key(|r| r.sub.label().to_lowercase());
+        }
+        if query.reverse {
+            rows.reverse();
+        }
         rows
+    }
+}
+
+/// Whether the qualifiers of `q` keep a subject of the list. The text of
+/// the query is matched by the caller.
+fn keeps(
+    q: &PackageFilter,
+    s: &Snapshot,
+    index: &Index,
+    h: &crate::health::Health,
+    sub: &Subject,
+    flags: &Flags,
+) -> bool {
+    let mut q = q.clone();
+    q.text.clear();
+    let failing = |failed: bool| {
+        let mut f = Failing::default();
+        if failed {
+            f.failed.insert(sub.label());
+        }
+        f
+    };
+    match sub {
+        Subject::Pkg(attr) => {
+            let Some(p) = index.pkgs.get(attr) else {
+                return false;
+            };
+            let t = Traits::of(s, index, h, attr).unwrap_or_default();
+            q.keeps(attr, p, &t, Some(&failing(flags.build_failed)))
+        }
+        Subject::Module(file) => {
+            let m = index.modules.get(file);
+            let p = crate::area::Package {
+                maintainers: m.map(|m| m.maintainers.clone()).unwrap_or_default(),
+                teams: m.map(|m| m.teams.clone()).unwrap_or_default(),
+                ..Default::default()
+            };
+            let t = Traits {
+                unmaintained: p.maintainers.is_empty() && p.teams.is_empty(),
+                open_prs: flags.open_prs as u32,
+                open_issues: flags.open_issues as u32,
+                ..Default::default()
+            };
+            q.keeps(&sub.label(), &p, &t, Some(&failing(false)))
+        }
+        Subject::Area(_) => {
+            let t = Traits {
+                open_prs: flags.open_prs as u32,
+                open_issues: flags.open_issues as u32,
+                ..Default::default()
+            };
+            q.keeps(&sub.label(), &Default::default(), &t, Some(&failing(false)))
+        }
     }
 }
 
@@ -703,13 +770,18 @@ pub(crate) fn view(
             rows: extra,
             action: "/packages",
             keep,
-            placeholder: "Words in the name",
+            placeholder: "Words in the name, or is:outdated",
             q: q.to_string(),
             clear: (!q.is_empty() || set.is_some()).then(|| href(f, "", None, None)),
             ..Default::default()
         }
         .render(),
     );
+    out.push(&crate::search::problem_lines(
+        q,
+        &PackageFilter::parse(q).problems,
+        |to| href(f, to, set, output),
+    ));
     let (page, next) = crate::review::paged_by_offset(&rows, after);
     let mut list: Html = page
         .iter()

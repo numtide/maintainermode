@@ -88,6 +88,20 @@ fn signed_in_app() -> Shared {
                 ..Default::default()
             },
         );
+        // Nobody maintains it, and upstream is ahead: what a filter finds.
+        index.by_pname.insert("world".into(), "world".into());
+        index.pkgs.insert(
+            "world".into(),
+            crate::area::Package {
+                pname: "world".into(),
+                version: "1.0".into(),
+                file: Some("pkgs/by-name/wo/world/package.nix".into()),
+                ..Default::default()
+            },
+        );
+        let mut h = crate::health::Health::clone(&app.health.read().unwrap());
+        h.upstream.insert("world".into(), "1.1".into());
+        *app.health.write().unwrap() = std::sync::Arc::new(h);
     }
     app.store
         .create_session(SID, "alice", "dummy-token")
@@ -282,6 +296,75 @@ async fn me_pages_show_their_parts() {
     assert!(a.body.contains("value=\"hel\""));
     let a = site.get("/search?q=%40alice", None).await;
     assert_eq!(a.location.as_deref(), Some("/u/alice"));
+    // Qualifiers list the packages of all of nixpkgs with a trait.
+    let a = site.get("/search?q=is:outdated", None).await;
+    assert!(a.body.contains("href=\"/p/world\""), "{}", a.body);
+    assert!(!a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    assert!(
+        a.body.contains("Packages <span class=\"Counter\">1</span>"),
+        "{}",
+        a.body
+    );
+    let a = site
+        .get("/search?q=-has:maintainer+-is:outdated", None)
+        .await;
+    assert!(!a.body.contains("href=\"/p/world\""), "{}", a.body);
+    assert!(a.body.contains("Nothing matches"), "{}", a.body);
+    let a = site.get("/search?q=is:unmaintained+wor", None).await;
+    assert!(a.body.contains("href=\"/p/world\""), "{}", a.body);
+    let a = site.get("/search?q=by:alice+sort:az", None).await;
+    assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    assert!(!a.body.contains("href=\"/p/world\""), "{}", a.body);
+    let a = site.get("/search?q=is:outdatd+colour:red", None).await;
+    assert!(
+        a.body.contains(
+            "no is:outdatd: <a href=\"/search?q=is%3Aoutdated%20colour%3Ared\">is:outdated</a>?"
+        ),
+        "{}",
+        a.body
+    );
+    assert!(a.body.contains("no colour: qualifier"), "{}", a.body);
+    // The filter in the list of your packages.
+    let a = site
+        .get("/packages?filter=maintain&q=is:outdated", Some(SID))
+        .await;
+    assert!(!a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    assert!(a.body.contains("Nothing matches"), "{}", a.body);
+    let a = site
+        .get(
+            "/packages?filter=maintain&q=-is:outdated+has:maintainer",
+            Some(SID),
+        )
+        .await;
+    assert!(a.body.contains("href=\"/p/hello\""), "{}", a.body);
+    let a = site
+        .get("/packages?filter=maintain&q=is:outdatd", Some(SID))
+        .await;
+    assert!(
+        a.body.contains("no is:outdatd: <a href=\"/packages?filter=maintain&amp;q=is%3Aoutdated\">is:outdated</a>?"),
+        "{}",
+        a.body
+    );
+    // The same over the API, paged.
+    let a = site.get("/api/v1/search?q=is:outdated&limit=1", None).await;
+    let v: serde_json::Value = serde_json::from_str(&a.body).unwrap();
+    assert_eq!(v["total"], 1, "{}", a.body);
+    assert_eq!(v["results"][0]["name"], "world");
+    assert!(v["next_cursor"].is_null());
+    let a = site.get("/api/v1/search?q=sort:az&limit=1", None).await;
+    let v: serde_json::Value = serde_json::from_str(&a.body).unwrap();
+    assert_eq!(v["total"], 2, "{}", a.body);
+    assert_eq!(v["results"][0]["name"], "hello");
+    assert_eq!(v["next_cursor"], "1");
+    let a = site
+        .get("/api/v1/search?q=sort:az&limit=1&cursor=1", None)
+        .await;
+    let v: serde_json::Value = serde_json::from_str(&a.body).unwrap();
+    assert_eq!(v["results"][0]["name"], "world");
+    assert!(v["next_cursor"].is_null());
+    let a = site.get("/api/v1/search?q=colour:red", None).await;
+    let v: serde_json::Value = serde_json::from_str(&a.body).unwrap();
+    assert_eq!(v["problems"][0]["message"], "no colour: qualifier");
     let a = site.get("/search?q=%23123", None).await;
     assert_eq!(a.location.as_deref(), Some("/pr/123"));
     let a = site.get("/packages", None).await;

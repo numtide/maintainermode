@@ -48,6 +48,7 @@ mod progress;
 mod project;
 mod prpage;
 mod prpanel;
+mod query;
 mod queue;
 mod reach;
 mod report;
