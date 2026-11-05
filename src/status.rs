@@ -288,7 +288,7 @@ const SOURCES: [(&str, &str, &str); 6] = [
     (
         "upstream",
         "Upstream tags and registries",
-        "git tags over HTTPS, crates.io, PyPI and npm; 300 requests a run, the packages people maintain or watch first; they overrule repology",
+        "git tags over HTTPS, crates.io, PyPI, npm, Hackage, GNOME and GNU; 300 requests a run, the packages people maintain or watch first; they overrule repology",
     ),
     (
         "cve",

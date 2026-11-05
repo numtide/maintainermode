@@ -287,8 +287,16 @@ tells where to ask. [repology](https://repology.org) fills the rest.
   or the API URL that fetchFromGitLab makes), Codeberg,
   sourcehut or KDE, Maintainer Mode asks the repository for its tags over
   HTTPS, as `git ls-remote --tags` does (protocol v2, one request, no token).
+  Any other host is asked too when the URL has the shape of a forge: a
+  GitLab API or `/-/archive/` URL, a Gitea `owner/repo/archive/` URL, or a
+  `.git` remote (salsa.debian.org, a self-hosted GitLab or Forgejo). A
+  plain download site is not.
 - **Registries.** When `src` comes from crates.io, PyPI or npm, the registry
-  says which release is the newest.
+  says which release is the newest. Hackage (`preferred.json`), GNOME
+  (`download.gnome.org/sources/<name>/cache.json`) and GNU
+  (`ftp.gnu.org/gnu/<name>/`, a listing of tarballs) list every release,
+  and the rules for tags below pick one. For GNOME below 40, when the
+  nixpkgs version has an even minor, an odd minor is a development release.
 - **Which tags count.** A tag counts when it names a version: `v1.2.3`,
   `openssl-3.5.0` and `curl-8_21_0` do; `nightly`, `v2.0-rc1` and
   `debian/1.2` do not. A prerelease (`alpha`, `beta`, `rc`, `dev` and the

@@ -23,13 +23,15 @@ const FRESH_REST: i64 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Origin {
-    /// crates.io, PyPI or npm: the publisher declared the version.
+    /// crates.io, PyPI, npm, Hackage, GNOME or GNU: the publisher lists
+    /// the releases.
     Registry {
         ecosystem: &'static str,
         name: String,
     },
     /// A git remote, asked for its tags over smart HTTP: GitHub, GitLab,
-    /// Codeberg, sourcehut, KDE and freedesktop alike, with no token.
+    /// Codeberg, sourcehut, KDE and freedesktop alike, and any host whose
+    /// `src` URL has the shape of a forge, with no token.
     Git(String),
 }
 
@@ -62,8 +64,25 @@ fn registry(src_url: &str) -> Option<Origin> {
             && s.chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_.@".contains(c))
     };
+    // `hlint-3.10.tar.gz` names hlint: the name ends before `-<digit>`
+    let stem = |file: &str| -> Option<String> {
+        let file = file.split_once(".tar").map_or(file, |(s, _)| s);
+        let at = file
+            .match_indices('-')
+            .find(|(i, _)| file[i + 1..].starts_with(|c: char| c.is_ascii_digit()))
+            .map(|(i, _)| i)?;
+        Some(file[..at].to_string())
+    };
     let (ecosystem, name) =
         match (host, parts.as_slice()) {
+            ("gnome", ["sources", n, ..]) | ("download.gnome.org", ["sources", n, ..]) => {
+                ("GNOME", n.to_string())
+            }
+            ("gnu", [n, ..]) | ("ftpmirror.gnu.org", [n, ..]) | ("ftp.gnu.org", ["gnu", n, ..]) => {
+                ("GNU", n.to_string())
+            }
+            ("hackage", [file]) => ("Hackage", stem(file)?),
+            ("hackage.haskell.org", ["package", _, file]) => ("Hackage", stem(file)?),
             // `packages/<source or python tag>/<first letter>/<name>/<file>`
             (
                 "files.pythonhosted.org" | "pypi.io" | "pypi.python.org",
@@ -101,6 +120,10 @@ fn unescape(s: &str) -> Option<String> {
 /// The repository or registry behind a `src` URL. nixpkgs' fetchFromGitHub
 /// gives `https://github.com/owner/repo/archive/refs/tags/v1.2.3.tar.gz`, and
 /// fetchFromGitLab `https://gitlab.com/api/v4/projects/owner%2Frepo/repository/archive.tar.gz?sha=v1.2.3`.
+/// On a known forge any path names the repository; elsewhere the path
+/// must have the shape of one (a GitLab API or `/-/archive/` URL, a Gitea
+/// `/archive/` URL, or a `.git` remote), so a plain download site is not
+/// asked for tags.
 pub fn origin(src_url: &str) -> Option<Origin> {
     if let Some(r) = registry(src_url) {
         return Some(r);
@@ -109,36 +132,46 @@ pub fn origin(src_url: &str) -> Option<Origin> {
         .strip_prefix("https://")
         .or(src_url.strip_prefix("http://"))?;
     let (host, path) = url.split_once('/')?;
-    let git_host = host == "github.com"
+    let known = host == "github.com"
         || host == "codeberg.org"
         || host.starts_with("gitlab.")
         || host == "git.sr.ht"
         || host == "invent.kde.org";
-    if !git_host {
+    // sourcehut's Mercurial side speaks no git
+    if host == "hg.sr.ht" {
         return None;
     }
+    let path = path.split(['?', '#']).next().unwrap_or(path);
     let slug = match path
         .strip_prefix("api/v4/projects/")
         .and_then(|p| p.split_once('/'))
     {
         Some((slug, _)) => unescape(slug)?,
         // `/-/archive/` before `/archive/`, or a GitLab repository keeps a `/-`
-        None => path
-            .split_once("/-/archive/")
-            .or_else(|| path.split_once("/-/releases/"))
-            .or_else(|| path.split_once("/archive/"))
-            .or_else(|| path.split_once("/releases/"))
-            .or_else(|| path.split_once("/repository/"))
-            .map(|(repo, _)| repo)
-            .unwrap_or(path)
-            .to_string(),
+        None => {
+            let cut = path
+                .split_once("/-/archive/")
+                .or_else(|| path.split_once("/-/releases/"))
+                .or_else(|| path.split_once("/archive/"))
+                .or_else(|| path.split_once("/releases/"))
+                .or_else(|| path.split_once("/repository/"))
+                .map(|(repo, _)| repo);
+            match cut {
+                Some(repo) => repo.to_string(),
+                None if known || path.trim_end_matches('/').ends_with(".git") => path.to_string(),
+                None => return None,
+            }
+        }
     };
-    let repo = slug.trim_end_matches(".git").trim_end_matches('/');
-    if repo.is_empty()
-        || !repo.contains('/')
-        || repo.contains("..")
-        || repo.contains(['%', '?', '#'])
-    {
+    let repo = slug.trim_end_matches('/').trim_end_matches(".git");
+    let segment = |s: &str| {
+        !s.is_empty()
+            && s != "."
+            && s != ".."
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || "-_.~+".contains(c))
+    };
+    if repo.is_empty() || !repo.contains('/') || !repo.split('/').all(segment) {
         return None;
     }
     Some(Origin::Git(format!("https://{host}/{repo}")))
@@ -411,13 +444,29 @@ fn registry_url(ecosystem: &str, name: &str) -> Option<String> {
             "https://registry.npmjs.org/-/package/{}/dist-tags",
             name.replace('/', "%2f")
         )),
+        "Hackage" => Some(format!(
+            "https://hackage.haskell.org/package/{name}/preferred.json"
+        )),
+        "GNOME" => Some(format!(
+            "https://download.gnome.org/sources/{name}/cache.json"
+        )),
+        "GNU" => Some(format!("https://ftp.gnu.org/gnu/{name}/")),
         _ => None,
     }
 }
 
-/// The newest release a registry names. No scheme filter: the publisher
-/// declared it.
-pub fn newest_published(ecosystem: &str, body: &str) -> Option<String> {
+/// The releases a registry lists, as it lists them: crates.io, PyPI and
+/// npm name the newest themselves; Hackage and GNOME list every version;
+/// GNU is a directory of tarballs, whose stems read like tags.
+pub fn published_versions(ecosystem: &str, body: &str) -> Vec<String> {
+    let json = || serde_json::from_str::<Value>(body).ok();
+    let strings = |v: &Value| -> Vec<String> {
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
     match ecosystem {
         // one JSON object per line, oldest first; a yanked release is no target
         "crates.io" => body
@@ -425,18 +474,90 @@ pub fn newest_published(ecosystem: &str, body: &str) -> Option<String> {
             .filter_map(|l| serde_json::from_str::<Value>(l).ok())
             .filter(|v| v["yanked"].as_bool() != Some(true))
             .filter_map(|v| v["vers"].as_str().map(str::to_string))
-            .filter(|v| version_of(v, "").is_some())
-            .max_by(|a, b| version::compare(a, b)),
+            .collect(),
         // PyPI's own latest leaves out prereleases
-        "PyPI" => serde_json::from_str::<Value>(body).ok()?["info"]["version"]
-            .as_str()
-            .map(str::to_string),
-        "npm" => serde_json::from_str::<Value>(body).ok()?["latest"]
-            .as_str()
-            .map(str::to_string),
-        _ => None,
+        "PyPI" => json()
+            .and_then(|v| v["info"]["version"].as_str().map(str::to_string))
+            .into_iter()
+            .collect(),
+        "npm" => json()
+            .and_then(|v| v["latest"].as_str().map(str::to_string))
+            .into_iter()
+            .collect(),
+        "Hackage" => json()
+            .map(|v| strings(&v["normal-version"]))
+            .unwrap_or_default(),
+        // `[format, {name: {version: {files}}}, {name: [versions]}, ...]`
+        "GNOME" => json()
+            .and_then(|v| v.get(2)?.as_object()?.values().next().map(strings))
+            .unwrap_or_default(),
+        "GNU" => body
+            .split("href=\"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .filter_map(|href| {
+                let name = href.split(['?', '#']).next()?;
+                // a tarball, or a directory of one release (gcc-15.1.0/)
+                let stem = name.strip_suffix('/').or_else(|| {
+                    [".tar.gz", ".tar.xz", ".tar.bz2", ".tar.lz", ".tgz", ".zip"]
+                        .iter()
+                        .find_map(|ext| name.strip_suffix(ext))
+                })?;
+                (!stem.is_empty() && !stem.contains('/') && !stem.starts_with('.'))
+                    .then(|| stem.to_string())
+            })
+            .collect(),
+        _ => Vec::new(),
     }
+    .into_iter()
     .filter(|v| !v.is_empty())
+    .collect()
+}
+
+/// GNOME's old numbering: below 40, an odd minor is a development release
+/// (2.89.x before 2.90). A package whose nixpkgs version has an even minor
+/// follows that policy; one on an odd minor (dconf 0.49.0) does not.
+fn gnome_stable(current: &str, candidate: &str) -> bool {
+    let minor = |v: &str| -> Option<(u64, u64)> {
+        let mut it = v.split('.');
+        Some((it.next()?.parse().ok()?, it.next()?.parse().ok()?))
+    };
+    match (minor(current), minor(candidate)) {
+        (Some((major, ours)), Some((_, theirs))) if major < 40 && ours % 2 == 0 => theirs % 2 == 0,
+        _ => true,
+    }
+}
+
+/// The newest release among what a registry lists. crates.io, PyPI and
+/// npm declared it, so no scheme filter, but off the series it says
+/// nothing about this package; Hackage, GNOME and GNU list everything, so
+/// the same rules as for tags apply.
+pub fn newest_published(
+    ecosystem: &str,
+    versions: &[String],
+    name: &str,
+    current: &str,
+    series: Option<&str>,
+) -> Option<String> {
+    let on_series = |v: &String| series.is_none_or(|s| in_series(v, s));
+    match ecosystem {
+        "crates.io" => versions
+            .iter()
+            .filter(|v| version_of(v, "").is_some())
+            .max_by(|a, b| version::compare(a, b))
+            .filter(|v| on_series(v))
+            .cloned(),
+        "PyPI" | "npm" => versions.first().filter(|v| on_series(v)).cloned(),
+        "GNOME" => {
+            let stable: Vec<String> = versions
+                .iter()
+                .filter(|v| gnome_stable(current, v))
+                .cloned()
+                .collect();
+            newest(&stable, name, current, series)
+        }
+        _ => newest(versions, name, current, series),
+    }
 }
 
 /// `<4 hex length><payload>` lines; `0000` ends the list.
@@ -495,9 +616,9 @@ async fn tags(http: &reqwest::Client, repo: &str) -> Result<Vec<String>> {
     )
 }
 
-async fn published(http: &reqwest::Client, ecosystem: &str, name: &str) -> Result<Option<String>> {
+async fn published(http: &reqwest::Client, ecosystem: &str, name: &str) -> Result<Vec<String>> {
     let Some(url) = registry_url(ecosystem, name) else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
     let body = http
         .get(url)
@@ -506,7 +627,7 @@ async fn published(http: &reqwest::Client, ecosystem: &str, name: &str) -> Resul
         .error_for_status()?
         .text()
         .await?;
-    Ok(newest_published(ecosystem, &body))
+    Ok(published_versions(ecosystem, &body))
 }
 
 /// One package to ask about.
@@ -567,7 +688,7 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
     queue.sort_by(|a, b| (a.0, a.1, &a.2.attr).cmp(&(b.0, b.1, &b.2.attr)));
     let left = queue.len();
     let mut seen: HashMap<String, Result<Vec<String>, ()>> = HashMap::new();
-    let mut registries: HashMap<String, Result<Option<String>, ()>> = HashMap::new();
+    let mut registries: HashMap<String, Result<Vec<String>, ()>> = HashMap::new();
     let mut asked: HashSet<String> = HashSet::new();
     let (mut behind, mut current, mut unclear, mut failed, mut done) = (0, 0, 0, 0, 0);
     for (_, _, c) in queue {
@@ -605,11 +726,16 @@ pub async fn pass(h: &mut Health, candidates: Vec<Candidate>) -> Run {
                     registries.insert(key.clone(), got);
                     tokio::time::sleep(PAUSE).await;
                 }
-                // a registry names one newest release; off the series it
-                // says nothing about this package
-                let answer = registries[&key]
-                    .clone()
-                    .map(|v| v.filter(|v| c.series.as_deref().is_none_or(|s| in_series(v, s))));
+                let answer = match &registries[&key] {
+                    Ok(v) => Ok(newest_published(
+                        ecosystem,
+                        v,
+                        name,
+                        &c.version,
+                        c.series.as_deref(),
+                    )),
+                    Err(()) => Err(()),
+                };
                 (answer, *ecosystem)
             }
         };
@@ -691,10 +817,51 @@ mod tests {
             Some(Origin::Git("https://git.sr.ht/~sircmpwn/scdoc".into()))
         );
         assert_eq!(
-            origin("https://ftpmirror.gnu.org/bison/bison-3.8.2.tar.xz"),
+            origin("https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz"),
             None
         );
         assert_eq!(origin("https://github.com/only-a-user"), None);
+        // any host, when the URL has the shape of a forge
+        assert_eq!(
+            origin("https://gitea.nouspiro.space/nou/libXISF/archive/v0.2.14.tar.gz"),
+            Some(Origin::Git(
+                "https://gitea.nouspiro.space/nou/libXISF".into()
+            ))
+        );
+        assert_eq!(
+            origin("https://0xacab.org/leap/bitmask-vpn.git"),
+            Some(Origin::Git("https://0xacab.org/leap/bitmask-vpn".into()))
+        );
+        assert_eq!(
+            origin(
+                "https://salsa.debian.org/api/v4/projects/clint%2Ffakeroot/repository/archive.tar.gz?sha=225d"
+            ),
+            Some(Origin::Git(
+                "https://salsa.debian.org/clint/fakeroot".into()
+            ))
+        );
+        assert_eq!(
+            origin("https://github.com/freebsd/freebsd-src.git"),
+            Some(Origin::Git("https://github.com/freebsd/freebsd-src".into()))
+        );
+        // a download site is no forge
+        assert_eq!(
+            origin("https://mupdf.com/downloads/archive/mupdf-1.28.5-source.tar.gz"),
+            None
+        );
+        assert_eq!(
+            origin("https://brltty.app/archive/brltty-6.9.1.tar.gz"),
+            None
+        );
+        assert_eq!(
+            origin("https://www.hepforge.org/archive/applgrid/applgrid-1.6.27.tgz"),
+            None
+        );
+        assert_eq!(origin("https://example.org/owner/repo/file.tar.gz"), None);
+        assert_eq!(
+            origin("https://hg.sr.ht/~scoopta/glpaper/archive/abc.tar.gz"),
+            None
+        );
     }
 
     #[test]
@@ -794,6 +961,33 @@ mod tests {
         assert_eq!(
             origin("https://registry.npmjs.org/@angular/cli/-/cli-17.0.0.tgz"),
             r("npm", "@angular/cli")
+        );
+        assert_eq!(
+            origin("mirror://hackage/hlint-3.10.tar.gz"),
+            r("Hackage", "hlint")
+        );
+        assert_eq!(
+            origin("mirror://hackage/jacinda-3.3.0.6.tar.gz"),
+            r("Hackage", "jacinda")
+        );
+        assert_eq!(
+            origin("https://hackage.haskell.org/package/niv-0.2.22/niv-0.2.22.tar.gz"),
+            r("Hackage", "niv")
+        );
+        assert_eq!(
+            origin(
+                "mirror://gnome/sources/gnome-control-center/50/gnome-control-center-50.4.tar.xz"
+            ),
+            r("GNOME", "gnome-control-center")
+        );
+        assert_eq!(origin("mirror://gnu/apl/apl-1.9.tar.gz"), r("GNU", "apl"));
+        assert_eq!(
+            origin("https://ftpmirror.gnu.org/glibc/glibc-2.44.tar.xz"),
+            r("GNU", "glibc")
+        );
+        assert_eq!(
+            origin("https://ftp.gnu.org/gnu/bash/bash-5.3.tar.gz"),
+            r("GNU", "bash")
         );
     }
 
@@ -975,21 +1169,76 @@ mod tests {
 
     #[test]
     fn each_registry_declares_its_latest_differently() {
+        let pick = |eco: &str, body: &str, name: &str, current: &str| {
+            newest_published(eco, &published_versions(eco, body), name, current, None)
+        };
         let index = "{\"vers\":\"1.0.0\"}\n{\"vers\":\"2.0.68\"}\n{\"vers\":\"2.0.99\",\"yanked\":true}\n{\"vers\":\"3.0.0-alpha.1\"}\n";
         assert_eq!(
-            newest_published("crates.io", index).as_deref(),
+            pick("crates.io", index, "syn", "1.0.0").as_deref(),
             Some("2.0.68")
         );
         assert_eq!(
-            newest_published("PyPI", "{\"info\":{\"version\":\"3.4.0\"}}").as_deref(),
+            pick("PyPI", "{\"info\":{\"version\":\"3.4.0\"}}", "x", "3.0").as_deref(),
             Some("3.4.0")
         );
         assert_eq!(
-            newest_published("npm", "{\"latest\":\"5.1.2\",\"next\":\"6.0.0-rc.1\"}").as_deref(),
+            pick(
+                "npm",
+                "{\"latest\":\"5.1.2\",\"next\":\"6.0.0-rc.1\"}",
+                "x",
+                "5.0.0"
+            )
+            .as_deref(),
             Some("5.1.2")
         );
         assert_eq!(crates_path("syn"), "3/s/syn");
         assert_eq!(crates_path("Serde"), "se/rd/serde");
+        // Hackage lists every version, newest first
+        let hackage =
+            "{\"deprecated-version\":[\"2.1.19\"],\"normal-version\":[\"3.10\",\"3.8\",\"3.6.1\"]}";
+        assert_eq!(
+            pick("Hackage", hackage, "hlint", "3.8").as_deref(),
+            Some("3.10")
+        );
+        // GNOME: `[format, {files}, {name: [versions]}]`; the prereleases
+        // and, below 40 on an even minor, the odd minors do not count
+        let gnome = "[4,{\"gnome-control-center\":{}},{\"gnome-control-center\":[\"50.4\",\"51.alpha\",\"51.beta\",\"51.rc.1\",\"51.0\",\"51.1\"]}]";
+        assert_eq!(
+            pick("GNOME", gnome, "gnome-control-center", "50.4").as_deref(),
+            Some("51.1")
+        );
+        let glib = "[4,{\"glib\":{}},{\"glib\":[\"2.86.0\",\"2.86.1\",\"2.89.4\",\"2.90.0\"]}]";
+        assert_eq!(
+            pick("GNOME", glib, "glib", "2.86.0").as_deref(),
+            Some("2.90.0")
+        );
+        let glib = "[4,{\"glib\":{}},{\"glib\":[\"2.86.0\",\"2.86.1\",\"2.87.0\"]}]";
+        assert_eq!(
+            pick("GNOME", glib, "glib", "2.86.0").as_deref(),
+            Some("2.86.1")
+        );
+        let dconf = "[4,{\"dconf\":{}},{\"dconf\":[\"0.48.0\",\"0.49.0\",\"0.49.1\"]}]";
+        assert_eq!(
+            pick("GNOME", dconf, "dconf", "0.49.0").as_deref(),
+            Some("0.49.1")
+        );
+        // GNU: an Apache listing of tarballs, signatures and release dirs
+        let gnu = "<a href=\"../\">..</a> <a href=\"autoconf-2.72.tar.xz\">x</a> <a href=\"autoconf-2.72.tar.xz.sig\">s</a> <a href=\"autoconf-2.73.tar.gz\">x</a> <a href=\"autoconf-latest.tar.gz\">l</a> <a href=\"gcc-15.1.0/\">d</a>";
+        assert_eq!(
+            published_versions("GNU", gnu),
+            [
+                "autoconf-2.72",
+                "autoconf-2.73",
+                "autoconf-latest",
+                "gcc-15.1.0"
+            ]
+        );
+        assert_eq!(
+            pick("GNU", gnu, "autoconf", "2.72").as_deref(),
+            Some("2.73")
+        );
+        assert_eq!(pick("GNU", gnu, "gcc", "14.2.0").as_deref(), None);
+        assert_eq!(pick("GNU", gnu, "gcc", "15.1.0").as_deref(), Some("15.1.0"));
     }
 
     #[test]

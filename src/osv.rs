@@ -53,8 +53,13 @@ pub fn query(attr: &str, pname: &str, version: &str, src_url: Option<&str>) -> O
     if version.is_empty() {
         return None;
     }
+    // the registries OSV knows under the same name; GNOME and GNU are none
     let (ecosystem, name) = match src_url.and_then(crate::upstream::origin) {
-        Some(Origin::Registry { ecosystem, name }) => (ecosystem, name),
+        Some(Origin::Registry { ecosystem, name })
+            if matches!(ecosystem, "crates.io" | "PyPI" | "npm" | "Hackage") =>
+        {
+            (ecosystem, name)
+        }
         _ => {
             let set = attr.split_once('.')?.0;
             (set.starts_with("python") && set.ends_with("Packages")).then_some(())?;
@@ -244,6 +249,14 @@ mod tests {
         )
         .unwrap();
         assert_eq!(q.ecosystem, "crates.io");
+        let q = query(
+            "hlint",
+            "hlint",
+            "3.10",
+            Some("mirror://hackage/hlint-3.10.tar.gz"),
+        )
+        .unwrap();
+        assert_eq!((q.ecosystem, q.name.as_str()), ("Hackage", "hlint"));
         assert!(
             query(
                 "hello",
