@@ -73,7 +73,7 @@ pub struct Advisory {
 
 impl Advisory {
     pub fn url(&self) -> String {
-        format!("https://tracker.security.nixos.org/issue/{}", self.code)
+        format!("https://tracker.security.nixos.org/issues/{}", self.code)
     }
 
     pub fn issue_url(&self) -> Option<String> {

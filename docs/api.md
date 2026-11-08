@@ -278,10 +278,10 @@ does not change `plans` and `events`.
       "moods": ["machines"],
       "labels": ["critical 9.8"],
       "at": null,
-      "link": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
+      "link": "https://tracker.security.nixos.org/issues/NIXPKGS-2026-1",
       "links": [
         {
-          "href": "https://tracker.security.nixos.org/issue/NIXPKGS-2026-1",
+          "href": "https://tracker.security.nixos.org/issues/NIXPKGS-2026-1",
           "text": "NIXPKGS-2026-1"
         }
       ],
