@@ -1147,7 +1147,7 @@ fn to_close_section(list: &[crate::catalog::ToClose]) -> Html {
             vec![
                 html!("<a href=\"/p/{0}\">{0}</a>", t.attr),
                 html!(
-                    "<a href=\"https://tracker.security.nixos.org/issue/{0}\">{0}</a> {1}",
+                    "<a href=\"https://tracker.security.nixos.org/issues/{0}\">{0}</a> {1}",
                     t.code,
                     t.title
                 ),
