@@ -107,7 +107,7 @@ the request again.
 
 | Parameter | Meaning                                                                                                         |
 | --------- | --------------------------------------------------------------------------------------------------------------- |
-| `queue`   | `foryou`, `unowned`, `firsttime`, `bumps`, `all` (the default) or `ready`                                       |
+| `queue`   | `foryou`, `unowned`, `firsttime`, `discourse`, `bumps`, `all` (the default) or `ready`                          |
 | `section` | with `queue=ready`: `ready` (the default), `yours`, `maintainer_approved`, `security`, `backports` or `waiting` |
 | `login`   | whose queue, for `foryou` and `bumps`; for `foryou` only, the default is the caller                             |
 | `limit`   | rows per page                                                                                                   |
@@ -124,6 +124,12 @@ The queues:
 - **`firsttime`**: first contributions with no review from another person,
   the oldest first. See [personal.md](personal.md#first-time-authors). The
   author does not need a review record.
+- **`discourse`**: pull requests posted in the Discourse thread [PRs ready
+  for review](https://discourse.nixos.org/t/prs-ready-for-review/3032), the
+  newest ask first, any author. See
+  [personal.md](personal.md#asked-on-discourse). Each row has `why`, who
+  asked and when. An error names `MAINTAINER_MODE_DISCOURSE_TOPIC` when the
+  server does not read the thread.
 - **`bumps`**: all open version bumps, the oldest first. With `login`, only what
   that login maintains; for your own login, also what you watch.
 - **`all`**: every pull request that needs review, the oldest first.
@@ -140,7 +146,7 @@ base:staging label:python sort:oldest hello`; a qualifier wins over the
 parameter of the same name, and `problems` names the words the queue does
 not know, each with `token`, `message` and, when a known word is close,
 `suggestion`. For your
-own login, `foryou`, `unowned`, `firsttime` and `all` leave out the pull
+own login, `foryou`, `unowned`, `firsttime`, `discourse` and `all` leave out the pull
 requests you hid on the site, and `hidden` gives their count. Each row of
 your own `foryou` has `why`: the reasons it is yours, such as
 `"you maintain: hello"`.

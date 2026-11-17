@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::ledger::Ledger;
 use crate::model::Pr;
@@ -41,6 +41,10 @@ pub struct Queues {
     /// First contributions that wait for their first review, oldest first.
     /// Any author, listed or not.
     pub firsttime: Vec<Entry>,
+    /// Pull requests posted in the Discourse thread "PRs ready for review",
+    /// the newest ask first. Any author, listed or not: the ask is the
+    /// signal. Open and not a draft, ready to merge or not.
+    pub discourse: Vec<Entry>,
 }
 
 /// The label the nixpkgs bot puts on the pull request of a new contributor.
@@ -136,8 +140,14 @@ pub(crate) fn credited(ledger: &Ledger) -> HashSet<(u64, &str)> {
 }
 
 /// `unowned`: no `meta.maintainers`, `meta.teams` or `ci/OWNERS` line covers a
-/// file the pull request changes, by public nixpkgs data.
-pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queues {
+/// file the pull request changes, by public nixpkgs data. `asked`: the
+/// pull requests posted on Discourse, each with its newest ask.
+pub fn build(
+    prs: &[Pr],
+    ledger: &Ledger,
+    unowned: impl Fn(&Pr) -> bool,
+    asked: &HashMap<u64, DateTime<Utc>>,
+) -> Queues {
     let credited = credited(ledger);
     let mut q = Queues::default();
     for pr in prs
@@ -158,6 +168,20 @@ pub fn build(prs: &[Pr], ledger: &Ledger, unowned: impl Fn(&Pr) -> bool) -> Queu
         q.firsttime.push(e);
     }
     q.firsttime.sort_by_key(|e| (e.created_at, e.number));
+    for pr in prs
+        .iter()
+        .filter(|p| p.is_open() && !p.is_draft && asked.contains_key(&p.number))
+    {
+        let mut e = entry(pr, ledger, &credited);
+        e.unowned = unowned(pr);
+        q.discourse.push(e);
+    }
+    q.discourse.sort_by_key(|e| {
+        (
+            std::cmp::Reverse(asked[&e.number]),
+            std::cmp::Reverse(e.number),
+        )
+    });
     // the merge queue rewards those who help; the review queue drains the
     // backlog from its oldest end, which is also where credit is full
     q.merge.sort_by(|a, b| {
@@ -221,10 +245,49 @@ mod tests {
             first(10, -300),
             pr(40, "x", -400),
         ];
-        let q = build(&prs, &Ledger::default(), |p| p.number == 10);
+        let q = build(
+            &prs,
+            &Ledger::default(),
+            |p| p.number == 10,
+            &HashMap::new(),
+        );
         let order: Vec<u64> = q.firsttime.iter().map(|e| e.number).collect();
         assert_eq!(order, [10, 20, 30]);
         assert!(q.firsttime[0].unowned && !q.firsttime[1].unowned);
         assert!(q.review.is_empty());
+        assert!(q.discourse.is_empty());
+    }
+
+    #[test]
+    fn the_newest_ask_on_discourse_comes_first_listed_or_not() {
+        let mut draft = pr(50, "x", -10);
+        draft.is_draft = true;
+        let mut closed = pr(60, "x", -10);
+        closed.state = "CLOSED".into();
+        let prs = vec![
+            pr(10, "x", -300),
+            pr(20, "y", -200),
+            pr(30, "z", -100),
+            draft,
+            closed,
+        ];
+        let at = |d: i64| Utc::now() - chrono::Duration::days(d);
+        let asked: HashMap<u64, DateTime<Utc>> = [
+            (10, at(1)),
+            (20, at(5)),
+            (50, at(0)),
+            (60, at(0)),
+            (99, at(0)),
+        ]
+        .into();
+        let q = build(&prs, &Ledger::default(), |p| p.number == 20, &asked);
+        let order: Vec<u64> = q.discourse.iter().map(|e| e.number).collect();
+        assert_eq!(
+            order,
+            [10, 20],
+            "no draft, no closed, nothing unknown; #30 was not asked"
+        );
+        assert!(!q.discourse[0].unowned && q.discourse[1].unowned);
+        assert!(q.review.is_empty(), "the authors are not listed");
     }
 }

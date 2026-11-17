@@ -341,6 +341,7 @@ maintain" filter. The "I watch" filter shows each item with its flags, and a
 | For you            | `/review?tab=foryou`    | pull requests that touch your machines, what you maintain, own, changed, tagged or watch |
 | No maintainer      | `/review?tab=unowned`   | pull requests with no maintainer, team or `ci/OWNERS` line on their files                |
 | First-time authors | `/review?tab=firsttime` | first contributions that no one has reviewed (see below)                                 |
+| Asked on Discourse | `/review?tab=discourse` | posted in the thread "PRs ready for review", the newest ask first (see below)            |
 | Version bumps      | `/review?tab=bumps`     | open version bumps (see [health.md](health.md))                                          |
 | All                | `/review?tab=all`       | every pull request in the queues that is not ready to merge                              |
 
@@ -350,25 +351,25 @@ Sign in, and `/review` shows **For you**. For you looks at the packages of your 
 
 The first row of the list tells in one sentence what the list holds. On No maintainer, "What to check" opens the checks that a first review can do.
 
-Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it is the number of the last pull request on the page. On For you and Ready to merge, it is the count of rows on the previous pages, because these lists are not in number order. `/merge`, `/committer` and `/bumps` redirect to their list.
+Each list shows 50 rows. "Next page" adds `?after=<number>`. On most lists, it is the number of the last pull request on the page. On For you, Asked on Discourse and Ready to merge, it is the count of rows on the previous pages, because these lists are not in number order. `/merge`, `/committer` and `/bumps` redirect to their list.
 
 **Why a pull request is here.** For you, No maintainer and All list only the pull requests of authors who are [in the queues](rules.md#2-whose-pull-requests-appear): in the last 60 days, they reviewed the pull requests of 3 or more other authors. The first row of these lists links to this rule. Each row of For you also says why it is yours, for example "on your machines: curl · you maintain: hello · you watch: nginx". The kinds are: on your machines, you maintain, you own in ci/OWNERS, you changed this year, your tag, and you watch. The page of a pull request shows the same in "Why it is here", with the number of other authors whose pull requests the author reviewed.
 
-**Hide.** Signed in, each row of For you, No maintainer, First-time authors and All has a **Hide** button (key `e`). A hidden pull request leaves these lists and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the list, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Version bumps do not hide anything.
+**Hide.** Signed in, each row of For you, No maintainer, First-time authors, Asked on Discourse and All has a **Hide** button (key `e`). A hidden pull request leaves these lists and their counts for you only. "N hidden by you" above the list opens `&hidden=1`, the hidden ones of the list, each with **Show again**. The page of a pull request has the same button. A hidden pull request is forgotten when it closes. Ready to merge and Version bumps do not hide anything.
 
 **Sort and filter.** The chips above the list are the Show choice, each with the size of its list once the pull requests you hid are out. A chip keeps the other filters. Under the chips are a search for words in the title, a **Label** field, and **More filters**, which opens the other choices. The Label field suggests the labels of the list with their counts. On a pull request page, each label links to the list of that label. `/packages` has the same bar. It is open when one of them is set. Push **Apply** to show the list. Each choice is a parameter of the address, so you can keep a link to a view:
 
-| Parameter   | Values                                           | What it does                                                            |
-| ----------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
-| `tab`       | `foryou`, `unowned`, `firsttime`, `bumps`, `all` | the Show choice                                                         |
-| `q`         | text                                             | titles with a word that starts with the text                            |
-| `sort`      | `oldest`, `newest`, `updated`                    | the order; without it, the order of the Show choice                     |
-| `checks`    | `pass`, `fail`, `pending`                        | the state of the checks of the head commit                              |
-| `reviews`   | `none`, `some`                                   | no review by another person yet, or one or more                         |
-| `conflicts` | `hide`                                           | drops the pull requests with a conflict                                 |
-| `base`      | a branch, such as `master` or `staging`          | one base branch; the bar lists the branches of the list                 |
-| `label`     | part of a label, such as `python`                | the labels that contain it, in any case; commas for several, all needed |
-| `filter`    | `mine`                                           | Version bumps only, signed in: the bumps of what you maintain or watch  |
+| Parameter   | Values                                                        | What it does                                                            |
+| ----------- | ------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| `tab`       | `foryou`, `unowned`, `firsttime`, `discourse`, `bumps`, `all` | the Show choice                                                         |
+| `q`         | text                                                          | titles with a word that starts with the text                            |
+| `sort`      | `oldest`, `newest`, `updated`                                 | the order; without it, the order of the Show choice                     |
+| `checks`    | `pass`, `fail`, `pending`                                     | the state of the checks of the head commit                              |
+| `reviews`   | `none`, `some`                                                | no review by another person yet, or one or more                         |
+| `conflicts` | `hide`                                                        | drops the pull requests with a conflict                                 |
+| `base`      | a branch, such as `master` or `staging`                       | one base branch; the bar lists the branches of the list                 |
+| `label`     | part of a label, such as `python`                             | the labels that contain it, in any case; commas for several, all needed |
+| `filter`    | `mine`                                                        | Version bumps only, signed in: the bumps of what you maintain or watch  |
 
 The search box takes the same choices as words, as GitHub's does: `checks:fail reviews:none base:staging label:python sort:oldest hello`. A word sets its choice, and wins over it; the words of the title stay in the box. A word the queue does not know is said under the bar, with what was likely meant, and the rest applies. On `/packages` and `/search`, the words are the traits of a package (`is:outdated`, `-has:pr`, `by:login`...), in the grammar of [nixkeeper](https://nixkeeper.com/), so one query works on both sites; `/search` lists them. The search box of the header offers the qualifiers as a card when it is empty or after a space, then the values of the one picked; a pick writes the word in the box.
 
@@ -390,6 +391,21 @@ A pull request is on the list when all of these are true:
 Maintainer Mode does not store the comments of other people. Thus a pull request with a comment but no review stays on the list. The author does not need a review record: this list does not use the queue rules. Everyone can see it, signed in or signed out.
 
 The API takes `queue=firsttime`. The CLI takes `maintainer-mode prs --queue firsttime`. Paging is the same as on the other lists.
+
+### Asked on Discourse
+
+The Discourse thread [PRs ready for review](https://discourse.nixos.org/t/prs-ready-for-review/3032) is where a person posts the link of a pull request to ask for a review. Show **Asked on Discourse** lists those pull requests, the newest ask first: their authors are trying to get them merged, so a review there is likely to move something. Each row says who asked and when, with a link to the post; "and 2 times before" counts the earlier asks.
+
+A pull request is on the list when all of these are true:
+
+- A post of the thread links to it (`github.com/NixOS/nixpkgs/pull/<number>`). Any post, from anyone: the ask is the signal. A post that was deleted takes its ask with it.
+- It is open, and it is not a draft. Ready to merge or not: the Ready to merge tab shows the same pull request too when it qualifies.
+
+The author does not need a review record: this list does not use the queue rules. Everyone can see it, signed in or signed out.
+
+The server reads the thread once an hour (see [data.md](data.md#how-the-data-is-pulled)), so a new post shows within an hour or so. A server whose operator turned this off (`MAINTAINER_MODE_DISCOURSE_TOPIC` empty) does not offer the choice.
+
+The API takes `queue=discourse`; each row has `why`, such as `"Asked on Discourse by alice 3d ago"`. The CLI takes `maintainer-mode prs --queue discourse`.
 
 ## Your progress
 

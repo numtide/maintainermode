@@ -127,6 +127,20 @@ its known limits.
   most 30 of the 60 a minute, so the pages keep the rest. A tail read is
   kept 30 days once the attempt is over, in the database, so a restart
   reads none again.
+- **Asked on Discourse.** Its own task reads the Discourse thread [PRs
+  ready for review](https://discourse.nixos.org/t/prs-ready-for-review/3032)
+  every hour: the topic JSON, which names every post id, then only the posts
+  the database lacks, 100 to a request with a second between requests. The
+  first run reads the whole thread, about 80 requests, once; after that a
+  pass is one request when nothing was posted. Discourse sends no `ETag`
+  for its JSON, so there is nothing to send back. Each post keeps its
+  author, its time and the pull requests it links to, in the database, so
+  a restart reads nothing again; a post that left the thread is dropped.
+  The topic is `MAINTAINER_MODE_DISCOURSE_TOPIC`; empty turns the task and
+  the Show choice off. When the thread closes, rate-limits us, refuses
+  anonymous JSON, or is gone, the journal and `/state?tab=status` say so,
+  with what to do; the last good data stays, and the next try waits 10
+  minutes, then 30, 1 hour, 2 and 6, or as long as `Retry-After` says.
 - **Advisory detail.** For each CVE that the tracker names:
   - The CVSS score and the CISA exploitation decision come from the
     [CVE Program's records](https://github.com/CVEProject/cvelistV5), one

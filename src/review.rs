@@ -18,10 +18,11 @@ use crate::web::{CONTRIBUTING, Shared, octicon, review_bucket, review_rows};
 pub(crate) const PAGE: usize = 50;
 
 /// The values of `tab`: the choices of Show, then Ready to merge.
-pub(crate) const TABS: [(&str, &str); 6] = [
+pub(crate) const TABS: [(&str, &str); 7] = [
     ("foryou", "For you"),
     ("unowned", "No maintainer"),
     ("firsttime", "First-time authors"),
+    ("discourse", "Asked on Discourse"),
     ("bumps", "Version bumps"),
     ("all", "All"),
     ("ready", "Ready to merge"),
@@ -98,11 +99,14 @@ struct ReviewQuery {
     q: Option<String>,
 }
 
-fn tab_id(asked: Option<&str>, signed_in: bool) -> &'static str {
+/// `discourse` is whether this server reads the Discourse thread: without
+/// it, the choice is not offered, and a link to it lands on the default.
+fn tab_id(asked: Option<&str>, signed_in: bool, discourse: bool) -> &'static str {
     match asked {
         Some("foryou") if signed_in => "foryou",
         Some("unowned") => "unowned",
         Some("firsttime") => "firsttime",
+        Some("discourse") if discourse => "discourse",
         Some("bumps") => "bumps",
         Some("all") => "all",
         Some("ready") => "ready",
@@ -123,10 +127,17 @@ const CHECKLIST: &str = "<details class=\"review-check\"><summary>What to check<
 <li>Does a CLI have <code>versionCheckHook</code>?</li></ul>\
 <p class=\"mt-1 mb-0\">Write each finding as a comment on the changed line.</p></details>";
 
-/// One sentence above the rows of a Show choice.
-fn intro(tab: &str) -> Html {
+/// One sentence above the rows of a Show choice. `topic` is the Discourse
+/// thread this server reads.
+fn intro(tab: &str, topic: Option<&crate::discourse::Topic>) -> Html {
     let queues = Html::from(IN_THE_QUEUES);
     match tab {
+        "discourse" => html!(
+            "Pull requests that someone posted in the Discourse thread <a href=\"{}\">{}</a>, the newest ask first: their authors are trying to get them merged. Any author, listed or not. The thread is read every {}.",
+            topic.map(crate::discourse::Topic::url).unwrap_or_default(),
+            crate::discourse::THREAD_NAME,
+            crate::discourse::EVERY_WORDS
+        ),
         "foryou" => html!(
             "Pull requests {queues} that touch your machines come first, then what you maintain, then what you watch. {} pull requests come last.",
             Html::from(TREEWIDE_LINK)
@@ -154,7 +165,7 @@ async fn review_page(
     let viewer = app.viewer(&headers);
     let v = viewer.as_deref();
     let s = app.snap();
-    let tab = tab_id(q.tab.as_deref(), v.is_some());
+    let tab = tab_id(q.tab.as_deref(), v.is_some(), app.discourse.on());
     let (sub, body) = if tab == "ready" {
         (
             html!(
@@ -277,7 +288,7 @@ fn needs_review(
                 None,
                 html!(
                     "<div class=\"Box-row f6 color-fg-muted\">{}</div>{body}",
-                    intro(tab)
+                    intro(tab, None)
                 )
             ),
             pager(&here, next.as_deref())
@@ -286,7 +297,8 @@ fn needs_review(
     let src = source(app, s, v, true, tab);
     let list = ReviewList::new(&src, &hidden, show_hidden, &opts);
     let entries = list.entries();
-    let (page, next) = if tab == "foryou" || opts.sorted() {
+    // these two lists have their own order: the page is an offset
+    let (page, next) = if tab == "foryou" || tab == "discourse" || opts.sorted() {
         paged_by_offset(&entries, q.after)
     } else {
         paged(&entries, q.after, |e| e.number)
@@ -295,10 +307,17 @@ fn needs_review(
         list.rows.iter().map(|r| (r.entry.number, r.why)).collect();
     let rows = if !page.is_empty() {
         review_rows(page, tab == "firsttime", |e| {
-            let why = why_of
-                .get(&e.number)
-                .map(|w| why_line(w))
-                .unwrap_or_default();
+            let why = if tab == "discourse" {
+                crate::discourse::why_html(
+                    app.discourse.topic(),
+                    s.discourse.get(&e.number).map(Vec::as_slice).unwrap_or(&[]),
+                )
+            } else {
+                why_of
+                    .get(&e.number)
+                    .map(|w| why_line(w))
+                    .unwrap_or_default()
+            };
             let end = if v.is_some() {
                 hide_button(e.number, show_hidden, &here, true)
             } else {
@@ -328,7 +347,7 @@ fn needs_review(
             "Pull requests that you hid. Push <strong>Show again</strong> to put one back in your lists.".into(),
         )
     } else {
-        (label, intro(tab))
+        (label, intro(tab, app.discourse.topic()))
     };
     html!(
         "{}{problems}{}{}",
@@ -615,6 +634,7 @@ fn choices(
 ) -> Vec<Tab> {
     TABS.iter()
         .filter(|(id, _)| *id != "ready" && (v.is_some() || *id != "foryou"))
+        .filter(|(id, _)| *id != "discourse" || app.discourse.on())
         .map(|&(id, label)| {
             let n = if id == "bumps" {
                 let index = app.index.read().unwrap();
@@ -859,6 +879,15 @@ pub(crate) fn source<'a>(
     match login {
         Some(l) if own && crate::web::bucket_name(queue) == Some("foryou") => {
             crate::mine::for_you_why(app, s, l)
+        }
+        _ if crate::web::bucket_name(queue) == Some("discourse") => {
+            review_bucket(s, login, None, queue)
+                .into_iter()
+                .map(|e| {
+                    let asks = s.discourse.get(&e.number).map(Vec::as_slice).unwrap_or(&[]);
+                    (e, crate::discourse::why(asks))
+                })
+                .collect()
         }
         _ => review_bucket(s, login, None, queue)
             .into_iter()
@@ -1238,11 +1267,17 @@ mod tests {
 
     #[test]
     fn a_visitor_never_gets_the_tab_for_you() {
-        assert_eq!(tab_id(Some("foryou"), false), "unowned");
-        assert_eq!(tab_id(None, true), "foryou");
-        assert_eq!(tab_id(Some("ready"), false), "ready");
-        assert_eq!(tab_id(Some("firsttime"), false), "firsttime");
-        assert_eq!(tab_id(Some("nonsense"), false), "unowned");
+        assert_eq!(tab_id(Some("foryou"), false, true), "unowned");
+        assert_eq!(tab_id(None, true, true), "foryou");
+        assert_eq!(tab_id(Some("ready"), false, true), "ready");
+        assert_eq!(tab_id(Some("firsttime"), false, true), "firsttime");
+        assert_eq!(tab_id(Some("nonsense"), false, true), "unowned");
+        assert_eq!(tab_id(Some("discourse"), false, true), "discourse");
+        assert_eq!(
+            tab_id(Some("discourse"), true, false),
+            "foryou",
+            "a server that does not read the thread has no such choice"
+        );
     }
 
     #[test]

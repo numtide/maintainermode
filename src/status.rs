@@ -131,6 +131,7 @@ pub(crate) fn state(app: &App) -> Value {
         "update_bot": app.updatebot.stats(),
         "hydra_builds": app.hydra.builds.stats(),
         "zhf": app.hydra.zhf.stats(),
+        "discourse": app.discourse.stats(),
         "rescans": rescans(app),
         "tokens": {
             "server": app.bot_token.is_some() || app.github_app.is_some(),
@@ -219,6 +220,56 @@ fn archive_row(a: &Value) -> Html {
         parts.push(html!(
             "<span class=\"color-fg-attention\">last error: {e}</span>"
         ));
+    }
+    crate::html::join(parts, " · ")
+}
+
+/// The Discourse thread: what the task read, and when it fails, what
+/// happened and what to do.
+fn discourse_row(d: &Value) -> Html {
+    if d["on"].as_bool() != Some(true) {
+        return html!(
+            "off on this server: {} is empty, and /review has no Asked on Discourse",
+            crate::discourse::VAR
+        );
+    }
+    let mut parts = vec![html!(
+        "<a href=\"{}\">{}</a>, read every {}: {} of {} posts in the store, {} pull requests asked for review · checked {} · {} requests in {} passes, {} failed",
+        d["topic"].as_str().unwrap_or(""),
+        d["title"].as_str().unwrap_or(crate::discourse::THREAD_NAME),
+        minutes(d["every_seconds"].as_i64().unwrap_or(3600)),
+        d["posts_read"],
+        d["posts"],
+        d["asked"],
+        when(&d["checked_at"]),
+        d["requests"],
+        d["passes"],
+        d["failed_passes"]
+    )];
+    if d["closed"].as_bool() == Some(true) {
+        parts.push(html!(
+            "<span class=\"color-fg-attention\">the thread is closed: new asks go to another one. Set {} to its URL</span>",
+            crate::discourse::VAR
+        ));
+    }
+    if let Some(e) = d["last_error"].as_str() {
+        parts.push(html!(
+            "<span class=\"color-fg-attention\">last error: {e} ({} in a row; next try {})</span>",
+            d["failures_in_a_row"],
+            match d["next_at"]
+                .as_str()
+                .and_then(|t| DateTime::parse_from_rfc3339(t).ok())
+            {
+                Some(t) => format!(
+                    "in {}",
+                    minutes((t.with_timezone(&Utc) - Utc::now()).num_seconds().max(0))
+                ),
+                None => "soon".to_string(),
+            }
+        ));
+        if let Some(a) = d["advice"].as_str() {
+            parts.push(html!("<span class=\"color-fg-attention\">{a}</span>"));
+        }
     }
     crate::html::join(parts, " · ")
 }
@@ -578,6 +629,7 @@ pub(crate) fn body(app: &App) -> Html {
                 .unwrap_or_default()
         ),
     ));
+    out.push(&kv("Asked on Discourse", discourse_row(&v["discourse"])));
     let r = &v["rescans"];
     out.push(&kv(
         "Flake rescans",

@@ -37,6 +37,7 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_RESCAN_TIMEOUT`       | wall-clock limit of one scan in seconds, default 900        |
 | `MAINTAINER_MODE_RESCAN_MEMORY_MB`     | address-space limit of each sandboxed process, default 3072 |
 | `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
+| `MAINTAINER_MODE_DISCOURSE_TOPIC`      | the thread of Asked on Discourse; empty turns it off        |
 
 CI is the flake's `checks`: `nix flake check`.
 

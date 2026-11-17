@@ -15,6 +15,7 @@ mod channels;
 mod chart;
 mod cli_login;
 mod committer;
+mod discourse;
 mod dossier;
 #[cfg(test)]
 mod e2e;
@@ -248,6 +249,8 @@ enum Command {
             value_delimiter = ','
         )]
         delegates: Vec<String>,
+        #[command(flatten)]
+        discourse: Box<discourse::DiscourseArgs>,
     },
     /// The full copy of issues and pull requests
     Archive {
@@ -284,7 +287,7 @@ enum Command {
         db: PathBuf,
     },
     /// Open pull requests in one queue: foryou (needs --login or MAINTAINER_MODE_API_TOKEN), unowned,
-    /// firsttime, bumps, all, or ready
+    /// firsttime, discourse, bumps, all, or ready
     Prs {
         #[arg(long, default_value = "all", value_parser = api::QUEUES)]
         queue: String,
@@ -975,8 +978,10 @@ async fn run(cli: Cli) -> Result<i32> {
             git_dir,
             rescan,
             delegates,
+            discourse,
         } => {
             telemetry::started();
+            let discourse_topic = discourse.topic()?;
             // before the seconds of loading: the kernel queues the requests
             // of that time, and a restart refuses none
             let listener = match passed_listener()? {
@@ -1058,6 +1063,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 secure_cookies: public_url.starts_with("https://"),
                 hydra: Default::default(),
                 updatebot: Default::default(),
+                discourse: discourse::Discourse::new(discourse_topic),
                 public_url: public_url.clone(),
                 data_dir: data_dir(&db),
                 git_dir: (archive_git && !archive_repos.is_empty())
@@ -1091,6 +1097,7 @@ async fn run(cli: Cli) -> Result<i32> {
             tokio::spawn(updatebot::run(app.clone()));
             tokio::spawn(builds::run(app.clone()));
             tokio::spawn(zhf::run(app.clone()));
+            tokio::spawn(discourse::run(app.clone()));
             match bot_token {
                 Some(t) => {
                     tokio::spawn(events::poll(app.events.clone(), t.clone()));
@@ -1155,6 +1162,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 secure_cookies: false,
                 hydra: Default::default(),
                 updatebot: Default::default(),
+                discourse: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
                 git_dir: None,
@@ -1210,6 +1218,7 @@ async fn run(cli: Cli) -> Result<i32> {
                 secure_cookies: false,
                 hydra: Default::default(),
                 updatebot: Default::default(),
+                discourse: Default::default(),
                 public_url: String::new(),
                 data_dir: data_dir(&db),
                 git_dir: None,
