@@ -31,7 +31,8 @@ Information about all of nixpkgs, for everyone, with no login:
 - **Search** across packages, modules and directories. An exact name opens its page, and `@login` opens the page of a person. Qualifiers list the packages with a trait, in the words of GitHub and [nixkeeper](https://nixkeeper.com/): `is:outdated -has:pr in:python3Packages by:zimbatm`.
 - **Statistics:** the state of nixpkgs month by month (pull requests, reviews,
   merge times), and of its packages (outdated, vulnerable, unmaintained).
-- **Queues:** pull requests that need review, and pull requests ready to merge.
+- **Queues:** pull requests that need review, the ones asked for in the
+  Discourse thread "PRs ready for review", and pull requests ready to merge.
 - **Zero Hydra Failures:** every failing job of the next release on Hydra,
   the ones with no maintainer, one picked at random for you, and how far
   the campaign is.

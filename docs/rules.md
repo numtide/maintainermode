@@ -98,6 +98,13 @@ After 60 days, a review does not count for a place in the queues.
 Your own page `/me/progress` tells you whether your pull requests are in the
 queues. Each pull request page tells why it is or is not in a queue.
 
+Two lists on `/review` do not use this rule, because their signal is
+elsewhere: **First-time authors** (a first contribution has no record yet)
+and **Asked on Discourse** (a person asked for a review in the thread [PRs
+ready for review](https://discourse.nixos.org/t/prs-ready-for-review/3032);
+the ask is the signal). Both take any author. See
+[personal.md](personal.md#first-time-authors).
+
 ### 3. Ready to merge
 
 A pull request goes in the **Ready to merge** queue when all of these are

@@ -279,6 +279,13 @@ impl Store {
                url TEXT PRIMARY KEY,
                read_at TEXT NOT NULL,
                outcome TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS discourse_post (
+               id INTEGER PRIMARY KEY,
+               post_number INTEGER NOT NULL,
+               username TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               prs TEXT NOT NULL
              );",
         )?;
         migrate_sets(&mut conn)?;
@@ -1837,6 +1844,76 @@ impl Store {
             "DELETE FROM bot_tail WHERE read_at < ?1",
             [before.to_rfc3339()],
         )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The posts of the Discourse thread the store has read, in post order.
+    pub fn discourse_posts(&self) -> Result<Vec<crate::discourse::Post>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, post_number, username, created_at, prs FROM discourse_post ORDER BY post_number",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (id, post_number, username, created_at, prs) = row?;
+            let created_at = DateTime::parse_from_rfc3339(&created_at)
+                .with_context(|| format!("discourse post {id}: created_at {created_at:?}"))?;
+            let prs: Vec<u64> = serde_json::from_str(&prs)
+                .with_context(|| format!("discourse post {id}: prs {prs:?}"))?;
+            out.push(crate::discourse::Post {
+                id: id as u64,
+                post_number: post_number as u64,
+                username,
+                created_at: created_at.with_timezone(&Utc),
+                prs,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn discourse_post_ids(&self) -> Result<Vec<u64>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare("SELECT id FROM discourse_post")?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        rows.map(|r| Ok(r? as u64)).collect()
+    }
+
+    pub fn put_discourse_posts(&self, posts: &[crate::discourse::Post]) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for p in posts {
+            tx.execute(
+                "INSERT INTO discourse_post (id, post_number, username, created_at, prs) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(id) DO UPDATE SET post_number = ?2, username = ?3, created_at = ?4, prs = ?5",
+                params![
+                    p.id as i64,
+                    p.post_number as i64,
+                    p.username,
+                    p.created_at.to_rfc3339(),
+                    serde_json::to_string(&p.prs)?
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn delete_discourse_posts(&self, ids: &[u64]) -> Result<()> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        for id in ids {
+            tx.execute("DELETE FROM discourse_post WHERE id = ?1", [*id as i64])?;
+        }
         tx.commit()?;
         Ok(())
     }

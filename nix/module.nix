@@ -153,6 +153,17 @@ in
       description = "nixpkgs channels indexed next to master. `stable` is the newest stable channel.";
     };
 
+    discourseTopic = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "https://discourse.nixos.org/t/prs-ready-for-review/3032";
+      description = ''
+        The Discourse thread whose pull requests make Asked on Discourse on /review, read every hour.
+        `null` keeps the app's default (the nixpkgs "PRs ready for review" thread); an empty string turns it off.
+        See docs/data.md.
+      '';
+    };
+
     archive = {
       repositories = lib.mkOption {
         type = lib.types.listOf lib.types.str;
@@ -288,6 +299,9 @@ in
       }
       // lib.optionalAttrs (cfg.metrics.listen != null) {
         MAINTAINER_MODE_METRICS_LISTEN = cfg.metrics.listen;
+      }
+      // lib.optionalAttrs (cfg.discourseTopic != null) {
+        MAINTAINER_MODE_DISCOURSE_TOPIC = cfg.discourseTopic;
       }
       // lib.optionalAttrs (cfg.githubClientId != null) {
         GITHUB_CLIENT_ID = cfg.githubClientId;

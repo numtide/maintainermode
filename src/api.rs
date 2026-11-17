@@ -18,7 +18,15 @@ use crate::web::{App, Shared};
 
 pub(crate) const LIMIT: usize = 50;
 pub(crate) const MAX_LIMIT: usize = 200;
-pub(crate) const QUEUES: [&str; 6] = ["foryou", "unowned", "firsttime", "bumps", "all", "ready"];
+pub(crate) const QUEUES: [&str; 7] = [
+    "foryou",
+    "unowned",
+    "firsttime",
+    "discourse",
+    "bumps",
+    "all",
+    "ready",
+];
 pub(crate) const SECTIONS: [&str; 6] = [
     "ready",
     "yours",
@@ -95,7 +103,7 @@ pub(crate) struct Endpoint {
 pub(crate) const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         path: "/api/v1/prs",
-        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
+        about: "Open pull requests in one queue, paged. foryou: what login maintains, owns, changed or tagged; for your own login, also the packages of your machines and what you watch, in the order of the page. unowned: no maintainer. firsttime: first contributions with no review yet, the oldest first. discourse: pull requests posted in the Discourse thread PRs ready for review, the newest ask first, any author; each row has why. bumps: version bumps; with login, only what login maintains. all: every pull request that needs review. ready: ready to merge; section picks a list of the committer view. Every queue but ready takes sort, checks, reviews, conflicts, base and q, as the filter bar of the page. For your own login, foryou, unowned, firsttime and all leave out what you hid, and foryou rows have why. Each row has treewide: null, or the packages and modules that a treewide pull request touches; foryou puts those rows last. Each row has too_large: null, or the changed files of a pull request too large to link to packages and people; its files are empty.",
         params: &[
             opt("queue", Type::OneOf(&QUEUES), "the queue: all by default"),
             opt(
@@ -492,6 +500,10 @@ pub(crate) const PAGES: &[(&str, Cover<&[&str]>)] = &[
     (
         "/review?tab=firsttime",
         By(&["/api/v1/prs?queue=firsttime"]),
+    ),
+    (
+        "/review?tab=discourse",
+        By(&["/api/v1/prs?queue=discourse"]),
     ),
     ("/review?tab=bumps", By(&["/api/v1/prs?queue=bumps"])),
     (
@@ -1208,6 +1220,12 @@ fn prs_value(app: &App, q: &Args, caller: Option<&str>) -> Result<Prs, String> {
         _ => {
             if queue == "foryou" && login.is_none() {
                 return Err("queue=foryou needs login, a session or an API token".into());
+            }
+            if queue == "discourse" && !app.discourse.on() {
+                return Err(format!(
+                    "this server does not read the Discourse thread: {} is empty",
+                    crate::discourse::VAR
+                ));
             }
             private = own;
             let src = crate::review::source(app, &s, login, own, queue);

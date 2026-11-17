@@ -67,6 +67,8 @@ pub struct Snapshot {
     pub series: HashMap<String, String>,
     pub committers: crate::committer::Committers,
     pub board: crate::committer::Board,
+    /// pull request → its asks on the Discourse thread, the newest first.
+    pub discourse: crate::discourse::Mentions,
 }
 
 pub struct App {
@@ -83,6 +85,8 @@ pub struct App {
     pub hydra: crate::health::Hydra,
     /// The update bot: its queue, its attempts, and their logs.
     pub updatebot: crate::updatebot::Bot,
+    /// The Discourse thread "PRs ready for review", and its task.
+    pub discourse: crate::discourse::Discourse,
     /// Where the nixpkgs source is unpacked for the evaluator.
     pub data_dir: std::path::PathBuf,
     /// The git copy of the archived repositories, when this server keeps one.
@@ -135,7 +139,19 @@ impl App {
             .iter()
             .map(|m| (m.login.clone(), Area::of(m, &index)))
             .collect();
-        let queues = queue::build(&prs, &ledger, |p| own.orphan(p));
+        let discourse = match self.store.discourse_posts() {
+            Ok(posts) => crate::discourse::mentions(&posts),
+            Err(e) => {
+                tracing::warn!("discourse: the posts in the store: {e:#}; the queue has none");
+                Default::default()
+            }
+        };
+        let queues = queue::build(
+            &prs,
+            &ledger,
+            |p| own.orphan(p),
+            &crate::discourse::latest(&discourse),
+        );
         let pr_at = prs.iter().enumerate().map(|(i, p)| (p.number, i)).collect();
         let reviewed_by = dossier::by_reviewer(&prs);
         let issue_at = issues
@@ -174,6 +190,7 @@ impl App {
             series,
             committers,
             board,
+            discourse,
         });
         drop(index);
         self.reassess();
@@ -511,6 +528,7 @@ pub(crate) fn bucket_name(b: &str) -> Option<&'static str> {
         "foryou" | "mine" => Some("foryou"),
         "unowned" => Some("unowned"),
         "firsttime" => Some("firsttime"),
+        "discourse" => Some("discourse"),
         "all" => Some("all"),
         _ => None,
     }
@@ -631,10 +649,10 @@ pub(crate) fn review_bucket<'a>(
 ) -> Vec<&'a Entry> {
     let interest = Interest::of(s, viewer, own);
     let name = bucket_name(bucket);
-    let list = if name == Some("firsttime") {
-        &s.queues.firsttime
-    } else {
-        &s.queues.review
+    let list = match name {
+        Some("firsttime") => &s.queues.firsttime,
+        Some("discourse") => &s.queues.discourse,
+        _ => &s.queues.review,
     };
     list.iter()
         .filter(|e| Some(e.author.as_str()) != viewer)
