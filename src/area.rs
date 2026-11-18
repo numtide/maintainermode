@@ -302,6 +302,8 @@ pub async fn download(http: &reqwest::Client, rev: &str, dir: &Path) -> Result<(
 pub async fn fetch(data: &Path, sets: &[String]) -> Result<Index> {
     let http = crate::github::http();
     let rev = master_rev(&http).await?;
+    // the evaluator takes the tree as a Nix path, which must be absolute
+    let data = &std::path::absolute(data)?;
     let dir = data.join(format!("nixpkgs-{rev}"));
     download(&http, &rev, &dir).await?;
     for old in std::fs::read_dir(data)?.flatten() {

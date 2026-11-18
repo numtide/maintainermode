@@ -262,6 +262,10 @@ curl https://<host>/api/v1/archive/NixOS/nixpkgs/1
 maintainer-mode archive export --repo NixOS/nixpkgs --out ./export
 ```
 
+`maintainer-mode archive pull` fills a small archive from this endpoint of
+another server, with no GitHub token (see
+[operations.md](operations.md#a-small-copy-for-a-preview-or-for-work-on-the-code)).
+
 The export writes one `ndjson.zst` file per 10 000 numbers. To archive more
 repositories, add them to `services.maintainer-mode.archive.repositories`.
 An empty list turns the archive off.

@@ -37,8 +37,42 @@ GITHUB_TOKEN=… ./result/bin/maintainer-mode sync --db club.sqlite --index
 | `MAINTAINER_MODE_RESCAN_TIMEOUT`       | wall-clock limit of one scan in seconds, default 900        |
 | `MAINTAINER_MODE_RESCAN_MEMORY_MB`     | address-space limit of each sandboxed process, default 3072 |
 | `MAINTAINER_MODE_RESCAN_PER_DAY_TOTAL` | scans in 24 hours for all people together, default 100      |
+| `MAINTAINER_MODE_FROZEN`               | `true` starts no background task: see below                 |
 
 CI is the flake's `checks`: `nix flake check`.
+
+## A small copy, for a preview or for work on the code
+
+A server with all of nixpkgs needs a GitHub token, many hours, and some
+gigabytes of memory. A small copy needs none of them. It reads its items
+from the public API of a running server:
+
+```sh
+maintainer-mode archive pull --db /data/small.sqlite
+maintainer-mode sweep --db /data/small.sqlite
+maintainer-mode serve --db /data/small.sqlite --frozen
+```
+
+- `archive pull` reads the pull requests of the review queue of `--server`
+  (default `https://maintainermode.org`) and its newest items, 4000 by
+  default (`--newest`). It skips the numbers that the archive holds, so a
+  second run reads only what is new. It asks 5 items a second
+  (`--per-second`); nginx of a public server allows 10. Then it writes the
+  rows of the main database. It does not read the open issues, or the pull
+  requests that are not in the queue, such as drafts.
+- `sweep` evaluates nixpkgs and stores the package index.
+- `serve --frozen` starts no background task. The server reads nothing from
+  GitHub or another site by itself, deletes no expired data, and the data
+  stays as it is. A page that asks another site when someone opens it, for
+  example for the builds of Hydra, still does so. With about 6000 items and
+  the index, the server uses about 0.2 GB of memory.
+
+The three commands give no health data (versions, CVEs), no channels and no
+build failures. Without `--frozen`, the server fills them from their
+sources, as a full server does, and then uses about 0.5 GB. To keep them in
+a frozen copy, run the server once without `--frozen`, stop it, and start
+it again with `--frozen`. Without a token, the items stay as the pull left
+them.
 
 ## Restarts and the listener
 

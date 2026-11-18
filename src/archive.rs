@@ -475,6 +475,18 @@ impl Archive {
         Ok(Some(Item { kind, json }))
     }
 
+    /// Every number the archive holds, also the ones GitHub has no item for.
+    fn numbers(&self) -> Result<std::collections::HashSet<u64>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT number FROM item")?;
+        let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+        let mut out = std::collections::HashSet::new();
+        for n in rows {
+            out.insert(n? as u64);
+        }
+        Ok(out)
+    }
+
     /// Up to `limit` stored items with a number above `after`, in order.
     fn items_after(&self, after: u64, limit: usize) -> Result<Vec<(u64, Value)>> {
         let conn = self.conn.lock().unwrap();
@@ -1235,6 +1247,125 @@ pub(crate) fn backfill(store: &Store, a: &Archive, rows: crate::project::Rows) -
     Ok(written)
 }
 
+/// What [`pull`] did.
+#[derive(Debug, Default, PartialEq)]
+pub struct Pulled {
+    /// Numbers the pull wanted: the review queue and the newest ones.
+    pub wanted: usize,
+    /// Items read from the server and stored.
+    pub fetched: usize,
+    /// Numbers the server has no item for.
+    pub missing: usize,
+    /// Rows written into the main database.
+    pub rows: usize,
+}
+
+/// Items of the review queue read per request of [`pull`].
+const PULL_PAGE: usize = 200;
+const PULL_TRIES: u32 = 5;
+
+/// One GET of [`pull`]: `None` for 404. A 429 or a 5xx is asked again,
+/// later each time.
+async fn pull_get(http: &reqwest::Client, url: &str) -> Result<Option<Value>> {
+    for attempt in 1..=PULL_TRIES {
+        let resp = http.get(url).send().await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                return Ok(Some(r.json().await.with_context(|| format!("read {url}"))?));
+            }
+            Ok(r) if r.status() == StatusCode::NOT_FOUND => return Ok(None),
+            Ok(r)
+                if r.status() == StatusCode::TOO_MANY_REQUESTS || r.status().is_server_error() =>
+            {
+                if attempt == PULL_TRIES {
+                    bail!("{url}: {}", r.status());
+                }
+            }
+            Ok(r) => bail!("{url}: {}", r.status()),
+            Err(e) if attempt == PULL_TRIES => return Err(e).with_context(|| format!("GET {url}")),
+            Err(_) => {}
+        }
+        tokio::time::sleep(StdDuration::from_secs(3 * attempt as u64)).await;
+    }
+    unreachable!("the last try returns")
+}
+
+/// Fills the archive from the public API of another Maintainer Mode
+/// server, with no GitHub token: a small copy for a preview or for work on
+/// the code. It reads the pull requests of the review queue (NixOS/nixpkgs
+/// only) and the `newest` numbers below the newest one of the server, skips
+/// the numbers the archive holds, and asks at most `per_second` items a
+/// second. Then it writes the rows of the main database, so a server that
+/// starts on the result has them at once.
+pub async fn pull(
+    store: &Store,
+    a: &Archive,
+    server: &str,
+    newest: u64,
+    per_second: u32,
+) -> Result<Pulled> {
+    let http = github::http();
+    let base = server.trim_end_matches('/');
+    let mut want = std::collections::BTreeSet::new();
+    if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
+        let mut cursor = Some("0".to_string());
+        while let Some(c) = cursor {
+            let url = format!("{base}/api/v1/prs?queue=all&limit={PULL_PAGE}&cursor={c}");
+            let page = pull_get(&http, &url)
+                .await?
+                .with_context(|| format!("{url}: not found"))?;
+            for item in page["items"].as_array().into_iter().flatten() {
+                want.extend(item["number"].as_u64());
+            }
+            cursor = page["next_cursor"].as_str().map(str::to_string);
+        }
+    }
+    let sync = pull_get(&http, &format!("{base}/api/v1/sync"))
+        .await?
+        .with_context(|| format!("{base}/api/v1/sync: not found"))?;
+    let top = sync["archive"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|r| {
+            r["repo"]
+                .as_str()
+                .is_some_and(|r| r.eq_ignore_ascii_case(&a.repo))
+        })
+        .and_then(|r| r["top"].as_u64())
+        .with_context(|| format!("{base} has no archive of {}", a.repo))?;
+    want.extend(top.saturating_sub(newest) + 1..=top);
+    let have = a.numbers()?;
+    let mut out = Pulled {
+        wanted: want.len(),
+        ..Pulled::default()
+    };
+    let mut tick = tokio::time::interval(StdDuration::from_secs(1) / per_second.max(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let todo: Vec<u64> = want
+        .into_iter()
+        .rev()
+        .filter(|n| !have.contains(n))
+        .collect();
+    for (i, n) in todo.iter().enumerate() {
+        tick.tick().await;
+        let url = format!("{base}/api/v1/archive/{}/{n}", a.repo);
+        match pull_get(&http, &url).await? {
+            // `put` stores anything else as a number with no item
+            Some(v) if matches!(v["__typename"].as_str(), Some("Issue" | "PullRequest")) => {
+                a.put(*n, &v, Utc::now())?;
+                out.fetched += 1;
+            }
+            _ => out.missing += 1,
+        }
+        if (i + 1) % 500 == 0 {
+            eprintln!("{} of {} read", i + 1, todo.len());
+        }
+    }
+    out.rows = backfill(store, a, crate::project::Rows::at(Utc::now()))?;
+    Ok(out)
+}
+
 /// Items stored before the walk read small first pages again can miss a
 /// timeline item (see `restart_small_page`). The open ones matter for the
 /// queues, so each is read once more. Delete with the key once every
@@ -1418,6 +1549,32 @@ async fn run_all(app: &Arc<App>, client: &mut github::Client, full: bool) -> Don
     total
 }
 
+/// Writes the rows of the main database from the archive of NixOS/nixpkgs
+/// when they are not from it yet (see [`backfill`]). It reads no network,
+/// so a frozen server runs it too.
+pub async fn rows_once(app: &Arc<App>) {
+    let Some(a) = app
+        .archive
+        .iter()
+        .find(|a| a.repo.eq_ignore_ascii_case(crate::events::REPO))
+    else {
+        return;
+    };
+    if projected(&app.store).unwrap_or(false) {
+        return;
+    }
+    let (app2, a2) = (app.clone(), a.clone());
+    let rows = crate::project::Rows::at(Utc::now());
+    match tokio::task::spawn_blocking(move || backfill(&app2.store, &a2, rows)).await {
+        Ok(Ok(n)) => {
+            tracing::info!("archive {}: {n} rows written from the archive", a.repo)
+        }
+        Ok(Err(e)) => tracing::warn!("archive {}: rows from the archive: {e:#}", a.repo),
+        Err(e) => tracing::warn!("archive {}: rows from the archive: {e}", a.repo),
+    }
+    recompute(app).await;
+}
+
 /// The background walk: the one fetcher of issues and pull requests. A full
 /// pass runs every `PASS_EVERY`; a new event or a due mark runs a due pass
 /// in between. Each stored nixpkgs item writes its rows of the main
@@ -1429,23 +1586,12 @@ async fn run_all(app: &Arc<App>, client: &mut github::Client, full: bool) -> Don
 /// and the due items only, each at most a tenth of its budget per rate
 /// limit window (`github::Client::lent`).
 pub async fn walk(app: Arc<App>) {
+    rows_once(&app).await;
     if let Some(a) = app
         .archive
         .iter()
         .find(|a| a.repo.eq_ignore_ascii_case(crate::events::REPO))
     {
-        if !projected(&app.store).unwrap_or(false) {
-            let (app2, a2) = (app.clone(), a.clone());
-            let rows = crate::project::Rows::at(Utc::now());
-            match tokio::task::spawn_blocking(move || backfill(&app2.store, &a2, rows)).await {
-                Ok(Ok(n)) => {
-                    tracing::info!("archive {}: {n} rows written from the archive", a.repo)
-                }
-                Ok(Err(e)) => tracing::warn!("archive {}: rows from the archive: {e:#}", a.repo),
-                Err(e) => tracing::warn!("archive {}: rows from the archive: {e}", a.repo),
-            }
-            recompute(&app).await;
-        }
         match refetch_open_once(&app.store, a, Utc::now()) {
             Ok(0) => {}
             Ok(n) => tracing::info!("archive {}: {n} open items to read again", a.repo),
@@ -2159,5 +2305,59 @@ mod tests {
         {
             std::fs::write(dir.join(format!("more{i}.graphql")), m.query()).unwrap();
         }
+    }
+    /// A server with two pull requests in its review queue, on two pages,
+    /// and a newest number of 453372; it has no item 453371.
+    async fn serve_api(f: Value) -> String {
+        use axum::extract::{Path as P, Query};
+        type Q = Query<std::collections::HashMap<String, String>>;
+        async fn prs(Query(q): Q) -> Json<Value> {
+            Json(match q["cursor"].as_str() {
+                "0" => json!({ "items": [{ "number": 300123 }], "next_cursor": "1" }),
+                _ => json!({ "items": [{ "number": 350000 }], "next_cursor": null }),
+            })
+        }
+        async fn sync() -> Json<Value> {
+            Json(json!({ "archive": [{ "repo": "NixOS/nixpkgs", "top": 453372 }] }))
+        }
+        async fn item(
+            State(f): State<Arc<Value>>,
+            P(n): P<u64>,
+        ) -> Result<Json<Value>, StatusCode> {
+            match &f["archive"][n.to_string()] {
+                Value::Null => Err(StatusCode::NOT_FOUND),
+                v => Ok(Json(v.clone())),
+            }
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route("/api/v1/prs", axum::routing::get(prs))
+            .route("/api/v1/sync", axum::routing::get(sync))
+            .route("/api/v1/archive/NixOS/nixpkgs/:n", axum::routing::get(item))
+            .with_state(Arc::new(f));
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn pull_reads_the_queue_and_the_newest_and_skips_what_it_has() {
+        let dir = tmp("pull");
+        let a = Archive::open(&dir, "NixOS/nixpkgs", 0).unwrap();
+        let store = Store::open(Path::new(":memory:")).unwrap();
+        let server = serve_api(crate::project::tests::fixtures()).await;
+        let p = pull(&store, &a, &server, 2, 1000).await.unwrap();
+        assert_eq!((p.wanted, p.fetched, p.missing), (4, 3, 1));
+        assert!(projected(&store).unwrap());
+        let mut have: Vec<u64> = a.numbers().unwrap().into_iter().collect();
+        have.sort();
+        assert_eq!(have, [300123, 350000, 453372]);
+        assert!(a.item(453372).unwrap().unwrap().json.is_some());
+        let again = pull(&store, &a, &server, 2, 1000).await.unwrap();
+        assert_eq!((again.fetched, again.missing), (0, 1));
+        let other = Archive::open(&dir, "NixOS/nix", 0).unwrap();
+        let e = pull(&store, &other, &server, 2, 1000).await.unwrap_err();
+        assert!(format!("{e:#}").contains("has no archive of NixOS/nix"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

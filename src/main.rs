@@ -211,6 +211,11 @@ enum Command {
         github_app_installation_id: Option<u64>,
         #[arg(long, default_value_t = 600)]
         sync_every: u64,
+        /// Serve the database as it is: start no background task, so
+        /// nothing reads GitHub or another site by itself. For a preview on
+        /// a copy of the data
+        #[arg(long, env = "MAINTAINER_MODE_FROZEN")]
+        frozen: bool,
         #[command(flatten)]
         s3: Box<S3>,
         /// Repositories whose issues and pull requests the archive keeps in
@@ -455,6 +460,25 @@ enum ArchiveCommand {
         repo: String,
         #[arg(long)]
         out: PathBuf,
+    },
+    /// Fill the archive from the public API of --server, with no GitHub
+    /// token: the pull requests of its review queue and its newest items.
+    /// A small copy, for a preview or for work on the code
+    Pull {
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
+        db: PathBuf,
+        #[arg(long, default_value = archive::DEFAULT_REPO)]
+        repo: String,
+        /// How many of the newest numbers to read, open or not
+        #[arg(long, default_value_t = 4000)]
+        newest: u64,
+        /// Items asked per second; a public server allows 10
+        #[arg(long, default_value_t = 5)]
+        per_second: u32,
     },
 }
 
@@ -968,6 +992,7 @@ async fn run(cli: Cli) -> Result<i32> {
             github_app_key_file,
             github_app_installation_id,
             sync_every,
+            frozen,
             s3,
             archive_repos,
             archive_items,
@@ -1085,33 +1110,38 @@ async fn run(cli: Cli) -> Result<i32> {
             let a = app.clone();
             tokio::task::spawn_blocking(move || a.recompute_metrics()).await??;
             app.store.set("sync_every", &sync_every.to_string())?;
-            tokio::spawn(background(app.clone(), sync_every));
-            tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
-            tokio::spawn(channels::run(app.clone()));
-            tokio::spawn(updatebot::run(app.clone()));
-            tokio::spawn(builds::run(app.clone()));
-            tokio::spawn(zhf::run(app.clone()));
-            match bot_token {
-                Some(t) => {
-                    tokio::spawn(events::poll(app.events.clone(), t.clone()));
-                    tracing::info!("notifications poller on");
-                    tokio::spawn(notifications::run(app.clone(), t));
+            if frozen {
+                tracing::info!("frozen: no background task runs, the data stays as it is");
+                archive::rows_once(&app).await;
+            } else {
+                tokio::spawn(background(app.clone(), sync_every));
+                tokio::spawn(health::run(app.clone(), Secret::open(nvd_api_key_file)?));
+                tokio::spawn(channels::run(app.clone()));
+                tokio::spawn(updatebot::run(app.clone()));
+                tokio::spawn(builds::run(app.clone()));
+                tokio::spawn(zhf::run(app.clone()));
+                match bot_token {
+                    Some(t) => {
+                        tokio::spawn(events::poll(app.events.clone(), t.clone()));
+                        tracing::info!("notifications poller on");
+                        tokio::spawn(notifications::run(app.clone(), t));
+                    }
+                    None => tracing::info!(
+                        "no bot token: the event log takes GH Archive only, and the notifications poller is off"
+                    ),
                 }
-                None => tracing::info!(
-                    "no bot token: the event log takes GH Archive only, and the notifications poller is off"
-                ),
-            }
-            tokio::spawn(events::archive(app.clone()));
-            if !app.archive.is_empty() {
-                tokio::spawn(archive::walk(app.clone()));
-                if let Some(dir) = app.git_dir.clone() {
-                    tokio::spawn(mirror::run(app.clone(), dir));
+                tokio::spawn(events::archive(app.clone()));
+                if !app.archive.is_empty() {
+                    tokio::spawn(archive::walk(app.clone()));
+                    if let Some(dir) = app.git_dir.clone() {
+                        tokio::spawn(mirror::run(app.clone(), dir));
+                    }
                 }
-            }
-            tokio::spawn(rescan::run(app.clone()));
-            if let Some(b) = bucket {
-                tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
-                tokio::spawn(events::copy(app.clone(), b));
+                tokio::spawn(rescan::run(app.clone()));
+                if let Some(b) = bucket {
+                    tracing::info!("event copy to {}/{}", b.endpoint, b.bucket);
+                    tokio::spawn(events::copy(app.clone(), b));
+                }
             }
             if let Some(addr) = metrics_listen {
                 let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -1683,6 +1713,24 @@ async fn run(cli: Cli) -> Result<i32> {
                 "{items} items of {} in {files} files under {}",
                 a.repo,
                 out.display()
+            );
+            Ok(0)
+        }
+        Command::Archive {
+            command:
+                ArchiveCommand::Pull {
+                    db,
+                    repo,
+                    newest,
+                    per_second,
+                },
+        } => {
+            let store = Store::open(&db)?;
+            let a = archive::Archive::open(&data_dir(&db).join("archive"), &repo, 0)?;
+            let p = archive::pull(&store, &a, &cli.server, newest, per_second).await?;
+            eprintln!(
+                "{} items of {} read from {}, {} of {} wanted have none there, {} rows written",
+                p.fetched, a.repo, cli.server, p.missing, p.wanted, p.rows
             );
             Ok(0)
         }
