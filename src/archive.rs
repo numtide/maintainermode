@@ -1263,6 +1263,8 @@ pub struct Pulled {
 /// Items of the review queue read per request of [`pull`].
 const PULL_PAGE: usize = 200;
 const PULL_TRIES: u32 = 5;
+/// Items asked per second: half of what nginx of a public server allows.
+const PULL_PER_SECOND: u32 = 5;
 
 /// One GET of [`pull`]: `None` for 404. A 429 or a 5xx is asked again,
 /// later each time.
@@ -1292,33 +1294,24 @@ async fn pull_get(http: &reqwest::Client, url: &str) -> Result<Option<Value>> {
 
 /// Fills the archive from the public API of another Maintainer Mode
 /// server, with no GitHub token: a small copy for a preview or for work on
-/// the code. It reads the pull requests of the review queue (NixOS/nixpkgs
-/// only) and the `newest` numbers below the newest one of the server, skips
-/// the numbers the archive holds, and asks at most `per_second` items a
-/// second. Then it writes the rows of the main database, so a server that
+/// the code. It reads the pull requests of the review queue and the
+/// `newest` numbers below the newest one of the server, skips the numbers
+/// the archive holds, and asks at most `PULL_PER_SECOND` items a second. Then it writes the rows of the main database, so a server that
 /// starts on the result has them at once.
-pub async fn pull(
-    store: &Store,
-    a: &Archive,
-    server: &str,
-    newest: u64,
-    per_second: u32,
-) -> Result<Pulled> {
+pub async fn pull(store: &Store, a: &Archive, server: &str, newest: u64) -> Result<Pulled> {
     let http = github::http();
     let base = server.trim_end_matches('/');
     let mut want = std::collections::BTreeSet::new();
-    if a.repo.eq_ignore_ascii_case(crate::events::REPO) {
-        let mut cursor = Some("0".to_string());
-        while let Some(c) = cursor {
-            let url = format!("{base}/api/v1/prs?queue=all&limit={PULL_PAGE}&cursor={c}");
-            let page = pull_get(&http, &url)
-                .await?
-                .with_context(|| format!("{url}: not found"))?;
-            for item in page["items"].as_array().into_iter().flatten() {
-                want.extend(item["number"].as_u64());
-            }
-            cursor = page["next_cursor"].as_str().map(str::to_string);
+    let mut cursor = Some("0".to_string());
+    while let Some(c) = cursor {
+        let url = format!("{base}/api/v1/prs?queue=all&limit={PULL_PAGE}&cursor={c}");
+        let page = pull_get(&http, &url)
+            .await?
+            .with_context(|| format!("{url}: not found"))?;
+        for item in page["items"].as_array().into_iter().flatten() {
+            want.extend(item["number"].as_u64());
         }
+        cursor = page["next_cursor"].as_str().map(str::to_string);
     }
     let sync = pull_get(&http, &format!("{base}/api/v1/sync"))
         .await?
@@ -1340,7 +1333,7 @@ pub async fn pull(
         wanted: want.len(),
         ..Pulled::default()
     };
-    let mut tick = tokio::time::interval(StdDuration::from_secs(1) / per_second.max(1));
+    let mut tick = tokio::time::interval(StdDuration::from_secs(1) / PULL_PER_SECOND);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let todo: Vec<u64> = want
         .into_iter()
@@ -2346,17 +2339,17 @@ mod tests {
         let a = Archive::open(&dir, "NixOS/nixpkgs", 0).unwrap();
         let store = Store::open(Path::new(":memory:")).unwrap();
         let server = serve_api(crate::project::tests::fixtures()).await;
-        let p = pull(&store, &a, &server, 2, 1000).await.unwrap();
+        let p = pull(&store, &a, &server, 2).await.unwrap();
         assert_eq!((p.wanted, p.fetched, p.missing), (4, 3, 1));
         assert!(projected(&store).unwrap());
         let mut have: Vec<u64> = a.numbers().unwrap().into_iter().collect();
         have.sort();
         assert_eq!(have, [300123, 350000, 453372]);
         assert!(a.item(453372).unwrap().unwrap().json.is_some());
-        let again = pull(&store, &a, &server, 2, 1000).await.unwrap();
+        let again = pull(&store, &a, &server, 2).await.unwrap();
         assert_eq!((again.fetched, again.missing), (0, 1));
         let other = Archive::open(&dir, "NixOS/nix", 0).unwrap();
-        let e = pull(&store, &other, &server, 2, 1000).await.unwrap_err();
+        let e = pull(&store, &other, &server, 2).await.unwrap_err();
         assert!(format!("{e:#}").contains("has no archive of NixOS/nix"));
         std::fs::remove_dir_all(&dir).unwrap();
     }

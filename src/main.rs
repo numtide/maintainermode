@@ -259,6 +259,20 @@ enum Command {
         #[command(subcommand)]
         command: ArchiveCommand,
     },
+    /// Fill a small database from the public API of --server, with no
+    /// GitHub token: the pull requests of its review queue and its newest
+    /// items. For a preview or for work on the code
+    PullTestData {
+        #[arg(
+            long,
+            env = "MAINTAINER_MODE_DB",
+            default_value = "maintainer-mode.sqlite"
+        )]
+        db: PathBuf,
+        /// How many of the newest numbers to read, open or not
+        #[arg(long, default_value_t = 4000)]
+        newest: u64,
+    },
     /// Fill the archive of NixOS/nixpkgs and the local database from it:
     /// every open item and the recent updates, then exit
     Sync {
@@ -460,25 +474,6 @@ enum ArchiveCommand {
         repo: String,
         #[arg(long)]
         out: PathBuf,
-    },
-    /// Fill the archive from the public API of --server, with no GitHub
-    /// token: the pull requests of its review queue and its newest items.
-    /// A small copy, for a preview or for work on the code
-    Pull {
-        #[arg(
-            long,
-            env = "MAINTAINER_MODE_DB",
-            default_value = "maintainer-mode.sqlite"
-        )]
-        db: PathBuf,
-        #[arg(long, default_value = archive::DEFAULT_REPO)]
-        repo: String,
-        /// How many of the newest numbers to read, open or not
-        #[arg(long, default_value_t = 4000)]
-        newest: u64,
-        /// Items asked per second; a public server allows 10
-        #[arg(long, default_value_t = 5)]
-        per_second: u32,
     },
 }
 
@@ -1716,21 +1711,14 @@ async fn run(cli: Cli) -> Result<i32> {
             );
             Ok(0)
         }
-        Command::Archive {
-            command:
-                ArchiveCommand::Pull {
-                    db,
-                    repo,
-                    newest,
-                    per_second,
-                },
-        } => {
+        Command::PullTestData { db, newest } => {
             let store = Store::open(&db)?;
-            let a = archive::Archive::open(&data_dir(&db).join("archive"), &repo, 0)?;
-            let p = archive::pull(&store, &a, &cli.server, newest, per_second).await?;
+            let a =
+                archive::Archive::open(&data_dir(&db).join("archive"), archive::DEFAULT_REPO, 0)?;
+            let p = archive::pull(&store, &a, &cli.server, newest).await?;
             eprintln!(
-                "{} items of {} read from {}, {} of {} wanted have none there, {} rows written",
-                p.fetched, a.repo, cli.server, p.missing, p.wanted, p.rows
+                "{} items read from {}, {} of {} wanted have none there, {} rows written",
+                p.fetched, cli.server, p.missing, p.wanted, p.rows
             );
             Ok(0)
         }
