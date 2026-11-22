@@ -63,8 +63,12 @@
         in
         {
           default = pkgs.mkShell {
-            # the full primer.css, so a new class works before the build trims it
-            PRIMER_DIR = "${self.packages.${system}.maintainer-mode.primer.override { classes = null; }}";
+            env = {
+              # the full primer.css, so a new class works before the build trims it
+              PRIMER_DIR = "${self.packages.${system}.maintainer-mode.primer.override { classes = null; }}";
+              # Needed for rust-analyzer in VSCode
+              RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+            };
             packages = [
               pkgs.cargo
               pkgs.rustc
